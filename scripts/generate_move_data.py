@@ -27,7 +27,8 @@ for number,symbol in moves:
     if not m: continue
     b=m.group(1); type_symbol=value(b,"type").removeprefix("TYPE_")
     effect = value(b,"effect").removeprefix("EFFECT_")
-    rows.append(f'    {{{number}, "{symbol.replace("_"," ")}", PokemonType::{types.get(type_symbol,"Normal")}, {value(b,"power")}, {value(b,"accuracy")}, {value(b,"pp")}, {value(b,"priority")}, {value(b,"secondaryEffectChance")}, "{effect}"}},')
+    contact = "true" if "FLAG_MAKES_CONTACT" in b else "false"
+    rows.append(f'    {{{number}, "{symbol.replace("_"," ")}", PokemonType::{types.get(type_symbol,"Normal")}, {value(b,"power")}, {value(b,"accuracy")}, {value(b,"pp")}, {value(b,"priority")}, {value(b,"secondaryEffectChance")}, "{effect}", {contact}}},')
 
 entries=[]
 for species_symbol,array_name in re.findall(r"\[SPECIES_([A-Z0-9_]+)\]\s*=\s*(s[A-Za-z0-9]+LevelUpLearnset)",pointers):

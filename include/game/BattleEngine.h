@@ -61,6 +61,7 @@ struct BattleState {
   uint16_t turn = 0;
   uint32_t rewardMoney = 0;
   uint8_t opponentItemUses = 0;
+  uint8_t gymStage = 0;
 };
 
 struct BattleActionResult {
@@ -79,7 +80,12 @@ struct BattleActionResult {
   uint16_t damageDealt = 0;
   uint16_t damageTaken = 0;
   uint16_t experienceGained = 0;
+  uint16_t effectiveness100 = 100;
+  bool criticalHit = false;
   uint32_t moneyGained = 0;
+  uint8_t movesToLearnCount = 0;
+  uint32_t moveLearnerUids[kPartyCapacity]{};
+  MoveId movesToLearn[kPartyCapacity]{};
   BattleOutcome outcome = BattleOutcome::None;
 };
 
@@ -112,17 +118,19 @@ class BattleEngine {
                                     Inventory& inventory, BattleItem item);
   static const char* ballName(PokeBallType ball);
   static const char* itemName(BattleItem item);
+  static void applyEntryAbilities(BattleState& battle, PokemonCollection& collection);
 
  private:
   static uint32_t random(BattleState& battle);
   static uint16_t calculateDamage(BattleState& battle, const OwnedPokemon& attacker,
                                   const OwnedPokemon& defender, MoveId move,
                                   const CombatVolatile& attackerVolatile,
-                                  const CombatVolatile& defenderVolatile);
+                                  const CombatVolatile& defenderVolatile,
+                                  uint16_t* effectivenessOut=nullptr,bool* criticalOut=nullptr);
   static void enemyTurn(BattleState& battle, PokemonCollection& collection,
                         OwnedPokemon& player, BattleActionResult& result, uint8_t moveSlot = 0xFF);
   static uint8_t chooseEnemyMove(BattleState& battle, const OwnedPokemon& player);
   static void awardExperience(BattleState& battle, PokemonCollection& collection, BattleActionResult& result);
-  static void applyMoveStatus(BattleState& battle, const OwnedPokemon& source, MoveId move, OwnedPokemon& target,
+  static void applyMoveStatus(BattleState& battle, OwnedPokemon& source, MoveId move, OwnedPokemon& target,
                               BattleActionResult& result);
 };

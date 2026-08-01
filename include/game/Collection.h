@@ -43,6 +43,7 @@ class CollectionLogic {
   static uint8_t count(const PokemonCollection& collection);
   static bool add(PokemonCollection& collection, OwnedPokemon pokemon, uint32_t* assignedUid = nullptr);
   static bool setPartySlot(PokemonCollection& collection, uint8_t slot, uint32_t uid);
+  static bool removeFromParty(PokemonCollection& collection, uint32_t uid);
   static bool isInParty(const PokemonCollection& collection, uint32_t uid);
   static bool validate(const PokemonCollection& collection);
   static void advanceCare(OwnedPokemon& pokemon, uint32_t elapsedSeconds);

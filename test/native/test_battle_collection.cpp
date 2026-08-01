@@ -56,6 +56,10 @@ int main() {
   assert(CollectionLogic::add(collection, extra, &extraUid));
   assert(CollectionLogic::setPartySlot(collection, 1, extraUid));
   assert(CollectionLogic::validate(collection));
+  assert(CollectionLogic::removeFromParty(collection,extraUid));
+  assert(!CollectionLogic::isInParty(collection,extraUid));
+  assert(!CollectionLogic::removeFromParty(collection,starterUid));
+  assert(CollectionLogic::setPartySlot(collection,1,extraUid));
 
   // A selected team member can enter the active battle and the opposing turn
   // still resolves after switching, matching the touch UI's SWITCH action.
@@ -202,6 +206,21 @@ int main() {
   PokemonCollection gymCollection; CollectionLogic::initialize(gymCollection);
   assert(CollectionLogic::chooseStarter(gymCollection,7)); BattleState gymBattle;
   GymProgress freshGyms; assert(GymSystem::start(gymBattle,gymCollection,gymCollection.party[0],freshGyms,GymId::Pewter,44));
-  assert(gymBattle.opponentItemUses==2);
+  assert(gymBattle.gymStage==0&&gymBattle.opponentItemUses==0);
+  gymBattle.active=false;gymBattle.outcome=BattleOutcome::Victory;assert(GymSystem::advance(gymBattle,gymCollection));
+  assert(gymBattle.gymStage==1&&gymBattle.active);
+  gymBattle.active=false;gymBattle.outcome=BattleOutcome::Victory;assert(GymSystem::advance(gymBattle,gymCollection));
+  assert(gymBattle.gymStage==2&&gymBattle.opponentItemUses==2&&gymBattle.opponentCount==3);
+  assert(!GymSystem::advance(gymBattle,gymCollection));
+
+  PokemonCollection learnCollection;CollectionLogic::initialize(learnCollection);assert(CollectionLogic::chooseStarter(learnCollection,4));
+  OwnedPokemon* learner=CollectionLogic::active(learnCollection,0);const uint32_t learnerUid=learner->uid;
+  *learner=CollectionLogic::createPokemon(learnerUid,4,18);learner->experience=experienceForLevel(findSpecies(4)->growthRate,19)-1;
+  BattleState learnBattle;learnBattle.active=true;learnBattle.kind=BattleKind::Trainer;learnBattle.outcome=BattleOutcome::Ongoing;
+  learnBattle.playerUid=learnerUid;learnBattle.opponentCount=1;learnBattle.opponents[0]=CollectionLogic::createPokemon(0,150,100);
+  learnBattle.opponents[0].currentHp=1;for(uint8_t i=0;i<kMoveSlots;++i)learnBattle.opponents[0].moves[i]=MoveId::None;
+  const BattleActionResult learnResult=BattleEngine::fight(learnBattle,learnCollection,0);
+  assert(learnResult.movesToLearnCount>=1&&learnResult.moveLearnerUids[0]==learnerUid);
+  assert(learnResult.movesToLearn[0]==moveLearnedAtLevel(4,19));
   return 0;
 }

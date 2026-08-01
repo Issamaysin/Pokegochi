@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstring>
 #include "game/TrainerData.h"
+#include "game/Pokedex.h"
 
 namespace {
 uint8_t statValue(uint8_t base, uint8_t level) {
@@ -86,6 +87,8 @@ bool abilityIs(const OwnedPokemon& pokemon, const char* name) {
   const AbilityData* ability = findAbility(pokemon.abilityId);
   return ability && std::strcmp(ability->name, name) == 0;
 }
+void applyAbsorbAbility(const FullMoveData* move,OwnedPokemon& target,uint16_t damage){if(!move||damage)return;if((move->type==PokemonType::Water&&abilityIs(target,"WATER ABSORB"))||(move->type==PokemonType::Electric&&abilityIs(target,"VOLT ABSORB")))target.currentHp=std::min<uint16_t>(target.maximumHp,static_cast<uint16_t>(target.currentHp+std::max<uint16_t>(1,target.maximumHp/4U)));}
+void applyContactAbility(BattleState& battle,const FullMoveData* move,OwnedPokemon& attacker,const OwnedPokemon& defender){if(!move||!move->makesContact||!attacker.currentHp)return;if(abilityIs(defender,"ROUGH SKIN")){const uint16_t hurt=std::max<uint16_t>(1,attacker.maximumHp/16U);attacker.currentHp=hurt>=attacker.currentHp?0:attacker.currentHp-hurt;}if(attacker.status!=StatusCondition::None)return;uint32_t x=battle.rngState?battle.rngState:0x1234567U;x^=x<<13U;x^=x>>17U;x^=x<<5U;battle.rngState=x;if(x%100U>=30U)return;if(abilityIs(defender,"STATIC"))attacker.status=StatusCondition::Paralysis;else if(abilityIs(defender,"POISON POINT"))attacker.status=StatusCondition::Poison;else if(abilityIs(defender,"FLAME BODY"))attacker.status=StatusCondition::Burn;else if(abilityIs(defender,"EFFECT SPORE")){const uint8_t r=x%3U;attacker.status=r==0?StatusCondition::Sleep:r==1?StatusCondition::Paralysis:StatusCondition::Poison;}}
 
 void refreshLevelMoves(OwnedPokemon& pokemon) {
   MoveId desired[4]{}; movesForLevel(pokemon.speciesId, pokemon.level, desired);
@@ -188,6 +191,7 @@ bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
   const uint8_t level = boundedLevel(static_cast<int16_t>(teamLevel) - 2 + random(battle) % 4U);
   battle.opponentCount = 1;
   battle.opponents[0] = CollectionLogic::createPokemon(0, speciesId, level);
+  applyEntryAbilities(battle,collection);
   return battle.opponents[0].speciesId != 0;
 }
 
@@ -211,17 +215,26 @@ bool BattleEngine::startTrainer(BattleState& battle, EncounterCharges& charges,
     battle.opponents[index] = CollectionLogic::createPokemon(0, speciesId, boundedLevel(teamLevel + offset));
     if (!battle.opponents[index].speciesId) return false;
   }
+  applyEntryAbilities(battle,collection);
   return EncounterLogic::consumeManualCharge(charges);
+}
+
+void BattleEngine::applyEntryAbilities(BattleState& battle,PokemonCollection& collection){OwnedPokemon* player=CollectionLogic::find(collection,battle.playerUid);OwnedPokemon* opponent=currentOpponent(battle);if(!player||!opponent)return;
+  auto blocksDrop=[](const OwnedPokemon& p){return abilityIs(p,"CLEAR BODY")||abilityIs(p,"WHITE SMOKE")||abilityIs(p,"HYPER CUTTER");};
+  if(abilityIs(*player,"INTIMIDATE")&&!blocksDrop(*opponent))changeStage(battle.opponentVolatiles[battle.opponentIndex].attackStage,-1);
+  if(abilityIs(*opponent,"INTIMIDATE")&&!blocksDrop(*player))changeStage(battle.playerVolatile.attackStage,-1);
 }
 
 uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& attacker,
                                        const OwnedPokemon& defender, MoveId moveId,
                                        const CombatVolatile& attackerVolatile,
-                                       const CombatVolatile& defenderVolatile) {
+                                       const CombatVolatile& defenderVolatile,uint16_t* effectivenessOut,bool* criticalOut) {
+  if(effectivenessOut)*effectivenessOut=100;if(criticalOut)*criticalOut=false;
   const FullMoveData* move = findFullMove(moveId);
   const SpeciesData* attackerSpecies = findSpecies(attacker.speciesId);
   const SpeciesData* defenderSpecies = findSpecies(defender.speciesId);
   if (!move || !attackerSpecies || !defenderSpecies || move->power == 0) return 0;
+  if(std::strstr(move->effect,"EXPLOSION")&&(abilityIs(attacker,"DAMP")||abilityIs(defender,"DAMP")))return 0;
   uint32_t accuracy = std::strstr(move->effect, "ALWAYS_HIT") ? 0U : move->accuracy;
   if (accuracy && abilityIs(attacker, "COMPOUND EYES")) accuracy = accuracy * 130U / 100U;
   if (accuracy && abilityIs(attacker, "HUSTLE") && move->power) accuracy = accuracy * 80U / 100U;
@@ -231,6 +244,7 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   if (std::strstr(move->effect, "DRAGON_RAGE")) return 40;
   if (std::strstr(move->effect, "SONICBOOM")) return 20;
   if (std::strstr(move->effect, "LEVEL_DAMAGE")) return attacker.level;
+  if (std::strstr(move->effect,"PSYWAVE")) return std::max<uint16_t>(1,static_cast<uint16_t>(attacker.level*(5U+random(battle)%11U)/10U));
   if (std::strstr(move->effect, "SUPER_FANG")) return std::max<uint16_t>(1, defender.currentHp / 2U);
   const bool physical = move->type == PokemonType::Normal || move->type == PokemonType::Fighting || move->type == PokemonType::Flying || move->type == PokemonType::Poison || move->type == PokemonType::Ground || move->type == PokemonType::Rock || move->type == PokemonType::Bug || move->type == PokemonType::Ghost || move->type == PokemonType::Steel;
   uint32_t attack = staged(statValue(physical ? attackerSpecies->baseAttack : attackerSpecies->baseSpAttack, attacker.level), physical ? attackerVolatile.attackStage : attackerVolatile.spAttackStage);
@@ -240,6 +254,9 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   if (physical && abilityIs(attacker,"GUTS") && attacker.status != StatusCondition::None) attack = attack * 3U / 2U;
   if (physical && abilityIs(defender,"MARVEL SCALE") && defender.status != StatusCondition::None) defense = defense * 3U / 2U;
   uint32_t power = move->power;
+  if(std::strstr(move->effect,"MAGNITUDE")){static constexpr uint8_t powers[]={10,30,50,70,90,110,150};power=powers[random(battle)%7U];}
+  else if(std::strstr(move->effect,"LOW_KICK")){const PokedexEntryData* entry=pokedexEntry(defender.speciesId);const uint16_t kg10=entry?entry->weightHectograms:100;
+    power=kg10<100?20:kg10<250?40:kg10<500?60:kg10<1000?80:kg10<2000?100:120;}
   if (std::strstr(move->effect,"FLAIL")) {
     const uint32_t ratio = attacker.maximumHp ? attacker.currentHp * 48U / attacker.maximumHp : 48U;
     power = ratio <= 1 ? 200 : ratio <= 4 ? 150 : ratio <= 9 ? 100 : ratio <= 16 ? 80 : ratio <= 32 ? 40 : 20;
@@ -254,9 +271,10 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   uint32_t damage = (((2U * attacker.level / 5U + 2U) * power * attack / defense) / 50U) + 2U;
   const uint8_t criticalChance = (attackerVolatile.criticalStage || std::strstr(move->effect,"HIGH_CRITICAL")) ? 8U : 16U;
   if (!abilityIs(defender,"BATTLE ARMOR") && !abilityIs(defender,"SHELL ARMOR") &&
-      random(battle) % criticalChance == 0) damage *= 2U;
+      random(battle) % criticalChance == 0) {damage *= 2U;if(criticalOut)*criticalOut=true;}
   if (move->type == attackerSpecies->type1 || move->type == attackerSpecies->type2) damage = damage * 150U / 100U;
   const uint16_t effectiveness = typeMultiplier100(move->type, *defenderSpecies);
+  if(effectivenessOut)*effectivenessOut=effectiveness;
   if (!effectiveness) return 0;
   if ((move->type == PokemonType::Ground && abilityIs(defender,"LEVITATE")) ||
       (move->type == PokemonType::Fire && abilityIs(defender,"FLASH FIRE")) ||
@@ -269,6 +287,7 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
       ((abilityIs(attacker,"OVERGROW")&&move->type==PokemonType::Grass)||(abilityIs(attacker,"BLAZE")&&move->type==PokemonType::Fire)||(abilityIs(attacker,"TORRENT")&&move->type==PokemonType::Water)||(abilityIs(attacker,"SWARM")&&move->type==PokemonType::Bug))) damage=damage*3U/2U;
   damage = damage * (85U + random(battle) % 16U) / 100U;
   if (std::strstr(move->effect, "DOUBLE_HIT")) damage *= 2U;
+  else if(std::strstr(move->effect,"TRIPLE_KICK"))damage*=3U;
   else if (std::strstr(move->effect, "MULTI_HIT")) damage *= 2U + random(battle) % 4U;
   return static_cast<uint16_t>(std::max<uint32_t>(1, damage));
 }
@@ -289,14 +308,18 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
     moveSlot = chooseEnemyMove(battle, player);
   if (moveSlot >= kMoveSlots) { result.enemyActed = true; return; }
   const MoveId enemyMove = opponent->moves[moveSlot];
+  const FullMoveData* enemyMoveData=findFullMove(enemyMove);
   const uint16_t damage = calculateDamage(battle, *opponent, player, enemyMove,
                                            battle.opponentVolatiles[battle.opponentIndex], battle.playerVolatile);
   --opponent->movePp[moveSlot];
   uint16_t appliedDamage=damage;
   if (battle.playerVolatile.substituteHp) { const uint16_t absorbed=std::min<uint16_t>(battle.playerVolatile.substituteHp,damage);battle.playerVolatile.substituteHp-=absorbed;appliedDamage=damage-absorbed; }
   player.currentHp = appliedDamage >= player.currentHp ? 0 : static_cast<uint16_t>(player.currentHp - appliedDamage);
+  applyAbsorbAbility(enemyMoveData,player,damage);applyContactAbility(battle,enemyMoveData,*opponent,player);
   result.enemyActed = true; result.damageTaken = damage;
+  if(enemyMoveData){applyStageEffect(enemyMoveData->effect,enemyVolatile,battle.playerVolatile);if(std::strstr(enemyMoveData->effect,"ABSORB")&&damage)opponent->currentHp=std::min<uint16_t>(opponent->maximumHp,static_cast<uint16_t>(opponent->currentHp+std::max<uint16_t>(1,damage/2U)));if((std::strstr(enemyMoveData->effect,"RECOIL")||std::strstr(enemyMoveData->effect,"DOUBLE_EDGE"))&&damage){const uint16_t recoil=std::max<uint16_t>(1,damage/4U);opponent->currentHp=recoil>=opponent->currentHp?0:opponent->currentHp-recoil;}if(std::strstr(enemyMoveData->effect,"CONFUSION"))battle.playerVolatile.confusionTurns=static_cast<uint8_t>(2U+random(battle)%4U);if(std::strstr(enemyMoveData->effect,"TRAP")||std::strstr(enemyMoveData->effect,"MEAN_LOOK"))battle.playerVolatile.trappedTurns=4;if(std::strstr(enemyMoveData->effect,"EXPLOSION")&&!abilityIs(*opponent,"DAMP")&&!abilityIs(player,"DAMP"))opponent->currentHp=0;}
   applyMoveStatus(battle, *opponent, enemyMove, player, result);
+  if(opponent->currentHp==0){result.opponentDefeated=true;awardExperience(battle,collection,result);if(battle.opponentIndex+1U<battle.opponentCount)++battle.opponentIndex;else{battle.active=false;battle.outcome=BattleOutcome::Victory;result.moneyGained=battle.rewardMoney;}}
   if (player.currentHp == 0) {
     player.recoverySecondsRemaining = 9000;
     OwnedPokemon* replacement = firstHealthyPartyMember(collection, player.uid);
@@ -341,7 +364,7 @@ uint8_t BattleEngine::chooseEnemyMove(BattleState& battle, const OwnedPokemon& p
   return best[random(battle) % bestCount];
 }
 
-void BattleEngine::applyMoveStatus(BattleState& battle, const OwnedPokemon& source, MoveId move, OwnedPokemon& target,
+void BattleEngine::applyMoveStatus(BattleState& battle, OwnedPokemon& source, MoveId move, OwnedPokemon& target,
                                    BattleActionResult& result) {
   if (target.status != StatusCondition::None) return;
   const FullMoveData* data = findFullMove(move);
@@ -362,6 +385,8 @@ void BattleEngine::applyMoveStatus(BattleState& battle, const OwnedPokemon& sour
   if (abilityIs(source, "SERENE GRACE")) chance = static_cast<uint8_t>(std::min<uint16_t>(100, chance * 2U));
   if (status != StatusCondition::None && random(battle) % 100U < chance) {
     target.status = status; result.statusApplied = true; result.appliedStatus = status;
+    if(abilityIs(target,"SYNCHRONIZE")&&source.status==StatusCondition::None&&
+       (status==StatusCondition::Poison||status==StatusCondition::BadlyPoisoned||status==StatusCondition::Paralysis||status==StatusCondition::Burn))source.status=status;
   }
 }
 
@@ -380,6 +405,7 @@ void BattleEngine::awardExperience(BattleState& battle, PokemonCollection& colle
   player.experience += result.experienceGained;
   while (player.level < 100 && player.experience >= experienceForLevel(playerSpecies->growthRate, player.level + 1)) {
     ++player.level;
+    const MoveId learnedMove = moveLearnedAtLevel(player.speciesId, player.level);
     const uint16_t oldMax = player.maximumHp;
     OwnedPokemon recalculated = CollectionLogic::createPokemon(player.uid, player.speciesId, player.level);
     player.maximumHp = recalculated.maximumHp;
@@ -403,7 +429,14 @@ void BattleEngine::awardExperience(BattleState& battle, PokemonCollection& colle
       if (result.evolvedCount < kPartyCapacity) { result.evolvedFromSpeciesIds[result.evolvedCount] = oldSpeciesId; result.evolvedSpeciesIds[result.evolvedCount++] = player.speciesId; }
       playerSpecies = findSpecies(player.speciesId);
       if (!playerSpecies) break;
-    } else refreshLevelMoves(player);
+    } else if (learnedMove != MoveId::None) {
+      bool known=false;for(uint8_t moveSlot=0;moveSlot<kMoveSlots;++moveSlot)if(player.moves[moveSlot]==learnedMove)known=true;
+      if(!known){
+        uint8_t empty=kMoveSlots;for(uint8_t moveSlot=0;moveSlot<kMoveSlots;++moveSlot)if(player.moves[moveSlot]==MoveId::None){empty=moveSlot;break;}
+        if(empty<kMoveSlots){player.moves[empty]=learnedMove;const FullMoveData* move=findFullMove(learnedMove);player.movePp[empty]=move?move->pp:0;}
+        else if(result.movesToLearnCount<kPartyCapacity){const uint8_t pending=result.movesToLearnCount++;result.moveLearnerUids[pending]=player.uid;result.movesToLearn[pending]=learnedMove;}
+      }
+    }
   }
   }
 }
@@ -453,7 +486,7 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
   const bool releasingCharge = selfVolatile.chargingMove == player->moves[moveSlot];
   if (!releasingCharge) --player->movePp[moveSlot];
   const uint16_t damage = calculateDamage(battle, *player, *opponent, player->moves[moveSlot],
-                                           battle.playerVolatile, battle.opponentVolatiles[battle.opponentIndex]);
+                                           battle.playerVolatile, battle.opponentVolatiles[battle.opponentIndex],&result.effectiveness100,&result.criticalHit);
   const FullMoveData* usedMove = findFullMove(player->moves[moveSlot]);
   if(usedMove && (std::strstr(usedMove->effect,"SEMI_INVULNERABLE")||std::strstr(usedMove->effect,"RAZOR_WIND")||std::strstr(usedMove->effect,"SOLAR_BEAM")) && !releasingCharge){selfVolatile.chargingMove=player->moves[moveSlot];enemyIfNeeded();result.outcome=battle.outcome;return result;}
   selfVolatile.chargingMove=MoveId::None;
@@ -461,9 +494,10 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
   if (usedMove && std::strstr(usedMove->effect,"FALSE_SWIPE") && damage >= opponent->currentHp)
     opponent->currentHp = 1;
   else opponent->currentHp = damage >= opponent->currentHp ? 0 : static_cast<uint16_t>(opponent->currentHp - damage);
+  applyAbsorbAbility(usedMove,*opponent,damage);applyContactAbility(battle,usedMove,*player,*opponent);
   if (usedMove && std::strstr(usedMove->effect, "ABSORB") && damage)
     player->currentHp = std::min<uint16_t>(player->maximumHp, static_cast<uint16_t>(player->currentHp + std::max<uint16_t>(1, damage / 2U)));
-  if (usedMove && std::strstr(usedMove->effect, "RECOIL") && !std::strstr(usedMove->effect, "RECOIL_IF_MISS") && damage) {
+  if (usedMove && (std::strstr(usedMove->effect, "RECOIL")||std::strstr(usedMove->effect,"DOUBLE_EDGE")) && !std::strstr(usedMove->effect, "RECOIL_IF_MISS") && damage) {
     const uint16_t recoil = std::max<uint16_t>(1, damage / 4U); player->currentHp = recoil >= player->currentHp ? 0 : player->currentHp - recoil;
   }
   if (usedMove && usedMove->power == 0 && (std::strstr(usedMove->effect, "HEAL_HALF") || std::strstr(usedMove->effect, "REST"))) {
@@ -482,6 +516,15 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
     if(std::strstr(usedMove->effect,"HEAL_BELL")) for(uint8_t i=0;i<kPartyCapacity;++i)
       if(OwnedPokemon* member=CollectionLogic::active(collection,i)) member->status=StatusCondition::None;
     if(std::strstr(usedMove->effect,"HAZE")){selfVolatile=CombatVolatile{};targetVolatile=CombatVolatile{};}
+    if(std::strstr(usedMove->effect,"BULK_UP")){changeStage(selfVolatile.attackStage,1);changeStage(selfVolatile.defenseStage,1);}
+    if(std::strstr(usedMove->effect,"CALM_MIND")){changeStage(selfVolatile.spAttackStage,1);changeStage(selfVolatile.spDefenseStage,1);}
+    if(std::strstr(usedMove->effect,"DRAGON_DANCE")){changeStage(selfVolatile.attackStage,1);changeStage(selfVolatile.speedStage,1);}
+    if(std::strstr(usedMove->effect,"COSMIC_POWER")){changeStage(selfVolatile.defenseStage,1);changeStage(selfVolatile.spDefenseStage,1);}
+    if(std::strstr(usedMove->effect,"SUPERPOWER")){changeStage(selfVolatile.attackStage,-1);changeStage(selfVolatile.defenseStage,-1);}
+    if(std::strstr(usedMove->effect,"OVERHEAT"))changeStage(selfVolatile.spAttackStage,-2);
+    if(std::strstr(usedMove->effect,"TICKLE")){changeStage(targetVolatile.attackStage,-1);changeStage(targetVolatile.defenseStage,-1);}
+    if(std::strstr(usedMove->effect,"ALL_STATS_UP_HIT")){changeStage(selfVolatile.attackStage,1);changeStage(selfVolatile.defenseStage,1);changeStage(selfVolatile.spAttackStage,1);changeStage(selfVolatile.spDefenseStage,1);changeStage(selfVolatile.speedStage,1);}
+    if(std::strstr(usedMove->effect,"PSYCH_UP")){selfVolatile.attackStage=targetVolatile.attackStage;selfVolatile.defenseStage=targetVolatile.defenseStage;selfVolatile.spAttackStage=targetVolatile.spAttackStage;selfVolatile.spDefenseStage=targetVolatile.spDefenseStage;selfVolatile.speedStage=targetVolatile.speedStage;}
     if(std::strstr(usedMove->effect,"BELLY_DRUM") && player->currentHp>player->maximumHp/2U){
       player->currentHp-=player->maximumHp/2U;selfVolatile.attackStage=6;
     }
@@ -498,14 +541,20 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
     if(std::strstr(usedMove->effect,"CONFUSION"))targetVolatile.confusionTurns=static_cast<uint8_t>(2U+random(battle)%4U);
     if(std::strstr(usedMove->effect,"FLINCH")&&usedMove->effectChance&&random(battle)%100U<usedMove->effectChance)targetVolatile.flinched=true;
     if(std::strstr(usedMove->effect,"TRAP"))targetVolatile.trappedTurns=static_cast<uint8_t>(2U+random(battle)%4U);
+    if(std::strstr(usedMove->effect,"MEAN_LOOK"))targetVolatile.trappedTurns=6;
+    if(std::strstr(usedMove->effect,"RAPID_SPIN"))selfVolatile.trappedTurns=0;
     if(std::strstr(usedMove->effect,"PROTECT")){selfVolatile.protectedThisTurn=true;}
     if(std::strstr(usedMove->effect,"SUBSTITUTE")&&!selfVolatile.substituteHp&&player->currentHp>player->maximumHp/4U){const uint16_t cost=player->maximumHp/4U;player->currentHp-=cost;selfVolatile.substituteHp=cost;}
     if(std::strstr(usedMove->effect,"RECHARGE"))selfVolatile.recharging=true;
     if(std::strstr(usedMove->effect,"DISABLE"))targetVolatile.disabledMove=opponent->moves[0];
     if(std::strstr(usedMove->effect,"ENCORE"))targetVolatile.encoreMove=opponent->moves[0];
-    if(std::strstr(usedMove->effect,"EXPLOSION") || std::strstr(usedMove->effect,"MEMENTO")) player->currentHp=0;
+    if((std::strstr(usedMove->effect,"EXPLOSION") || std::strstr(usedMove->effect,"MEMENTO"))&&!abilityIs(*player,"DAMP")&&!abilityIs(*opponent,"DAMP")) player->currentHp=0;
   }
   applyMoveStatus(battle, *player, player->moves[moveSlot], *opponent, result);
+  if(usedMove&&std::strstr(usedMove->effect,"ROAR")){
+    if(battle.kind==BattleKind::Wild){battle.active=false;battle.outcome=BattleOutcome::Escaped;result.outcome=battle.outcome;return result;}
+    if(battle.opponentIndex+1U<battle.opponentCount){OwnedPokemon temp=battle.opponents[battle.opponentIndex];battle.opponents[battle.opponentIndex]=battle.opponents[battle.opponentIndex+1U];battle.opponents[battle.opponentIndex+1U]=temp;}
+  }
   const bool playerFaintedFromMove = player->currentHp == 0;
   if (playerFaintedFromMove) player->recoverySecondsRemaining = 9000;
   if (opponent->currentHp == 0) {
@@ -521,6 +570,7 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
     player->currentHp = residual >= player->currentHp ? 0 : player->currentHp - residual;
     if (!player->currentHp) { player->recoverySecondsRemaining = 9000; if (OwnedPokemon* replacement = firstHealthyPartyMember(collection, player->uid)) battle.playerUid = replacement->uid; else { battle.active = false; battle.outcome = BattleOutcome::Defeat; } }
   }
+  if(battle.active){if(abilityIs(*player,"SHED SKIN")&&player->status!=StatusCondition::None&&random(battle)%3U==0)player->status=StatusCondition::None;if(abilityIs(*player,"SPEED BOOST"))changeStage(battle.playerVolatile.speedStage,1);if(OwnedPokemon* activeOpponent=currentOpponent(battle)){if(abilityIs(*activeOpponent,"SHED SKIN")&&activeOpponent->status!=StatusCondition::None&&random(battle)%3U==0)activeOpponent->status=StatusCondition::None;if(abilityIs(*activeOpponent,"SPEED BOOST"))changeStage(battle.opponentVolatiles[battle.opponentIndex].speedStage,1);}}
   result.outcome = battle.outcome; return result;
 }
 
@@ -536,7 +586,7 @@ BattleActionResult BattleEngine::run(BattleState& battle, PokemonCollection& col
   const uint16_t playerSpeed = statValue(playerSpecies->baseSpeed, player->level);
   const uint16_t wildSpeed = statValue(wildSpecies->baseSpeed, opponent->level);
   const uint16_t chance = std::min<uint16_t>(95, static_cast<uint16_t>(50 + (playerSpeed * 30U) / std::max<uint16_t>(1, wildSpeed)));
-  if (random(battle) % 100U < chance) { battle.active = false; battle.outcome = BattleOutcome::Escaped; }
+  if (abilityIs(*player,"RUN AWAY") || random(battle) % 100U < chance) { battle.active = false; battle.outcome = BattleOutcome::Escaped; }
   else enemyTurn(battle, collection, *player, result);
   result.outcome = battle.outcome; return result;
 }
@@ -569,6 +619,7 @@ BattleActionResult BattleEngine::switchToPokemon(BattleState& battle, PokemonCol
   if (abilityIs(*current, "NATURAL CURE")) current->status = StatusCondition::None;
   result.accepted = true; ++battle.turn; battle.playerUid = uid;
   battle.playerVolatile = CombatVolatile{};
+  applyEntryAbilities(battle,collection);
   enemyTurn(battle, collection, *replacement, result);
   result.outcome = battle.outcome; return result;
 }

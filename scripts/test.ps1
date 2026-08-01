@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $zig = Join-Path $projectRoot '.tools\python312\Lib\site-packages\ziglang\zig.exe'
+$python = Join-Path $projectRoot '.tools\python312\python.exe'
 if (-not (Test-Path $zig)) { throw 'Local Zig compiler is missing.' }
 $env:ZIG_GLOBAL_CACHE_DIR = Join-Path $projectRoot '.zig-cache-global'
 $env:ZIG_LOCAL_CACHE_DIR = Join-Path $projectRoot '.zig-cache'
@@ -8,6 +9,14 @@ $out = Join-Path $projectRoot '.test-build'
 New-Item -ItemType Directory -Force $out | Out-Null
 Push-Location $projectRoot
 try {
+    & $python (Join-Path $PSScriptRoot 'generate_pokemon_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_move_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_pokedex_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_trainer_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp test/native/test_pet_state.cpp -o "$out/pet_state.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/pet_state.exe"

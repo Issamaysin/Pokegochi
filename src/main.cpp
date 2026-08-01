@@ -17,7 +17,7 @@
 #include "services/PersistentSave.h"
 
 namespace {
-enum class Screen : uint8_t { Diagnostic, Starter, Home, ChooseBattler, TrainerIntro, Battle, MoveSelect, BattleParty, BattleSummary, Bag, Inventory, Box, Pokedex, PokedexDetail, Mart, Recovery };
+enum class Screen : uint8_t { Diagnostic, Starter, Home, ChooseBattler, TrainerIntro, Battle, MoveSelect, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, Box, Pokedex, PokedexDetail, Mart, Recovery };
 TFT_eSPI display;
 SPIClass sdSpi(VSPI);
 Backlight backlight;
@@ -88,7 +88,8 @@ void battleBackSprite(int16_t x, int16_t y, uint16_t speciesId) {
 }
 
 void playMoveAnimation(MoveId move) {
-  const char* asset = "hit"; uint8_t frames = 5;
+  const FullMoveData* data=findFullMove(move);const char* effect=data?data->effect:"HIT";
+  const char* asset = "hit"; uint8_t frames = 1;
   if (move == MoveId::VineWhip) { asset = "leaf"; frames = 9; }
   else if (move == MoveId::Scratch) { asset = "claw_slash"; frames = 1; }
   else if (move == MoveId::Ember) { asset = "fire"; frames = 8; }
@@ -96,20 +97,41 @@ void playMoveAnimation(MoveId move) {
   else if (move == MoveId::Gust) { asset = "gust"; frames = 2; }
   else if (move == MoveId::StringShot) { asset = "web_thread"; frames = 1; }
   else if (move == MoveId::PoisonSting) { asset = "poison_bubble"; frames = 3; }
+  else if(std::strstr(effect,"EXPLOSION")){asset="explosion";frames=1;}
+  else if(std::strstr(effect,"PROTECT")){asset="protect";frames=1;}
+  else if(std::strstr(effect,"SUBSTITUTE")){asset="substitute";frames=1;}
+  else if(std::strstr(effect,"SLEEP")){asset="letter_z";frames=1;}
+  else if(std::strstr(effect,"CONFUSE")){asset="thought_bubble";frames=1;}
+  else if(std::strstr(effect,"POISON")){asset="toxic_bubble";frames=1;}
+  else if(std::strstr(effect,"PAIN_SPLIT")){asset="pain_split";frames=1;}
+  else if(data)switch(data->type){
+    case PokemonType::Fire:asset="fire";frames=8;break;case PokemonType::Water:asset="bubble";frames=3;break;
+    case PokemonType::Electric:asset="lightning";break;case PokemonType::Grass:asset="leaf";frames=9;break;
+    case PokemonType::Ice:asset="ice_crystals_0";break;case PokemonType::Psychic:asset="bent_spoon";break;
+    case PokemonType::Ghost:asset="ghostly_spirit";break;case PokemonType::Ground:asset="flying_dirt";break;
+    case PokemonType::Rock:asset="rocks";break;case PokemonType::Bug:asset="web";break;
+    case PokemonType::Flying:asset="gust";frames=2;break;case PokemonType::Fighting:asset="punch_impact";break;
+    case PokemonType::Dragon:asset="breath";break;case PokemonType::Steel:asset="torn_metal";break;
+    case PokemonType::Dark:asset="black_ball";break;case PokemonType::Poison:asset="poison_bubble";frames=3;break;
+    default:asset=data->power?"hit":"sparkle_1";break;}
   for (uint8_t frame = 0; frame < frames; ++frame) {
     char path[112];
-    if (frames == 1) std::snprintf(path, sizeof(path), "/pokegochi/assets/firered/battle_anims/sprites/%s.pkg", asset);
+    if (frames == 1) std::snprintf(path, sizeof(path), "/pokegochi/assets/firered/battle_anims/sprites/%s_00.pkg", asset);
     else std::snprintf(path, sizeof(path), "/pokegochi/assets/firered/battle_anims/sprites/%s_%02u.pkg", asset, frame);
     AssetRenderer::draw(display, path, 225, 47); delay(65);
   }
 }
 
-void playBallAnimation() {
+const char* ballAsset(PokeBallType ball){switch(ball){case PokeBallType::GreatBall:return "great_ball";case PokeBallType::UltraBall:return "ultra_ball";case PokeBallType::MasterBall:return "master_ball";default:return "poke_ball";}}
+void playBallAnimation(PokeBallType ball) {
   for (uint8_t step = 0; step < 8; ++step) {
     const int16_t x = 92 + step * 19, y = 108 - static_cast<int16_t>(step < 4 ? step * 12 : (7 - step) * 12);
-    AssetRenderer::draw(display, "/pokegochi/assets/firered/battle_anims/sprites/pokeball.pkg", x, y); delay(55);
+    char path[72];std::snprintf(path,sizeof(path),"/pokegochi/assets/firered/items/%s.pkg",ballAsset(ball));AssetRenderer::draw(display,path,x,y); delay(55);
   }
 }
+void playBallResult(PokeBallType ball,bool caught){char path[72];std::snprintf(path,sizeof(path),"/pokegochi/assets/firered/items/%s.pkg",ballAsset(ball));
+  for(uint8_t shake=0;shake<3;++shake){for(int8_t dx=-4;dx<=4;dx+=2){display.fillRect(238,86,34,30,TFT_WHITE);AssetRenderer::draw(display,path,243+dx,89);delay(45);}}
+  if(caught){display.fillCircle(256,101,20,TFT_YELLOW);AssetRenderer::draw(display,path,244,89);}else{display.fillCircle(256,101,25,TFT_WHITE);delay(90);}}
 
 void playEvolutionAnimation(uint16_t fromSpecies, uint16_t toSpecies) {
   display.fillScreen(TFT_NAVY);
@@ -174,7 +196,8 @@ void drawParty() {
     display.fillCircle(x, 14, 9, pet ? speciesColor(pet->speciesId) : TFT_DARKGREY);
     if (i == gameSave.activePetSlot) display.drawCircle(x, 14, 11, TFT_WHITE);
   }
-  button(270, 3, 46, 22, "BOX", TFT_NAVY);
+  button(270, 3, 46, 22, "", TFT_NAVY);
+  if(!sdReady||!AssetRenderer::draw(display,"/pokegochi/assets/firered/ui/box_icon.pkg",283,4)){display.setTextColor(TFT_WHITE,TFT_NAVY);display.drawString("BOX",278,9,1);}
 }
 
 void drawHome() {
@@ -182,7 +205,8 @@ void drawHome() {
   const SpeciesData* data = findSpecies(pet->speciesId);
   display.fillScreen(TFT_BLACK); display.fillRect(0, 0, 320, 29, TFT_DARKGREEN);
   display.setTextColor(TFT_WHITE, TFT_DARKGREEN); display.drawString(data ? data->name : "UNKNOWN", 7, 7, 2);
-  button(139, 3, 44, 22, "DEX", TFT_RED);
+  button(139, 3, 44, 22, "", TFT_RED);
+  if(!sdReady||!AssetRenderer::draw(display,"/pokegochi/assets/firered/ui/pokedex_icon.pkg",151,4)){display.setTextColor(TFT_WHITE,TFT_RED);display.drawString("DEX",147,9,1);}
   button(91, 3, 44, 22, "MART", TFT_ORANGE);
   button(43, 3, 44, 22, "", TFT_NAVY);
   if (!sdReady || !AssetRenderer::draw(display, "/pokegochi/assets/firered/item_menu/bag_icon.pkg", 55, 4)) {
@@ -239,7 +263,7 @@ void drawTrainerIntro() {
   display.fillScreen(TFT_WHITE);
   display.fillRect(0, 0, 320, 153, TFT_SKYBLUE);
   if (profile || gym) {
-    const char* asset = gym ? gym->frontAsset : profile->frontAsset;
+    const char* asset = gym ? GymSystem::opponentAsset(gameSave.battle) : profile->frontAsset;
     char path[96]; std::snprintf(path, sizeof(path), "/pokegochi/assets/trainers/%s.pkg", asset);
     AssetRenderer::draw(display, path, 128, 38);
   }
@@ -247,8 +271,8 @@ void drawTrainerIntro() {
   display.fillRoundRect(9, 155, 302, 76, 4, TFT_NAVY);
   display.setTextColor(TFT_WHITE, TFT_NAVY);
   if (gym) {
-    char title[40]; std::snprintf(title, sizeof(title), "LEADER %s", gym->leader);
-    display.drawString(title, 17, 162, 2); display.drawString(gym->introLine1, 17, 187, 1); display.drawString(gym->introLine2, 17, 203, 1);
+    char title[40]; std::snprintf(title, sizeof(title), "%s %s", GymSystem::opponentClass(gameSave.battle),GymSystem::opponentName(gameSave.battle));
+    display.drawString(title, 17, 162, 2); display.drawString(GymSystem::opponentLine1(gameSave.battle), 17, 187, 1); display.drawString(GymSystem::opponentLine2(gameSave.battle), 17, 203, 1);
   } else if (profile) {
     char title[40]; std::snprintf(title, sizeof(title), "%s %s", profile->trainerClass, profile->name);
     display.drawString(title, 17, 162, 2); display.drawString(profile->introLine1, 17, 187, 1); display.drawString(profile->introLine2, 17, 203, 1);
@@ -261,7 +285,9 @@ void drawBattle() {
   OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle);
   const SpeciesData* wild = opponent ? findSpecies(opponent->speciesId) : nullptr;
   const SpeciesData* own = player ? findSpecies(player->speciesId) : nullptr;
-  display.fillScreen(TFT_BLACK); display.setTextColor(TFT_WHITE);
+  display.fillScreen(TFT_BLACK);const char* terrain=gameSave.battle.kind==BattleKind::Wild?"grass":"indoor";char terrainPath[72];
+  std::snprintf(terrainPath,sizeof(terrainPath),"/pokegochi/assets/firered/battle_terrain/%s.pkg",terrain);
+  if(!AssetRenderer::draw(display,terrainPath,0,0))display.fillRect(0,0,320,184,TFT_WHITE);display.setTextColor(TFT_BLACK);
   display.drawString(wild ? wild->name : "WILD", 8, 8, 2);
   if (opponent) bar(8, 29, "HP", opponent->currentHp, opponent->maximumHp, TFT_GREEN);
   creature(245, 71, opponent ? opponent->speciesId : 0, true);
@@ -292,6 +318,27 @@ void drawMoveSelect() {
     if (move) { char pp[24]; std::snprintf(pp, sizeof(pp), "PP %u/%u", pokemon->movePp[slot], move->pp); display.drawString(pp, x + 8, y + 39, 1); }
   }
   button(115, 207, 90, 27, "BACK", TFT_RED);
+}
+
+void queueMoveLearning(const BattleActionResult& result) {
+  for(uint8_t i=0;i<result.movesToLearnCount&&gameSave.moveLearning.count<kPartyCapacity;++i){
+    PendingMoveLearning& pending=gameSave.moveLearning.entries[gameSave.moveLearning.count++];
+    pending.pokemonUid=result.moveLearnerUids[i];pending.move=result.movesToLearn[i];
+  }
+}
+
+void drawMoveLearn() {
+  if(gameSave.moveLearning.index>=gameSave.moveLearning.count){gameSave.moveLearning=MoveLearningQueue{};screen=Screen::Battle;drawBattle();return;}
+  const PendingMoveLearning& pending=gameSave.moveLearning.entries[gameSave.moveLearning.index];
+  OwnedPokemon* pokemon=CollectionLogic::find(gameSave.collection,pending.pokemonUid);
+  const SpeciesData* species=pokemon?findSpecies(pokemon->speciesId):nullptr;const FullMoveData* learned=findFullMove(pending.move);
+  display.fillScreen(TFT_WHITE);display.fillRoundRect(4,4,312,232,7,TFT_DARKGREY);display.fillRoundRect(8,8,304,224,5,TFT_NAVY);
+  display.setTextColor(TFT_WHITE,TFT_NAVY);char title[64];std::snprintf(title,sizeof(title),"%s WANTS TO LEARN",species?species->name:"POKEMON");display.drawString(title,15,16,2);
+  display.setTextColor(TFT_YELLOW,TFT_NAVY);display.drawString(learned?learned->name:"A NEW MOVE",15,38,2);
+  display.setTextColor(TFT_WHITE,TFT_NAVY);display.drawString("CHOOSE A MOVE TO FORGET",15,61,1);
+  for(uint8_t slot=0;slot<kMoveSlots;++slot){const FullMoveData* move=pokemon?findFullMove(pokemon->moves[slot]):nullptr;char label[40];
+    std::snprintf(label,sizeof(label),"%s  PP %u",move?move->name:"---",pokemon?pokemon->movePp[slot]:0);button(17,80+slot*29,286,24,label,TFT_BLUE);}
+  button(75,202,170,27,"DO NOT LEARN",TFT_RED);
 }
 
 void drawBattleParty() {
@@ -430,6 +477,7 @@ void drawBox() {
     if (pokemon) { char path[64]; std::snprintf(path, sizeof(path), "/pokegochi/assets/pokemon/icons/%03u_%u.pkg", pokemon->speciesId, iconFrame); AssetRenderer::draw(display, path, 262, y); }
     display.drawRoundRect(255, y - 2, 48, 38, 3, slot == gameSave.activePetSlot ? TFT_YELLOW : TFT_WHITE);
   }
+  button(255,166,48,20,"OUT",TFT_RED);
   display.fillRoundRect(10, 194, 300, 33, 4, TFT_WHITE);
   const OwnedPokemon* selected = CollectionLogic::find(gameSave.collection, selectedUid);
   const SpeciesData* data = selected ? findSpecies(selected->speciesId) : nullptr;
@@ -492,6 +540,8 @@ void drawPokedexDetail() {
     display.drawString(metadata, 99, 70, 1);
     std::snprintf(metadata, sizeof(metadata), "WT %u.%u kg", entry->weightHectograms / 10U, entry->weightHectograms % 10U);
     display.drawString(metadata, 99, 86, 1);
+    const EvolutionData* evolution=evolutionFor(selectedDexSpecies);
+    if(evolution){const SpeciesData* evolved=findSpecies(evolution->toSpeciesId);std::snprintf(metadata,sizeof(metadata),"EVOLVES: %s LV%u",evolved?evolved->name:"?",evolution->level);display.drawString(metadata,99,102,1);}
     display.drawFastHLine(17, 119, 286, TFT_DARKGREY);
     const char* cursor = entry->description; int16_t y = 128;
     while (*cursor && y < 195) {
@@ -509,10 +559,10 @@ void drawPokedexDetail() {
 }
 
 void drawMart() {
-  display.fillScreen(TFT_WHITE); display.fillRect(0,0,320,31,TFT_RED);
+  display.fillScreen(TFT_WHITE);AssetRenderer::draw(display,"/pokegochi/assets/firered/shop/background.pkg",0,0);display.fillRoundRect(4,3,312,29,5,TFT_RED);
   display.setTextColor(TFT_WHITE,TFT_RED); display.drawString("POKE MART",10,8,2);
   char cash[24]; std::snprintf(cash,sizeof(cash),"$%lu",static_cast<unsigned long>(gameSave.money)); display.drawString(cash,245,9,2);
-  for(uint8_t i=0;i<kMartOfferCount;++i){const MartOffer& offer=gameSave.mart.offers[i];const int16_t y=35+i*24;display.fillRoundRect(10,y,300,21,4,TFT_LIGHTGREY);display.setTextColor(TFT_BLACK,TFT_LIGHTGREY);display.drawString(Economy::name(offer.item),18,y+5,1);char details[32];std::snprintf(details,sizeof(details),"$%u  x%u",offer.price,offer.remaining);display.drawString(details,224,y+5,1);}
+  for(uint8_t i=0;i<kMartOfferCount;++i){const MartOffer& offer=gameSave.mart.offers[i];const int16_t y=35+i*24;display.fillRect(9,y,302,21,TFT_WHITE);display.drawRect(9,y,302,21,TFT_DARKGREY);display.setTextColor(TFT_BLACK,TFT_WHITE);display.drawString(Economy::name(offer.item),18,y+5,1);char details[32];std::snprintf(details,sizeof(details),"$%u  x%u",offer.price,offer.remaining);display.drawString(details,224,y+5,1);}
   button(110,207,100,27,"BACK",TFT_RED);
 }
 
@@ -539,12 +589,16 @@ void battleResultMessage(const BattleActionResult& result) {
   else if (result.outcome == BattleOutcome::Captured) std::snprintf(message, sizeof(message), "CAUGHT! SENT TO YOUR BOX");
   else if (result.outcome == BattleOutcome::Escaped) std::snprintf(message, sizeof(message), "GOT AWAY SAFELY");
   else if (!result.hit && result.accepted) std::snprintf(message, sizeof(message), "THE ATTACK MISSED");
+  else if (result.criticalHit) std::snprintf(message,sizeof(message),"A CRITICAL HIT!  DAMAGE %u",result.damageDealt);
+  else if (result.effectiveness100>100) std::snprintf(message,sizeof(message),"IT'S SUPER EFFECTIVE!");
+  else if (result.effectiveness100<100) std::snprintf(message,sizeof(message),"IT'S NOT VERY EFFECTIVE...");
   else if (result.accepted) std::snprintf(message, sizeof(message), "DEALT %u, TOOK %u", result.damageDealt, result.damageTaken);
 }
 
 void handleTap(const TouchPoint& p) {
   if (screen == Screen::Diagnostic && inside(p, 105, 190, 110, 38) && saveReady) {
     if (CollectionLogic::count(gameSave.collection) == 0) { screen = Screen::Starter; drawStarter(); }
+    else if (gameSave.moveLearning.index < gameSave.moveLearning.count) { screen=Screen::MoveLearn;drawMoveLearn(); }
     else if (gameSave.battle.active) { screen = Screen::Battle; drawBattle(); }
     else { screen = Screen::Home; drawHome(); }
     return;
@@ -612,11 +666,14 @@ void handleTap(const TouchPoint& p) {
     else if (inside(p, 243, 190, 74, 43) && gameSave.battle.kind == BattleKind::Wild) result = BattleEngine::run(gameSave.battle, gameSave.collection);
     if (result.accepted) {
       for (uint8_t i = 0; i < result.evolvedCount; ++i) PokedexLogic::markCaught(gameSave.pokedex, result.evolvedSpeciesIds[i]);
-      if (result.outcome == BattleOutcome::Victory && gameSave.battle.kind == BattleKind::Gym)
-        GymSystem::recordVictory(gameSave.gymProgress, static_cast<GymId>(gameSave.battle.gymId));
+      bool nextGymStage=false;
+      if (result.outcome == BattleOutcome::Victory && gameSave.battle.kind == BattleKind::Gym) {
+        nextGymStage=GymSystem::advance(gameSave.battle,gameSave.collection);
+        if(!nextGymStage)GymSystem::recordVictory(gameSave.gymProgress, static_cast<GymId>(gameSave.battle.gymId));
+      }
       gameSave.money += result.moneyGained;
       if (result.caught) { const OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle); if (opponent) PokedexLogic::markCaught(gameSave.pokedex, opponent->speciesId); }
-      battleResultMessage(result); saveDirty = true; saveNow(); drawBattle();
+      battleResultMessage(result); saveDirty = true; saveNow(); if(nextGymStage){screen=Screen::TrainerIntro;drawTrainerIntro();}else drawBattle();
     }
     return;
   }
@@ -630,12 +687,23 @@ void handleTap(const TouchPoint& p) {
       playMoveAnimation(attacker->moves[slot]);
       const BattleActionResult result = BattleEngine::fight(gameSave.battle, gameSave.collection, slot);
       if (result.accepted) {
+        queueMoveLearning(result);
         for (uint8_t i = 0; i < result.evolvedCount; ++i) { PokedexLogic::markCaught(gameSave.pokedex, result.evolvedSpeciesIds[i]); playEvolutionAnimation(result.evolvedFromSpeciesIds[i], result.evolvedSpeciesIds[i]); }
-        if (result.outcome == BattleOutcome::Victory && gameSave.battle.kind == BattleKind::Gym) GymSystem::recordVictory(gameSave.gymProgress, static_cast<GymId>(gameSave.battle.gymId));
+        bool nextGymStage=false;if (result.outcome == BattleOutcome::Victory && gameSave.battle.kind == BattleKind::Gym){nextGymStage=GymSystem::advance(gameSave.battle,gameSave.collection);if(!nextGymStage)GymSystem::recordVictory(gameSave.gymProgress, static_cast<GymId>(gameSave.battle.gymId));}
         gameSave.money += result.moneyGained; battleResultMessage(result); saveDirty = true; saveNow();
       }
-      screen = Screen::Battle; drawBattle(); return;
+      if(gameSave.moveLearning.index<gameSave.moveLearning.count){screen=Screen::MoveLearn;drawMoveLearn();}
+      else if(gameSave.battle.active&&gameSave.battle.kind==BattleKind::Gym&&gameSave.battle.opponentIndex==0&&gameSave.battle.gymStage>0){screen=Screen::TrainerIntro;drawTrainerIntro();}
+      else {screen = Screen::Battle; drawBattle();} return;
     }
+    return;
+  }
+  if(screen==Screen::MoveLearn){
+    PendingMoveLearning pending=gameSave.moveLearning.entries[gameSave.moveLearning.index];OwnedPokemon* pokemon=CollectionLogic::find(gameSave.collection,pending.pokemonUid);
+    bool resolved=false;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot)if(inside(p,17,80+slot*29,286,24)&&pokemon){pokemon->moves[slot]=pending.move;const FullMoveData* move=findFullMove(pending.move);pokemon->movePp[slot]=move?move->pp:0;resolved=true;}
+    if(inside(p,75,202,170,27))resolved=true;
+    if(resolved){++gameSave.moveLearning.index;saveDirty=true;saveNow();if(gameSave.moveLearning.index<gameSave.moveLearning.count)drawMoveLearn();else{gameSave.moveLearning=MoveLearningQueue{};saveDirty=true;saveNow();if(gameSave.battle.active&&gameSave.battle.kind==BattleKind::Gym&&gameSave.battle.gymStage>0&&gameSave.battle.opponentIndex==0){screen=Screen::TrainerIntro;drawTrainerIntro();}else{screen=Screen::Battle;drawBattle();}}}
     return;
   }
   if (screen == Screen::BattleParty) {
@@ -656,8 +724,8 @@ void handleTap(const TouchPoint& p) {
     if (inside(p, 77, 207, 64, 28) && bagPage < 3) { ++bagPage; drawBag(); return; }
     if (bagPage == 0) for (uint8_t i = 0; i < static_cast<uint8_t>(PokeBallType::Count); ++i) {
       if (!inside(p, 25, 36 + i * 34, 270, 27)) continue;
-      playBallAnimation(); const BattleActionResult result = BattleEngine::throwBall(gameSave.battle, gameSave.collection,
-          gameSave.inventory, static_cast<PokeBallType>(i));
+      const PokeBallType ball=static_cast<PokeBallType>(i);playBallAnimation(ball); const BattleActionResult result = BattleEngine::throwBall(gameSave.battle, gameSave.collection,
+          gameSave.inventory, ball);if(result.accepted)playBallResult(ball,result.caught);
       if (result.accepted) {
         if (result.caught) { const OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle); if (opponent) PokedexLogic::markCaught(gameSave.pokedex, opponent->speciesId); }
         battleResultMessage(result); saveDirty = true; saveNow(); screen = Screen::Battle; drawBattle();
@@ -692,6 +760,9 @@ void handleTap(const TouchPoint& p) {
     for (uint8_t slot = 0; slot < 3; ++slot) if (inside(p, 255, 50 + slot * 44, 48, 38) && selectedUid) {
       if (CollectionLogic::setPartySlot(gameSave.collection, slot, selectedUid)) { gameSave.activePetSlot = slot; saveDirty = true; saveNow(); drawBox(); }
       return;
+    }
+    if(inside(p,255,166,48,20)&&selectedUid&&CollectionLogic::removeFromParty(gameSave.collection,selectedUid)){
+      gameSave.activePetSlot=0;saveDirty=true;saveNow();drawBox();return;
     }
   }
   if (screen == Screen::Pokedex) {

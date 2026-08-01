@@ -27,17 +27,16 @@ The firmware starts with a hardware diagnostic for display, touch, microSD,
 screen button, backlight, and persistent storage. On the first start, the
 player permanently chooses Bulbasaur, Charmander, or Squirtle. The touch UI
 then provides FEED, BATHE, PLAY, random wild encounters, charged trainer battles,
-Poké Ball capture, a
-151-slot persistent Box, an active team of up to three Pokémon, and a 151-entry
-Pokédex. BATHE clears a persistent battle status; cleanliness is not a timed
-virtual-pet need.
+Poké Ball capture, a rotating Mart, three-stage Gyms, a 151-slot persistent Box,
+an active team of up to three Pokémon, and a 151-entry Pokédex. BATHE clears
+persistent battle status and restores PP; cleanliness is not a timed need.
 
 Trainer battles use a maximum of three charges. One charge returns every three
 hours, up to the cap. Wild encounters consume no charge and are the only
 capturable battles. Both use the highest selected-team level for difficulty.
-The current early-game encounter pool and graphics are a
-vertical-slice implementation; FireRed ROM data and extracted assets will
-replace these provisional tables and shapes in later content passes.
+Species, moves, learnsets, encounter progression, trainer identities and Pokedex
+metadata are generated from the supplied local FireRed data. Original graphics
+are converted into a local-only microSD asset pack and are not distributed.
 
 The consolidated rules, including sequential fixed-level Gyms and planned
 Bluetooth PvP/trading, are documented in `docs/GAME_DESIGN.md`.

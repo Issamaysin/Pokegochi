@@ -35,7 +35,7 @@ struct MoveData {
   uint8_t power;
   uint8_t accuracy;
 };
-struct FullMoveData { uint16_t id; const char* name; PokemonType type; uint8_t power; uint8_t accuracy; uint8_t pp; int8_t priority; uint8_t effectChance; const char* effect; };
+struct FullMoveData { uint16_t id; const char* name; PokemonType type; uint8_t power; uint8_t accuracy; uint8_t pp; int8_t priority; uint8_t effectChance; const char* effect; bool makesContact; };
 struct LearnsetEntry { uint16_t speciesId; uint8_t level; uint16_t moveId; };
 
 struct EvolutionData { uint16_t fromSpeciesId; uint16_t toSpeciesId; uint8_t level; };
@@ -45,6 +45,7 @@ const SpeciesData* findSpecies(uint16_t id);
 const MoveData* findMove(MoveId id);
 const FullMoveData* findFullMove(MoveId id);
 uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4]);
+MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level);
 MoveId defaultMoveForSpecies(uint16_t speciesId);
 uint32_t experienceForLevel(GrowthRate growth, uint8_t level);
 const EvolutionData* evolutionFor(uint16_t speciesId);

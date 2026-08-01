@@ -67,6 +67,13 @@ uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4]) {
   return count;
 }
 
+MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level) {
+  MoveId learned = MoveId::None;
+  for (const auto& entry : kLearnsets)
+    if (entry.speciesId == speciesId && entry.level == level) learned = static_cast<MoveId>(entry.moveId);
+  return learned;
+}
+
 MoveId defaultMoveForSpecies(uint16_t speciesId) {
   switch (speciesId) {
     case 1: return MoveId::VineWhip;

@@ -31,5 +31,12 @@ class GymSystem {
   static bool hasBadge(const GymProgress& progress, GymId id);
   static bool start(BattleState& battle, PokemonCollection& collection, uint32_t playerUid,
                     const GymProgress& progress, GymId id, uint32_t seed);
+  static bool advance(BattleState& battle, PokemonCollection& collection);
+  static bool isLeaderStage(const BattleState& battle);
+  static const char* opponentClass(const BattleState& battle);
+  static const char* opponentName(const BattleState& battle);
+  static const char* opponentAsset(const BattleState& battle);
+  static const char* opponentLine1(const BattleState& battle);
+  static const char* opponentLine2(const BattleState& battle);
   static bool recordVictory(GymProgress& progress, GymId id);
 };

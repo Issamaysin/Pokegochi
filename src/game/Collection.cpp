@@ -90,6 +90,13 @@ bool CollectionLogic::setPartySlot(PokemonCollection& collection, uint8_t slot, 
   return true;
 }
 
+bool CollectionLogic::removeFromParty(PokemonCollection& collection, uint32_t uid) {
+  uint8_t count=0,found=kPartyCapacity;for(uint8_t i=0;i<kPartyCapacity;++i){if(collection.party[i])++count;if(collection.party[i]==uid)found=i;}
+  if(count<=1||found>=kPartyCapacity)return false;
+  for(uint8_t i=found;i+1<kPartyCapacity;++i)collection.party[i]=collection.party[i+1];
+  collection.party[kPartyCapacity-1]=kEmptyPokemonUid;return validate(collection);
+}
+
 bool CollectionLogic::validate(const PokemonCollection& collection) {
   if (collection.party[0] == kEmptyPokemonUid) return false;
   for (uint8_t i = 0; i < kPartyCapacity; ++i) {

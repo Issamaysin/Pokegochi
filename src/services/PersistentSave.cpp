@@ -19,6 +19,16 @@ bool PersistentSave::readRecordV9(const char* key, RecordV9& record) {
          record.magic == kMagic && record.version == 9 && record.payloadSize == sizeof(GameSaveV9) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV9, crc));
 }
+bool PersistentSave::readRecordV10(const char* key, RecordV10& record) {
+  return preferences_.getBytesLength(key)==sizeof(RecordV10)&&preferences_.getBytes(key,&record,sizeof(record))==sizeof(record)&&
+    record.magic==kMagic&&record.version==10&&record.payloadSize==sizeof(GameSaveV10)&&
+    record.crc==crc32(reinterpret_cast<const uint8_t*>(&record),offsetof(RecordV10,crc));
+}
+bool PersistentSave::readRecordV11(const char* key, RecordV11& record) {
+  return preferences_.getBytesLength(key)==sizeof(RecordV11)&&preferences_.getBytes(key,&record,sizeof(record))==sizeof(record)&&
+    record.magic==kMagic&&record.version==11&&record.payloadSize==sizeof(GameSaveV11)&&
+    record.crc==crc32(reinterpret_cast<const uint8_t*>(&record),offsetof(RecordV11,crc));
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -28,6 +38,19 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
   Record a{}, b{}; const bool validA = readRecord("save_a", a) && valid(a); const bool validB = readRecord("save_b", b) && valid(b);
   const bool gameWasStarted = preferences_.getBool("started", false);
   if (!validA && !validB) {
+    RecordV11 v11a{},v11b{};const bool valid11a=readRecordV11("save_a",v11a),valid11b=readRecordV11("save_b",v11b);
+    if(valid11a||valid11b){const RecordV11& old=valid11a&&(!valid11b||isNewer(v11a.sequence,v11b.sequence))?v11a:v11b;
+      save=GameSave{};save.playTimeSeconds=old.payload.playTimeSeconds;save.bootCount=old.payload.bootCount;save.flags=old.payload.flags;save.activePetSlot=old.payload.activePetSlot;
+      save.collection=old.payload.collection;save.inventory=old.payload.inventory;save.encounterCharges=old.payload.encounterCharges;save.wildEncounterClock=old.payload.wildEncounterClock;
+      std::memcpy(&save.battle,&old.payload.battle,sizeof(BattleStateV10));save.pokedex=old.payload.pokedex;save.gymProgress=old.payload.gymProgress;save.money=old.payload.money;
+      save.mart=old.payload.mart;save.moveLearning=old.payload.moveLearning;sequence_=old.sequence;nextSlotA_=true;if(!commit(save))return SaveLoadResult::StorageError;return SaveLoadResult::Loaded;}
+    RecordV10 v10a{},v10b{};const bool valid10a=readRecordV10("save_a",v10a),valid10b=readRecordV10("save_b",v10b);
+    if(valid10a||valid10b){const RecordV10& old=valid10a&&(!valid10b||isNewer(v10a.sequence,v10b.sequence))?v10a:v10b;
+      save=GameSave{};save.playTimeSeconds=old.payload.playTimeSeconds;save.bootCount=old.payload.bootCount;save.flags=old.payload.flags;
+      save.activePetSlot=old.payload.activePetSlot;save.collection=old.payload.collection;save.inventory=old.payload.inventory;
+      save.encounterCharges=old.payload.encounterCharges;save.wildEncounterClock=old.payload.wildEncounterClock;std::memcpy(&save.battle,&old.payload.battle,sizeof(BattleStateV10));
+      save.pokedex=old.payload.pokedex;save.gymProgress=old.payload.gymProgress;save.money=old.payload.money;save.mart=old.payload.mart;
+      sequence_=old.sequence;nextSlotA_=true;if(!commit(save))return SaveLoadResult::StorageError;return SaveLoadResult::Loaded;}
     RecordV9 oldA{}, oldB{}; const bool validOldA = readRecordV9("save_a", oldA);
     const bool validOldB = readRecordV9("save_b", oldB);
     if (validOldA || validOldB) {
