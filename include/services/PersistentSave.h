@@ -39,12 +39,26 @@ class PersistentSave {
 #endif
  private:
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 9;
+  static constexpr uint16_t kFormatVersion = 10;
+  struct BattleStateV9 {
+    bool active; BattleKind kind; BattleOutcome outcome; uint32_t playerUid;
+    OwnedPokemon opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
+    uint8_t trainerProfileId; uint8_t gymId; CombatVolatile playerVolatile;
+    CombatVolatile opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn; uint32_t rewardMoney;
+  };
+  struct GameSaveV9 {
+    uint32_t playTimeSeconds; uint32_t bootCount; uint8_t flags; uint8_t activePetSlot;
+    PokemonCollection collection; Inventory inventory; EncounterCharges encounterCharges;
+    WildEncounterClock wildEncounterClock; BattleStateV9 battle; PokedexState pokedex;
+    GymProgress gymProgress; uint32_t money; MartState mart;
+  };
+  struct RecordV9 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV9 payload; uint32_t crc; };
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   uint32_t sequence_ = 0;
   bool nextSlotA_ = true;
   bool readRecord(const char* key, Record& record);
+  bool readRecordV9(const char* key, RecordV9& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   bool isNewer(uint32_t a, uint32_t b) const;

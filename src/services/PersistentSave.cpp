@@ -13,6 +13,12 @@ uint32_t PersistentSave::crc32(const uint8_t* data, size_t length) const {
 bool PersistentSave::readRecord(const char* key, Record& record) {
   return preferences_.getBytesLength(key) == sizeof(Record) && preferences_.getBytes(key, &record, sizeof(Record)) == sizeof(Record);
 }
+bool PersistentSave::readRecordV9(const char* key, RecordV9& record) {
+  return preferences_.getBytesLength(key) == sizeof(RecordV9) &&
+         preferences_.getBytes(key, &record, sizeof(RecordV9)) == sizeof(RecordV9) &&
+         record.magic == kMagic && record.version == 9 && record.payloadSize == sizeof(GameSaveV9) &&
+         record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV9, crc));
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -22,6 +28,25 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
   Record a{}, b{}; const bool validA = readRecord("save_a", a) && valid(a); const bool validB = readRecord("save_b", b) && valid(b);
   const bool gameWasStarted = preferences_.getBool("started", false);
   if (!validA && !validB) {
+    RecordV9 oldA{}, oldB{}; const bool validOldA = readRecordV9("save_a", oldA);
+    const bool validOldB = readRecordV9("save_b", oldB);
+    if (validOldA || validOldB) {
+      const RecordV9& old = validOldA && (!validOldB || isNewer(oldA.sequence, oldB.sequence)) ? oldA : oldB;
+      save = GameSave{}; save.playTimeSeconds=old.payload.playTimeSeconds; save.bootCount=old.payload.bootCount;
+      save.flags=old.payload.flags; save.activePetSlot=old.payload.activePetSlot; save.collection=old.payload.collection;
+      save.inventory=old.payload.inventory; save.encounterCharges=old.payload.encounterCharges;
+      save.wildEncounterClock=old.payload.wildEncounterClock; save.battle.active=old.payload.battle.active;
+      save.battle.kind=old.payload.battle.kind; save.battle.outcome=old.payload.battle.outcome;
+      save.battle.playerUid=old.payload.battle.playerUid; std::memcpy(save.battle.opponents,old.payload.battle.opponents,sizeof(save.battle.opponents));
+      save.battle.opponentCount=old.payload.battle.opponentCount; save.battle.opponentIndex=old.payload.battle.opponentIndex;
+      save.battle.trainerProfileId=old.payload.battle.trainerProfileId; save.battle.gymId=old.payload.battle.gymId;
+      save.battle.playerVolatile=old.payload.battle.playerVolatile; std::memcpy(save.battle.opponentVolatiles,old.payload.battle.opponentVolatiles,sizeof(save.battle.opponentVolatiles));
+      save.battle.rngState=old.payload.battle.rngState; save.battle.turn=old.payload.battle.turn;
+      save.battle.rewardMoney=old.payload.battle.rewardMoney; save.pokedex=old.payload.pokedex;
+      save.gymProgress=old.payload.gymProgress; save.money=old.payload.money; save.mart=old.payload.mart;
+      sequence_=old.sequence; nextSlotA_=true; if(!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
     if (gameWasStarted) return SaveLoadResult::Corrupted;
     save = GameSave{};
     if (!commit(save)) return SaveLoadResult::StorageError;

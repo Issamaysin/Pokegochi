@@ -42,6 +42,7 @@ bool GymSystem::start(BattleState& battle, PokemonCollection& collection, uint32
   battle.outcome = BattleOutcome::Ongoing; battle.playerUid = playerUid;
   battle.rngState = seed ? seed : 0xC0FFEE11U; battle.opponentCount = gym->teamSize;
   battle.rewardMoney = static_cast<uint32_t>(gym->team[gym->teamSize - 1].level) * 100U;
+  battle.opponentItemUses = 2;
   battle.gymId = static_cast<uint8_t>(id);
   for (uint8_t i = 0; i < gym->teamSize; ++i) {
     battle.opponents[i] = CollectionLogic::createPokemon(0, gym->team[i].speciesId, gym->team[i].level);

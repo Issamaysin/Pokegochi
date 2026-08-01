@@ -61,6 +61,7 @@ int main() {
   // still resolves after switching, matching the touch UI's SWITCH action.
   assert(BattleEngine::startTrainer(battle, charges, collection, starterUid, 67890));
   assert(battle.rewardMoney > 0);
+  assert(battle.opponentItemUses == 1);
   assert(charges.available == 2);
   const uint32_t firstBattlerUid = battle.playerUid;
   const BattleActionResult switched = BattleEngine::switchPokemon(battle, collection);
@@ -71,6 +72,7 @@ int main() {
   // A complete fight awards XP and leaves a terminal battle result that can
   // be persisted before the UI returns home.
   battle.opponentCount = 1;
+  battle.opponentItemUses = 0;
   BattleEngine::currentOpponent(battle)->currentHp = 1;
   const uint32_t xpBefore = CollectionLogic::find(collection, extraUid)->experience;
   const uint32_t starterXpBefore = CollectionLogic::find(collection, starterUid)->experience;
@@ -196,5 +198,10 @@ int main() {
   assert(!GymSystem::recordVictory(gyms, GymId::Cerulean));
   assert(GymSystem::recordVictory(gyms, GymId::Pewter));
   assert(GymSystem::hasBadge(gyms, GymId::Pewter) && GymSystem::next(gyms) == GymId::Cerulean);
+
+  PokemonCollection gymCollection; CollectionLogic::initialize(gymCollection);
+  assert(CollectionLogic::chooseStarter(gymCollection,7)); BattleState gymBattle;
+  GymProgress freshGyms; assert(GymSystem::start(gymBattle,gymCollection,gymCollection.party[0],freshGyms,GymId::Pewter,44));
+  assert(gymBattle.opponentItemUses==2);
   return 0;
 }

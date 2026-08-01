@@ -202,6 +202,7 @@ bool BattleEngine::startTrainer(BattleState& battle, EncounterCharges& charges,
   const TrainerProfile* profile = trainerProfile(battle.trainerProfileId);
   if (!profile) return false;
   const uint8_t teamLevel = highestPartyLevel(collection);
+  battle.opponentItemUses = 1;
   battle.rewardMoney = static_cast<uint32_t>(teamLevel) * 40U;
   battle.opponentCount = static_cast<uint8_t>(1U + random(battle) % std::min<uint8_t>(3, 1U + teamLevel / 15U));
   for (uint8_t index = 0; index < battle.opponentCount; ++index) {
@@ -221,16 +222,16 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   const SpeciesData* attackerSpecies = findSpecies(attacker.speciesId);
   const SpeciesData* defenderSpecies = findSpecies(defender.speciesId);
   if (!move || !attackerSpecies || !defenderSpecies || move->power == 0) return 0;
-  uint32_t accuracy = move->accuracy;
+  uint32_t accuracy = std::strstr(move->effect, "ALWAYS_HIT") ? 0U : move->accuracy;
   if (accuracy && abilityIs(attacker, "COMPOUND EYES")) accuracy = accuracy * 130U / 100U;
   if (accuracy && abilityIs(attacker, "HUSTLE") && move->power) accuracy = accuracy * 80U / 100U;
   if (accuracy) accuracy = std::min<uint32_t>(100, staged(accuracy, attackerVolatile.accuracyStage - defenderVolatile.evasionStage));
   if (accuracy && random(battle) % 100U >= accuracy) return 0;
   if (std::strstr(move->effect, "OHKO")) return abilityIs(defender, "STURDY") ? 0 : defender.currentHp;
   if (std::strstr(move->effect, "DRAGON_RAGE")) return 40;
-  if (std::strstr(move->effect, "SONIC_BOOM")) return 20;
+  if (std::strstr(move->effect, "SONICBOOM")) return 20;
   if (std::strstr(move->effect, "LEVEL_DAMAGE")) return attacker.level;
-  if (std::strstr(move->effect, "HALF_HP")) return std::max<uint16_t>(1, defender.currentHp / 2U);
+  if (std::strstr(move->effect, "SUPER_FANG")) return std::max<uint16_t>(1, defender.currentHp / 2U);
   const bool physical = move->type == PokemonType::Normal || move->type == PokemonType::Fighting || move->type == PokemonType::Flying || move->type == PokemonType::Poison || move->type == PokemonType::Ground || move->type == PokemonType::Rock || move->type == PokemonType::Bug || move->type == PokemonType::Ghost || move->type == PokemonType::Steel;
   uint32_t attack = staged(statValue(physical ? attackerSpecies->baseAttack : attackerSpecies->baseSpAttack, attacker.level), physical ? attackerVolatile.attackStage : attackerVolatile.spAttackStage);
   uint32_t defense = std::max<uint32_t>(1, staged(statValue(physical ? defenderSpecies->baseDefense : defenderSpecies->baseSpDefense, defender.level), physical ? defenderVolatile.defenseStage : defenderVolatile.spDefenseStage));
@@ -238,8 +239,20 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   if (physical && abilityIs(attacker,"HUSTLE")) attack = attack * 3U / 2U;
   if (physical && abilityIs(attacker,"GUTS") && attacker.status != StatusCondition::None) attack = attack * 3U / 2U;
   if (physical && abilityIs(defender,"MARVEL SCALE") && defender.status != StatusCondition::None) defense = defense * 3U / 2U;
-  uint32_t damage = (((2U * attacker.level / 5U + 2U) * move->power * attack / defense) / 50U) + 2U;
-  const uint8_t criticalChance = attackerVolatile.criticalStage ? 8U : 16U;
+  uint32_t power = move->power;
+  if (std::strstr(move->effect,"FLAIL")) {
+    const uint32_t ratio = attacker.maximumHp ? attacker.currentHp * 48U / attacker.maximumHp : 48U;
+    power = ratio <= 1 ? 200 : ratio <= 4 ? 150 : ratio <= 9 ? 100 : ratio <= 16 ? 80 : ratio <= 32 ? 40 : 20;
+  } else if (std::strstr(move->effect,"ERUPTION")) power = std::max<uint32_t>(1, 150U * attacker.currentHp / attacker.maximumHp);
+  else if (std::strstr(move->effect,"FACADE") && (attacker.status == StatusCondition::Poison ||
+           attacker.status == StatusCondition::BadlyPoisoned || attacker.status == StatusCondition::Paralysis ||
+           attacker.status == StatusCondition::Burn)) power *= 2U;
+  else if (std::strstr(move->effect,"RETURN")) power = std::max<uint32_t>(1, attacker.happiness * 10U / 25U);
+  else if (std::strstr(move->effect,"FRUSTRATION")) power = std::max<uint32_t>(1, (255U - attacker.happiness) * 10U / 25U);
+  else if (std::strstr(move->effect,"DREAM_EATER") && defender.status != StatusCondition::Sleep) return 0;
+  else if (std::strstr(move->effect,"SMELLINGSALT") && defender.status == StatusCondition::Paralysis) power *= 2U;
+  uint32_t damage = (((2U * attacker.level / 5U + 2U) * power * attack / defense) / 50U) + 2U;
+  const uint8_t criticalChance = (attackerVolatile.criticalStage || std::strstr(move->effect,"HIGH_CRITICAL")) ? 8U : 16U;
   if (!abilityIs(defender,"BATTLE ARMOR") && !abilityIs(defender,"SHELL ARMOR") &&
       random(battle) % criticalChance == 0) damage *= 2U;
   if (move->type == attackerSpecies->type1 || move->type == attackerSpecies->type2) damage = damage * 150U / 100U;
@@ -265,15 +278,16 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   OwnedPokemon* opponent = currentOpponent(battle);
   if (!battle.active || !opponent || opponent->currentHp == 0) return;
   CombatVolatile& enemyVolatile = battle.opponentVolatiles[battle.opponentIndex];
+  if (battle.kind != BattleKind::Wild && battle.opponentItemUses && opponent->currentHp * 3U <= opponent->maximumHp) {
+    const uint16_t amount = opponent->level >= 30 ? 50U : 20U;
+    opponent->currentHp = std::min<uint16_t>(opponent->maximumHp, static_cast<uint16_t>(opponent->currentHp + amount));
+    --battle.opponentItemUses; result.enemyActed = true; return;
+  }
   if (enemyVolatile.recharging) { enemyVolatile.recharging=false; result.enemyActed=true; return; }
   if (battle.playerVolatile.protectedThisTurn) { result.enemyActed=true; return; }
-  if (moveSlot >= kMoveSlots || opponent->moves[moveSlot] == MoveId::None || opponent->movePp[moveSlot] == 0) {
-    uint8_t usable[kMoveSlots]{}, count = 0;
-    for (uint8_t slot = 0; slot < kMoveSlots; ++slot)
-      if (opponent->moves[slot] != MoveId::None && opponent->movePp[slot]) usable[count++] = slot;
-    if (!count) { result.enemyActed = true; return; }
-    moveSlot = usable[random(battle) % count];
-  }
+  if (moveSlot >= kMoveSlots || opponent->moves[moveSlot] == MoveId::None || opponent->movePp[moveSlot] == 0)
+    moveSlot = chooseEnemyMove(battle, player);
+  if (moveSlot >= kMoveSlots) { result.enemyActed = true; return; }
   const MoveId enemyMove = opponent->moves[moveSlot];
   const uint16_t damage = calculateDamage(battle, *opponent, player, enemyMove,
                                            battle.opponentVolatiles[battle.opponentIndex], battle.playerVolatile);
@@ -289,6 +303,42 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
     if (replacement) battle.playerUid = replacement->uid;
     else { battle.active = false; battle.outcome = BattleOutcome::Defeat; }
   }
+}
+
+uint8_t BattleEngine::chooseEnemyMove(BattleState& battle, const OwnedPokemon& player) {
+  const OwnedPokemon* opponent = currentOpponent(battle);
+  const SpeciesData* attacker = opponent ? findSpecies(opponent->speciesId) : nullptr;
+  const SpeciesData* defender = findSpecies(player.speciesId);
+  if (!opponent || !attacker || !defender) return 0xFF;
+  int32_t bestScore = -1; uint8_t best[kMoveSlots]{}, bestCount = 0;
+  for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
+    const FullMoveData* move = findFullMove(opponent->moves[slot]);
+    if (!move || !opponent->movePp[slot]) continue;
+    int32_t score = move->power ? move->power : 28;
+    score = score * (move->accuracy ? move->accuracy : 100) / 100;
+    if (move->type == attacker->type1 || move->type == attacker->type2) score = score * 3 / 2;
+    const uint16_t effectiveness = typeMultiplier100(move->type, *defender);
+    score = score * effectiveness / 100;
+    if (!effectiveness || (move->type == PokemonType::Ground && abilityIs(player,"LEVITATE")) ||
+        (move->type == PokemonType::Water && abilityIs(player,"WATER ABSORB")) ||
+        (move->type == PokemonType::Electric && abilityIs(player,"VOLT ABSORB"))) score = 0;
+    if (!move->power && player.status != StatusCondition::None &&
+        (std::strstr(move->effect,"POISON") || std::strstr(move->effect,"SLEEP") ||
+         std::strstr(move->effect,"PARALYZE") || std::strstr(move->effect,"BURN"))) score = 5;
+    if ((std::strstr(move->effect,"RESTORE_HP") || std::strstr(move->effect,"SYNTHESIS") ||
+         std::strstr(move->effect,"MORNING_SUN") || std::strstr(move->effect,"MOONLIGHT")) &&
+        opponent->currentHp * 2U < opponent->maximumHp) score += 100;
+    score += move->priority * 12;
+    if (score > bestScore) { bestScore = score; best[0] = slot; bestCount = 1; }
+    else if (score == bestScore) best[bestCount++] = slot;
+  }
+  if (!bestCount) return 0xFF;
+  if (random(battle) % 10U < 2U) {
+    uint8_t usable[kMoveSlots]{}, count = 0;
+    for (uint8_t slot=0;slot<kMoveSlots;++slot) if(opponent->moves[slot]!=MoveId::None&&opponent->movePp[slot]) usable[count++]=slot;
+    if (count) return usable[random(battle)%count];
+  }
+  return best[random(battle) % bestCount];
 }
 
 void BattleEngine::applyMoveStatus(BattleState& battle, const OwnedPokemon& source, MoveId move, OwnedPokemon& target,
@@ -366,11 +416,7 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
   result.accepted = true; ++battle.turn;
   CombatVolatile& selfVolatile=battle.playerVolatile; CombatVolatile& targetVolatile=battle.opponentVolatiles[battle.opponentIndex];
   selfVolatile.protectedThisTurn=false;
-  uint8_t enemyMoveSlot = 0xFF;
-  for (uint8_t offset = 0; offset < kMoveSlots; ++offset) {
-    const uint8_t candidate = static_cast<uint8_t>((random(battle) + offset) % kMoveSlots);
-    if (opponent->moves[candidate] != MoveId::None && opponent->movePp[candidate]) { enemyMoveSlot = candidate; break; }
-  }
+  const uint8_t enemyMoveSlot = chooseEnemyMove(battle, *player);
   const FullMoveData* plannedPlayerMove = findFullMove(player->moves[moveSlot]);
   const FullMoveData* plannedEnemyMove = enemyMoveSlot < kMoveSlots ? findFullMove(opponent->moves[enemyMoveSlot]) : nullptr;
   const SpeciesData* playerSpecies = findSpecies(player->speciesId);
@@ -412,7 +458,9 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
   if(usedMove && (std::strstr(usedMove->effect,"SEMI_INVULNERABLE")||std::strstr(usedMove->effect,"RAZOR_WIND")||std::strstr(usedMove->effect,"SOLAR_BEAM")) && !releasingCharge){selfVolatile.chargingMove=player->moves[moveSlot];enemyIfNeeded();result.outcome=battle.outcome;return result;}
   selfVolatile.chargingMove=MoveId::None;
   result.hit = damage != 0; result.damageDealt = damage;
-  opponent->currentHp = damage >= opponent->currentHp ? 0 : static_cast<uint16_t>(opponent->currentHp - damage);
+  if (usedMove && std::strstr(usedMove->effect,"FALSE_SWIPE") && damage >= opponent->currentHp)
+    opponent->currentHp = 1;
+  else opponent->currentHp = damage >= opponent->currentHp ? 0 : static_cast<uint16_t>(opponent->currentHp - damage);
   if (usedMove && std::strstr(usedMove->effect, "ABSORB") && damage)
     player->currentHp = std::min<uint16_t>(player->maximumHp, static_cast<uint16_t>(player->currentHp + std::max<uint16_t>(1, damage / 2U)));
   if (usedMove && std::strstr(usedMove->effect, "RECOIL") && !std::strstr(usedMove->effect, "RECOIL_IF_MISS") && damage) {
@@ -423,6 +471,29 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
     if (std::strstr(usedMove->effect, "REST")) player->status = StatusCondition::Sleep;
   }
   if(usedMove){
+    if(std::strstr(usedMove->effect,"RESTORE_HP") || std::strstr(usedMove->effect,"SOFTBOILED") ||
+       std::strstr(usedMove->effect,"SYNTHESIS") || std::strstr(usedMove->effect,"MORNING_SUN") ||
+       std::strstr(usedMove->effect,"MOONLIGHT"))
+      player->currentHp=std::min<uint16_t>(player->maximumHp,static_cast<uint16_t>(player->currentHp+player->maximumHp/2U));
+    if(std::strstr(usedMove->effect,"THAW_HIT") && player->status==StatusCondition::Frozen) player->status=StatusCondition::None;
+    if(std::strstr(usedMove->effect,"REFRESH") && (player->status==StatusCondition::Poison ||
+       player->status==StatusCondition::BadlyPoisoned || player->status==StatusCondition::Paralysis ||
+       player->status==StatusCondition::Burn)) player->status=StatusCondition::None;
+    if(std::strstr(usedMove->effect,"HEAL_BELL")) for(uint8_t i=0;i<kPartyCapacity;++i)
+      if(OwnedPokemon* member=CollectionLogic::active(collection,i)) member->status=StatusCondition::None;
+    if(std::strstr(usedMove->effect,"HAZE")){selfVolatile=CombatVolatile{};targetVolatile=CombatVolatile{};}
+    if(std::strstr(usedMove->effect,"BELLY_DRUM") && player->currentHp>player->maximumHp/2U){
+      player->currentHp-=player->maximumHp/2U;selfVolatile.attackStage=6;
+    }
+    if(std::strstr(usedMove->effect,"PAIN_SPLIT")){
+      const uint16_t average=static_cast<uint16_t>((player->currentHp+opponent->currentHp)/2U);
+      player->currentHp=std::min(player->maximumHp,average);opponent->currentHp=std::min(opponent->maximumHp,average);
+    }
+    if(std::strstr(usedMove->effect,"ENDEAVOR") && opponent->currentHp>player->currentHp){
+      result.damageDealt=opponent->currentHp-player->currentHp;opponent->currentHp=player->currentHp;
+    }
+    if(std::strstr(usedMove->effect,"SMELLINGSALT") && opponent->status==StatusCondition::Paralysis)
+      opponent->status=StatusCondition::None;
     applyStageEffect(usedMove->effect,selfVolatile,targetVolatile);
     if(std::strstr(usedMove->effect,"CONFUSION"))targetVolatile.confusionTurns=static_cast<uint8_t>(2U+random(battle)%4U);
     if(std::strstr(usedMove->effect,"FLINCH")&&usedMove->effectChance&&random(battle)%100U<usedMove->effectChance)targetVolatile.flinched=true;
@@ -432,12 +503,18 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
     if(std::strstr(usedMove->effect,"RECHARGE"))selfVolatile.recharging=true;
     if(std::strstr(usedMove->effect,"DISABLE"))targetVolatile.disabledMove=opponent->moves[0];
     if(std::strstr(usedMove->effect,"ENCORE"))targetVolatile.encoreMove=opponent->moves[0];
+    if(std::strstr(usedMove->effect,"EXPLOSION") || std::strstr(usedMove->effect,"MEMENTO")) player->currentHp=0;
   }
   applyMoveStatus(battle, *player, player->moves[moveSlot], *opponent, result);
+  const bool playerFaintedFromMove = player->currentHp == 0;
+  if (playerFaintedFromMove) player->recoverySecondsRemaining = 9000;
   if (opponent->currentHp == 0) {
     result.opponentDefeated = true; awardExperience(battle, collection, result);
     if (battle.opponentIndex + 1U < battle.opponentCount) ++battle.opponentIndex;
     else { battle.active = false; battle.outcome = BattleOutcome::Victory; result.moneyGained = battle.rewardMoney; }
+  } else if (playerFaintedFromMove) {
+    if (OwnedPokemon* replacement = firstHealthyPartyMember(collection, player->uid)) battle.playerUid = replacement->uid;
+    else { battle.active = false; battle.outcome = BattleOutcome::Defeat; }
   } else if (!result.enemyActed) enemyTurn(battle, collection, *player, result, enemyMoveSlot);
   if (battle.active && (player->status == StatusCondition::Poison || player->status == StatusCondition::BadlyPoisoned || player->status == StatusCondition::Burn)) {
     const uint16_t residual = std::max<uint16_t>(1, player->maximumHp / 8U);

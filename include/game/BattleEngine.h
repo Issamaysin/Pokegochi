@@ -60,6 +60,7 @@ struct BattleState {
   uint32_t rngState = 0xA341316CU;
   uint16_t turn = 0;
   uint32_t rewardMoney = 0;
+  uint8_t opponentItemUses = 0;
 };
 
 struct BattleActionResult {
@@ -120,6 +121,7 @@ class BattleEngine {
                                   const CombatVolatile& defenderVolatile);
   static void enemyTurn(BattleState& battle, PokemonCollection& collection,
                         OwnedPokemon& player, BattleActionResult& result, uint8_t moveSlot = 0xFF);
+  static uint8_t chooseEnemyMove(BattleState& battle, const OwnedPokemon& player);
   static void awardExperience(BattleState& battle, PokemonCollection& collection, BattleActionResult& result);
   static void applyMoveStatus(BattleState& battle, const OwnedPokemon& source, MoveId move, OwnedPokemon& target,
                               BattleActionResult& result);
