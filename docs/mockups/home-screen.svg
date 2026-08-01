@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 320 240" shape-rendering="crispEdges">
+  <rect width="320" height="240" fill="#102018"/>
+  <rect width="320" height="29" fill="#236b3b"/>
+  <text x="7" y="19" fill="white" font-family="monospace" font-size="12" font-weight="bold">BULBASAUR</text>
+  <g stroke="white" stroke-width="1">
+    <circle cx="190" cy="14" r="9" fill="#58b65c"/><circle cx="215" cy="14" r="9" fill="#454d48"/><circle cx="240" cy="14" r="9" fill="#454d48"/>
+  </g>
+  <rect x="270" y="3" width="46" height="22" rx="5" fill="#183b67" stroke="white"/>
+  <text x="293" y="18" text-anchor="middle" fill="white" font-family="monospace" font-size="9" font-weight="bold">BOX</text>
+  <text x="8" y="46" fill="white" font-family="monospace" font-size="11" font-weight="bold">LV 5</text>
+  <rect x="0" y="29" width="320" height="109" fill="#8fcf76"/>
+  <path d="M0 112 Q60 92 120 112 T240 108 T320 110 V138 H0Z" fill="#53a663"/>
+  <ellipse cx="160" cy="104" rx="40" ry="7" fill="#3d7f4c" opacity=".65"/>
+  <g stroke="#173e2d" stroke-width="2">
+    <ellipse cx="160" cy="91" rx="31" ry="27" fill="#60bd79"/>
+    <path d="M137 77 L129 53 L150 70Z" fill="#60bd79"/><path d="M172 70 L190 53 L183 79Z" fill="#60bd79"/>
+    <ellipse cx="160" cy="65" rx="27" ry="22" fill="#4b8f43"/>
+    <path d="M143 72 Q159 43 177 71 Q160 58 143 72Z" fill="#76bd4b"/>
+    <circle cx="149" cy="89" r="4" fill="#d95656"/><circle cx="173" cy="89" r="4" fill="#d95656"/>
+    <path d="M151 105 Q160 111 170 104" fill="none"/>
+  </g>
+  <g font-family="monospace" font-size="8" fill="white" font-weight="bold">
+    <text x="8" y="151">FOOD</text><rect x="50" y="143" width="92" height="9" fill="#252a27" stroke="#78847d"/><rect x="53" y="146" width="70" height="3" fill="#f0a43b"/>
+    <text x="8" y="168">HAPPY</text><rect x="50" y="160" width="92" height="9" fill="#252a27" stroke="#78847d"/><rect x="53" y="163" width="70" height="3" fill="#e95ea9"/>
+    <text x="174" y="151" fill="#62d26f">HEALTHY</text><text x="174" y="168">HP 20/20</text>
+  </g>
+  <g stroke="white" stroke-width="1" font-family="monospace" font-size="9" fill="white" font-weight="bold" text-anchor="middle">
+    <rect x="6" y="187" width="72" height="45" rx="7" fill="#267342"/><text x="42" y="214" stroke="none">FEED</text>
+    <rect x="84" y="187" width="72" height="45" rx="7" fill="#2671a8"/><text x="120" y="214" stroke="none">BATHE</text>
+    <rect x="162" y="187" width="72" height="45" rx="7" fill="#713e91"/><text x="198" y="214" stroke="none">PLAY</text>
+    <rect x="240" y="187" width="74" height="45" rx="7" fill="#a43d3d"/><text x="277" y="207" stroke="none">BATTLE</text><text x="277" y="220" stroke="none" font-size="7">3/3</text>
+  </g>
+</svg>

@@ -1,0 +1,13 @@
+.pio/
+.pio-core/
+.tools/
+.test-build/
+.zig-cache/
+.zig-cache-global/
+.downloads/
+.generated/
+.local-packages/
+.vscode/
+*.gba
+*.rom
+data/generated/

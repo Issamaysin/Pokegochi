@@ -1,0 +1,52 @@
+#include "services/PersistentSave.h"
+#include <cstddef>
+#include <cstring>
+
+static_assert(sizeof(GameSave) < 8000, "GameSave no longer fits the redundant NVS layout");
+
+bool PersistentSave::begin() { return preferences_.begin("pokegochi", false); }
+uint32_t PersistentSave::crc32(const uint8_t* data, size_t length) const {
+  uint32_t crc = 0xFFFFFFFFU;
+  for (size_t i = 0; i < length; ++i) { crc ^= data[i]; for (uint8_t bit = 0; bit < 8; ++bit) crc = (crc >> 1U) ^ (0xEDB88320U & (0U - (crc & 1U))); }
+  return ~crc;
+}
+bool PersistentSave::readRecord(const char* key, Record& record) {
+  return preferences_.getBytesLength(key) == sizeof(Record) && preferences_.getBytes(key, &record, sizeof(Record)) == sizeof(Record);
+}
+bool PersistentSave::valid(const Record& record) const {
+  return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
+         record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
+}
+bool PersistentSave::isNewer(uint32_t a, uint32_t b) const { return static_cast<int32_t>(a - b) > 0; }
+SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
+  Record a{}, b{}; const bool validA = readRecord("save_a", a) && valid(a); const bool validB = readRecord("save_b", b) && valid(b);
+  const bool gameWasStarted = preferences_.getBool("started", false);
+  if (!validA && !validB) {
+    if (gameWasStarted) return SaveLoadResult::Corrupted;
+    save = GameSave{};
+    if (!commit(save)) return SaveLoadResult::StorageError;
+    if (preferences_.putBool("started", true) != 1) return SaveLoadResult::StorageError;
+    return SaveLoadResult::FirstStart;
+  }
+  const bool chooseA = validA && (!validB || isNewer(a.sequence, b.sequence));
+  const Record& selected = chooseA ? a : b; save = selected.payload; sequence_ = selected.sequence; nextSlotA_ = !chooseA;
+  if (!gameWasStarted && preferences_.putBool("started", true) != 1) return SaveLoadResult::StorageError;
+  return SaveLoadResult::Loaded;
+}
+bool PersistentSave::commit(const GameSave& save) {
+  Record record{}; record.magic = kMagic; record.version = kFormatVersion; record.payloadSize = sizeof(GameSave); record.sequence = ++sequence_; record.payload = save;
+  record.crc = crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
+  const char* key = nextSlotA_ ? "save_a" : "save_b";
+  if (preferences_.putBytes(key, &record, sizeof(Record)) != sizeof(Record)) return false;
+  Record verification{};
+  if (!readRecord(key, verification) || !valid(verification) || std::memcmp(&record, &verification, sizeof(Record)) != 0) return false;
+  nextSlotA_ = !nextSlotA_; return true;
+}
+
+#if defined(POKEGOCHI_DEV_ALLOW_FACTORY_RESET)
+bool PersistentSave::factoryResetForDevelopment() {
+  sequence_ = 0;
+  nextSlotA_ = true;
+  return preferences_.clear();
+}
+#endif
