@@ -10,4 +10,7 @@
 .vscode/
 *.gba
 *.rom
+rom/source.zip
+__pycache__/
+*.pyc
 data/generated/
