@@ -50,10 +50,11 @@ Add a 100 nF ceramic capacitor between the GPIO35 junction and GND close to the
 board. At a fully charged 4.2 V cell the GPIO receives about 2.1 V. Never connect
 the cell directly to GPIO35. Battery/BMS ground and CYD ground must be common.
 
-The displayed percentage uses a piecewise Li-ion discharge curve and is therefore
-an estimate, especially during charging or a heavy display/SD load. A MAX17048 can
-still replace it later for a more accurate fuel gauge, but is not required for the
-installed battery prototype.
+The firmware takes four readings 200 ms apart, averages them, and maps the result
+through a piecewise Li-ion discharge curve. Home intentionally shows four coarse
+battery bars instead of a numeric percentage because an ADC/divider estimate varies
+under charging and display/SD load. A MAX17048 can still replace it later for a more
+accurate fuel gauge, but is not required for the installed battery prototype.
 
 ## Candidate AliExpress components
 
@@ -98,8 +99,9 @@ MCP73871 + boost architecture is preferred for the final unit.
 ## Controls and connectors
 
 - No external control button or master disconnect is fitted.
-- The XPT2046 touch IRQ wakes the ESP32 and display from light sleep. The wake touch
-  is discarded; a second touch is required to activate a control.
+- The XPT2046 touch IRQ wakes the ESP32 and display from light sleep. Wake opens the
+  dedicated lock screen; the player must slide its Poke Ball across the track before
+  gameplay controls accept input. Settings also has a manual lock button.
 - Charge through the new USB-C port connected to the charger, not through the CYD's
   Micro-USB port.
 - During bench firmware uploads, disconnect the external battery/power-path wiring

@@ -1,188 +1,171 @@
 # Pokegochi V2
 
-Virtual-pet game firmware for the ESP32-2432S028R (CYD) board.
+Pokegochi is a persistent Pokemon-inspired virtual pet and battle game for the
+ESP32-2432S028R (CYD). It adapts the FireRed visual language and Generation III
+battle rules to a 320x240 landscape touchscreen.
 
-The ready-to-install 2.0 distribution is in
+The ready-to-install V2 distribution is in
 [`POKEGOCHI_V2/`](POKEGOCHI_V2/README.md). It contains the firmware images,
-microSD package, Android BLE updater, standalone Windows installation scripts,
-complete hardware list, and the battery/charging/soldering guide.
+FAT32 microSD package, Android Bluetooth updater, signed OTA package,
+standalone Windows installation scripts, hardware documentation, and the
+battery/charging/soldering guide.
+
+## Current game
+
+### Progression and collection
+
+- Professor Oak introduces the game before the permanent Kanto starter choice:
+  Bulbasaur, Charmander, or Squirtle.
+- The single persistent collection supports all 386 Generation I-III species,
+  a three-Pokemon Party, a 386-slot Box, sorting, summaries, and regional
+  Pokedex completion rewards.
+- Kanto, Johto, and Hoenn unlock sequentially. Each region requires its eight
+  Gyms, Elite Four, and Champion before the next regional starter is offered.
+- Regional starters do not appear in wild encounters. The Pokedex expands only
+  after the player chooses the newly unlocked starter.
+- The post-Hoenn Mega Stone challenge unlocks Mega Evolution and the repeatable
+  Battle Tower.
+
+### Battles
+
+- Wild encounters are always available from Home, have no charge or cooldown,
+  and are the only battles in which Pokemon can be captured.
+- The VS Seeker starts trainer battles. It stores three charges; each spent
+  charge independently returns after a randomized 30-60 minute interval.
+- Gyms unlock deterministically from the highest Party level and remain
+  available until defeated. Each Gym is a sequence of three battles.
+- Regional Leagues contain the Elite Four and Champion. The Battle Tower uses
+  three consecutive Emerald-derived trainers and is permanently available once
+  unlocked.
+- Experience is divided equally among the selected Party Pokemon. The unique
+  Lucky Egg applies its party-wide multiplier before that split.
+- The engine covers all 354 Generation III moves, their special effects,
+  abilities, persistent status, held items, trainer items, weather, switching,
+  capture, evolution, and FireRed-style battle event ordering.
+
+### Individual Pokemon
+
+- Every Pokemon persists its IVs, naturally earned EVs, Nature, Ability,
+  personality, gender, friendship, shiny state, moves, PP, held item, and form.
+- EVs follow the Generation III per-stat and total limits. Shiny Pokemon receive
+  the intentional extra 255-point total pool defined by Pokegochi. The Summary
+  EV page is visible at every level and becomes editable at Lv.90.
+- Alternate forms include personality-derived Unown and Spinda variants,
+  battle-local Castform forms, selectable Deoxys forms, and supported Mega and
+  Primal forms.
+- The fourth Summary page can rebuild a moveset from the moves legally learned
+  by that Pokemon and its pre-evolutions up to its current level.
+
+### Recovery, Eggs, Bag, and Mart
+
+- The Pokemon Center stores five charges and restores one charge every hour.
+  One use fully restores the selected Party's HP, PP, and status.
+- Party Pokemon through Lv.20 recover passively in 10 minutes; higher-level
+  Party Pokemon recover in 30 minutes. Box Pokemon recover in three hours.
+  Fainted Pokemon remain unavailable until fully healed or revived.
+- The Day Care offers regional Eggs after the third Badge. Incubation uses real
+  elapsed time, is accelerated by Flame Body or Magma Armor, and hatch level is
+  based on the strongest completed Gym, capped at Lv.89.
+- The Bag supports battle and field use, Party or Box targets, held items,
+  TMs/HMs, Trainer Card, Badge Case, and Bluetooth multiplayer.
+- The Mart has twenty stocked offers across four pages, guaranteed essentials,
+  unique TMs/HMs, quantity purchasing, Badge-gated items, and a six-hour
+  rotation.
+
+### Interface and connectivity
+
+- Home uses 39 collision-aware FireRed/Emerald map backgrounds. Party Pokemon
+  patrol valid terrain and may play type-based ambient effects.
+- Sapphire, Ruby, and Emerald color themes apply throughout the interface.
+- Brightness, automatic screen timeout, battle-text advance, background,
+  player statistics, and the manual pocket lock are available in Settings.
+- The lock screen uses a swipeable Poke Ball so an accidental pocket touch does
+  not activate the game.
+- Bluetooth multiplayer supports discovery between Pokegochi devices, confirmed
+  PvP battles, and confirmed Pokemon trades. Closing the Bag switches the radio
+  off and releases its RAM.
+- Settings also provides signed Bluetooth updates for both firmware and the
+  microSD asset pack through the Android updater.
+
+## Permanent save policy
+
+Production firmware exposes exactly one game per device. There is no New Game,
+second save, or player-accessible reset. Critical actions are committed to
+redundant persistent records, and invalid copies open Save Recovery instead of
+silently replacing the player's game.
+
+Factory reset code is excluded from production builds. Bench firmware must
+explicitly define `POKEGOCHI_DEV_ALLOW_FACTORY_RESET`.
 
 ## Hardware
 
 - ESP32-2432S028R with ILI9341 TFT and XPT2046 resistive touch
-- microSD card formatted as FAT32
-- 5 V power bank connected through Micro-USB
+- FAT32 microSD card
+- During development: 5 V power bank through Micro-USB
+- Final portable build: protected 1S Li-ion/LiPo cell, charger with power-path,
+  regulated 5 V converter, and the documented battery-sense divider
 
-## Build
+See
+[`POKEGOCHI_V2/docs/BATERIA_E_SOLDAGEM.md`](POKEGOCHI_V2/docs/BATERIA_E_SOLDAGEM.md)
+before connecting a cell. Never connect a Li-ion cell directly to a GPIO or
+feed raw cell voltage into the board's 5 V input.
 
-The project uses PlatformIO and the Arduino framework.
+## Installation
 
-```text
-pio run
-pio run --target upload
-pio device monitor
-```
-
-This workspace also contains an isolated Windows build environment. From
-PowerShell, run `./scripts/build.ps1` to reproduce the verified build without
-changing the machine-wide Python, Git, or PATH configuration.
-
-## Bluetooth wireless updates
-
-The firmware now includes a Settings entry for signed Bluetooth updates of
-both the inactive firmware slot and the microSD asset pack. A small native
-Android updater, package builder, one-time safe partition migration, resumable
-SD staging, SHA-256 verification, and automatic rollback are included. The
-persistent one-save data is never copied into or replaced by an update bundle.
-
-Build the phone APK with `./scripts/build_android_updater.ps1` and a signed
-bundle with `./scripts/build_wireless_update.ps1`. Existing boards require one
-USB installation of the new two-slot layout. The exact workflow and recovery
-guarantees are in [docs/WIRELESS_UPDATE.md](docs/WIRELESS_UPDATE.md).
-
-## Gravacao rapida no Windows
-
-Os dois scripts abaixo evitam reconstruir ambientes que nao fazem parte do
-firmware normal e podem ser usados sem o Codex.
-
-Para compilar somente o firmware de producao, detectar a placa CH340 e gravar
-sem apagar o save persistente:
+Read [`POKEGOCHI_V2/docs/INSTALACAO.md`](POKEGOCHI_V2/docs/INSTALACAO.md), or
+use the standalone scripts from the V2 distribution:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\gravar_firmware.ps1
+# Prepare and verify a FAT32 microSD card.
+powershell -ExecutionPolicy Bypass -File .\POKEGOCHI_V2\instalar_sd.ps1 -Drive D:
+
+# First installation on a board. Replace COM6 when necessary.
+powershell -ExecutionPolicy Bypass -File .\POKEGOCHI_V2\instalar_firmware.ps1 -Mode Factory -Port COM6
+
+# Prepare both components in sequence.
+powershell -ExecutionPolicy Bypass -File .\POKEGOCHI_V2\instalar_tudo.ps1 -Drive D: -Port COM6 -Mode Factory
 ```
 
-Se houver mais de uma placa conectada, informe a porta explicitamente:
+Use `-Mode Update` only on a board that already has the V2 two-slot partition
+layout and whose persistent save must be preserved.
+
+## Build and verification
+
+The firmware uses PlatformIO and the Arduino framework. The repository also
+contains isolated PowerShell build scripts so the machine-wide Python, Git, and
+PATH configuration do not need to be changed.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\gravar_firmware.ps1 -Port COM6
+# Firmware build
+.\scripts\build.ps1
+
+# Native gameplay, save, data, and package verification
+.\scripts\test.ps1
+
+# Android updater
+.\scripts\build_android_updater.ps1
+
+# Signed firmware + SD wireless package
+.\scripts\build_wireless_update.ps1
 ```
 
-Para apenas compilar, sem gravar:
+The release checksums can be verified separately:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\gravar_firmware.ps1 -BuildOnly
+powershell -ExecutionPolicy Bypass -File .\POKEGOCHI_V2\verificar_release.ps1
 ```
 
-Para copiar e verificar o pacote de assets ja pronto em um microSD (troque
-`D:` pela letra correta):
+## Documentation
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\gravar_sd.ps1 -Drive D:
-```
+- [Current gameplay specification](docs/GAME_DESIGN.md)
+- [Hardware and power system](docs/POWER_SYSTEM.md)
+- [Bluetooth wireless update](docs/WIRELESS_UPDATE.md)
+- [Implementation status](docs/IMPLEMENTATION_PLAN.md)
+- [Battle animation audit](docs/BATTLE_ANIMATION_AUDIT.md)
+- [Move-effect compatibility](docs/EFFECT_COMPATIBILITY.md)
 
-Use `-RebuildAssets` somente quando sprites, fundos ou outros arquivos graficos
-forem alterados. Use `-Format` apenas quando quiser apagar e preparar o cartao
-como FAT32; por seguranca o script exige uma confirmacao adicional:
+## ROM and asset policy
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\gravar_sd.ps1 -Drive D: -RebuildAssets
-powershell -ExecutionPolicy Bypass -File .\scripts\gravar_sd.ps1 -Drive D: -Format
-```
-
-O script do SD valida a unidade, espaco livre e o SHA-256 do pacote copiado.
-
-Asset pack v22 stores the PKG2 payloads in one indexed `pokegochi.pak`, with
-numbered animation cels adjacent in the stream. At boot the firmware qualifies
-10, 8, 4 and 2 MHz using repeated 64 KiB reads (with 1 MHz/400 kHz fallbacks),
-then keeps the fastest stable rate. A complete animation preload uses one
-bounded archive open and closes it before rendering; the visible move dialogue
-is presented before that preload, so playback itself remains RAM-only.
-
-The firmware starts with a hardware diagnostic for display, touch, microSD,
-backlight, and persistent storage. On the first start, the
-player permanently chooses Bulbasaur, Charmander, or Squirtle. The touch UI
-then provides FEED, BATHE, PLAY, random wild encounters, charged trainer battles,
-Poké Ball capture, a rotating Mart, three-stage Gyms, regional Pokemon Leagues,
-a 386-slot persistent Box, an active team of up to three Pokémon, and a regional
-Pokédex. BATHE clears
-persistent battle status and restores PP; cleanliness is not a timed need.
-
-Each individual Pokemon has permanent six-stat IVs, one of the 25 FireRed
-Natures, and its personality-selected species Ability. Battle stats use the
-Generation III formulas without EVs. These traits persist through capture,
-level-up, evolution, Box movement, eggs, and save/load; evolution never rerolls them.
-
-The Mart and Bag also support 37 Generation III held items. Berries and White
-Herb are consumed automatically, while permanent equipment covers healing,
-turn order, critical hits, survival, prize money, escape, Choice Band locking,
-and all 17 type boosts. Held-item offers unlock with Badges and use weighted
-rarity; EV, breeding, permanent-stat, and bonus-EXP items are intentionally absent.
-
-Trainer battles use a maximum of three charges. One charge returns every three
-hours, up to the cap. Wild encounters consume no charge and are the only
-capturable battles. Both use the highest selected-team level for difficulty.
-Species, moves, learnsets, encounter progression, trainer identities and Pokedex
-metadata are generated from the supplied local FireRed data. Original graphics
-are converted into a local-only microSD asset pack and are not distributed.
-
-The collection and Box support all 386 Generation I-III species. The Pokedex is
-strictly regional: it exposes 001-151 at first, 001-251 only after the Johto
-starter choice, and 001-386 only after the Hoenn starter choice. All nine
-regional starters are exclusive choices and are excluded from wild encounters.
-Each regional starter choice is gated by eight Badges followed by that region's
-Elite Four and Champion; clearing the Gym sequence alone never expands the Pokedex.
-Completing each unlocked generation's visible Pokedex awards one Master Ball through
-a persistent on-screen reward flow; it cannot be collected twice after a reboot.
-
-The consolidated rules, including sequential fixed-level Gyms and planned
-Bluetooth PvP/trading, are documented in `docs/GAME_DESIGN.md`.
-
-Care needs advance in deterministic 15-minute ticks. Important actions save
-immediately; dirty background state is consolidated every 60 seconds to limit
-flash wear.
-
-Display Settings provide 20/40/60/80/100% brightness and automatic screen-off
-choices of 1, 2, 5, or 10 minutes. With the panel off, the ESP32 enters light
-sleep and wakes once per second to preserve game clocks. Pressing the resistive
-screen wakes through the XPT2046 IRQ; that first touch is consumed and never
-activates a UI control. A waiting wild encounter flashes the onboard RGB LED for
-one minute while the display remains asleep.
-
-All game text is drawn with a compact mask conversion of the original FireRed
-Latin font rather than TFT_eSPI's bundled fonts. The local generator is
-`scripts/generate_firered_font.py`; it reads the same local FireRed asset set as
-the rest of the non-distributable graphics pipeline.
-
-## First-board checklist
-
-1. Run `.tools/python312/python.exe scripts/build_sd_asset_pack.py`, format the
-   microSD card as FAT32, and copy the contents of `.generated/sdcard` to its root.
-   These local assets are generated from the supplied ROM/decomp and are not distributed.
-2. Flash the `esp32-2432S028R` environment.
-3. Confirm four green diagnostic statuses.
-4. Touch START and verify the provisional home screen.
-5. Choose a starter, start a manual battle, fight, switch party members, run,
-   and capture with each available Poké Ball type.
-6. Open BOX, assign captured Pokémon to all three team slots, select each one
-   on HOME, then power-cycle and confirm all state persists.
-7. Drain a manual encounter charge and confirm its timer advances.
-8. Let the display time out, touch once to wake it, and confirm no UI action is
-   triggered by the wake touch.
-9. Record raw touch values at all four corners for final calibration.
-
-## Native verification
-
-Run `./scripts/test.ps1` in PowerShell. The suite covers deterministic care,
-manual encounter charges, capture and collection behavior, party assignment,
-Pokédex flags, and the redundant one-save persistence policy.
-
-## One-save policy
-
-The production firmware has one permanent game per device. After the first
-start it never offers New Game or Reset. If both redundant slots are invalid,
-the firmware enters recovery instead of silently creating a new game.
-
-Factory reset code is excluded from production builds. It can only be compiled
-for bench tests by explicitly defining `POKEGOCHI_DEV_ALLOW_FACTORY_RESET`.
-
-## Touch calibration
-
-The initial calibration constants in `include/config/BoardConfig.h` are only
-safe defaults. Raw touch readings are printed to the serial monitor. They must
-be replaced with measurements from the actual board before game UI work.
-
-## ROM files
-
-ROM images are local inputs only and are ignored by Git. Extracted copyrighted
-assets must not be committed or redistributed.
+ROM images are local development inputs and are excluded from Git. The private
+V2 distribution contains the generated microSD package used by the project,
+but never includes an original ROM image or save dump.

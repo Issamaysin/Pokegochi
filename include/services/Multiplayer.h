@@ -4,9 +4,8 @@
 #include <cstdint>
 #include "game/BattleEngine.h"
 
-// Multiplayer is a device-wide service.  Its lifetime is deliberately not
-// tied to the Bag screen: a player may connect, leave the Bag, rearrange the
-// Party in the Box and return to the same peer session.
+// Multiplayer stays alive while an activity-specific Party or Box selector is
+// open. Closing the Bag is the session boundary and disables the BLE radio.
 class Multiplayer {
  public:
   enum class State : uint8_t {

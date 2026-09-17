@@ -52,7 +52,9 @@ only when the engine state is `Wild`; hiding the Ball button is not the rule.
 
 ### Player-initiated trainer battle
 
-- Consumes one of three charges; one charge returns every three hours.
+- Consumes one of three VS Seeker charges. Every spent charge rolls its own
+  recovery interval between 30 and 60 minutes; partial progress is retained
+  while other charges remain available.
 - The player chooses any healthy selected-team member before it starts.
 - The trainer owns one, two, or three Pokemon and none can be captured.
 - Difficulty uses the highest level in the currently selected team.
@@ -169,15 +171,17 @@ Gym content and level gating remain separate from the generic battle engine.
 - Gold trainer and Gym presentation may be redrawn or recolored to fit the FireRed
   GBA interface. Pokemon always use their FireRed Generation III assets.
 - Original ROM files are local development inputs only and are excluded from source
-  control and distributable asset packages.
+  control and every release. The private V2 distribution contains only the generated
+  microSD package used by the project, never an original ROM image or save dump.
 
 ## Bluetooth multiplayer
 
-Multiplayer is a sixth Bag pocket, but the BLE connection is a device-wide session.
-Leaving the Bag never disconnects the peer: a player can connect, open the Box,
-rearrange the three-member Party, and return to Multiplayer without scanning again.
-Only the Multiplayer `CANCEL` action, switching Bluetooth off, or losing the physical
-link ends the peer session.
+Multiplayer is a sixth Bag pocket. BLE remains active during the activity-specific
+Party/Box selectors, so a player may rearrange the three-member Party or choose a
+trade candidate without reconnecting. Actually closing the Bag is the radio lifetime
+boundary: it disconnects the peer, stops advertising/scanning, and returns BLE memory
+to the graphics renderer. `CANCEL`, the ON/OFF toggle, or a lost physical link also
+ends the session.
 
 Each board owns a stable five-digit player ID derived once from its ESP32 identity and
 stored separately from the game save. With Bluetooth enabled it advertises a versioned
@@ -194,8 +198,9 @@ and payload. Interrupted or mismatched transactions abort. After the durable com
 both devices play a FireRed-style transfer scene built from the original link-trade
 console, wireless-signal, glow and Poke Ball sprites before returning to Multiplayer.
 
-For a link battle, each player may leave Multiplayer and arrange the Party before pressing
-`READY`; that press sends a three-Pokemon roster snapshot. After both players are ready,
+For a link battle, each player uses the connection-preserving Party selector before pressing
+`READY`; closing the Bag ends the BLE session. The `READY` press sends a three-Pokemon
+roster snapshot. After both players are ready,
 each independently chooses the first Pokemon. Battle commands are exchanged in lockstep,
 so neither console resolves a turn before both choices are present. The lower five-digit
 player ID is the deterministic authority: after the FireRed event sequence for a turn it
@@ -223,8 +228,10 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
 - Every generated Pokemon receives six permanent IVs from 0 to 31: HP, Attack,
   Defense, Special Attack, Special Defense, and Speed. IVs are generated once and
   survive capture, Box/party movement, level-up, evolution, saving, eggs, and trades.
-- The Generation III stat formulas are used without EVs. HP uses its IV directly;
-  every other stat also applies the Pokemon's Nature modifier after the base formula.
+- The Generation III stat formulas use both IVs and naturally earned EVs. A defeated
+  species awards its original effort yield equally to every eligible selected Party
+  member. Each stat is capped at 255 EVs and a normal Pokemon at 510 total EVs;
+  Pokegochi deliberately grants Shiny Pokemon one additional 255-point total pool.
 - One of FireRed's 25 Natures is generated from the permanent personality value.
   A non-neutral Nature raises one stat by 10% and lowers another by 10%; HP is never
   modified. Nature is visible in Summary and the selected Box information panel.
@@ -232,8 +239,9 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
   and battle effects; its slot is now selected by the permanent personality bit.
   Evolution preserves personality/Nature/IVs and resolves the evolved species' matching
   Ability slot.
-- EV training, breeding inheritance, vitamins, and permanent stat boosters remain
-  deliberately excluded. IVs are not directly exposed in the FireRed-style UI.
+- The fifth Summary page exposes base stats, IVs, and EVs at every level. At Lv.90 it
+  also permits redistribution of already-earned EVs without creating new points.
+  Breeding inheritance, vitamins, and direct permanent-stat items remain excluded.
 
 ## Held items
 
@@ -262,8 +270,8 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
 - Whenever a random slot would stock Ultra Ball, it has a 0.001% chance to be
   replaced by one Master Ball. That exceptional offer has stock 1 and costs
   99,999; the guaranteed Pokedex and League rewards remain unchanged.
-- Items for EVs, breeding, or permanent stat growth are excluded. Lucky Egg is
-  the sole bonus-experience exception and is earned through progression.
+- Vitamins and other direct EV/permanent-stat items are excluded. Lucky Egg is the
+  sole bonus-experience exception and is earned through progression.
 
 ## Shiny Pokemon
 
@@ -284,22 +292,25 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
   trainer victories; only one Egg may be incubated at a time and offers may be refused.
 - Incubation lasts 24 hours for common, 48 hours for uncommon, and 96 hours for
   rare Eggs. Normal elapsed device time advances the timer.
-- Feed, Play, and Bath remove 10 minutes; a completed battle removes 15 minutes.
-  Combined acceleration is capped at two hours per rolling 24-hour window.
+- A successful Pokemon Center visit removes 10 minutes and a completed battle removes
+  15 minutes. Combined interaction acceleration is capped at two hours per rolling
+  24-hour window. Flame Body or Magma Armor in the selected Party doubles normal
+  elapsed-time incubation.
 - Egg pools contain unlocked-region basic forms only. Starters, evolved forms,
   Legendary and Mythical Pokemon are excluded; baby Pokemon receive extra weight.
 - Battle Tower Special Eggs are the sole exception to that normal pool: their
   starter/Legendary contents are selected by the completion reward rules above.
-- A hatchling is level 5, uses its normal FireRed ability and learnset, and may be
-  Shiny at 1/8192. It goes to the Box and the ordinary species Pokedex entry is caught.
+- A hatchling begins at the ace level of the strongest completed Gym, or Lv.5 before
+  the first Badge, capped at Lv.89. It uses its normal FireRed ability and learnset,
+  may be Shiny at 1/8192, goes to the Box, and marks the species as caught.
 - A ready Egg waits if the Box is full. The original FireRed Egg and cracking
   graphics are used for the Home indicator, status screen, and hatch sequence.
 
 ## Home backgrounds
 
-The Home scenery is user-selectable from the OPTIONS button. Thirty native-map
-backgrounds are included: eleven exact 304x134 crops decoded from FireRed maps
-and nineteen from Emerald. The catalogue deliberately avoids near-duplicate
+The Home scenery is user-selectable from Settings. Thirty-nine native-map
+backgrounds are included: fourteen exact 304x134 crops decoded from FireRed maps
+and twenty-five from Emerald. The catalogue deliberately avoids near-duplicate
 forest and generic-route views: Viridian Forest and Southern Island are the two
 forest-style scenes retained, while Pokemon Mansion, Power Plant, Pacifidlog
 Town, Shoal Ice Cave, Meteor Falls, Pokemon Tower, and the unique ash-covered
@@ -341,9 +352,8 @@ animation.
 - No physical button is part of the product. Brightness and the 1/2/5/10-minute
   automatic screen timeout are persistent Display Settings.
 - Screen timeout turns off the backlight, sleeps the ILI9341 panel and places the ESP32
-  in light sleep. A one-second timer wake preserves encounters, charges, Eggs, recovery,
-  Mart rotation and care clocks.
-- XPT2046 IRQ is the only user wake source. The first touch wakes and redraws the current
-  screen but is consumed, so it cannot accidentally choose or purchase anything.
-- A wild encounter that becomes pending while the Home screen sleeps flashes the onboard
-  RGB LED yellow for one minute. Waking the display stops the alert immediately.
+  in light sleep. Elapsed-time reconciliation preserves charges, Eggs, passive recovery,
+  Mart rotation, friendship, and progression clocks.
+- XPT2046 IRQ is the only user wake source. A touch wakes into a dedicated lock screen;
+  gameplay remains protected until the player slides the Poke Ball far enough across the
+  track. Settings also provides a manual lock button for pocket use.
