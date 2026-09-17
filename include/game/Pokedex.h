@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
 
-constexpr uint16_t kPokedexSpeciesCount = 151;
-constexpr uint8_t kPokedexBytes = 19;
+constexpr uint16_t kPokedexSpeciesCount = 386;
+constexpr uint8_t kPokedexBytes = 49;
 
 struct PokedexState {
   uint8_t seen[kPokedexBytes]{};
@@ -27,4 +27,7 @@ class PokedexLogic {
   static bool hasCaught(const PokedexState& pokedex, uint16_t speciesId);
   static uint16_t seenCount(const PokedexState& pokedex);
   static uint16_t caughtCount(const PokedexState& pokedex);
+  static uint16_t generationSpeciesCount(uint8_t generation);
+  static uint16_t generationCaughtCount(const PokedexState& pokedex, uint8_t generation);
+  static bool isGenerationComplete(const PokedexState& pokedex, uint8_t generation);
 };

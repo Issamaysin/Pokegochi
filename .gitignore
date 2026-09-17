@@ -11,6 +11,26 @@
 *.gba
 *.rom
 rom/source.zip
+rom/sources/
+*.gbc
 __pycache__/
 *.pyc
 data/generated/
+.keys/
+*.pgota
+
+# Local Codex/debug/reference material and device backups.
+.codex-*
+.references/
+.tmp*
+tmp/
+output/
+backups/
+legend-fighter/
+/Legend_Fighter_OneStick_2.9.5_APKPure.apk
+
+# Build output is reproducible.  The curated V2 release lives in
+# POKEGOCHI_V2/ and is the only binary distribution committed to Git.
+/dist/*
+!/dist/README.md
+!POKEGOCHI_V2/ota/*.pgota

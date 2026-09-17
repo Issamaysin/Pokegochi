@@ -17,15 +17,53 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_trainer_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_battle_tower_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_battle_animation_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_tmhm_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'audit_display_text.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'audit_move_effects.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'audit_abilities.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_wireless_update_package.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude test/native/test_wireless_update_protocol.cpp -o "$out/wireless_update_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/wireless_update_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/services/WirelessUpdate.cpp test/native/test_wireless_update_state_machine.cpp -o "$out/wireless_update_state_machine.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/wireless_update_state_machine.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp test/native/test_pet_state.cpp -o "$out/pet_state.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/pet_state.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/Collection.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/GymSystem.cpp src/game/Economy.cpp test/native/test_battle_collection.cpp -o "$out/battle_collection.exe"
+    & $zig c++ -std=c++17 -w -Iinclude test/native/test_swipe_unlock.cpp -o "$out/swipe_unlock.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/swipe_unlock.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude test/native/test_battle_touch.cpp -o "$out/battle_touch.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/battle_touch.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/TrainerData.cpp src/game/BattleAnimationData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/PokedexRewards.cpp src/game/GymSystem.cpp src/game/LeagueSystem.cpp src/game/MegaChallengeSystem.cpp src/game/BattleTowerSystem.cpp src/game/Economy.cpp src/game/EggSystem.cpp test/native/test_battle_collection.cpp -o "$out/battle_collection.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/battle_collection.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $zig c++ -std=c++17 -w -Itest/native/stubs -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/Collection.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/services/PersistentSave.cpp test/native/test_persistent_save.cpp -o "$out/persistent_save.exe"
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp test/native/test_move_effect_matrix.cpp -o "$out/move_effect_matrix.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/move_effect_matrix.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/GymSystem.cpp src/game/EggSystem.cpp test/native/test_ability_matrix.cpp -o "$out/ability_matrix.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/ability_matrix.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Itest/native/stubs -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/services/PersistentSave.cpp test/native/test_persistent_save.cpp -o "$out/persistent_save.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/persistent_save.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

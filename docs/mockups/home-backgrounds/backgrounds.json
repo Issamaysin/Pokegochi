@@ -1,0 +1,431 @@
+[
+  {
+    "id": 0,
+    "key": "fr_viridian_forest",
+    "name": "VIRIDIAN FOREST",
+    "game": "firered",
+    "layout": "ViridianForest",
+    "crop": [
+      32,
+      416
+    ]
+  },
+  {
+    "id": 1,
+    "key": "fr_pokemon_mansion",
+    "name": "POKEMON MANSION",
+    "game": "firered",
+    "layout": "PokemonMansion_1F",
+    "crop": [
+      288,
+      128
+    ]
+  },
+  {
+    "id": 2,
+    "key": "fr_mt_moon",
+    "name": "MT. MOON",
+    "game": "firered",
+    "layout": "MtMoon_1F",
+    "crop": [
+      224,
+      256
+    ]
+  },
+  {
+    "id": 3,
+    "key": "fr_cerulean",
+    "name": "CERULEAN CITY",
+    "game": "firered",
+    "layout": "CeruleanCity",
+    "crop": [
+      224,
+      224
+    ]
+  },
+  {
+    "id": 4,
+    "key": "fr_vermilion",
+    "name": "VERMILION CITY",
+    "game": "firered",
+    "layout": "VermilionCity",
+    "crop": [
+      224,
+      368
+    ]
+  },
+  {
+    "id": 5,
+    "key": "fr_safari",
+    "name": "SAFARI ZONE",
+    "game": "firered",
+    "layout": "SafariZone_Center",
+    "crop": [
+      256,
+      240
+    ]
+  },
+  {
+    "id": 6,
+    "key": "fr_seafoam",
+    "name": "SEAFOAM ISLANDS",
+    "game": "firered",
+    "layout": "SeafoamIslands_1F",
+    "crop": [
+      144,
+      112
+    ]
+  },
+  {
+    "id": 7,
+    "key": "fr_cinnabar",
+    "name": "CINNABAR ISLAND",
+    "game": "firered",
+    "layout": "CinnabarIsland",
+    "crop": [
+      32,
+      128
+    ]
+  },
+  {
+    "id": 8,
+    "key": "fr_mt_ember",
+    "name": "MT. EMBER",
+    "game": "firered",
+    "layout": "MtEmber_Summit",
+    "crop": [
+      0,
+      112
+    ]
+  },
+  {
+    "id": 9,
+    "key": "fr_power_plant",
+    "name": "POWER PLANT",
+    "game": "firered",
+    "layout": "PowerPlant",
+    "crop": [
+      320,
+      496
+    ]
+  },
+  {
+    "id": 10,
+    "key": "em_pacifidlog",
+    "name": "PACIFIDLOG TOWN",
+    "game": "emerald",
+    "layout": "PacifidlogTown",
+    "crop": [
+      0,
+      192
+    ]
+  },
+  {
+    "id": 11,
+    "key": "em_shoal_ice",
+    "name": "SHOAL ICE CAVE",
+    "game": "emerald",
+    "layout": "ShoalCave_LowTideIceRoom",
+    "crop": [
+      0,
+      160
+    ]
+  },
+  {
+    "id": 12,
+    "key": "em_dewford",
+    "name": "DEWFORD TOWN",
+    "game": "emerald",
+    "layout": "DewfordTown",
+    "crop": [
+      0,
+      128
+    ]
+  },
+  {
+    "id": 13,
+    "key": "em_granite_cave",
+    "name": "GRANITE CAVE",
+    "game": "emerald",
+    "layout": "GraniteCave_1F",
+    "crop": [
+      176,
+      48
+    ]
+  },
+  {
+    "id": 14,
+    "key": "em_route_113",
+    "name": "ROUTE 113 ASH",
+    "game": "emerald",
+    "layout": "Route113",
+    "crop": [
+      448,
+      16
+    ]
+  },
+  {
+    "id": 15,
+    "key": "em_meteor_falls",
+    "name": "METEOR FALLS",
+    "game": "emerald",
+    "layout": "MeteorFalls_1F_1R",
+    "crop": [
+      0,
+      400
+    ]
+  },
+  {
+    "id": 16,
+    "key": "em_fortree",
+    "name": "FORTREE CITY",
+    "game": "emerald",
+    "layout": "FortreeCity",
+    "crop": [
+      256,
+      16
+    ]
+  },
+  {
+    "id": 17,
+    "key": "fr_pokemon_tower",
+    "name": "POKEMON TOWER",
+    "game": "firered",
+    "layout": "PokemonTower_5F",
+    "crop": [
+      0,
+      128
+    ]
+  },
+  {
+    "id": 18,
+    "key": "em_sootopolis",
+    "name": "SOOTOPOLIS CITY",
+    "game": "emerald",
+    "layout": "SootopolisCity",
+    "crop": [
+      448,
+      288
+    ]
+  },
+  {
+    "id": 19,
+    "key": "em_mt_chimney",
+    "name": "MT. CHIMNEY",
+    "game": "emerald",
+    "layout": "MtChimney",
+    "crop": [
+      160,
+      144
+    ]
+  },
+  {
+    "id": 20,
+    "key": "em_frontier_dome",
+    "name": "BATTLE DOME PLAZA",
+    "game": "emerald",
+    "layout": "BattleFrontier_OutsideWest",
+    "crop": [
+      80,
+      240
+    ]
+  },
+  {
+    "id": 21,
+    "key": "em_frontier_tower",
+    "name": "BATTLE TOWER PLAZA",
+    "game": "emerald",
+    "layout": "BattleFrontier_OutsideEast",
+    "crop": [
+      64,
+      176
+    ]
+  },
+  {
+    "id": 22,
+    "key": "em_frontier_pyramid",
+    "name": "BATTLE PYRAMID PLAZA",
+    "game": "emerald",
+    "layout": "BattleFrontier_OutsideEast",
+    "crop": [
+      704,
+      192
+    ]
+  },
+  {
+    "id": 23,
+    "key": "em_frontier_dome_lobby",
+    "name": "BATTLE DOME LOBBY",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattleDomeLobby",
+    "crop": [
+      32,
+      96
+    ]
+  },
+  {
+    "id": 24,
+    "key": "em_frontier_dome_arena",
+    "name": "BATTLE DOME ARENA",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattleDomeBattleRoom",
+    "crop": [
+      0,
+      16
+    ]
+  },
+  {
+    "id": 25,
+    "key": "em_frontier_pike",
+    "name": "BATTLE PIKE",
+    "game": "emerald",
+    "layout": "BattleFrontier_OutsideWest",
+    "crop": [
+      528,
+      384
+    ]
+  },
+  {
+    "id": 26,
+    "key": "em_frontier_factory_lobby",
+    "name": "BATTLE FACTORY LOBBY",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattleFactoryLobby",
+    "crop": [
+      0,
+      32
+    ]
+  },
+  {
+    "id": 27,
+    "key": "em_frontier_palace_garden",
+    "name": "BATTLE PALACE GARDEN",
+    "game": "emerald",
+    "layout": "BattleFrontier_OutsideEast",
+    "crop": [
+      512,
+      672
+    ]
+  },
+  {
+    "id": 28,
+    "key": "em_frontier_arena",
+    "name": "BATTLE ARENA",
+    "game": "emerald",
+    "layout": "BattleFrontier_OutsideEast",
+    "crop": [
+      432,
+      400
+    ]
+  },
+  {
+    "id": 29,
+    "key": "em_southern_island",
+    "name": "SOUTHERN ISLAND",
+    "game": "emerald",
+    "layout": "SouthernIsland_Exterior",
+    "crop": [
+      112,
+      64
+    ]
+  },
+  {
+    "id": 30,
+    "key": "fr_ember_spa",
+    "name": "EMBER SPA",
+    "game": "firered",
+    "layout": "OneIsland_KindleRoad_EmberSpa",
+    "crop": [
+      64,
+      48
+    ]
+  },
+  {
+    "id": 31,
+    "key": "fr_icefall_grotto",
+    "name": "ICEFALL GROTTO",
+    "game": "firered",
+    "layout": "FourIsland_IcefallCave_Back",
+    "crop": [
+      48,
+      128
+    ]
+  },
+  {
+    "id": 32,
+    "key": "fr_indigo_plateau",
+    "name": "INDIGO PLATEAU",
+    "game": "firered",
+    "layout": "IndigoPlateau_Exterior",
+    "crop": [
+      32,
+      80
+    ]
+  },
+  {
+    "id": 33,
+    "key": "em_route_111_desert",
+    "name": "ROUTE 111 DESERT",
+    "game": "emerald",
+    "layout": "Route111",
+    "crop": [
+      160,
+      1040
+    ]
+  },
+  {
+    "id": 34,
+    "key": "em_sky_pillar_summit",
+    "name": "SKY PILLAR SUMMIT",
+    "game": "emerald",
+    "layout": "SkyPillar_Top",
+    "crop": [
+      64,
+      64
+    ]
+  },
+  {
+    "id": 35,
+    "key": "em_faraway_island",
+    "name": "FARAWAY ISLAND",
+    "game": "emerald",
+    "layout": "FarawayIsland_Interior",
+    "crop": [
+      80,
+      128
+    ]
+  },
+  {
+    "id": 36,
+    "key": "em_frontier_pyramid_top",
+    "name": "BATTLE PYRAMID TOP",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattlePyramidTop",
+    "crop": [
+      112,
+      48
+    ]
+  },
+  {
+    "id": 37,
+    "key": "em_frontier_ranking_hall",
+    "name": "RANKING HALL",
+    "game": "emerald",
+    "layout": "BattleFrontier_RankingHall",
+    "crop": [
+      272,
+      48
+    ]
+  },
+  {
+    "id": 38,
+    "key": "em_frontier_tower_lobby",
+    "name": "BATTLE TOWER LOBBY",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattleTowerLobby",
+    "crop": [
+      48,
+      0
+    ]
+  }
+]

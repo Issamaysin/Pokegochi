@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from text_normalization import fire_red_ascii
 
 ROOT = Path(__file__).resolve().parent.parent
 D = ROOT / ".downloads/pokefirered-tree/pokefirered-master"
@@ -18,6 +19,7 @@ def clean(value: str) -> str:
 
 
 def quote(value: str) -> str:
+    value = fire_red_ascii(value, "generated trainer text")
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
@@ -80,17 +82,37 @@ for scripts in sorted((D / "data/maps").glob("*/scripts.inc")):
             target = first if len(" ".join(first + [word])) <= 28 else second
             if len(" ".join(target + [word])) <= 30:
                 target.append(word)
-        profiles.append((trainer_class, name, asset, " ".join(first), " ".join(second), party))
+        profiles.append((trainer_class, name, asset, " ".join(first), " ".join(second), party, 1))
         seen.add(trainer_symbol)
 
 if len(profiles) < 40:
     raise RuntimeError(f"Trainer extraction unexpectedly found only {len(profiles)} profiles")
 
+regional_profiles = [
+ ("BIRD KEEPER","ABE","johto_bird_keeper","THE KEY WORD IS GUTS!","WE TRAIN NIGHT AND DAY!",[21,16],2),
+ ("BUG CATCHER","AL","johto_bug_catcher","BUG POKEMON EVOLVE YOUNG.","THEY GET STRONG FAST!",[10,13],2),
+ ("LASS","CARRIE","johto_lass","I LIKE CUTE POKEMON.","LET'S SEE YOURS!",[161,39],2),
+ ("SAGE","JEFFREY","johto_sage","CAN YOU INFLICT DAMAGE","ON MY GHOSTS?",[92,93],2),
+ ("BLACK BELT","YOSHI","johto_blackbelt_t","MY RAGING FISTS WILL","SHATTER YOUR TEAM!",[66,67],2),
+ ("SKIER","DIANA","johto_skier","THE ICE IS SLIPPERY.","STAY SHARP!",[124,220],2),
+ ("COOLTRAINER","PAUL","johto_cooltrainer_m","DRAGONS ARE SACRED.","SHOW ME YOUR POWER!",[147,117,148],2),
+ ("COOLTRAINER","LOLA","johto_cooltrainer_f","WE DON'T ALL USE DRAGONS!","READY?",[230,148],2),
+ ("YOUNGSTER","JOSH","emerald_youngster","MY POKEMON RULE!","CHECK THEM OUT!",[263,261],3),
+ ("AROMA LADY","ROSE","emerald_aroma_lady","A SWEET SCENT DRIFTS BY.","LET'S BATTLE!",[315,316],3),
+ ("BATTLE GIRL","LAURA","emerald_battle_girl","MY FIGHTING SPIRIT","NEVER FADES!",[307,296],3),
+ ("BUG MANIAC","BRANDON","emerald_bug_maniac","BUG POKEMON ARE COOL!","DON'T YOU AGREE?",[290,313],3),
+ ("HEX MANIAC","LEAH","emerald_hex_maniac","THE SPIRITS TOLD ME","YOU WERE COMING.",[353,354],3),
+ ("DRAGON TAMER","NICOLAS","emerald_dragon_tamer","DRAGONS HOLD ANCIENT POWER!","FACE IT!",[371,372],3),
+ ("COOLTRAINER","MARY","emerald_cooltrainer_f","A BALANCED TEAM WINS.","LET ME SHOW YOU!",[333,357,334],3),
+ ("COOLTRAINER","GEORGE","emerald_cooltrainer_m","WE TRAINED ACROSS HOENN.","NOW WE BATTLE!",[288,330,359],3),
+]
+profiles.extend(regional_profiles)
+
 lines = ["static constexpr TrainerProfile kProfiles[] = {"]
-for index, (trainer_class, name, asset, line1, line2, party) in enumerate(profiles[:240]):
+for index, (trainer_class, name, asset, line1, line2, party, generation) in enumerate(profiles[:240]):
     padded = party + [0] * (3 - len(party))
     lines.append(f"  {{{index}, {quote(trainer_class)}, {quote(name)}, {quote(asset)}, {quote(line1)}, {quote(line2)}, "
-                 f"{{{padded[0]},{padded[1]},{padded[2]}}}, {len(party)}}},")
+                 f"{{{padded[0]},{padded[1]},{padded[2]}}}, {len(party)}, {generation}}},")
 lines.append("};")
 OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print(f"Generated {min(len(profiles), 240)} original FireRed trainer profiles")
+print(f"Generated {min(len(profiles), 240)} regional trainer profiles")

@@ -42,3 +42,26 @@ uint16_t PokedexLogic::caughtCount(const PokedexState& pokedex) {
   for (uint16_t id = 1; id <= kPokedexSpeciesCount; ++id) if (hasCaught(pokedex, id)) ++count;
   return count;
 }
+
+uint16_t PokedexLogic::generationSpeciesCount(uint8_t generation) {
+  switch (generation) {
+    case 1: return 151;
+    case 2: return 251;
+    case 3: return 386;
+    default: return 0;
+  }
+}
+
+uint16_t PokedexLogic::generationCaughtCount(const PokedexState& pokedex, uint8_t generation) {
+  const uint16_t total = generationSpeciesCount(generation);
+  if (!total) return 0;
+  uint16_t caught = 0;
+  for (uint16_t id = 1; id <= total; ++id)
+    if (hasCaught(pokedex, id)) ++caught;
+  return caught;
+}
+
+bool PokedexLogic::isGenerationComplete(const PokedexState& pokedex, uint8_t generation) {
+  const uint16_t total = generationSpeciesCount(generation);
+  return total != 0 && generationCaughtCount(pokedex, generation) == total;
+}

@@ -1,28 +1,32 @@
 #include "game/PetState.h"
 
 #include <cassert>
+#include <cstring>
 #include <iostream>
 
 int main() {
+  assert(std::strcmp(PetLogic::statusName(StatusCondition::Poison), "POISON") == 0);
+  assert(std::strcmp(PetLogic::statusAdjective(StatusCondition::Poison), "POISONED") == 0);
+  assert(std::strcmp(PetLogic::statusAdjective(StatusCondition::BadlyPoisoned), "BADLY POISONED") == 0);
+  assert(std::strcmp(PetLogic::statusAdjective(StatusCondition::Paralysis), "PARALYZED") == 0);
+  assert(std::strcmp(PetLogic::statusAdjective(StatusCondition::Burn), "BURNED") == 0);
+  assert(std::strcmp(PetLogic::statusAdjective(StatusCondition::Sleep), "ASLEEP") == 0);
+  assert(std::strcmp(PetLogic::statusAdjective(StatusCondition::Frozen), "FROZEN") == 0);
   PetState pet;
-  PetLogic::advance(pet, 899);
-  assert(pet.fullness == 80);
-  PetLogic::advance(pet, 1);
-  assert(pet.fullness == 79);
+  PetLogic::advanceFriendship(pet, 3599);
+  assert(pet.friendship == 70);
+  PetLogic::advanceFriendship(pet, 1);
+  assert(pet.friendship == 75);
 
-  PetLogic::advance(pet, 900UL * 80U);
-  assert(pet.fullness == 0);
-  assert(pet.happiness < 80);
-
-  PetLogic::care(pet, CareAction::Feed);
-  assert(pet.fullness == 25);
   pet.status = StatusCondition::Paralysis;
-  PetLogic::care(pet, CareAction::Bathe);
+  pet.currentHp = 1;
+  PetLogic::care(pet, CareAction::Center);
   assert(pet.status == StatusCondition::None);
-  PetLogic::care(pet, CareAction::Play);
-  assert(pet.happiness <= 100);
+  assert(pet.currentHp == pet.maximumHp);
 
+  pet.status = StatusCondition::Burn;
   PetLogic::defeat(pet, 1000, 7200);
+  assert(pet.status == StatusCondition::None);
   assert(!PetLogic::canBattle(pet, 8199));
   PetLogic::recoverIfReady(pet, 8200);
   assert(PetLogic::canBattle(pet, 8200));

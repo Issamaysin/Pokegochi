@@ -1,8 +1,9 @@
-"""Generate the 151 FireRed Pokedex metadata rows from the local decomp."""
+"""Generate all 386 FireRed National Pokedex metadata rows."""
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from text_normalization import fire_red_ascii
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / ".downloads/pokefirered-tree/pokefirered-master/src/data/pokemon"
@@ -10,6 +11,7 @@ OUT = ROOT / "src/game/PokedexDataGenerated.inc"
 
 
 def c_string(value: str) -> str:
+    value = fire_red_ascii(value, "Pokedex text")
     value = value.replace("POKÃ©MON", "POKEMON").replace("POKéMON", "POKEMON")
     value = value.replace("\\n", " ").replace("\n", " ")
     value = re.sub(r"\s+", " ", value).strip()
@@ -37,11 +39,11 @@ for match in blocks:
     if not all((category, height, weight, description)):
         continue
     rows.append((category.group(1), int(height.group(1)), int(weight.group(1)), texts.get(description.group(1), "")))
-    if len(rows) == 151:
+    if len(rows) == 386:
         break
 
-if len(rows) != 151:
-    raise RuntimeError(f"Expected 151 Kanto Pokedex rows, found {len(rows)}")
+if len(rows) != 386:
+    raise RuntimeError(f"Expected 386 National Pokedex rows, found {len(rows)}")
 
 lines = ["static constexpr PokedexEntryData kPokedexEntries[] = {"]
 for category, height, weight, description in rows:

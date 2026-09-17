@@ -44,9 +44,11 @@ TouchPoint TouchDriver::read() {
   digitalWrite(board::kTouchCsPin, HIGH);
   point.touched = true; point.rawX = median3(x1, x2, x3); point.rawY = median3(y1, y2, y3);
   point.x = map(point.rawY, board::kTouchRawYMin, board::kTouchRawYMax, 0, board::kScreenWidth - 1);
-  point.y = map(point.rawX, board::kTouchRawXMin, board::kTouchRawXMax, board::kScreenHeight - 1, 0);
+  // The physical panel is landscape rotation 1. Raw X increases from the
+  // display's top edge to its bottom edge on this board, so it must not be
+  // inverted for the on-screen Y coordinate.
+  point.y = map(point.rawX, board::kTouchRawXMin, board::kTouchRawXMax, 0, board::kScreenHeight - 1);
   point.x = constrain(point.x, 0, board::kScreenWidth - 1);
   point.y = constrain(point.y, 0, board::kScreenHeight - 1);
   return point;
 }
-
