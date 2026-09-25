@@ -9,6 +9,7 @@ enum class BattleTowerRewardKind : uint8_t {
   None,
   RareCandy,
   SpecialEgg,
+  MasterBall,
 };
 
 struct BattleTowerRewardResult {
@@ -41,14 +42,16 @@ class BattleTowerSystem {
   static constexpr uint16_t kTrainerCount = 300;
   static constexpr uint16_t kMonTemplateCount = 882;
   static constexpr uint16_t kSpecialEggOddsDenominator = 200;
+  static constexpr uint16_t kMasterBallOddsDenominator = 200;
 
   // Battle Tower is the repeatable epilogue. It remains locked until the
   // one-time post-Hoenn Mega Stone challenge has been defeated.
   static bool available(const GymProgress& progress);
   // Once available, the Tower is a permanent Home destination. It never uses
   // a timer, invitation roll, Center charge, or VS Seeker charge.
-  // Rare Candy is the fallback prize after the third opponent.  A 1-in-200
-  // roll replaces it with the Special Egg when the one-egg incubator is free.
+  // Rare Candy is the fallback prize after the third opponent. Separate
+  // non-overlapping 1-in-200 buckets replace it with a Master Ball or the
+  // Special Egg (when the one-egg incubator is free).
   // The result object makes future percentage rewards an explicit table
   // instead of scattering their rolls through the UI.
   static bool awardCompletionReward(Inventory& inventory);

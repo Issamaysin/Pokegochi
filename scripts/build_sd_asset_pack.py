@@ -113,6 +113,10 @@ BATTLE_ANIMATION_TASK_BACKGROUNDS = (
 # two official Primal Reversions. Extra expansion folders (for example fan
 # forms) are intentionally absent from this allow-list.
 MEGA_FORMS = (
+    (26,"raichu","mega_x"),(26,"raichu","mega_y"),(36,"clefable","mega"),
+    (71,"victreebel","mega"),(121,"starmie","mega"),(149,"dragonite","mega"),
+    (154,"meganium","mega"),(160,"feraligatr","mega"),(227,"skarmory","mega"),
+    (358,"chimecho","mega"),(359,"absol","mega_z"),
     (3,"venusaur","mega"),(6,"charizard","mega_x"),(6,"charizard","mega_y"),
     (9,"blastoise","mega"),(15,"beedrill","mega"),(18,"pidgeot","mega"),
     (65,"alakazam","mega"),(80,"slowbro","mega"),(94,"gengar","mega"),
@@ -1709,6 +1713,45 @@ def main() -> None:
         path = DECOMP / "graphics/items/icons" / f"{source_name}.png"
         if not path.exists(): raise RuntimeError(f"Missing held item icon: {source_name}")
         write_asset(f"firered/items/held_{index:02}.pkg", source_png(path), manifest)
+
+    # Berry Garden is a real Route 123 berry patch, not a firmware-drawn set
+    # of generic cards.  The six authored soil beds are already part of this
+    # Emerald map crop; the matching object-event sheets supply each species'
+    # actual sapling, flowering tree and fruit-bearing tree.
+    route123 = render_map_layers(EMERALD, "Route123").composite
+    garden = route123.crop((9 * 16, 0, 19 * 16, 6 * 16)).resize(
+        (320, 192), Image.Resampling.NEAREST)
+    write_asset("emerald/berry_garden/background.pkg", garden, manifest)
+
+    berry_tree_names = (
+        # Numeric order matches HeldItem and held_XX.pkg.
+        "oran", "sitrus", "lum", "persim", "cheri", "chesto",
+        "pecha", "rawst", "aspear",
+    )
+    tree_root = EMERALD / "graphics/object_events/pics/berry_trees"
+    sprout_sheet = source_png(tree_root / "sprout.png")
+    for frame in range(2):
+        # Early-stage objects use a 16x16 cel aligned to the bottom half of
+        # the later 16x32 tree canvas.  Keeping one 32x64 destination size
+        # lets firmware place every growth stage at the same coordinates.
+        sprout = Image.new("RGBA", (16, 32), (0, 0, 0, 0))
+        sprout.alpha_composite(sprout_sheet.crop((frame * 16, 0, frame * 16 + 16, 16)),
+                               (0, 16))
+        write_asset(f"emerald/berry_garden/sprout_{frame}.pkg",
+                    sprout.resize((32, 64), Image.Resampling.NEAREST), manifest)
+    for berry_index, berry_name in enumerate(berry_tree_names, start=1):
+        tree_sheet = source_png(tree_root / f"{berry_name}.png")
+        if tree_sheet.size != (96, 32):
+            raise RuntimeError(f"Invalid Emerald berry-tree sheet: {berry_name} {tree_sheet.size}")
+        # Emerald stages 2/3/4 use authored frame pairs 0/1, 2/3 and 4/5.
+        for stage in range(2, 5):
+            for frame in range(2):
+                source_frame = (stage - 2) * 2 + frame
+                tree = tree_sheet.crop((source_frame * 16, 0,
+                                        source_frame * 16 + 16, 32))
+                write_asset(
+                    f"emerald/berry_garden/tree_{berry_index:02}_stage_{stage}_{frame}.pkg",
+                    tree.resize((32, 64), Image.Resampling.NEAREST), manifest)
     mega_stone_icon = EXPANSION / "graphics/items/icons/key_stone.png"
     if not mega_stone_icon.exists(): raise RuntimeError("Missing official Key Stone icon")
     write_asset("firered/items/held_38.pkg", source_png(mega_stone_icon), manifest)
@@ -1781,6 +1824,12 @@ def main() -> None:
                     background_images[background.key].base, manifest)
         write_asset(f"firered/ui/home_background_foreground_{index:02}.pkg",
                     background_images[background.key].foreground, manifest)
+    # Home visitors are actual FireRed overworld sprites. The first downward-
+    # facing cel is the same 16x32 frame the original map engine displays
+    # while the character is standing still.
+    for index, name in enumerate(("youngster", "lass", "old_man_1", "policeman")):
+        sheet = source_png(DECOMP / "graphics/object_events/pics/people" / f"{name}.png")
+        write_asset(f"firered/ui/home_npc_{index}.pkg", sheet.crop((0, 0, 16, 32)), manifest)
     write_asset("firered/ui/box_icon_v2.pkg",
                 normalized_home_icon(home_box_icon()), manifest)
     write_asset("firered/ui/mart_icon.pkg", home_mart_icon(), manifest)
@@ -2132,6 +2181,7 @@ def main() -> None:
       *(f"firered/ui/home_background_{i:02}.pkg" for i in range(len(BACKGROUNDS))),
       *(f"firered/ui/home_background_base_{i:02}.pkg" for i in range(len(BACKGROUNDS))),
       *(f"firered/ui/home_background_foreground_{i:02}.pkg" for i in range(len(BACKGROUNDS))),
+      *(f"firered/ui/home_npc_{i}.pkg" for i in range(4)),
       "firered/ui/egg_icon.pkg","firered/ui/egg.pkg",
       "firered/ui/egg_hatch_fresh.pkg","firered/ui/egg_hatch_cracked.pkg",
       *(f"firered/ui/egg_hatch_breaking_{frame}.pkg" for frame in range(3)),
@@ -2150,6 +2200,10 @@ def main() -> None:
       *(f"firered/items/mart_{name}.pkg" for name in ("poke_ball","great_ball","ultra_ball","potion","large_potion","full_heal","antidote","status_heal","battle_stat_item")),
       *(f"firered/items/held_{index:02}.pkg" for index in range(1,39)),
       "firered/items/lucky_egg.pkg",
+      "emerald/berry_garden/background.pkg",
+      *(f"emerald/berry_garden/sprout_{frame}.pkg" for frame in range(2)),
+      *(f"emerald/berry_garden/tree_{berry:02}_stage_{stage}_{frame}.pkg"
+        for berry in range(1,10) for stage in range(2,5) for frame in range(2)),
       *(f"pokemon/forms/mega/{species:03}/{variant}/{shiny}{view}.pkg"
         for species, _folder, variant in MEGA_FORMS for shiny in ("","shiny/")
         for view in ("front","back")),

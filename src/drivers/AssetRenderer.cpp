@@ -1307,6 +1307,7 @@ bool shouldBankLargeAsset(const char* path) {
                   // instead of the base/foreground pair. It is far too large
                   // for the 12 KiB icon arena and belongs in the scene bank.
                   std::strstr(path, "/ui/home_background_") ||
+                  std::strstr(path, "/creative/base_") ||
                   std::strstr(path, "/shop/background.pkg") ||
                   // Each Pokecenter variant is a full-width scene. Treating
                   // one as an icon exhausts the 12 KiB small-asset arena and
@@ -2069,7 +2070,10 @@ bool AssetRenderer::drawCompositeRegion(PixelCanvas& display, const char* basePa
                                         const char* foregroundPath, int16_t x, int16_t y,
                                         uint16_t sourceX, uint16_t sourceY,
                                         uint16_t width, uint16_t height,
-                                        const AssetOverlay* overlays, uint8_t overlayCount) {
+                                        const AssetOverlay* overlays, uint8_t overlayCount,
+                                        AssetColorEffect baseColorEffect,
+                                        uint16_t baseBlendColor,
+                                        uint8_t baseBlendAmount) {
   if (!basePath || !width || !height || width > kRegionBufferWidth) return false;
   const IndexedImage* baseImage = residentImage(basePath);
   const IndexedImage* foregroundImage = foregroundPath && foregroundPath[0] ? residentImage(foregroundPath) : nullptr;
@@ -2098,11 +2102,19 @@ bool AssetRenderer::drawCompositeRegion(PixelCanvas& display, const char* basePa
     const int16_t chunkY = static_cast<int16_t>(y + line);
     const int16_t bottom = static_cast<int16_t>(chunkY + rows);
 
-    for (uint16_t row = 0; row < rows; ++row)
-      for (uint16_t column = 0; column < clippedWidth; ++column)
-        scratch.region[static_cast<size_t>(row) * clippedWidth + column] = indexedPixel(
+    for (uint16_t row = 0; row < rows; ++row) {
+      for (uint16_t column = 0; column < clippedWidth; ++column) {
+        uint16_t pixel = indexedPixel(
             base, static_cast<size_t>(sourceY + line + row) *
                       base.header.width + sourceX + column);
+        if (pixel != base.header.transparent &&
+            baseColorEffect != AssetColorEffect::None) {
+          pixel = transformedColor(pixel, baseColorEffect,
+                                   baseBlendColor, baseBlendAmount);
+        }
+        scratch.region[static_cast<size_t>(row) * clippedWidth + column] = pixel;
+      }
+    }
 
     for (uint8_t item = 0; overlays && item < overlayCount; ++item) {
       const IndexedImage* resident = residentImage(overlays[item].path);

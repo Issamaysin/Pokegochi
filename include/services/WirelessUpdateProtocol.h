@@ -13,6 +13,7 @@ constexpr uint16_t kMaximumManifestBytes = 384;
 // belong to DataHeader, leaving 508 useful bytes per acknowledged write.
 // Older updater apps remain compatible: they keep sending 184-byte blocks.
 constexpr uint16_t kMaximumDataBytes = 508;
+constexpr uint8_t kCapabilityTimeSync = 0x01U;
 
 constexpr char kServiceUuid[] = "70564743-4849-5550-8000-504f4b45474f";
 constexpr char kControlUuid[] = "70564743-4849-5550-8001-504f4b45474f";
@@ -29,6 +30,7 @@ enum class Command : uint8_t {
   Commit,
   Abort,
   QueryStatus,
+  SynchronizeTime,
 };
 
 enum class ObjectKind : uint8_t { Firmware = 0, Asset = 1 };
@@ -64,6 +66,7 @@ enum class StatusCode : uint8_t {
   Complete,
   Aborted,
   Error,
+  TimeSynchronized,
 };
 
 enum class ErrorCode : uint8_t {
@@ -95,6 +98,8 @@ struct Advertisement {
   // Optional extension.  Legacy firmware advertised only the first 10 bytes;
   // a new Android client therefore falls back to 184 when this is absent.
   uint16_t maximumDataBytes;
+  // Optional second extension. Unknown bits are ignored by phone clients.
+  uint8_t capabilities;
 };
 
 struct AssetRecord {
@@ -126,6 +131,13 @@ struct AuthenticateCommand {
   uint8_t command;
   uint8_t protocolVersion;
   uint32_t pairingCode;
+};
+
+struct TimeSyncCommand {
+  uint8_t command;
+  // Unix seconds shifted by the phone's current UTC offset. This lets the
+  // console render local wall time without maintaining a timezone database.
+  uint32_t localEpochSeconds;
 };
 
 struct ManifestBeginCommand {
@@ -163,7 +175,8 @@ struct StatusPacket {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(Advertisement) == 12, "Update advertisement ABI changed");
+static_assert(sizeof(Advertisement) == 13, "Update advertisement ABI changed");
+static_assert(sizeof(TimeSyncCommand) == 5, "Time-sync command ABI changed");
 static_assert(sizeof(AssetRecord) == 40, "Update asset record ABI changed");
 static_assert(sizeof(Manifest) == 276, "Update manifest ABI changed");
 static_assert(sizeof(StatusPacket) == 24, "Update status ABI changed");

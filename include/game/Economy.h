@@ -28,6 +28,10 @@ class Economy {
   static constexpr uint32_t kRotationSeconds = 6U * 60U * 60U;
   static constexpr uint32_t kMasterBallPrice = 99999U;
   static constexpr uint32_t kMasterBallReplacementDenominator = 100000U;
+  // Opening the Mart may initialize/refresh offers only when the six-hour
+  // timer is due. Sold-out stock is valid state and must not rotate early.
+  static bool refreshIfDue(MartState& mart, uint8_t badgeCount = 0,
+                           uint64_t ownedMachines = 0);
   static void advance(MartState& mart, uint32_t seconds, uint8_t badgeCount = 0,
                       uint64_t ownedMachines = 0);
   static void rotate(MartState& mart, uint8_t badgeCount = 0, uint64_t ownedMachines = 0);

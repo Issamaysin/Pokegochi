@@ -34,15 +34,33 @@ uint16_t TouchDriver::median3(uint16_t a, uint16_t b, uint16_t c) {
   return b;
 }
 
+uint16_t TouchDriver::median5(uint16_t values[5]) {
+  for (uint8_t index = 1; index < 5U; ++index) {
+    const uint16_t value = values[index];
+    uint8_t insertion = index;
+    while (insertion && values[insertion - 1U] > value) {
+      values[insertion] = values[insertion - 1U];
+      --insertion;
+    }
+    values[insertion] = value;
+  }
+  return values[2];
+}
+
 TouchPoint TouchDriver::read() {
   TouchPoint point;
   if (digitalRead(board::kTouchIrqPin) != LOW) return point;
   digitalWrite(board::kTouchCsPin, LOW);
-  const uint16_t x1 = readChannel(kReadX), y1 = readChannel(kReadY);
-  const uint16_t x2 = readChannel(kReadX), y2 = readChannel(kReadY);
-  const uint16_t x3 = readChannel(kReadX), y3 = readChannel(kReadY);
+  uint16_t rawX[5]{}, rawY[5]{};
+  const uint8_t sampleCount = fingerMode_ ? 5U : 3U;
+  for (uint8_t sample = 0; sample < sampleCount; ++sample) {
+    rawX[sample] = readChannel(kReadX);
+    rawY[sample] = readChannel(kReadY);
+  }
   digitalWrite(board::kTouchCsPin, HIGH);
-  point.touched = true; point.rawX = median3(x1, x2, x3); point.rawY = median3(y1, y2, y3);
+  point.touched = true;
+  point.rawX = fingerMode_ ? median5(rawX) : median3(rawX[0], rawX[1], rawX[2]);
+  point.rawY = fingerMode_ ? median5(rawY) : median3(rawY[0], rawY[1], rawY[2]);
   point.x = map(point.rawY, board::kTouchRawYMin, board::kTouchRawYMax, 0, board::kScreenWidth - 1);
   // The physical panel is landscape rotation 1. Raw X increases from the
   // display's top edge to its bottom edge on this board, so it must not be

@@ -39,6 +39,7 @@ HANDLER_GROUPS = {
     "entry/weather/form": {
         "DRIZZLE", "INTIMIDATE", "TRACE", "FORECAST", "SAND STREAM",
         "DROUGHT", "PRIMORDIAL SEA", "DESOLATE LAND", "DELTA STREAM",
+        "MEGA SOL",
     },
     "end-turn/cadence": {
         "SPEED BOOST", "RAIN DISH", "SHED SKIN", "TRUANT", "SOLAR POWER",
@@ -54,7 +55,8 @@ HANDLER_GROUPS = {
         "ROCK HEAD", "TOUGH CLAWS", "MEGA LAUNCHER", "ADAPTABILITY",
         "PARENTAL BOND", "AERILATE", "MOLD BREAKER", "SAND FORCE",
         "TECHNICIAN", "SKILL LINK", "PIXILATE", "FILTER", "STRONG JAW",
-        "SHEER FORCE", "REFRIGERATE",
+        "SHEER FORCE", "REFRIGERATE", "MULTISCALE", "INNARDS OUT",
+        "SHARPNESS", "DRAGONIZE", "ELECTRIC SURGE",
     },
     "type immunity/absorption/weather suppression": {
         "CLOUD NINE", "AIR LOCK", "VOLT ABSORB", "WATER ABSORB",
@@ -92,6 +94,7 @@ ADAPTED_NO_EFFECT = {
     "LIGHTNING ROD": "Generation III effect redirects only in double battles",
     "PLUS": "requires an allied MINUS user in a double battle",
     "MINUS": "requires an allied PLUS user in a double battle",
+    "STALWART": "move redirection does not exist in one-on-one battles",
 }
 
 errors: list[str] = []
@@ -121,8 +124,8 @@ if unknown_adaptations:
 
 if len(base) != 77:
     errors.append(f"expected 77 FireRed abilities, parsed {len(base)}")
-if len(custom) != 22:
-    errors.append(f"expected 22 custom Mega/Primal abilities, parsed {len(custom)}")
+if len(custom) != 29:
+    errors.append(f"expected 29 custom Mega/Primal abilities, parsed {len(custom)}")
 
 if errors:
     print("Ability audit failed:", file=sys.stderr)

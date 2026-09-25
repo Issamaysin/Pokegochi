@@ -39,7 +39,7 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
     private LinearLayout deviceList;
     private EditText pairingCode;
     private ProgressBar progress;
-    private Button scanButton, updateButton;
+    private Button scanButton, updateButton, syncButton;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -106,6 +106,9 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         updateButton = action("START UPDATE", Color.rgb(30, 142, 76));
         updateButton.setOnClickListener(v -> startUpdate());
         installCard.addView(updateButton);
+        syncButton = action("SYNC CLOCK ONLY", Color.rgb(38, 111, 190));
+        syncButton.setOnClickListener(v -> synchronizeClock());
+        installCard.addView(syncButton);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(1000);
         progress.setProgress(0);
@@ -224,8 +227,20 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         statusLabel.setText("Authenticating signed update...");
         updateButton.setText("UPDATING...");
         updateButton.setEnabled(false);
+        syncButton.setEnabled(false);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         client.start(updatePackage, Integer.parseInt(text));
+    }
+
+    private void synchronizeClock() {
+        String text = pairingCode.getText().toString().trim();
+        if (text.length() != 6) { showError("Enter the six-digit code from the console"); return; }
+        statusLabel.setTextColor(STATUS_COLOR);
+        statusLabel.setText("Synchronizing with the phone clock...");
+        updateButton.setEnabled(false);
+        syncButton.setEnabled(false);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        client.synchronizeClock(Integer.parseInt(text));
     }
 
     @Override public void onDevice(BluetoothDevice device, long playerId, int rssi) {
@@ -258,7 +273,20 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
     @Override public void onComplete() {
         runOnUiThread(() -> {
             updateButton.setEnabled(true);
+            syncButton.setEnabled(true);
             updateButton.setText("UPDATE COMPLETE");
+            pairingCode.setText("");
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
+    }
+
+    @Override public void onClockSynchronized() {
+        runOnUiThread(() -> {
+            statusLabel.setTextColor(Color.rgb(30,142,76));
+            statusLabel.setText("Clock synchronized with this phone.");
+            progressLabel.setText("Clock ready");
+            updateButton.setEnabled(true);
+            syncButton.setEnabled(true);
             pairingCode.setText("");
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
@@ -270,6 +298,7 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         statusLabel.setText(message);
         statusLabel.setTextColor(Color.rgb(190, 35, 45));
         updateButton.setEnabled(true);
+        syncButton.setEnabled(true);
         updateButton.setText("RETRY UPDATE");
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }

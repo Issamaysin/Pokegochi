@@ -24,7 +24,7 @@ enum class PokemonNature : uint8_t {
 // Explicit PC sorting modes. Sorting changes only the physical Box slots;
 // Party membership remains stable because Party entries reference Pokemon by
 // UID rather than by their Box index.
-enum class BoxSortMode : uint8_t { DexNumber, Level };
+enum class BoxSortMode : uint8_t { DexNumber, Level, EffortValues };
 
 struct IndividualValues {
   uint8_t hp = 0;
@@ -100,6 +100,13 @@ class CollectionLogic {
   static bool applyPpUp(OwnedPokemon& pokemon, uint8_t slot);
   static void clearMovePpUps(OwnedPokemon& pokemon, uint8_t slot);
   static void swapMovePpUps(OwnedPokemon& pokemon, uint8_t first, uint8_t second);
+  // Berries share the otherwise unused upper bits of the old care counter.
+  // Old saves therefore read as a one-Berry stack without enlarging all 386
+  // Box records. Non-Berry held items always have quantity one.
+  static constexpr uint8_t kMaximumHeldBerryQuantity = 5;
+  static uint8_t heldItemQuantity(const OwnedPokemon& pokemon);
+  static bool setHeldItemQuantity(OwnedPokemon& pokemon, HeldItem item, uint8_t quantity);
+  static bool consumeHeldItem(OwnedPokemon& pokemon);
   static const char* natureName(PokemonNature nature);
   static int8_t natureEffect(PokemonNature nature, PokemonStat stat);
   static constexpr uint16_t kMaximumTotalEffortValues = 510;
@@ -154,8 +161,9 @@ class CollectionLogic {
                            OwnedPokemon incoming, uint32_t* assignedUid = nullptr);
   static bool isInParty(const PokemonCollection& collection, uint32_t uid);
   // DEX NUMBER is ascending. LEVEL is descending so the strongest Pokemon
-  // are immediately visible. Empty storage slots are always packed at the
-  // end and equal keys are ordered deterministically.
+  // are immediately visible. EFFORT VALUES uses the accumulated total in
+  // descending order, then descending level. Empty storage slots are always
+  // packed at the end and equal keys are ordered deterministically.
   static void sortBox(PokemonCollection& collection, BoxSortMode mode);
   static bool validate(const PokemonCollection& collection);
   // Passive HP/PP recovery takes ten minutes for a Party Pokemon through

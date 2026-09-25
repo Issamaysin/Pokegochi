@@ -208,7 +208,10 @@ class AssetRenderer {
                                   uint16_t sourceX, uint16_t sourceY,
                                   uint16_t width, uint16_t height,
                                   const AssetOverlay* overlays,
-                                  uint8_t overlayCount);
+                                  uint8_t overlayCount,
+                                  AssetColorEffect baseColorEffect = AssetColorEffect::None,
+                                  uint16_t baseBlendColor = 0,
+                                  uint8_t baseBlendAmount = 0);
   // Discard only the cached Home layers. Used when the player picks another
   // landscape so no fragment from the prior scenery can survive a switch.
   static void invalidateHomeSceneCache();

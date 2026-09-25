@@ -97,6 +97,16 @@ struct GameSaveV36Test {
   HomePetPlacementState homePetPlacement{};
 };
 struct RecordV36Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV36Test payload;uint32_t crc;};
+struct GameSaveV37Test {
+  uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
+  PokemonCollection collection{};Inventory inventory{};EncounterCharges encounterCharges{};
+  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexState pokedex{};
+  GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
+  MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
+  uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;PpItemInventory ppItems{};
+  HomePetPlacementState homePetPlacement{};
+};
+struct RecordV37Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV37Test payload;uint32_t crc;};
 static_assert(sizeof(BattleStateV33Test)==684);
 static_assert(sizeof(GameSaveV33Test)==25912);
 static_assert(sizeof(RecordV33Test)==25936);
@@ -109,6 +119,8 @@ static_assert(sizeof(RecordV35Test)==26056);
 static_assert(sizeof(GameSaveV36Test)==26040);
 static_assert(offsetof(RecordV36Test,crc)==26056);
 static_assert(sizeof(RecordV36Test)==26064);
+static_assert(sizeof(GameSaveV37Test)==26064);
+static_assert(offsetof(GameSave,berryGarden)==26060);
 uint32_t crc32(const uint8_t* data,size_t length){uint32_t crc=0xFFFFFFFFU;for(size_t i=0;i<length;++i){crc^=data[i];for(uint8_t bit=0;bit<8;++bit)crc=(crc>>1U)^(0xEDB88320U&(0U-(crc&1U)));}return ~crc;}
 }
 
@@ -136,15 +148,30 @@ int main() {
   original.settings.setScreenTimeout(3);
   original.settings.setAutoBattleText(true);
   original.settings.setColorTheme(UiColorTheme::Emerald);
+  original.settings.setTouchInputMode(TouchInputMode::Stylus);
   original.homePetPlacement.background = 19;
   original.homePetPlacement.validMask = 0x03;
   original.homePetPlacement.gridX[0] = 4;
   original.homePetPlacement.gridY[0] = 6;
   original.homePetPlacement.gridX[1] = 12;
   original.homePetPlacement.gridY[1] = 3;
+  original.berryGarden.plots[2].berry=HeldItem::SitrusBerry;
+  original.berryGarden.plots[2].remainingSeconds=123;
+  // Preserve nonzero retired creator bytes to prove that keeping its frozen
+  // layout does not corrupt older V38 records.
+  original.creativeBackgrounds.slots[3].used=1;
+  original.creativeBackgrounds.slots[3].theme=2;
+  original.creativeBackgrounds.slots[3].decorationCount=1;
+  original.creativeBackgrounds.slots[3].decorations[0]={
+      static_cast<uint8_t>(CreativeDecorationKind::Desk),7,5};
+  original.creativeBackgrounds.activeSlot=3;
+  original.specialHeldItems.quantities[0]=1;
+  original.specialHeldItems.claimedMask=1;
+  original.lastNpcGiftDay=4;
   assert(original.settings.screenTimeout() == 3);
   assert(original.settings.autoBattleText());
   assert(original.settings.colorTheme() == UiColorTheme::Emerald);
+  assert(original.settings.touchInputMode() == TouchInputMode::Stylus);
   CollectionLogic::active(original.collection,0)->heldItem=HeldItem::Leftovers;
   original.battle.active = true;
   original.battle.kind = BattleKind::Trainer;
@@ -179,15 +206,24 @@ int main() {
   assert(loaded.settings.screenTimeout() == 3);
   assert(loaded.settings.autoBattleText());
   assert(loaded.settings.colorTheme() == UiColorTheme::Emerald);
+  assert(loaded.settings.touchInputMode() == TouchInputMode::Stylus);
   assert(loaded.homePetPlacement.background == 19);
   assert(loaded.homePetPlacement.validMask == 0x03);
   assert(loaded.homePetPlacement.gridX[0] == 4 && loaded.homePetPlacement.gridY[0] == 6);
   assert(loaded.homePetPlacement.gridX[1] == 12 && loaded.homePetPlacement.gridY[1] == 3);
+  assert(loaded.berryGarden.plots[2].berry==HeldItem::SitrusBerry&&
+         loaded.berryGarden.plots[2].remainingSeconds==123);
+  assert(loaded.creativeBackgrounds.activeSlot==3&&
+         loaded.creativeBackgrounds.slots[3].decorationCount==1);
+  assert(loaded.specialHeldItems.quantities[0]==1&&
+         loaded.specialHeldItems.claimedMask==1);
+  assert(loaded.lastNpcGiftDay==4);
   loaded.settings.setScreenTimeout(2);
   assert(loaded.settings.colorTheme() == UiColorTheme::Emerald);
   loaded.settings.setAutoBattleText(false);
   assert(loaded.settings.colorTheme() == UiColorTheme::Emerald);
   assert(loaded.settings.screenTimeout() == 2);
+  assert(loaded.settings.touchInputMode() == TouchInputMode::Stylus);
   assert(CollectionLogic::active(loaded.collection,0)->heldItem==HeldItem::Leftovers);
   assert(CollectionLogic::active(loaded.collection, 0)->speciesId == 7);
   assert(CollectionLogic::active(loaded.collection, 1)->speciesId == 16);
@@ -367,5 +403,34 @@ int main() {
   assert(v36Migrated.mart.offers[0].remaining==0);
   assert(v36Migrated.homePetPlacement.background==4&&v36Migrated.homePetPlacement.validMask==1);
   assert(v36Migrated.homePetPlacement.gridX[0]==9&&v36Migrated.homePetPlacement.gridY[0]==5);
+
+  // V38 appends the garden, creative backgrounds and species-item inventory.
+  // A V37 record keeps every prior byte and initializes only those new fields.
+  Preferences::resetTestStorage();
+  RecordV37Test old37{};old37.magic=0x504F4B45;old37.version=37;
+  old37.payloadSize=sizeof(GameSaveV37Test);old37.sequence=71237;
+  CollectionLogic::initialize(old37.payload.collection);
+  assert(CollectionLogic::chooseStarter(old37.payload.collection,4));
+  old37.payload.playTimeSeconds=56789;old37.payload.money=98765;
+  old37.payload.mart.offers[19]={MartItem::UltraBall,HeldItem::None,1200,6};
+  old37.payload.homePetPlacement.background=7;
+  old37.payload.homePetPlacement.validMask=1;
+  old37.payload.homePetPlacement.gridX[0]=11;
+  old37.payload.homePetPlacement.gridY[0]=6;
+  old37.crc=crc32(reinterpret_cast<const uint8_t*>(&old37),offsetof(RecordV37Test,crc));
+  assert(raw.putBytes("save_b",&old37,sizeof(old37))==sizeof(old37));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v37Migrator;assert(v37Migrator.begin());GameSave v37Migrated;
+  assert(v37Migrator.loadOrCreate(v37Migrated)==SaveLoadResult::Loaded);
+  assert(v37Migrated.playTimeSeconds==56789&&v37Migrated.money==98765);
+  assert(CollectionLogic::active(v37Migrated.collection,0)->speciesId==4);
+  assert(v37Migrated.mart.offers[19].remaining==6);
+  assert(v37Migrated.homePetPlacement.background==7&&
+         v37Migrated.homePetPlacement.gridX[0]==11&&
+         v37Migrated.homePetPlacement.gridY[0]==6);
+  assert(v37Migrated.creativeBackgrounds.activeSlot==0xFF);
+  assert(v37Migrated.berryGarden.rngState==0x42455252UL);
+  assert(v37Migrated.specialHeldItems.claimedMask==0&&
+         v37Migrated.lastNpcGiftDay==UINT32_MAX);
   return 0;
 }

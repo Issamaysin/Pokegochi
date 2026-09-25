@@ -7,6 +7,8 @@ enum CustomAbility : uint8_t {
   Aerilate, MoldBreaker, Steadfast, SandForce, Technician, SkillLink,
   SolarPower, Pixilate, MagicBounce, Filter, StrongJaw, SheerForce,
   Prankster, Refrigerate, PrimordialSea, DesolateLand, DeltaStream,
+  Multiscale, InnardsOut, ElectricSurge, Stalwart, Sharpness, Dragonize,
+  MegaSol,
 };
 
 constexpr AbilityData kCustomAbilities[] = {
@@ -32,6 +34,13 @@ constexpr AbilityData kCustomAbilities[] = {
   {PrimordialSea,"PRIMORDIAL SEA","HEAVY RAIN MAKES FIRE MOVES FAIL."},
   {DesolateLand,"DESOLATE LAND","HARSH SUN MAKES WATER MOVES FAIL."},
   {DeltaStream,"DELTA STREAM","STRONG WINDS PROTECT FLYING TYPES."},
+  {Multiscale,"MULTISCALE","HALVES DAMAGE WHILE HP IS FULL."},
+  {InnardsOut,"INNARDS OUT","HURTS THE FOE WHEN THE HOLDER FAINTS."},
+  {ElectricSurge,"ELECTRIC SURGE","CHARGES THE FIELD WITH ELECTRICITY."},
+  {Stalwart,"STALWART","IGNORES MOVE REDIRECTION."},
+  {Sharpness,"SHARPNESS","BOOSTS SLICING MOVES BY 50%."},
+  {Dragonize,"DRAGONIZE","MAKES NORMAL MOVES DRAGON AND BOOSTS THEM."},
+  {MegaSol,"MEGA SOL","THE HOLDER BATTLES AS IF IN SUNLIGHT."},
 };
 
 // Official Mega Evolutions whose base species exists in National Dex #001-386,
@@ -39,6 +48,16 @@ constexpr AbilityData kCustomAbilities[] = {
 // canonical forms; no Radical Red fan form or ordinary Gen-IV+ species enters
 // this table.
 constexpr MegaFormData kForms[] = {
+ {26,MegaVariant::MegaX,60,135,95,90,95,110,PokemonType::Electric,PokemonType::Electric,ElectricSurge,"mega_x","MEGA X"},
+ {26,MegaVariant::MegaY,60,100,55,160,80,130,PokemonType::Electric,PokemonType::Electric,NoGuard,"mega_y","MEGA Y"},
+ {36,MegaVariant::Mega,95,80,93,135,110,70,PokemonType::Fairy,PokemonType::Flying,MagicBounce,"mega","MEGA"},
+ {71,MegaVariant::Mega,80,125,85,135,95,70,PokemonType::Grass,PokemonType::Poison,InnardsOut,"mega","MEGA"},
+ {121,MegaVariant::Mega,60,100,105,130,105,120,PokemonType::Water,PokemonType::Psychic,37,"mega","MEGA"},
+ {149,MegaVariant::Mega,91,124,115,145,125,100,PokemonType::Dragon,PokemonType::Flying,Multiscale,"mega","MEGA"},
+ {154,MegaVariant::Mega,80,92,115,143,115,80,PokemonType::Grass,PokemonType::Fairy,MegaSol,"mega","MEGA"},
+ {160,MegaVariant::Mega,85,160,125,89,93,78,PokemonType::Water,PokemonType::Dragon,Dragonize,"mega","MEGA"},
+ {227,MegaVariant::Mega,65,140,110,40,100,110,PokemonType::Steel,PokemonType::Flying,Stalwart,"mega","MEGA"},
+ {358,MegaVariant::Mega,75,50,110,135,120,65,PokemonType::Psychic,PokemonType::Steel,26,"mega","MEGA"},
  {3,MegaVariant::Mega,80,100,123,122,120,80,PokemonType::Grass,PokemonType::Poison,47,"mega","MEGA"},
  {6,MegaVariant::MegaX,78,130,111,130,85,100,PokemonType::Fire,PokemonType::Dragon,ToughClaws,"mega_x","MEGA X"},
  {6,MegaVariant::MegaY,78,104,78,159,115,100,PokemonType::Fire,PokemonType::Flying,70,"mega_y","MEGA Y"},
@@ -74,6 +93,7 @@ constexpr MegaFormData kForms[] = {
  {334,MegaVariant::Mega,75,110,110,110,105,80,PokemonType::Dragon,PokemonType::Fairy,Pixilate,"mega","MEGA"},
  {354,MegaVariant::Mega,64,165,75,93,83,75,PokemonType::Ghost,PokemonType::Ghost,Prankster,"mega","MEGA"},
  {359,MegaVariant::Mega,65,150,60,115,60,115,PokemonType::Dark,PokemonType::Dark,MagicBounce,"mega","MEGA"},
+ {359,MegaVariant::MegaZ,65,154,60,75,60,151,PokemonType::Dark,PokemonType::Ghost,Sharpness,"mega_z","MEGA Z"},
  {362,MegaVariant::Mega,80,120,80,120,80,100,PokemonType::Ice,PokemonType::Ice,Refrigerate,"mega","MEGA"},
  {373,MegaVariant::Mega,95,145,130,120,90,120,PokemonType::Dragon,PokemonType::Flying,Aerilate,"mega","MEGA"},
  {376,MegaVariant::Mega,80,145,150,105,110,110,PokemonType::Steel,PokemonType::Psychic,ToughClaws,"mega","MEGA"},
@@ -86,23 +106,37 @@ constexpr MegaFormData kForms[] = {
 }
 
 namespace MegaEvolution {
+namespace {
+constexpr uint8_t kVariantChoiceShift=11U;
+constexpr uint32_t kVariantChoiceMask=0x07UL<<kVariantChoiceShift;
+}
 const MegaFormData* formData(uint16_t speciesId,MegaVariant variant){
   for(const auto& form:kForms)if(form.speciesId==speciesId&&form.variant==variant)return &form;
   return nullptr;
 }
 bool canTransform(uint16_t speciesId){for(const auto& form:kForms)if(form.speciesId==speciesId)return true;return false;}
+uint8_t variantChoiceCount(uint16_t speciesId){
+  uint8_t count=0;for(const auto& form:kForms)if(form.speciesId==speciesId)++count;return count;
+}
+MegaVariant variantChoice(uint16_t speciesId,uint8_t wanted){
+  uint8_t index=0;for(const auto& form:kForms)if(form.speciesId==speciesId){
+    if(index++==wanted)return form.variant;
+  }return MegaVariant::None;
+}
+bool setVariantChoice(OwnedPokemon& pokemon,MegaVariant variant){
+  if(!formData(pokemon.speciesId,variant))return false;
+  pokemon.legacyCareCounterReserved=(pokemon.legacyCareCounterReserved&~kVariantChoiceMask)|
+      (static_cast<uint32_t>(variant)<<kVariantChoiceShift);
+  return true;
+}
 MegaVariant variantFor(const OwnedPokemon& pokemon){
   if(pokemon.heldItem!=HeldItem::MegaStone)return MegaVariant::None;
-  bool hasX=false,hasY=false;for(const auto& form:kForms)if(form.speciesId==pokemon.speciesId){hasX|=form.variant==MegaVariant::MegaX;hasY|=form.variant==MegaVariant::MegaY;if(form.variant==MegaVariant::Primal)return MegaVariant::Primal;}
-  if(hasX&&hasY){
-    const SpeciesData* species=findSpecies(pokemon.speciesId);
-    if(!species)return MegaVariant::None;
-    if(species->genderRatio==255U)return (pokemon.personality&1U)?MegaVariant::MegaY:MegaVariant::MegaX;
-    const bool female=species->genderRatio==254U||(species->genderRatio!=0U&&
-        static_cast<uint8_t>(pokemon.personality)<species->genderRatio);
-    return female?MegaVariant::MegaX:MegaVariant::MegaY;
-  }
-  return canTransform(pokemon.speciesId)?MegaVariant::Mega:MegaVariant::None;
+  const MegaVariant selected=static_cast<MegaVariant>(
+      (pokemon.legacyCareCounterReserved&kVariantChoiceMask)>>kVariantChoiceShift);
+  if(selected!=MegaVariant::None&&formData(pokemon.speciesId,selected))return selected;
+  // Saves made before explicit selection fall back to the first authored form
+  // until the player next equips the stone and chooses a form.
+  return variantChoice(pokemon.speciesId,0);
 }
 uint8_t baseHp(const OwnedPokemon& pokemon,uint8_t fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->baseHp:fallback;}
 uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));if(!f)return fallback;const uint8_t s[]={f->baseAttack,f->baseDefense,f->baseSpeed,f->baseSpAttack,f->baseSpDefense};return statIndex<5?s[statIndex]:fallback;}

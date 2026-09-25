@@ -40,6 +40,7 @@ class WirelessUpdate {
   uint8_t progressPercent() const;
   const char* statusText() const { return status_; }
   bool takeChanged();
+  bool takeSynchronizedTime(uint32_t& localEpochSeconds);
 
   // BLE callbacks only enqueue bounded packets. All flash and SD writes run
   // later on Arduino's main loop, never inside the NimBLE host task.
@@ -127,6 +128,8 @@ class WirelessUpdate {
   uint32_t rebootAtMs_ = 0;
   uint32_t playerId_ = 0;
   uint32_t pairingCode_ = 0;
+  uint32_t synchronizedTime_ = 0;
+  bool synchronizedTimePending_ = false;
   uint16_t currentAssetPackVersion_ = 0;
   char firmwareVersion_[24]{};
   char status_[72] = "WIRELESS UPDATE IS OFF.";

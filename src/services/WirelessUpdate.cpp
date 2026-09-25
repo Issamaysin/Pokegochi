@@ -255,7 +255,7 @@ bool WirelessUpdate::startTransport() {
   gUpdateServer->start();
 
   Advertisement advertisement{{'P', 'G', 'O', 'T'}, kVersion, kDeviceModel,
-                              playerId_, kMaximumDataBytes};
+                              playerId_, kMaximumDataBytes, kCapabilityTimeSync};
   NimBLEAdvertisementData advertisementData;
   if (!advertisementData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP) ||
       !advertisementData.setManufacturerData(
@@ -360,6 +360,22 @@ void WirelessUpdate::processControl(const uint8_t* bytes, size_t length) {
     abort();
     return;
   }
+  if (command == Command::SynchronizeTime) {
+    if (length != sizeof(TimeSyncCommand)) {
+      fail(ErrorCode::BadCommand, "INVALID CLOCK REQUEST."); return;
+    }
+    TimeSyncCommand request{};
+    std::memcpy(&request, bytes, sizeof(request));
+    // 2020-01-01 through 2100-01-01, including practical timezone shifts.
+    if (request.localEpochSeconds < 1577793600UL ||
+        request.localEpochSeconds > 4102495200UL) {
+      fail(ErrorCode::BadCommand, "PHONE CLOCK IS OUT OF RANGE."); return;
+    }
+    synchronizedTime_ = request.localEpochSeconds;
+    synchronizedTimePending_ = true;
+    sendStatus(StatusCode::TimeSynchronized);
+    return;
+  }
 
   switch (command) {
     case Command::ManifestBegin: {
@@ -426,6 +442,13 @@ void WirelessUpdate::processControl(const uint8_t* bytes, size_t length) {
       fail(ErrorCode::BadCommand, "UNKNOWN UPDATE COMMAND.");
       return;
   }
+}
+
+bool WirelessUpdate::takeSynchronizedTime(uint32_t& localEpochSeconds) {
+  if (!synchronizedTimePending_) return false;
+  synchronizedTimePending_ = false;
+  localEpochSeconds = synchronizedTime_;
+  return true;
 }
 
 void WirelessUpdate::processData(const uint8_t* bytes, size_t length) {

@@ -51,15 +51,15 @@ OwnedPokemon authoredShedinja() {
 
 OwnedPokemon authoredMegaCharizardX() {
   OwnedPokemon pokemon = CollectionLogic::createPokemon(0, 6, 100, false, 0x4D454741U);
-  // Charizard has both X/Y forms in Pokegochi.  Its existing design rule maps
-  // female to X, so force a legal female personality for this authored boss.
-  pokemon.personality &= 0xFFFFFF00UL;
   setMoves(pokemon, static_cast<MoveId>(349),  // DRAGON DANCE
                     static_cast<MoveId>(337),  // DRAGON CLAW
                     static_cast<MoveId>(89),   // EARTHQUAKE
                     static_cast<MoveId>(126)); // FIRE BLAST
   finishAuthoredPokemon(pokemon, PokemonNature::Jolly, HeldItem::MegaStone,
                         {0, 252, 0, 0, 4, 252});
+  MegaEvolution::setVariantChoice(pokemon, MegaVariant::MegaX);
+  CollectionLogic::refreshAbility(pokemon);
+  CollectionLogic::refreshDerivedStats(pokemon, false);
   return pokemon;
 }
 }  // namespace

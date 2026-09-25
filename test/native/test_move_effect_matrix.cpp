@@ -410,6 +410,26 @@ int main(){
         aiStruggle.battle,aiStruggle.collection,0);
     assert(enemyStruggle.accepted&&
            sawMove(enemyStruggle,MoveId::Struggle,BattleSide::Opponent));
+
+    // PP belongs to local opponents too. Wild and trainer Pokemon must both
+    // fall back to Struggle when every known move reaches zero, preserve all
+    // four zero counters, damage the target and take the normal recoil.
+    for(const BattleKind kind:{BattleKind::Wild,BattleKind::Trainer}){
+      Fixture exhausted(splash,tackle,kind);
+      for(uint8_t slot=0;slot<kMoveSlots;++slot)
+        exhausted.opponent().movePp[slot]=0;
+      const uint16_t playerHpBefore=exhausted.player().currentHp;
+      const uint16_t opponentHpBefore=exhausted.opponent().currentHp;
+      const BattleActionResult exhaustedResult=BattleEngine::fight(
+          exhausted.battle,exhausted.collection,0);
+      assert(exhaustedResult.accepted&&exhaustedResult.enemyActed&&
+             sawMove(exhaustedResult,MoveId::Struggle,BattleSide::Opponent)&&
+             saw(exhaustedResult,BattleMoveEffect::Recoil,BattleSide::Opponent)&&
+             exhausted.player().currentHp<playerHpBefore&&
+             exhausted.opponent().currentHp<opponentHpBefore);
+      for(uint8_t slot=0;slot<kMoveSlots;++slot)
+        assert(exhausted.opponent().movePp[slot]==0);
+    }
   }
 
   // Mud Sport and Water Sport are battler-local flags whose reduction is

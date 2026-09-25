@@ -484,11 +484,13 @@ class EncounterLogic {
 
 class BattleEngine {
  public:
+  static void setPermanentExperienceBoost(bool active);
+  static bool permanentExperienceBoost();
   static void clear(BattleState& battle);
   static uint8_t highestPartyLevel(const PokemonCollection& collection);
   static bool startWild(BattleState& battle, PokemonCollection& collection,
                         uint32_t playerUid, uint32_t seed, uint8_t unlockedGeneration = 1,
-                        bool beginnerProtection = false);
+                        bool beginnerProtection = false, uint8_t worldTimePeriod = 0xFF);
   static bool startTrainer(BattleState& battle, EncounterCharges& charges,
                            PokemonCollection& collection, uint32_t playerUid,
                            uint32_t seed, uint8_t unlockedGeneration = 1);
@@ -563,6 +565,8 @@ class BattleEngine {
   static void applyEntryAbilities(BattleState& battle, PokemonCollection& collection,
                                   BattleEntryScope scope = BattleEntryScope::Both,
                                   BattleActionResult* result = nullptr);
+  static void synchronizeWeatherForms(BattleState& battle,
+                                      PokemonCollection& collection);
   // Shared by reflected Magic Coat moves; public to let the compact internal
   // resolver reuse the exact same status/Ability/Safeguard path.
   static void applyMoveStatus(BattleState& battle, OwnedPokemon& source, MoveId move,

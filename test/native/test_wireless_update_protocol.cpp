@@ -8,7 +8,9 @@
 using namespace PokegochiUpdateProtocol;
 
 int main() {
-  static_assert(sizeof(Advertisement) == 12);
+  static_assert(sizeof(Advertisement) == 13);
+  static_assert(sizeof(TimeSyncCommand) == 5);
+  static_assert(kCapabilityTimeSync == 1);
   static_assert(kMaximumDataBytes == 508);
   static_assert(sizeof(AssetRecord) == 40);
   static_assert(sizeof(Manifest) == 276);

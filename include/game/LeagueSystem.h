@@ -27,10 +27,10 @@ class LeagueSystem {
                     const GymProgress& progress, uint32_t seed);
   static bool advance(BattleState& battle, PokemonCollection& collection);
   static bool isChampionStage(const BattleState& battle);
-  // Grants the one-time post-Kanto Lucky Egg. The ownership bit and every
-  // Box slot are checked so an equipped Egg can never be duplicated.
+  // Unlocks the permanent post-Kanto Lucky Egg account bonus. Legacy saves
+  // that still have it equipped are migrated without losing the reward.
   static bool reconcileKantoLuckyEggReward(const GymProgress& progress,
-                                            const PokemonCollection& collection,
+                                            PokemonCollection& collection,
                                             uint64_t& ownedMachines);
   static uint8_t minimumLevel(uint8_t region);
   static uint8_t maximumLevel(uint8_t region);

@@ -1,6 +1,6 @@
-# Pokegochi V2
+# Pokegochi v2.2
 
-Pacote completo da versão 2.0 para a placa ESP32-2432S028R de 2,8 polegadas.
+Pacote completo da versão 2.2 para a placa ESP32-2432S028R de 2,8 polegadas.
 Esta pasta foi feita para ficar na raiz do repositório e reúne, em um único
 lugar, os arquivos de instalação, a imagem do microSD e a documentação do
 hardware realmente usado no projeto.

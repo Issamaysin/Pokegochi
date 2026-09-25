@@ -122,7 +122,11 @@ void sortOffersByCategory(MartState& mart){
 }
 // The stocked offers remain stable for six hours, including while the screen
 // is asleep; the next elapsed-time update performs one fresh rotation.
-void Economy::advance(MartState& mart,uint32_t seconds,uint8_t badgeCount,uint64_t ownedMachines){mart.elapsedSeconds+=seconds;if(mart.elapsedSeconds>=kRotationSeconds)rotate(mart,badgeCount,ownedMachines);}
+bool Economy::refreshIfDue(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines){
+  if(mart.elapsedSeconds<kRotationSeconds)return false;
+  rotate(mart,badgeCount,ownedMachines);return true;
+}
+void Economy::advance(MartState& mart,uint32_t seconds,uint8_t badgeCount,uint64_t ownedMachines){mart.elapsedSeconds+=seconds;refreshIfDue(mart,badgeCount,ownedMachines);}
 void Economy::rotate(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines){
   mart.elapsedSeconds%=kRotationSeconds;++mart.day;
   mart.offers[0]={MartItem::PokeBall,HeldItem::None,200,12};

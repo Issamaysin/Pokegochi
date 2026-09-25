@@ -33,12 +33,13 @@ final class BleUpdateClient implements AutoCloseable {
         void onDevice(BluetoothDevice device, long playerId, int rssi);
         void onConnection(boolean connected, String message);
         void onTransfer(long done, long total, String message);
+        void onClockSynchronized();
         void onComplete();
         void onError(String message);
     }
 
     private enum Step {
-        IDLE, AUTH, MANIFEST_BEGIN, MANIFEST_CHUNK, MANIFEST_FINISH,
+        IDLE, AUTH, TIME_SYNC, MANIFEST_BEGIN, MANIFEST_CHUNK, MANIFEST_FINISH,
         OBJECT_BEGIN, DATA, OBJECT_FINISH, COMMIT, COMPLETE
     }
 
@@ -48,6 +49,7 @@ final class BleUpdateClient implements AutoCloseable {
     private final BluetoothAdapter adapter;
     private final Map<String, Long> playerIds = new LinkedHashMap<>();
     private final Map<String, Integer> advertisedDataBytes = new LinkedHashMap<>();
+    private final Map<String, Integer> advertisedCapabilities = new LinkedHashMap<>();
     private BluetoothLeScanner scanner;
     private BluetoothGatt gatt;
     private BluetoothGattCharacteristic control;
@@ -55,6 +57,7 @@ final class BleUpdateClient implements AutoCloseable {
     private BluetoothGattCharacteristic status;
     private int mtu = 23;
     private int maximumDataBytes = UpdateProtocol.LEGACY_MAXIMUM_DATA_BYTES;
+    private boolean supportsTimeSync;
     private volatile Step step = Step.IDLE;
     private volatile int expectedStatus = 0;
     private final Runnable operationTimeout = () -> {
@@ -62,6 +65,7 @@ final class BleUpdateClient implements AutoCloseable {
             fail("The console stopped responding. Reconnect to resume safely.");
     };
     private UpdatePackage updatePackage;
+    private boolean clockOnly;
     private int manifestOffset;
     private int payloadIndex;
     private long payloadOffset;
@@ -102,6 +106,7 @@ final class BleUpdateClient implements AutoCloseable {
         stopScan();
         playerIds.clear();
         advertisedDataBytes.clear();
+        advertisedCapabilities.clear();
         scanner = adapter.getBluetoothLeScanner();
         ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
@@ -123,6 +128,8 @@ final class BleUpdateClient implements AutoCloseable {
         if (gatt != null) gatt.close();
         maximumDataBytes = advertisedDataBytes.getOrDefault(
                 device.getAddress(), UpdateProtocol.LEGACY_MAXIMUM_DATA_BYTES);
+        supportsTimeSync = (advertisedCapabilities.getOrDefault(device.getAddress(), 0) &
+                UpdateProtocol.CAPABILITY_TIME_SYNC) != 0;
         listener.onConnection(false, "Connecting...");
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
     }
@@ -135,9 +142,26 @@ final class BleUpdateClient implements AutoCloseable {
             listener.onError("Enter the six-digit code shown on the Pokegochi"); return;
         }
         this.updatePackage = updatePackage;
+        clockOnly = false;
         manifestOffset = payloadIndex = 0;
         payloadOffset = 0;
         closePayloadStream();
+        step = Step.AUTH;
+        sendControl(UpdateProtocol.authenticate(pairingCode), UpdateProtocol.STATUS_AUTHENTICATED);
+    }
+
+    void synchronizeClock(int pairingCode) {
+        if (control == null || status == null || gatt == null) {
+            listener.onError("Connect to the Pokegochi first"); return;
+        }
+        if (!supportsTimeSync) {
+            listener.onError("Install firmware v24 before synchronizing the clock"); return;
+        }
+        if (pairingCode < 100000 || pairingCode > 999999) {
+            listener.onError("Enter the six-digit code shown on the Pokegochi"); return;
+        }
+        updatePackage = null;
+        clockOnly = true;
         step = Step.AUTH;
         sendControl(UpdateProtocol.authenticate(pairingCode), UpdateProtocol.STATUS_AUTHENTICATED);
     }
@@ -159,6 +183,7 @@ final class BleUpdateClient implements AutoCloseable {
             if (advertisement == null || advertisement.playerId == 0) return;
             String address = result.getDevice().getAddress();
             advertisedDataBytes.put(address, advertisement.maximumDataBytes);
+            advertisedCapabilities.put(address, advertisement.capabilities);
             if (playerIds.put(address, advertisement.playerId) == null)
                 listener.onDevice(result.getDevice(), advertisement.playerId, result.getRssi());
         }
@@ -288,9 +313,18 @@ final class BleUpdateClient implements AutoCloseable {
         try {
             switch (step) {
                 case AUTH:
-                    step = Step.MANIFEST_BEGIN;
-                    sendControl(UpdateProtocol.manifestBegin(updatePackage.manifest.length),
-                            UpdateProtocol.STATUS_DATA_ACCEPTED);
+                    if (supportsTimeSync) {
+                        step = Step.TIME_SYNC;
+                        sendControl(UpdateProtocol.synchronizeTime(),
+                                UpdateProtocol.STATUS_TIME_SYNCHRONIZED);
+                    } else beginManifestTransfer();
+                    break;
+                case TIME_SYNC:
+                    if (clockOnly) {
+                        clockOnly = false;
+                        step = Step.COMPLETE;
+                        listener.onClockSynchronized();
+                    } else beginManifestTransfer();
                     break;
                 case MANIFEST_BEGIN:
                 case MANIFEST_CHUNK:
@@ -356,6 +390,12 @@ final class BleUpdateClient implements AutoCloseable {
         manifestOffset += count;
         step = Step.MANIFEST_CHUNK;
         sendControl(packet, UpdateProtocol.STATUS_DATA_ACCEPTED);
+    }
+
+    private void beginManifestTransfer() {
+        step = Step.MANIFEST_BEGIN;
+        sendControl(UpdateProtocol.manifestBegin(updatePackage.manifest.length),
+                UpdateProtocol.STATUS_DATA_ACCEPTED);
     }
 
     private void beginCurrentPayload() {
@@ -471,10 +511,12 @@ final class BleUpdateClient implements AutoCloseable {
     private static final class UpdateAdvertisement {
         final long playerId;
         final int maximumDataBytes;
+        final int capabilities;
 
-        UpdateAdvertisement(long playerId, int maximumDataBytes) {
+        UpdateAdvertisement(long playerId, int maximumDataBytes, int capabilities) {
             this.playerId = playerId;
             this.maximumDataBytes = maximumDataBytes;
+            this.capabilities = capabilities;
         }
     }
 
@@ -503,7 +545,8 @@ final class BleUpdateClient implements AutoCloseable {
                                     advertised <= UpdateProtocol.MAXIMUM_DATA_BYTES)
                                 maximum = advertised;
                         }
-                        return new UpdateAdvertisement(playerId, maximum);
+                        int capabilities = index + 13 <= end ? record[index + 12] & 0xff : 0;
+                        return new UpdateAdvertisement(playerId, maximum, capabilities);
                     }
                 }
             }

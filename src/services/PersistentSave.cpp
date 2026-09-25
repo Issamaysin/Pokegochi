@@ -52,6 +52,9 @@ void initializeNewSave(GameSave& save) {
   save.settings.brightnessPercent = 80;
   save.settings.screenTimeoutIndex = 1;
   save.homePetPlacement.background = 0xFF;
+  save.creativeBackgrounds.activeSlot = 0xFF;
+  save.berryGarden.rngState = 0x42455252UL;
+  save.lastNpcGiftDay = UINT32_MAX;
 }
 
 // A new physical Pokegochi must not start on the same deterministic random
@@ -497,6 +500,22 @@ bool PersistentSave::readRecordV36(const char* key, RecordV36& record) {
   return read && record.magic == kMagic && record.version == 36 &&
          record.payloadSize == sizeof(GameSaveV36) && record.crc == calculatedCrc;
 }
+bool PersistentSave::readRecordV37(const char* key, RecordV37& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV37)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV37) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV37, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 37 &&
+         record.payloadSize == sizeof(GameSaveV37) && record.crc == calculatedCrc;
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -704,6 +723,30 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     std::memset(save.battle.opponentEncoreTurns,0,sizeof(save.battle.opponentEncoreTurns));
   };
   if (!found) {
+    // V38 appends the Berry Garden, five creative scenes and the obtainable
+    // species-item inventory. The permanent V37 collection and active battle
+    // remain byte-for-byte intact.
+    static_assert(sizeof(Record)>=sizeof(RecordV37),"V38 record must hold the V37 migration buffer");
+    RecordV37* legacy37=reinterpret_cast<RecordV37*>(record);
+    bool legacy37Found=false;uint32_t legacy37Sequence=0;
+    for(const char* key:{"save_a","save_b"}){
+      std::memset(legacy37,0,sizeof(*legacy37));
+      if(!readRecordV37(key,*legacy37)||(legacy37Found&&!isNewer(legacy37->sequence,legacy37Sequence)))continue;
+      initializeNewSave(save);const GameSaveV37& old=legacy37->payload;
+      save.playTimeSeconds=old.playTimeSeconds;save.bootCount=old.bootCount;
+      save.flags=old.flags;save.activePetSlot=old.activePetSlot;
+      save.collection=old.collection;save.inventory=old.inventory;
+      save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
+      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      save.money=old.money;save.mart=old.mart;save.moveLearning=old.moveLearning;
+      save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
+      save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
+      save.martSeenDay=old.martSeenDay;save.ppItems=old.ppItems;
+      save.homePetPlacement=old.homePetPlacement;
+      legacy37Sequence=legacy37->sequence;legacy37Found=true;
+    }
+    if(legacy37Found){sequence_=legacy37Sequence;nextSlotA_=true;if(!commit(save))return SaveLoadResult::StorageError;return SaveLoadResult::Loaded;}
+
     // V37 enlarges the Mart from fifteen to twenty offers. Preserve every
     // permanent V36 field, then expire only the old shop rotation so its next
     // opening creates four complete pages using the new probabilities.

@@ -2,23 +2,25 @@
 #include <Arduino.h>
 #include <cstddef>
 #include <Preferences.h>
+#include "drivers/TouchFilter.h"
 #include "game/BattleEngine.h"
 #include "game/Pokedex.h"
 #include "game/GymSystem.h"
 #include "game/Economy.h"
 #include "game/EggSystem.h"
+#include "game/WorldFeatures.h"
 
 enum class UiColorTheme : uint8_t { Sapphire = 0, Ruby = 1, Emerald = 2 };
 
 struct UserSettings {
   uint8_t homeBackground = 0;
   uint8_t brightnessPercent = 80;
-  // The timeout needs only two bits. Its high bit stores automatic battle
-  // dialogue, while two otherwise unused middle bits persist the global UI
-  // theme without growing or migrating the shipped save ABI.
+  // The timeout needs only two bits. The remaining bits persist battle text,
+  // touch input mode and UI theme without growing the shipped save ABI.
   uint8_t screenTimeoutIndex = 1;
 
   static constexpr uint8_t kAutoBattleTextMask = 0x80U;
+  static constexpr uint8_t kTouchInputModeMask = 0x40U;
   static constexpr uint8_t kThemeMask = 0x30U;
   static constexpr uint8_t kThemeShift = 4U;
   static constexpr uint8_t kScreenTimeoutMask = 0x0FU;
@@ -27,7 +29,7 @@ struct UserSettings {
   }
   void setScreenTimeout(uint8_t index) {
     screenTimeoutIndex = static_cast<uint8_t>(
-        (screenTimeoutIndex & (kAutoBattleTextMask | kThemeMask)) |
+        (screenTimeoutIndex & (kAutoBattleTextMask | kTouchInputModeMask | kThemeMask)) |
         (index & kScreenTimeoutMask));
   }
   bool autoBattleText() const {
@@ -37,6 +39,15 @@ struct UserSettings {
     screenTimeoutIndex = enabled
         ? static_cast<uint8_t>(screenTimeoutIndex | kAutoBattleTextMask)
         : static_cast<uint8_t>(screenTimeoutIndex & ~kAutoBattleTextMask);
+  }
+  TouchInputMode touchInputMode() const {
+    return (screenTimeoutIndex & kTouchInputModeMask)
+        ? TouchInputMode::Stylus : TouchInputMode::Finger;
+  }
+  void setTouchInputMode(TouchInputMode mode) {
+    screenTimeoutIndex = mode == TouchInputMode::Stylus
+        ? static_cast<uint8_t>(screenTimeoutIndex | kTouchInputModeMask)
+        : static_cast<uint8_t>(screenTimeoutIndex & ~kTouchInputModeMask);
   }
   UiColorTheme colorTheme() const {
     const uint8_t raw = static_cast<uint8_t>((screenTimeoutIndex & kThemeMask) >> kThemeShift);
@@ -115,7 +126,18 @@ struct GameSave {
   uint32_t martSeenDay = 0;
   PpItemInventory ppItems{};
   HomePetPlacementState homePetPlacement{};
+  BerryGardenState berryGarden{};
+  CreativeBackgroundState creativeBackgrounds{};
+  SpecialHeldItemInventory specialHeldItems{};
+  uint32_t lastNpcGiftDay = UINT32_MAX;
+  // Local Unix-style seconds (UTC plus the phone's current zone offset).
+  // This consumes V38's former four-byte tail padding, so existing V38 saves
+  // remain byte-for-byte readable and simply start unsynchronized at zero.
+  uint32_t clockLocalEpochSeconds = 0;
 };
+static_assert(offsetof(GameSave,clockLocalEpochSeconds)==26340,
+              "Synchronized clock must consume the frozen V38 tail padding");
+static_assert(sizeof(GameSave)==26344,"V38 payload size changed");
 
 enum class SaveLoadResult : uint8_t {
   Loaded,
@@ -135,7 +157,7 @@ class PersistentSave {
  private:
   struct Record;
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 37;
+  static constexpr uint16_t kFormatVersion = 38;
   struct MartStateLegacy7 { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy10 { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy15 { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
@@ -571,6 +593,24 @@ class PersistentSave {
   static_assert(sizeof(GameSaveV36)==26040,"Frozen V36 payload ABI changed");
   static_assert(offsetof(RecordV36,crc)==26056,"Frozen V36 CRC offset changed");
   static_assert(sizeof(RecordV36)==26064,"Frozen V36 record ABI changed");
+  // V37 enlarged the Mart to twenty offers and is the exact save layout
+  // immediately before the garden/creative-world extension was appended.
+  struct GameSaveV37 {
+    uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
+    PokemonCollection collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
+    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexState pokedex{};
+    GymProgress gymProgress{}; uint32_t money = 3000; MartState mart{};
+    MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
+    uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
+    PpItemInventory ppItems{}; HomePetPlacementState homePetPlacement{};
+  };
+  struct RecordV37 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV37 payload; uint32_t crc; };
+  // GameSaveV37 ends with four alignment-padding bytes; the first V38 field
+  // may reuse that padding without changing the frozen on-disk V37 payload.
+  static_assert(sizeof(GameSaveV37)==26064,"Frozen V37 payload ABI changed");
+  static_assert(offsetof(GameSave,berryGarden)==26060,"V38 extension offset changed");
+  static_assert(offsetof(RecordV37,crc)==offsetof(RecordV37,payload)+sizeof(GameSaveV37),
+                "Frozen V37 CRC offset changed");
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   // Kept for the lifetime of the firmware.  A save record is ~28 KiB, so a
@@ -600,6 +640,7 @@ class PersistentSave {
   bool readRecordV34(const char* key, RecordV34& record);
   bool readRecordV35(const char* key, RecordV35& record);
   bool readRecordV36(const char* key, RecordV36& record);
+  bool readRecordV37(const char* key, RecordV37& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   uint32_t crc32Update(uint32_t state, const uint8_t* data, size_t length) const;

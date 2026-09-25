@@ -198,6 +198,47 @@ void CollectionLogic::swapMovePpUps(OwnedPokemon& pokemon, uint8_t first, uint8_
   pokemon.legacyCareCounterReserved |= static_cast<uint32_t>(firstCount) << (second * 2U);
 }
 
+namespace {
+constexpr uint8_t kHeldBerryQuantityShift = 8U;
+constexpr uint32_t kHeldBerryQuantityMask = 0x07UL << kHeldBerryQuantityShift;
+}
+
+uint8_t CollectionLogic::heldItemQuantity(const OwnedPokemon& pokemon) {
+  if (pokemon.heldItem == HeldItem::None) return 0;
+  if (!heldItemIsBerry(pokemon.heldItem)) return 1;
+  const uint8_t stored = static_cast<uint8_t>(
+      (pokemon.legacyCareCounterReserved & kHeldBerryQuantityMask) >>
+      kHeldBerryQuantityShift);
+  return static_cast<uint8_t>(std::min<uint8_t>(
+      kMaximumHeldBerryQuantity, static_cast<uint8_t>(stored + 1U)));
+}
+
+bool CollectionLogic::setHeldItemQuantity(OwnedPokemon& pokemon, HeldItem item,
+                                          uint8_t quantity) {
+  pokemon.legacyCareCounterReserved &= ~kHeldBerryQuantityMask;
+  if (item == HeldItem::None || quantity == 0U) {
+    pokemon.heldItem = HeldItem::None;
+    return true;
+  }
+  if (!heldItemIsBerry(item) && quantity != 1U) return false;
+  pokemon.heldItem = item;
+  if (heldItemIsBerry(item)) {
+    const uint8_t bounded = std::min<uint8_t>(quantity, kMaximumHeldBerryQuantity);
+    pokemon.legacyCareCounterReserved |=
+        static_cast<uint32_t>(bounded - 1U) << kHeldBerryQuantityShift;
+  }
+  return true;
+}
+
+bool CollectionLogic::consumeHeldItem(OwnedPokemon& pokemon) {
+  const uint8_t quantity = heldItemQuantity(pokemon);
+  if (!quantity) return false;
+  if (heldItemIsBerry(pokemon.heldItem) && quantity > 1U)
+    return setHeldItemQuantity(pokemon, pokemon.heldItem,
+                               static_cast<uint8_t>(quantity - 1U));
+  return setHeldItemQuantity(pokemon, HeldItem::None, 0U);
+}
+
 const char* CollectionLogic::natureName(PokemonNature nature) {
   static constexpr const char* kNames[] = {
     "HARDY", "LONELY", "BRAVE", "ADAMANT", "NAUGHTY",
@@ -462,6 +503,12 @@ void CollectionLogic::sortBox(PokemonCollection& collection, BoxSortMode mode) {
                                   const OwnedPokemon& right) {
     if (!left.uid) return false;
     if (!right.uid) return true;
+    if (mode == BoxSortMode::EffortValues) {
+      const uint16_t leftTotal = totalEffortValues(left);
+      const uint16_t rightTotal = totalEffortValues(right);
+      if (leftTotal != rightTotal) return leftTotal > rightTotal;
+      if (left.level != right.level) return left.level > right.level;
+    }
     if (mode == BoxSortMode::Level && left.level != right.level)
       return left.level > right.level;
     if (left.speciesId != right.speciesId)

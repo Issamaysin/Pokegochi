@@ -1,4 +1,5 @@
 #include "game/HeldItems.h"
+#include "game/Collection.h"
 
 namespace {
 constexpr HeldItemData kItems[] = {
@@ -68,6 +69,7 @@ constexpr HeldItemData kItems[] = {
   {HeldItem::LuckyPunch,"LUCKY PUNCH",0,255,0,false,false,PokemonType::Normal},
   {HeldItem::GanlonBerry,"GANLON BERRY",0,255,0,true,false,PokemonType::Normal},
   {HeldItem::LuckyEgg,"LUCKY EGG",0,255,0,false,false,PokemonType::Normal},
+  {HeldItem::QuickPowder,"QUICK POWDER",0,255,0,false,false,PokemonType::Normal},
 };
 static_assert(sizeof(kItems)/sizeof(kItems[0]) == static_cast<uint8_t>(HeldItem::Count)-1U,
               "Held item catalog must cover every item");
@@ -143,18 +145,106 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::PetayaBerry: return "RAISES SP. ATK IN A PINCH.";
     case HeldItem::LuckyPunch: return "RAISES CHANSEY'S CRITICAL-HIT RATIO.";
     case HeldItem::GanlonBerry: return "RAISES DEFENSE IN A PINCH.";
-    case HeldItem::LuckyEgg: return "DOUBLES EXP. POINTS EARNED BY THE WHOLE ACTIVE PARTY.";
+    case HeldItem::LuckyEgg: return "A PERMANENT ACCOUNT REWARD THAT DOUBLES PARTY EXP.";
+    case HeldItem::QuickPowder: return "DOUBLES DITTO'S SPEED BEFORE IT TRANSFORMS.";
     default: return "NO BATTLE EFFECT.";
   }
 }
 bool heldItemIsConsumable(HeldItem item) { const HeldItemData* data=heldItemData(item);return data&&data->consumable; }
+bool heldItemIsBerry(HeldItem item) {
+  switch(item){
+    case HeldItem::OranBerry:case HeldItem::SitrusBerry:case HeldItem::LumBerry:
+    case HeldItem::PersimBerry:case HeldItem::CheriBerry:case HeldItem::ChestoBerry:
+    case HeldItem::PechaBerry:case HeldItem::RawstBerry:case HeldItem::AspearBerry:
+    case HeldItem::LeppaBerry:case HeldItem::IapapaBerry:case HeldItem::WikiBerry:
+    case HeldItem::SalacBerry:case HeldItem::LansatBerry:case HeldItem::ApicotBerry:
+    case HeldItem::StarfBerry:case HeldItem::LiechiBerry:case HeldItem::AguavBerry:
+    case HeldItem::FigyBerry:case HeldItem::MagoBerry:case HeldItem::PetayaBerry:
+    case HeldItem::GanlonBerry:return true;
+    default:return false;
+  }
+}
 bool heldItemBoostsType(HeldItem item,PokemonType type) { const HeldItemData* data=heldItemData(item);return data&&data->boostsType&&data->boostedType==type; }
 bool heldItemIsTransferLocked(HeldItem item) { return uniqueHeldItemOwnershipBit(item)!=0U; }
 uint8_t heldItemCount(){return kHeldItemInventorySlots-1U;}
 
+namespace {
+constexpr HeldItem kSpecialItems[kSpecialHeldItemCount] = {
+  HeldItem::LightBall, HeldItem::LuckyPunch, HeldItem::ThickClub,
+  HeldItem::Stick, HeldItem::MetalPowder, HeldItem::QuickPowder,
+  HeldItem::DeepSeaTooth, HeldItem::DeepSeaScale, HeldItem::SoulDew,
+};
+uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
+                          SpecialHeldItemInventory& special){
+  const uint8_t raw=static_cast<uint8_t>(item);
+  if(raw<kHeldItemInventorySlots)return inventory?&inventory[raw]:nullptr;
+  const int8_t specialIndex=specialHeldItemIndex(item);
+  return specialIndex>=0?&special.quantities[static_cast<uint8_t>(specialIndex)]:nullptr;
+}
+}
+
+int8_t specialHeldItemIndex(HeldItem item){
+  for(uint8_t index=0;index<kSpecialHeldItemCount;++index)
+    if(kSpecialItems[index]==item)return static_cast<int8_t>(index);
+  return -1;
+}
+uint16_t specialHeldItemQuantity(const SpecialHeldItemInventory& inventory,HeldItem item){
+  const int8_t index=specialHeldItemIndex(item);
+  return index>=0?inventory.quantities[static_cast<uint8_t>(index)]:0U;
+}
+
+bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
+                   SpecialHeldItemInventory& special,uint64_t& ownedMachines){
+  if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
+  if(selected==equipped){
+    uint16_t* selectedQuantity=countedQuantity(selected,inventory,special);
+    if(!heldItemIsBerry(selected)||!selectedQuantity||!*selectedQuantity||
+       equippedQuantity>=CollectionLogic::kMaximumHeldBerryQuantity)return false;
+    --*selectedQuantity;
+    return CollectionLogic::setHeldItemQuantity(
+        pokemon,selected,static_cast<uint8_t>(equippedQuantity+1U));
+  }
+  const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
+  const uint64_t equippedBit=uniqueHeldItemOwnershipBit(equipped);
+  uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:
+      countedQuantity(selected,inventory,special);
+  uint16_t* equippedBagQuantity=equipped==HeldItem::None?nullptr:
+      countedQuantity(equipped,inventory,special);
+  if(selected!=HeldItem::None){
+    if(selectedBit){if(!(ownedMachines&selectedBit))return false;}
+    else if(!selectedQuantity||!*selectedQuantity)return false;
+  }
+  if(equipped!=HeldItem::None&&!equippedBit&&
+     (!equippedBagQuantity||UINT16_MAX-*equippedBagQuantity<equippedQuantity))return false;
+  if(equippedBit)ownedMachines|=equippedBit;
+  else if(equippedBagQuantity)*equippedBagQuantity=static_cast<uint16_t>(
+      *equippedBagQuantity+equippedQuantity);
+  if(selectedBit)ownedMachines&=~selectedBit;
+  else if(selectedQuantity)--*selectedQuantity;
+  return CollectionLogic::setHeldItemQuantity(
+      pokemon,selected,selected==HeldItem::None?0U:1U);
+}
+
+bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
+                     SpecialHeldItemInventory& special,uint64_t& ownedMachines){
+  if(pokemon.heldItem==HeldItem::None)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const uint8_t quantity=CollectionLogic::heldItemQuantity(pokemon);
+  const uint64_t ownershipBit=uniqueHeldItemOwnershipBit(equipped);
+  if(ownershipBit){ownedMachines|=ownershipBit;return CollectionLogic::setHeldItemQuantity(
+      pokemon,HeldItem::None,0U);}
+  uint16_t* bagQuantity=countedQuantity(equipped,inventory,special);
+  if(!bagQuantity||UINT16_MAX-*bagQuantity<quantity)return false;
+  *bagQuantity=static_cast<uint16_t>(*bagQuantity+quantity);
+  return CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+}
+
 bool equipHeldItem(HeldItem& equipped,HeldItem selected,uint16_t inventory[],
                    uint64_t& ownedMachines) {
-  if(!inventory||selected>=HeldItem::Count||selected==equipped)return false;
+  if(!inventory||selected>=HeldItem::Count||selected==equipped||
+     selected==HeldItem::LuckyEgg)return false;
   const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
   const uint64_t equippedBit=uniqueHeldItemOwnershipBit(equipped);
   const uint8_t selectedIndex=static_cast<uint8_t>(selected);

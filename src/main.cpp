@@ -2,6 +2,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <TFT_eSPI.h>
+#include <esp_attr.h>
 #include <esp_sleep.h>
 #include <esp_timer.h>
 #include <esp_heap_caps.h>
@@ -17,6 +18,7 @@
 #include "drivers/RgbLed.h"
 #include "drivers/TouchDriver.h"
 #include "game/BattleEngine.h"
+#include "game/BattleEnvironment.h"
 #include "game/BattleAnimationData.h"
 #include "game/BattleTouch.h"
 #include "game/Collection.h"
@@ -29,6 +31,9 @@
 #include "game/MegaChallengeSystem.h"
 #include "game/BattleTowerSystem.h"
 #include "game/HomeBackgrounds.h"
+#include "game/HomeWeather.h"
+#include "game/WorldFeatures.h"
+#include "game/BatteryProtection.h"
 #include "services/PersistentSave.h"
 #include "services/Multiplayer.h"
 #include "services/SwipeUnlock.h"
@@ -78,6 +83,13 @@ const char* chooseBattleTerrain(const OwnedPokemon* opponent);
 void requestRetainedFrame();
 void drawUnlockScreen();
 void drawWirelessUpdate();
+void drawKidsMenu();
+void drawKidsMemory();
+void drawKidsPaint();
+void drawKidsCatch();
+void drawKidsPokeball(int16_t cx,int16_t cy,int16_t radius);
+void drawBerryGarden();
+void drawMegaFormSelect();
 void turnDisplayOff();
 bool seriesIntroPending();
 const char* pokemonTypeName(PokemonType type);
@@ -90,7 +102,7 @@ void drawFireRedBattleWindow(int16_t x, int16_t y, int16_t width, int16_t height
 void drawGbaInsetPanel(int16_t x, int16_t y, int16_t width, int16_t height,
                        uint8_t radius, uint16_t frame, uint16_t paper,
                        uint16_t highlight);
-enum class Screen : uint8_t { Diagnostic, OakIntro, Starter, RegionalDiscovery, RegionalStarter, PokedexUpdated, PokedexCompleteReward, Home, PokecenterConfirm, Settings, PlayerStats, WirelessUpdate, EggOffer, EggStatus, EggHatch, GymInvite, LeagueInvite, MegaChallengeInvite, TowerInvite, LeagueComplete, ChooseBattler, TrainerIntro, Battle, MoveSelect, EvolutionCinematic, TradeCinematic, EvolutionChoose, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, TrainerCard, BadgeCase, Box, Pokedex, PokedexDetail, Mart, Recovery };
+enum class Screen : uint8_t { Diagnostic, OakIntro, Starter, RegionalDiscovery, RegionalStarter, PokedexUpdated, PokedexCompleteReward, Home, PokecenterConfirm, Settings, PlayerStats, WirelessUpdate, KidsMenu, KidsMemory, KidsPaint, EggOffer, EggStatus, EggHatch, GymInvite, LeagueInvite, MegaChallengeInvite, TowerInvite, LeagueComplete, ChooseBattler, TrainerIntro, Battle, MoveSelect, EvolutionCinematic, TradeCinematic, EvolutionChoose, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, TrainerCard, BadgeCase, Box, Pokedex, PokedexDetail, Mart, Recovery, BerryGarden, KidsCatch, MegaFormSelect };
 bool beginScreenPresentation(Screen target, uint16_t clearColor);
 // Every screen is retained on the physical TFT.  A normal interaction is
 // therefore not allowed to clear a screen before it paints its delta: that
@@ -133,7 +145,7 @@ struct InventoryEntry {
 // any realistic play session, so that bit records the one-time Oak rescue.
 constexpr uint32_t kOakRescueUsedMask = 0x80000000UL;
 constexpr uint32_t kMartSeenDayMask = 0x7FFFFFFFUL;
-constexpr char kGameVersion[] = "2.0 RELEASE";
+constexpr char kGameVersion[] = "2.2 RELEASE";
 // Colours sampled from FireRed's battle_interface palettes.  They are used
 // by the arena and by every battle-adjacent screen so pre-battle selection
 // no longer looks like a separate blue application.
@@ -219,6 +231,7 @@ bool assetPackUpdateRequired = false;
 // to the destination screen; require release or a deliberate finger move.
 bool touchBlockedAfterScreenChange = false;
 uint32_t lastSaveMs = 0, selectedUid = 0;
+uint16_t lastRenderedWorldMinute = UINT16_MAX;
 uint32_t fieldMoveUserUid = 0;
 constexpr uint8_t kPokecenterSceneCount = 10;
 uint8_t pokecenterSceneIndex = 0xFFU;
@@ -609,6 +622,7 @@ uint64_t lastClockUs = 0;
 uint32_t lastAnimationMs = 0;
 uint32_t lastInteractionMs = 0;
 uint32_t homeAnimationStep = 0;
+HomeWeatherSample lastHomeWeatherSample{};
 uint8_t iconFrame = 0;
 int16_t homeLastX[kPartyCapacity]{};
 int16_t homeLastY[kPartyCapacity]{};
@@ -679,6 +693,7 @@ uint8_t inventorySelection = 0;
 uint8_t inventoryListOffset = 0;
 InventoryMode inventoryMode = InventoryMode::Browse;
 uint32_t inventoryMoveTargetUid = 0;
+uint32_t megaVariantTargetUid = 0;
 // The same FireRed Bag screen is shared by Home and battles. This flag changes
 // only legal pockets, Cancel destination and item execution; it never swaps in
 // a second, visually unrelated battle-item menu.
@@ -701,6 +716,43 @@ uint8_t trainerCardRegion = 1;
 uint8_t trainerBadgeCaseSelection = 0;
 uint8_t settingsPage = 0;
 uint8_t settingsScroll = 0;
+uint8_t gardenBerrySelection = 0;
+char worldFeatureNotice[48] = "";
+constexpr int16_t kBerryGardenTreeX[3] = {80, 180, 276};
+constexpr int16_t kBerryGardenTreeY[2] = {48, 116};
+constexpr int16_t kBerryGardenTouchX[3] = {60, 160, 256};
+constexpr int16_t kBerryGardenTouchY[2] = {54, 120};
+uint32_t kidsRandomState = 0x4B494453UL;
+uint8_t kidsMemoryCards[12]{};
+uint16_t kidsMemoryMatched = 0;
+int8_t kidsMemoryFirst = -1;
+int8_t kidsMemorySecond = -1;
+uint16_t kidsMemoryCardClicks = 0;
+uint8_t kidsCatchScore = 0;
+uint8_t kidsCatchBerry = 0;
+int16_t kidsCatchX = 160;
+int16_t kidsCatchY = 125;
+bool kidsCatchTimerStarted = false;
+uint32_t kidsCatchStartedMs = 0;
+uint32_t kidsCatchFinishedMs = 0;
+uint8_t kidsPaintColor = 1;
+constexpr uint8_t kKidsCanvasWidth = 148;
+constexpr uint8_t kKidsCanvasHeight = 70;
+constexpr size_t kKidsCanvasBytes =
+    (static_cast<size_t>(kKidsCanvasWidth) * kKidsCanvasHeight + 3U) / 4U;
+uint8_t* kidsPaintPixels = nullptr;
+int16_t kidsPaintLastX = -1;
+int16_t kidsPaintLastY = -1;
+uint32_t kidsPaintLastTouchMs = 0;
+int16_t kidsPaintSampleX[3]{};
+int16_t kidsPaintSampleY[3]{};
+uint8_t kidsPaintSampleCount = 0;
+uint8_t kidsPaintSampleCursor = 0;
+TouchInputFilter gameTouchFilter;
+Screen gameTouchFilterScreen = Screen::Diagnostic;
+uint8_t kidsExitSlide = 0;
+bool kidsExitDragging = false;
+bool kidsExitAwaitRelease = false;
 // The 39-scenery browser keeps only one 20-30 KiB map in the shared scene
 // bank. After presenting a selection, use the idle interval to replace that
 // bank with the next map in the direction being browsed. Consecutive taps are
@@ -767,6 +819,9 @@ uint8_t batteryBars = 0;
 uint16_t batteryMillivolts = 0;
 bool batteryReadingValid = false;
 uint32_t lastBatterySampleMs = 0;
+constexpr uint32_t kLowBatteryDormantMagic = 0x4C4F5742UL;  // "LOWB"
+RTC_DATA_ATTR uint32_t lowBatteryDormantMarker = 0;
+bool lowBatteryDormancyStarting = false;
 struct BatterySampleBurst {
   uint32_t millivoltSum = 0;
   uint32_t nextSampleMs = 0;
@@ -913,6 +968,7 @@ bool battleFlowFinishDeferred = false;
 // the prize-money dialogue.
 bool towerRareCandyMessagePending = false;
 bool towerSpecialEggMessagePending = false;
+bool towerMasterBallMessagePending = false;
 bool luckyEggMessagePending = false;
 // The reward is committed with the victory. This transient flag merely gives
 // the unique Mega Stone its own acknowledged FireRed-style result dialogue.
@@ -1033,8 +1089,10 @@ uint8_t inventoryEntries(InventoryEntry* entries, uint8_t capacity) {
       if (gameSave.inventory.heldItems[id]) add(InventoryEntryKind::Held, id);
     if(gameSave.ownedMachines&kMegaStoneOwnershipBit)
       add(InventoryEntryKind::Held,static_cast<uint8_t>(HeldItem::MegaStone));
-    if(gameSave.ownedMachines&kLuckyEggOwnershipBit)
-      add(InventoryEntryKind::Held,static_cast<uint8_t>(HeldItem::LuckyEgg));
+    for(uint8_t id=static_cast<uint8_t>(HeldItem::MegaStone)+1U;
+        id<static_cast<uint8_t>(HeldItem::Count);++id)
+      if(specialHeldItemQuantity(gameSave.specialHeldItems,static_cast<HeldItem>(id)))
+        add(InventoryEntryKind::Held,id);
   } else if (bagPage == kMachinePocket) {
     for (uint8_t id = 0; id < kMachineCount; ++id)
       if (Economy::ownsMachine(gameSave.ownedMachines, id)) add(InventoryEntryKind::Machine, id);
@@ -1054,7 +1112,9 @@ uint8_t inventoryTotalEntries() {
   } else if (bagPage == kHeldPocket) {
     for (uint8_t id=1;id<kHeldItemInventorySlots;++id) if(gameSave.inventory.heldItems[id]) ++total;
     if(gameSave.ownedMachines&kMegaStoneOwnershipBit)++total;
-    if(gameSave.ownedMachines&kLuckyEggOwnershipBit)++total;
+    for(uint8_t id=static_cast<uint8_t>(HeldItem::MegaStone)+1U;
+        id<static_cast<uint8_t>(HeldItem::Count);++id)
+      if(specialHeldItemQuantity(gameSave.specialHeldItems,static_cast<HeldItem>(id)))++total;
   } else if (bagPage == kMachinePocket) {
     for (uint8_t id=0;id<kMachineCount;++id) if(Economy::ownsMachine(gameSave.ownedMachines,id)) ++total;
   }
@@ -1097,7 +1157,11 @@ void saveNow();
 
 void normalizeSettings() {
   gameSave.settings.homeBackground = HomeBackgrounds::normalize(gameSave.settings.homeBackground);
+  // The retired Map Maker bytes remain in the frozen save layout only for
+  // backward compatibility. Never let an older active slot affect the Home.
+  gameSave.creativeBackgrounds.activeSlot = 0xFF;
   gameSave.settings.setColorTheme(gameSave.settings.colorTheme());
+  gameSave.settings.setTouchInputMode(gameSave.settings.touchInputMode());
   if (gameSave.settings.brightnessPercent < 20 || gameSave.settings.brightnessPercent > 100)
     gameSave.settings.brightnessPercent = 80;
   gameSave.settings.brightnessPercent = static_cast<uint8_t>((gameSave.settings.brightnessPercent / 20U) * 20U);
@@ -1114,9 +1178,10 @@ bool inside(const TouchPoint& p, int16_t x, int16_t y, int16_t w, int16_t h) {
   // Keep hit boxes almost identical to their painted bounds. Expanding every
   // control by five pixels made neighbouring FireRed controls overlap and a
   // physically correct tap could be claimed by the wrong button.
-  constexpr int16_t kTouchTolerance = 3;
-  return p.x >= x - kTouchTolerance && p.x < x + w + kTouchTolerance &&
-         p.y >= y - kTouchTolerance && p.y < y + h + kTouchTolerance;
+  const int16_t tolerance = gameSaveStorage &&
+      gameSave.settings.touchInputMode() == TouchInputMode::Stylus ? 1 : 3;
+  return p.x >= x - tolerance && p.x < x + w + tolerance &&
+         p.y >= y - tolerance && p.y < y + h + tolerance;
 }
 
 // Generation III derives gender from the low personality byte and the
@@ -11029,7 +11094,9 @@ void preloadBallAnimation(PokeBallType ball){
     return complete;
   };
   if(loadFrames())return;
-  AssetRenderer::clearSmallCache();
+  // Release the previous screen's scene ownership too, allowing this round's
+  // twelve 64px front sprites to use the otherwise-idle scene workspace.
+  AssetRenderer::clearCache();
   const OwnedPokemon* player=CollectionLogic::find(gameSave.collection,gameSave.battle.playerUid);
   const OwnedPokemon* opponent=BattleEngine::currentOpponent(gameSave.battle);
   char path[112];
@@ -11185,11 +11252,23 @@ const char* inventoryEntryName(InventoryEntry entry) {
   return "";
 }
 
+const char* heldItemDisplayName(const OwnedPokemon& pokemon){
+  static char displayName[32];
+  const uint8_t quantity=CollectionLogic::heldItemQuantity(pokemon);
+  if(heldItemIsBerry(pokemon.heldItem)&&quantity>1U)
+    std::snprintf(displayName,sizeof(displayName),"%s x%u",heldItemName(pokemon.heldItem),quantity);
+  else std::snprintf(displayName,sizeof(displayName),"%s",heldItemName(pokemon.heldItem));
+  return displayName;
+}
+
 uint16_t inventoryEntryQuantity(InventoryEntry entry) {
   switch (entry.kind) {
     case InventoryEntryKind::Ball: return gameSave.inventory.balls[entry.id];
     case InventoryEntryKind::Medicine: return battleItemQuantity(static_cast<BattleItem>(entry.id));
     case InventoryEntryKind::Held:
+      if(specialHeldItemIndex(static_cast<HeldItem>(entry.id))>=0)
+        return specialHeldItemQuantity(gameSave.specialHeldItems,
+                                       static_cast<HeldItem>(entry.id));
       if (const uint64_t bit=uniqueHeldItemOwnershipBit(static_cast<HeldItem>(entry.id)))
         return (gameSave.ownedMachines&bit)?1U:0U;
       return entry.id<kHeldItemInventorySlots?gameSave.inventory.heldItems[entry.id]:0U;
@@ -11288,8 +11367,8 @@ bool applyInventoryItem(InventoryEntry entry, OwnedPokemon& pokemon) {
   if (entry.kind == InventoryEntryKind::Held) {
     const HeldItem selected=static_cast<HeldItem>(entry.id);
     if(selected==HeldItem::MegaStone&&!MegaEvolution::canTransform(pokemon.speciesId))return false;
-    const bool changed=equipHeldItem(pokemon.heldItem,selected,
-        gameSave.inventory.heldItems,gameSave.ownedMachines);
+    const bool changed=equipHeldItem(pokemon,selected,gameSave.inventory.heldItems,
+        gameSave.specialHeldItems,gameSave.ownedMachines);
     if(changed){CollectionLogic::refreshAbility(pokemon);CollectionLogic::refreshDerivedStats(pokemon,true);}
     return changed;
   }
@@ -12947,6 +13026,66 @@ uint8_t batteryPercentFromMillivolts(uint16_t millivolts) {
   return 0;
 }
 
+constexpr uint16_t kBatteryMinimumValidMillivolts = 2500U;
+constexpr uint16_t kBatteryMaximumValidMillivolts = 4600U;
+
+bool validBatteryMillivolts(uint16_t millivolts) {
+  return millivolts >= kBatteryMinimumValidMillivolts &&
+         millivolts <= kBatteryMaximumValidMillivolts;
+}
+
+void configureBatteryAdc() {
+  pinMode(board::kBatterySensePin, INPUT);
+  analogReadResolution(12);
+  // Arduino-ESP32 3.x registers a pin with the ADC one-shot driver on its
+  // first read. Configure per-pin attenuation only after that registration.
+  (void)analogRead(board::kBatterySensePin);
+  analogSetPinAttenuation(board::kBatterySensePin, ADC_11db);
+}
+
+uint16_t readBatteryCellMillivoltsBlocking() {
+  uint32_t pinMillivoltSum = 0;
+  for(uint8_t sample=0;sample<4U;++sample){
+    pinMillivoltSum += analogReadMilliVolts(board::kBatterySensePin);
+    if(sample<3U)delay(20);
+  }
+  const uint32_t pinMillivolts=pinMillivoltSum/4U;
+  return static_cast<uint16_t>(pinMillivolts*
+      (board::kBatteryDividerTopOhms+board::kBatteryDividerBottomOhms)/
+      board::kBatteryDividerBottomOhms);
+}
+
+[[noreturn]] void sleepUntilBatteryRecheck() {
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_sleep_enable_timer_wakeup(
+      static_cast<uint64_t>(BatteryProtection::kDormantRecheckSeconds)*1000000ULL);
+  Serial.flush();
+  esp_deep_sleep_start();
+  while(true)delay(1000);
+}
+
+void resumeLowBatteryDormancyAtBoot() {
+  if(lowBatteryDormantMarker!=kLowBatteryDormantMagic)return;
+
+  // Keep the panel dark during periodic charge checks. No SD, renderer, save
+  // or BLE allocation is needed until the cell has actually crossed 10%.
+  pinMode(board::kBacklightPin,OUTPUT);
+  digitalWrite(board::kBacklightPin,board::kBacklightOnLevel?LOW:HIGH);
+  configureBatteryAdc();
+  const uint16_t millivolts=readBatteryCellMillivoltsBlocking();
+  const bool valid=validBatteryMillivolts(millivolts);
+  const uint8_t percent=valid?batteryPercentFromMillivolts(millivolts):0U;
+  Serial.printf("[BAT] dormant check cell=%umV valid=%u percent=%u\n",
+      millivolts,valid?1U:0U,valid?percent:0U);
+  if(BatteryProtection::canResume(valid,percent)){
+    lowBatteryDormantMarker=0;
+    Serial.println("[BAT] charge above 10%; resuming normal boot");
+    return;
+  }
+  Serial.println("[BAT] charge not above 10%; remaining dormant");
+  sleepUntilBatteryRecheck();
+}
+
 uint8_t batteryBarsFromPercent(uint8_t percent) {
   if (percent <= 5U) return 0;
   if (percent <= 25U) return 1;
@@ -12981,7 +13120,7 @@ bool serviceBatterySampleBurst(uint32_t now) {
       (board::kBatteryDividerTopOhms+board::kBatteryDividerBottomOhms)/board::kBatteryDividerBottomOhms);
   // An unconnected GPIO35 floats near zero. Do not present that as an empty
   // battery until the physical divider is actually wired.
-  batteryReadingValid=batteryMillivolts>=2500U&&batteryMillivolts<=4600U;
+  batteryReadingValid=validBatteryMillivolts(batteryMillivolts);
   if(batteryReadingValid){
     batteryPercent=batteryPercentFromMillivolts(batteryMillivolts);
     batteryBars=batteryBarsFromPercent(batteryPercent);
@@ -13251,6 +13390,134 @@ constexpr uint8_t kHomePetMinimumGridY = 2;
 constexpr uint8_t kHomePetMaximumGridY = HomeBackgrounds::kGridHeight - 1U;
 constexpr int16_t kHomePetMinimumSeparation = 36;
 
+uint16_t currentWorldMinute(){
+  return WorldClock::minuteOfDay(gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds);
+}
+
+uint32_t currentWorldDay(){
+  return WorldClock::day(gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds);
+}
+
+WorldTimePeriod currentWorldPeriod(){
+  return WorldClock::period(gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds);
+}
+
+HomeWeatherSample currentHomeWeather(){
+  return HomeWeather::sample(WorldClock::effectiveSeconds(
+      gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds));
+}
+
+struct AmbientWeatherBounds {
+  int16_t x = 0;
+  int16_t y = 0;
+  int16_t width = 0;
+  int16_t height = 0;
+  bool valid() const { return width > 0 && height > 0; }
+};
+
+uint16_t ambientWeatherTriangle(uint32_t phase,uint16_t range){
+  if(!range)return 0;
+  const uint32_t cycle=static_cast<uint32_t>(range)*2U;
+  const uint16_t position=static_cast<uint16_t>(phase%cycle);
+  return position<=range?position:static_cast<uint16_t>(cycle-position);
+}
+
+AmbientWeatherBounds homeWeatherBounds(const HomeWeatherSample& weather,
+                                        uint32_t animationStep){
+  (void)animationStep;
+  if(!weather.active())return {};
+  // Weather belongs to the complete 304x134 landscape. Individual particles
+  // remain sparse below, but no event is confined to one moving corner.
+  return {8,49,304,134};
+}
+
+int16_t ambientWeatherLaneX(const AmbientWeatherBounds& bounds,uint8_t index,
+                            uint8_t count,uint8_t spriteWidth,uint32_t seed){
+  if(!count||bounds.width<=spriteWidth)return bounds.x;
+  const uint16_t span=static_cast<uint16_t>(bounds.width-spriteWidth);
+  const uint16_t laneStart=static_cast<uint16_t>(
+      static_cast<uint32_t>(span)*index/count);
+  const uint16_t laneEnd=static_cast<uint16_t>(
+      static_cast<uint32_t>(span)*(index+1U)/count);
+  const uint16_t laneWidth=std::max<uint16_t>(1U,laneEnd-laneStart+1U);
+  const uint32_t mixed=HomeWeather::mix(seed^(
+      static_cast<uint32_t>(index+1U)*0x9E3779B9UL));
+  return static_cast<int16_t>(bounds.x+laneStart+(mixed%laneWidth));
+}
+
+bool ambientWeatherIntersects(int16_t left,int16_t top,int16_t width,int16_t height,
+                              int16_t clipX,int16_t clipY,uint16_t clipWidth,
+                              uint16_t clipHeight){
+  return left<clipX+static_cast<int16_t>(clipWidth)&&left+width>clipX&&
+      top<clipY+static_cast<int16_t>(clipHeight)&&top+height>clipY;
+}
+
+void drawHomeWeatherInClip(int16_t clipX,int16_t clipY,uint16_t clipWidth,
+                           uint16_t clipHeight){
+  const HomeWeatherSample weather=currentHomeWeather();
+  const uint32_t weatherStep=homeAnimationStep/2U;
+  const AmbientWeatherBounds bounds=homeWeatherBounds(weather,weatherStep);
+  if(!bounds.valid()||!ambientWeatherIntersects(bounds.x,bounds.y,bounds.width,
+      bounds.height,clipX,clipY,clipWidth,clipHeight))return;
+  const uint32_t seed=weather.eventKey;
+  if(weather.kind==HomeWeatherKind::Rain){
+    constexpr uint8_t kDropCount=9U;
+    constexpr uint16_t kVerticalRange=134U-32U+1U;
+    for(uint8_t drop=0;drop<kDropCount;++drop){
+      const int16_t x=ambientWeatherLaneX(bounds,drop,kDropCount,16U,seed);
+      const int16_t y=static_cast<int16_t>(bounds.y+
+          ((weatherStep*11U+drop*31U+(seed>>8U))%kVerticalRange));
+      if(ambientWeatherIntersects(x,y,16,32,clipX,clipY,clipWidth,clipHeight))
+        AssetRenderer::draw(display,
+            "/pokegochi/assets/firered/battle_anims/sprites/rain_drops_00.pkg",x,y);
+    }
+  }else if(weather.kind==HomeWeatherKind::Wind){
+    constexpr uint8_t kGustCount=5U;
+    constexpr uint16_t kVerticalRange=134U-16U+1U;
+    constexpr uint16_t kHorizontalRange=304U-32U+1U;
+    for(uint8_t gust=0;gust<kGustCount;++gust){
+      const int16_t x=static_cast<int16_t>(bounds.x+
+          ((weatherStep*13U+gust*67U+(seed&0xFFU))%kHorizontalRange));
+      const int16_t y=static_cast<int16_t>(bounds.y+
+          ((gust*29U+(seed>>10U))%kVerticalRange));
+      if(ambientWeatherIntersects(x,y,32,16,clipX,clipY,clipWidth,clipHeight))
+        AssetRenderer::draw(display,
+            "/pokegochi/assets/firered/battle_anims/sprites/whirlwind_lines_00.pkg",x,y);
+    }
+  }else if(weather.kind==HomeWeatherKind::Hail){
+    constexpr uint8_t kStoneCount=8U;
+    constexpr uint16_t kVerticalRange=134U-16U+1U;
+    for(uint8_t stone=0;stone<kStoneCount;++stone){
+      const int16_t x=ambientWeatherLaneX(bounds,stone,kStoneCount,16U,seed);
+      const int16_t y=static_cast<int16_t>(bounds.y+
+          ((weatherStep*8U+stone*37U+(seed>>8U))%kVerticalRange));
+      if(ambientWeatherIntersects(x,y,16,16,clipX,clipY,clipWidth,clipHeight))
+        AssetRenderer::draw(display,
+            "/pokegochi/assets/firered/battle_anims/sprites/hail_00.pkg",x,y);
+    }
+  }else if(weather.kind==HomeWeatherKind::Sun){
+    constexpr uint8_t kRayCount=3U;
+    constexpr uint16_t kVerticalRange=134U-32U-3U;
+    for(uint8_t ray=0;ray<kRayCount;++ray){
+      const int16_t x=ambientWeatherLaneX(bounds,ray,kRayCount,32U,seed);
+      const int16_t y=static_cast<int16_t>(bounds.y+
+          ((ray*43U+(seed>>9U))%kVerticalRange)+
+          ambientWeatherTriangle(weatherStep/2U+ray*7U+seed,3U));
+      if(ambientWeatherIntersects(x,y,32,32,clipX,clipY,clipWidth,clipHeight))
+        AssetRenderer::draw(display,
+            "/pokegochi/assets/firered/battle_anims/sprites/sunlight_00.pkg",x,y);
+    }
+  }
+}
+
+uint8_t currentHomeBackgroundKey(){
+  return HomeBackgrounds::normalize(gameSave.settings.homeBackground);
+}
+
+bool homeGridWalkable(uint8_t background,uint8_t x,uint8_t y){
+  return HomeBackgrounds::walkable(background,x,y);
+}
+
 uint32_t nextHomePetRandom(HomePetMotion& motion) {
   uint32_t value = motion.randomState ? motion.randomState : 0x6D2B79F5UL;
   value ^= value << 13U;
@@ -13267,11 +13534,11 @@ void resetHomePetMotionsForBackground(uint8_t background) {
 
 void initializeHomePetMotion(uint8_t slot, const OwnedPokemon& pokemon) {
   HomePetMotion& motion = homePetMotion[slot];
-  const HomeBackgrounds::PetRoute& spawn = HomeBackgrounds::route(homePetMotionBackground, slot);
   motion = HomePetMotion{};
   motion.uid = pokemon.uid;
-  uint8_t initialX = static_cast<uint8_t>((spawn.x0 - 8) / 16);
-  uint8_t initialY = static_cast<uint8_t>((spawn.y0 - 8) / 16);
+  const HomeBackgrounds::PetRoute& spawn=HomeBackgrounds::route(homePetMotionBackground,slot);
+  uint8_t initialX=static_cast<uint8_t>((spawn.x0-8)/16);
+  uint8_t initialY=static_cast<uint8_t>((spawn.y0-8)/16);
   const HomePetPlacementState& placement = gameSave.homePetPlacement;
   if (placement.background == homePetMotionBackground &&
       (placement.validMask & (1U << slot)) != 0U &&
@@ -13279,8 +13546,8 @@ void initializeHomePetMotion(uint8_t slot, const OwnedPokemon& pokemon) {
       placement.gridX[slot] <= kHomePetMaximumGridX &&
       placement.gridY[slot] >= kHomePetMinimumGridY &&
       placement.gridY[slot] <= kHomePetMaximumGridY &&
-      HomeBackgrounds::walkable(homePetMotionBackground,
-                                placement.gridX[slot], placement.gridY[slot])) {
+       homeGridWalkable(homePetMotionBackground,
+                        placement.gridX[slot],placement.gridY[slot])) {
     initialX = placement.gridX[slot];
     initialY = placement.gridY[slot];
   }
@@ -13299,7 +13566,7 @@ void initializeHomePetMotion(uint8_t slot, const OwnedPokemon& pokemon) {
 }
 
 void synchronizeHomePetMotions() {
-  const uint8_t background = HomeBackgrounds::normalize(gameSave.settings.homeBackground);
+  const uint8_t background=currentHomeBackgroundKey();
   if (homePetMotionBackground != background) resetHomePetMotionsForBackground(background);
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
     const OwnedPokemon* member = CollectionLogic::active(gameSave.collection, slot);
@@ -13355,8 +13622,8 @@ bool chooseHomePetDestination(uint8_t slot) {
     const int16_t nextY = static_cast<int16_t>(motion.cellY) + kDy[direction];
     if (nextX < kHomePetMinimumGridX || nextX > kHomePetMaximumGridX ||
         nextY < kHomePetMinimumGridY || nextY > kHomePetMaximumGridY ||
-        !HomeBackgrounds::walkable(homePetMotionBackground,
-                                   static_cast<uint8_t>(nextX), static_cast<uint8_t>(nextY)) ||
+        !homeGridWalkable(homePetMotionBackground,
+                          static_cast<uint8_t>(nextX),static_cast<uint8_t>(nextY)) ||
         !homePetDestinationSeparated(slot, static_cast<uint8_t>(nextX), static_cast<uint8_t>(nextY)))
       continue;
     if (nextX == motion.previousX && nextY == motion.previousY)
@@ -13382,6 +13649,12 @@ void advanceHomePetMotions() {
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
     HomePetMotion& motion = homePetMotion[slot];
     if (motion.uid == kEmptyPokemonUid) continue;
+    const OwnedPokemon* member=CollectionLogic::active(gameSave.collection,slot);
+    if(member&&WorldClock::speciesSleeps(member->speciesId,
+       currentWorldPeriod())){
+      motion.targetX=motion.cellX;motion.targetY=motion.cellY;motion.progress=0;
+      motion.ambientEffectPhase=0;continue;
+    }
     if (motion.ambientCooldownTicks) --motion.ambientCooldownTicks;
     if (motion.ambientEffectPhase) {
       if (++motion.ambientEffectPhase > 6U) {
@@ -13469,7 +13742,7 @@ bool placeHomePetAt(uint8_t slot, uint8_t gridX, uint8_t gridY) {
   if (slot >= kPartyCapacity || homePetMotion[slot].uid == kEmptyPokemonUid ||
       gridX < kHomePetMinimumGridX || gridX > kHomePetMaximumGridX ||
       gridY < kHomePetMinimumGridY || gridY > kHomePetMaximumGridY ||
-      !HomeBackgrounds::walkable(homePetMotionBackground, gridX, gridY) ||
+       !homeGridWalkable(homePetMotionBackground,gridX,gridY) ||
       !homePetDestinationSeparated(slot, gridX, gridY)) return false;
 
   HomePetMotion& motion = homePetMotion[slot];
@@ -13508,14 +13781,21 @@ void homePetPosition(uint8_t slot, int16_t& x, int16_t& y) {
 void drawHomePet(uint8_t slot, int16_t x, int16_t y,
                  const OwnedPokemon& pokemon) {
   synchronizeHomePetMotions();
+  bool drawn=false;
   if (slot < kPartyCapacity && homePetMotion[slot].uid == pokemon.uid &&
       homePetMotion[slot].faceRight && sdReady &&
       pokemon.speciesId >= 1U && pokemon.speciesId <= 386U) {
     char path[112];
     pokemonAssetPath(path, sizeof(path), pokemon, PokemonAssetView::Icon, iconFrame);
-    if (AssetRenderer::drawHorizontalMirror(display, path, x - 16, y - 16)) return;
+    drawn=AssetRenderer::drawHorizontalMirror(display,path,x-16,y-16);
   }
-  creature(x, y, pokemon, false);
+  if(!drawn)creature(x,y,pokemon,false);
+  if(WorldClock::speciesSleeps(pokemon.speciesId,
+     currentWorldPeriod())){
+    fireRedText.setTextColor(TFT_WHITE);
+    fireRedText.drawString("Z",x+10,y-22,1);
+    fireRedText.drawString("Z",x+17,y-30,1);
+  }
 }
 
 namespace {
@@ -13524,6 +13804,8 @@ constexpr char kHomeMoveEffectPathFormat[] =
     "/pokegochi/assets/firered/ui/home_move_effect_%02u.pkg";
 constexpr uint8_t kHomeMoveEffectCell = 18U;
 constexpr uint8_t kHomeMoveEffectPhases = 6U;
+constexpr int16_t kHomeMoveEffectBodyStartX = 12;
+constexpr int16_t kHomeMoveEffectBodyCenterY = 1;
 
 uint8_t homeMoveEffectTypeIndex(const OwnedPokemon& pokemon) {
   const SpeciesData* species = findSpecies(pokemon.speciesId);
@@ -13540,8 +13822,12 @@ void drawHomeTypeEffect(const OwnedPokemon& pokemon, const HomePetMotion& motion
   const uint8_t typeIndex = homeMoveEffectTypeIndex(pokemon);
   const int16_t direction = motion.faceRight ? 1 : -1;
   const uint8_t phase = motion.ambientEffectPhase;
-  const int16_t centerX = petX + direction * static_cast<int16_t>(17 + phase * 3U);
-  const int16_t centerY = petY - 7 - static_cast<int16_t>((phase & 1U) ? 2 : 0);
+  // Home icons are centered on petX/petY. Begin the effect over the side of
+  // the torso, then move it outwards, instead of emitting above the head.
+  const int16_t centerX = petX + direction * static_cast<int16_t>(
+      kHomeMoveEffectBodyStartX + phase * 3U);
+  const int16_t centerY = petY + kHomeMoveEffectBodyCenterY -
+      static_cast<int16_t>((phase & 1U) ? 1 : 0);
   const int16_t originX = centerX - kHomeMoveEffectCell / 2;
   const int16_t originY = centerY - kHomeMoveEffectCell / 2;
   const int16_t left = std::max<int16_t>(originX, clipX);
@@ -13692,25 +13978,75 @@ void drawHomePokemonInfoBubble(const OwnedPokemon& pokemon, int16_t petX, int16_
   drawHomeInfoMeter(x + 25, y + 71, 65, levelProgress, levelSpan, TFT_CYAN);
 }
 
+void homeNpcPosition(int16_t& x,int16_t& y){
+  switch(currentWorldPeriod()){
+    case WorldTimePeriod::Morning:x=282;y=128;break;
+    case WorldTimePeriod::Day:x=38;y=132;break;
+    case WorldTimePeriod::Evening:x=282;y=146;break;
+    case WorldTimePeriod::Night:x=38;y=148;break;
+  }
+}
+
+void drawHomeTimedNpc(){
+  int16_t x=0,y=0;homeNpcPosition(x,y);
+  char path[72];
+  std::snprintf(path,sizeof(path),"/pokegochi/assets/firered/ui/home_npc_%u.pkg",
+      static_cast<unsigned>(currentWorldPeriod()));
+  AssetRenderer::draw(display,path,x-8,y-30);
+}
+
+struct HomeLightingStyle {
+  AssetColorEffect effect = AssetColorEffect::None;
+  uint16_t color = 0;
+  uint8_t amount = 0;
+};
+
+HomeLightingStyle currentHomeLightingStyle(){
+  switch(currentWorldPeriod()){
+    case WorldTimePeriod::Morning:return {AssetColorEffect::Blend,0xFFE8,1U};
+    case WorldTimePeriod::Evening:return {AssetColorEffect::Blend,0xFBA0,2U};
+    case WorldTimePeriod::Night:return {AssetColorEffect::Blend,0x0864,3U};
+    case WorldTimePeriod::Day:default:return {};
+  }
+}
+
+bool drawHomeBackground(const char* path,int16_t x,int16_t y){
+  const HomeLightingStyle lighting=currentHomeLightingStyle();
+  if(lighting.effect==AssetColorEffect::None)return AssetRenderer::draw(display,path,x,y);
+  uint16_t width=0,height=0;
+  if(!AssetRenderer::dimensions(path,width,height))return false;
+  // Indexed backgrounds can be recoloured continuously while they are
+  // decoded. This keeps the time-of-day cue without placing a visible grid
+  // of red/blue pixels over the scene, Pokemon, NPCs and weather.
+  return AssetRenderer::drawTransformed(
+      display,path,static_cast<int16_t>(x+width/2U),
+      static_cast<int16_t>(y+height/2U),100U,100U,
+      lighting.effect,lighting.color,lighting.amount);
+}
+
+void currentHomeBackgroundPath(char* path,size_t pathSize){
+  std::snprintf(path,pathSize,"/pokegochi/assets/firered/ui/home_background_%02u.pkg",
+                gameSave.settings.homeBackground);
+}
+
 void drawHomeScene() {
   char backgroundPath[96];
   gameSave.settings.homeBackground = HomeBackgrounds::normalize(gameSave.settings.homeBackground);
-  std::snprintf(backgroundPath, sizeof(backgroundPath),
-                "/pokegochi/assets/firered/ui/home_background_%02u.pkg",
-                gameSave.settings.homeBackground);
+  currentHomeBackgroundPath(backgroundPath,sizeof(backgroundPath));
   // Home uses the complete, original map as one opaque layer.  The former
   // base/Pokemon/foreground sandwich put every upper metatile above a pet,
   // including harmless flowers and tall-grass decoration.  Those pixels
   // looked like holes cut out of the Pokemon.  Routes are already generated
   // only on walkable map blocks, so composing the complete scenery first and
   // the partners second preserves collision without corrupting their art.
-  homeLayeredBackground = sdReady && AssetRenderer::isPreloaded(backgroundPath);
-  if (homeLayeredBackground)
-    homeLayeredBackground = AssetRenderer::draw(display, backgroundPath, 8, 49);
-  if (!homeLayeredBackground) {
-    if (!sdReady || !AssetRenderer::draw(display, backgroundPath, 8, 49))
-      display.fillRect(8, 49, 304, 134, TFT_GREEN);
+  homeLayeredBackground=sdReady&&AssetRenderer::isPreloaded(backgroundPath);
+  if(homeLayeredBackground)homeLayeredBackground=drawHomeBackground(backgroundPath,8,49);
+  if(!homeLayeredBackground){
+    if(!sdReady||!AssetRenderer::draw(display,backgroundPath,8,49))
+      display.fillRect(8,49,304,134,TFT_GREEN);
   }
+
+  drawHomeTimedNpc();
 
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
     OwnedPokemon* member = CollectionLogic::active(gameSave.collection, slot);
@@ -13719,6 +14055,7 @@ void drawHomeScene() {
     drawHomePet(slot, petX, petY, *member);
   }
   drawHomeAmbientEffectsInClip(8, 49, 304, 134);
+  drawHomeWeatherInClip(8,49,304,134);
   if (homeInfoPokemonUid != kEmptyPokemonUid) {
     bool shown = false;
     for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
@@ -13763,6 +14100,7 @@ void captureHomePositions() {
 void resetHomeAnimationState() {
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) homeLastValid[slot] = false;
   homeLayeredBackground = false;
+  lastHomeWeatherSample = currentHomeWeather();
   lastAnimationMs = millis();
 }
 
@@ -13784,25 +14122,30 @@ bool drawHomeRegion(int16_t x, int16_t y, uint16_t width, uint16_t height) {
   char basePath[96], spritePaths[kPartyCapacity][112];
   AssetOverlay overlays[kPartyCapacity];
   uint8_t overlayCount = 0;
-  std::snprintf(basePath, sizeof(basePath),
-                "/pokegochi/assets/firered/ui/home_background_%02u.pkg",
-                gameSave.settings.homeBackground);
+  currentHomeBackgroundPath(basePath,sizeof(basePath));
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
     OwnedPokemon* member = CollectionLogic::active(gameSave.collection, slot);
     if (!member) continue;
     int16_t petX, petY; homePetPosition(slot, petX, petY);
-    const uint8_t index = overlayCount++;
-    pokemonAssetPath(spritePaths[index], sizeof(spritePaths[index]), *member,
+    const uint8_t spriteIndex=slot;
+    pokemonAssetPath(spritePaths[spriteIndex], sizeof(spritePaths[spriteIndex]), *member,
                      PokemonAssetView::Icon, iconFrame);
-    overlays[index] = {spritePaths[index], static_cast<int16_t>(petX - 16),
+    overlays[overlayCount++] = {spritePaths[spriteIndex], static_cast<int16_t>(petX - 16),
                        static_cast<int16_t>(petY - 16),
                        homePetMotion[slot].faceRight};
   }
   const uint16_t sourceX = static_cast<uint16_t>(x - 8);
   const uint16_t sourceY = static_cast<uint16_t>(y - 49);
+  const HomeLightingStyle lighting=currentHomeLightingStyle();
   if (!AssetRenderer::drawCompositeRegion(display, basePath, nullptr, x, y, sourceX, sourceY,
-                                          width, height, overlays, overlayCount)) return false;
+                                          width, height, overlays, overlayCount,
+                                          lighting.effect,lighting.color,
+                                          lighting.amount)) return false;
   drawHomeAmbientEffectsInClip(x, y, width, height);
+  drawHomeWeatherInClip(x,y,width,height);
+  int16_t npcX=0,npcY=0;homeNpcPosition(npcX,npcY);
+  if(npcX+9>=x&&npcX-9<x+static_cast<int16_t>(width)&&
+     npcY+15>=y&&npcY-20<y+static_cast<int16_t>(height))drawHomeTimedNpc();
   return true;
 }
 
@@ -13877,8 +14220,15 @@ void drawHome() {
   // flow; none of them should be interrupted mid-animation. A pending reward
   // is persistent and therefore also appears here after a power loss.
   if (presentPokedexCompletionRewardIfNeeded()) return;
+  const HeldItem speciesItem=SpeciesHeldItems::reconcile(
+      gameSave.collection,gameSave.specialHeldItems);
+  if(speciesItem!=HeldItem::None&&!homeNoticeAwaitingTap){
+    std::snprintf(homeNotice,sizeof(homeNotice),"FOUND SPECIES ITEM: %s!",
+                  heldItemName(speciesItem));
+    homeNoticeAwaitingTap=true;saveDirty=true;
+  }
   if (luckyEggMessagePending && !homeNoticeAwaitingTap) {
-    std::snprintf(homeNotice, sizeof(homeNotice), "KANTO LEAGUE REWARD: LUCKY EGG!");
+    std::snprintf(homeNotice, sizeof(homeNotice), "LUCKY EGG: PERMANENT 2X EXP ACTIVE!");
     homeNoticeAwaitingTap = true;
     luckyEggMessagePending = false;
   }
@@ -13900,9 +14250,10 @@ void drawHome() {
     return;
   }
   gameSave.settings.homeBackground = HomeBackgrounds::normalize(gameSave.settings.homeBackground);
-  if (renderedHomeBackground != gameSave.settings.homeBackground) {
+  const uint8_t homeBackgroundKey=currentHomeBackgroundKey();
+  if (renderedHomeBackground != homeBackgroundKey) {
     AssetRenderer::invalidateHomeSceneCache();
-    renderedHomeBackground = gameSave.settings.homeBackground;
+    renderedHomeBackground = homeBackgroundKey;
   }
   // This manifest remains valid only for the synchronous scene preparation,
   // but placing ~800 bytes of path storage on loopTask was enough to leave
@@ -13910,18 +14261,16 @@ void drawHome() {
   static char basePath[96], partnerPaths[kPartyCapacity * 2][72];
   static char effectPaths[kPartyCapacity][80];
   static char gymBadgePath[80];
-  static const char* homeAssets[24];
+  static const char* homeAssets[64];
   std::memset(basePath, 0, sizeof(basePath));
   std::memset(partnerPaths, 0, sizeof(partnerPaths));
   std::memset(effectPaths, 0, sizeof(effectPaths));
   std::memset(gymBadgePath, 0, sizeof(gymBadgePath));
   std::memset(homeAssets, 0, sizeof(homeAssets));
   const bool compactRadioScene = multiplayer.enabled();
-  std::snprintf(basePath, sizeof(basePath),
-                "/pokegochi/assets/firered/ui/home_background_%02u.pkg",
-                gameSave.settings.homeBackground);
-  uint32_t homeKey = 0x484F4D45UL ^ gameSave.settings.homeBackground ^
-                     (compactRadioScene ? 0x00424C45UL : 0U);
+  currentHomeBackgroundPath(basePath,sizeof(basePath));
+  uint32_t homeKey = 0x484F4D45UL ^ homeBackgroundKey ^
+                      (compactRadioScene ? 0x00424C45UL : 0U);
   const bool levelGymReady = gymChallengeAvailable();
   const bool towerIconReady = BattleTowerSystem::available(gameSave.gymProgress);
   const bool leagueIconReady = GymSystem::leagueAvailable(gameSave.gymProgress);
@@ -13937,6 +14286,26 @@ void drawHome() {
   // unavailable even though both landscape packages were healthy.
   uint8_t homeAssetCount = 0;
   homeAssets[homeAssetCount++] = basePath;
+  for(uint8_t visitor=0;visitor<4U;++visitor){
+    static constexpr const char* kVisitorAssets[4]={
+      "/pokegochi/assets/firered/ui/home_npc_0.pkg",
+      "/pokegochi/assets/firered/ui/home_npc_1.pkg",
+      "/pokegochi/assets/firered/ui/home_npc_2.pkg",
+      "/pokegochi/assets/firered/ui/home_npc_3.pkg",
+    };
+    homeAssets[homeAssetCount++]=kVisitorAssets[visitor];
+  }
+  // These are tiny original FireRed battle-animation sprites. Keeping the
+  // four possible event types resident avoids an SD read exactly when a
+  // scheduled shower or gust begins while Home is already on screen.
+  static constexpr const char* kHomeWeatherAssets[4]={
+    "/pokegochi/assets/firered/battle_anims/sprites/rain_drops_00.pkg",
+    "/pokegochi/assets/firered/battle_anims/sprites/whirlwind_lines_00.pkg",
+    "/pokegochi/assets/firered/battle_anims/sprites/hail_00.pkg",
+    "/pokegochi/assets/firered/battle_anims/sprites/sunlight_00.pkg",
+  };
+  for(const char* weatherAsset:kHomeWeatherAssets)
+    homeAssets[homeAssetCount++]=weatherAsset;
   bool includedEffectTypes[18]{};
   uint8_t effectPathCount = 0;
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
@@ -14035,10 +14404,38 @@ void refreshHomeAfterCare() {
 // that made the TFT visibly flash blue/black and looked like a very low FPS
 // animation even when the assets were already cached in RAM.
 void animateHome() {
-  if (!currentPet()) return;
   constexpr int16_t kSceneLeft = 8, kSceneTop = 49, kSceneRight = 312, kSceneBottom = 183;
   constexpr int16_t kPetMargin = 27;
   constexpr int16_t kAmbientEffectMargin = 50;
+  bool changed = false;
+  const HomeWeatherSample currentWeather=currentHomeWeather();
+  const uint32_t currentWeatherStep=homeAnimationStep/2U;
+  const uint32_t previousWeatherStep=homeAnimationStep?
+      (homeAnimationStep-1U)/2U:0U;
+  const AmbientWeatherBounds previousWeatherBounds=
+      homeWeatherBounds(lastHomeWeatherSample,previousWeatherStep);
+  const AmbientWeatherBounds currentWeatherBounds=
+      homeWeatherBounds(currentWeather,currentWeatherStep);
+  const bool weatherFrameChanged=currentWeatherStep!=previousWeatherStep||
+      currentWeather.kind!=lastHomeWeatherSample.kind||
+      currentWeather.eventKey!=lastHomeWeatherSample.eventKey;
+  if(weatherFrameChanged){
+    if(previousWeatherBounds.valid()){
+      invalidatePixels(previousWeatherBounds.x,previousWeatherBounds.y,
+                       previousWeatherBounds.width,previousWeatherBounds.height);
+      changed=true;
+    }
+    if(currentWeatherBounds.valid()){
+      invalidatePixels(currentWeatherBounds.x,currentWeatherBounds.y,
+                       currentWeatherBounds.width,currentWeatherBounds.height);
+      changed=true;
+    }
+  }
+  lastHomeWeatherSample=currentWeather;
+  if (!currentPet()) {
+    if(changed)requestRetainedFrame();
+    return;
+  }
   int16_t previousX[kPartyCapacity]{}, previousY[kPartyCapacity]{};
   uint8_t previousEffectPhase[kPartyCapacity]{};
   bool active[kPartyCapacity]{};
@@ -14050,7 +14447,6 @@ void animateHome() {
     }
   }
   advanceHomePetMotions();
-  bool changed = false;
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
     if (!active[slot]) continue;
     int16_t currentX = 0, currentY = 0;
@@ -14147,6 +14543,20 @@ void animateHome() {
 constexpr uint16_t kSettingsPaper = 0xFFDF;
 constexpr uint16_t kSettingsWell = 0xF79E;
 constexpr uint16_t kSettingsLine = 0xA514;
+constexpr int16_t kSettingsTabY = 202;
+constexpr int16_t kSettingsMoreButtonX = 211;
+constexpr int16_t kSettingsMoreButtonWidth = 90;
+constexpr int16_t kSettingsMoreButtonHeight = 38;
+constexpr int16_t kSettingsMoreWirelessY = 48;
+constexpr int16_t kSettingsMoreKidsY = 112;
+constexpr int16_t kSettingsMoreCardHeight = 58;
+constexpr int16_t kSettingsMoreInfoY = 175;
+constexpr int16_t kSettingsMoreInfoHeight = 22;
+constexpr int16_t kSettingsMoreTextRight = 201;
+static_assert(kSettingsMoreInfoY+kSettingsMoreInfoHeight<kSettingsTabY,
+              "Settings More info must not overlap the tab row");
+static_assert(kSettingsMoreTextRight<kSettingsMoreButtonX,
+              "Settings More text must end before its action buttons");
 
 void drawSettingsShell(const char* title) {
   display.fillRoundRect(1, 1, 318, 238, 9, themeDark());
@@ -14166,9 +14576,9 @@ void drawSettingsFooter(uint8_t page) {
   drawGbaInsetPanel(11, 199, 298, 33, 6, kBattleFrameShadow,
                     kSettingsWell, kBattleFrameGold);
   button(15, 202, 105, 28, "BACK", TFT_RED);
-  button(238, 202, 67, 28, page < 3U ? "MORE" : "TOP", themePrimary());
-  const int16_t dotX = 145;
-  for (uint8_t index = 0; index < 4U; ++index) {
+  button(238, 202, 67, 28, page < 4U ? "MORE" : "TOP", themePrimary());
+  const int16_t dotX = 138;
+  for (uint8_t index = 0; index < 5U; ++index) {
     const int16_t x = dotX + index * 15;
     display.fillCircle(x, 216, index == page ? 5 : 4,
                        index == page ? themeAccent() : kSettingsLine);
@@ -14182,10 +14592,10 @@ void drawSettingsFooter(uint8_t page) {
 }
 
 void drawSettingsBrightnessCard() {
-  drawGbaInsetPanel(13, 47, 294, 66, 7, kBattleFrameShadow,
+  drawGbaInsetPanel(13, 47, 294, 55, 7, kBattleFrameShadow,
                     kSettingsWell, kBattleFrameGold);
   fireRedText.setTextColor(kBattleInk, kSettingsWell);
-  fireRedText.drawString("BRIGHTNESS", 23, 54, 2);
+  fireRedText.drawString("BRIGHTNESS", 23, 53, 2);
   char brightness[12];
   std::snprintf(brightness, sizeof(brightness), "%u%%",
                 gameSave.settings.brightnessPercent);
@@ -14196,33 +14606,46 @@ void drawSettingsBrightnessCard() {
   fireRedText.drawString(brightness, 272, 61, 1);
   fireRedText.setTextDatum(TL_DATUM);
 
-  button(18, 75, 42, 31, "-", themePrimary());
-  button(260, 75, 42, 31, "+", themePrimary());
-  display.fillRoundRect(69, 76, 182, 28, 5, kBattleFrameShadow);
-  display.fillRoundRect(72, 79, 176, 22, 3, TFT_WHITE);
-  display.fillRoundRect(76, 83, 168, 14, 2, 0xC618);
+  button(18, 71, 42, 27, "-", themePrimary());
+  button(260, 71, 42, 27, "+", themePrimary());
+  display.fillRoundRect(69, 72, 182, 25, 5, kBattleFrameShadow);
+  display.fillRoundRect(72, 75, 176, 19, 3, TFT_WHITE);
+  display.fillRoundRect(76, 79, 168, 11, 2, 0xC618);
   const int16_t fillWidth = static_cast<int16_t>(
       168U * gameSave.settings.brightnessPercent / 100U);
-  if (fillWidth > 0) display.fillRoundRect(76, 83, fillWidth, 14, 2, TFT_YELLOW);
-  display.drawFastHLine(80, 85, std::max<int16_t>(0, fillWidth - 8), TFT_WHITE);
+  if (fillWidth > 0) display.fillRoundRect(76, 79, fillWidth, 11, 2, TFT_YELLOW);
+  display.drawFastHLine(80, 81, std::max<int16_t>(0, fillWidth - 8), TFT_WHITE);
 }
 
 void drawSettingsTimeoutCard() {
-  drawGbaInsetPanel(13, 117, 294, 80, 7, kBattleFrameShadow,
+  drawGbaInsetPanel(13, 106, 294, 45, 7, kBattleFrameShadow,
                     kSettingsWell, kBattleFrameGold);
   fireRedText.setTextColor(kBattleInk, kSettingsWell);
-  fireRedText.drawString("SCREEN OFF", 23, 123, 2);
-  button(18, 146, 42, 31, "<", themePrimary());
-  button(260, 146, 42, 31, ">", themePrimary());
-  display.fillRoundRect(66, 145, 188, 33, 6, themePale());
-  display.drawRoundRect(66, 145, 188, 33, 6, themeDark());
+  fireRedText.drawString("SCREEN OFF", 23, 116, 2);
+  button(126, 112, 35, 33, "<", themePrimary());
+  button(264, 112, 38, 33, ">", themePrimary());
+  display.fillRoundRect(165, 112, 95, 33, 6, themePale());
+  display.drawRoundRect(165, 112, 95, 33, 6, themeDark());
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.setTextColor(themeDark(), themePale());
   fireRedText.drawStringFitted(screenTimeoutLabel(gameSave.settings.screenTimeout()),
-                               160, 161, 176, 2);
-  fireRedText.setTextColor(kBattleInk, kSettingsWell);
-  fireRedText.drawStringFitted("WAKE, THEN SLIDE TO UNLOCK", 160, 188, 272, 1);
+                               212, 128, 83, 2);
   fireRedText.setTextDatum(TL_DATUM);
+}
+
+void drawSettingsTouchModeCard() {
+  drawGbaInsetPanel(13, 155, 294, 42, 7, kBattleFrameShadow,
+                    kSettingsWell, kBattleFrameGold);
+  fireRedText.setTextColor(kBattleInk, kSettingsWell);
+  fireRedText.drawString("TOUCH MODE", 23, 168, 2);
+  const TouchInputMode selected = gameSave.settings.touchInputMode();
+  button(142, 160, 75, 31, "FINGER",
+         selected == TouchInputMode::Finger ? TFT_DARKGREEN : themePrimary());
+  button(222, 160, 80, 31, "STYLUS",
+         selected == TouchInputMode::Stylus ? TFT_DARKGREEN : themePrimary());
+  const int16_t selectedX = selected == TouchInputMode::Finger ? 141 : 221;
+  const int16_t selectedWidth = selected == TouchInputMode::Finger ? 77 : 82;
+  display.drawRoundRect(selectedX, 159, selectedWidth, 33, 6, TFT_YELLOW);
 }
 
 void drawSettingsBattleTextCard() {
@@ -14269,106 +14692,641 @@ void drawSettings() {
   drawSettingsShell(settingsPage == 0 ? "SETTINGS" : "HOME BACKGROUND");
 
   if (settingsPage == 0) {
+    button(280,13,26,24,"X",TFT_RED);
     if (settingsScroll == 0) {
       drawSettingsBrightnessCard();
       drawSettingsTimeoutCard();
+      drawSettingsTouchModeCard();
     } else if (settingsScroll == 1) {
-      char buildInfo[48];
-      std::snprintf(buildInfo, sizeof(buildInfo), "ID:%05lu  VER:%s",
-          static_cast<unsigned long>(multiplayer.playerId()), kGameVersion);
-      fireRedText.setTextDatum(MC_DATUM);
-      fireRedText.setTextColor(themeDark(), kSettingsPaper);
-      fireRedText.drawStringFitted(buildInfo, 160, 47, 286, 1);
-      fireRedText.setTextDatum(TL_DATUM);
-
-      drawGbaInsetPanel(13, 55, 294, 50, 7, kBattleFrameShadow,
+      drawGbaInsetPanel(13, 47, 294, 47, 7, kBattleFrameShadow,
                         kSettingsWell, kBattleFrameGold);
       fireRedText.setTextColor(kBattleInk, kSettingsWell);
-      fireRedText.drawString("PLAYER DATA", 23, 63, 2);
+      fireRedText.drawString("PLAYER DATA", 23, 55, 2);
       fireRedText.setTextColor(TFT_DARKGREY, kSettingsWell);
-      fireRedText.drawStringFitted("PLAY AND BATTLE RECORDS", 23, 84, 176, 1);
-      button(208, 64, 94, 36, "STATS", TFT_DARKGREEN);
-
-      drawGbaInsetPanel(13, 108, 294, 51, 7, kBattleFrameShadow,
+      fireRedText.drawStringFitted("PLAY AND BATTLE RECORDS", 23, 76, 176, 1);
+      button(211,54,90,32,"STATS",TFT_DARKGREEN);
+      drawGbaInsetPanel(13, 98, 294, 43, 7, kBattleFrameShadow,
                         kSettingsWell, kBattleFrameGold);
       fireRedText.setTextColor(kBattleInk, kSettingsWell);
-      fireRedText.drawString("HOME SCENERY", 23, 116, 2);
+      fireRedText.drawString("BATTLE TEXT",23,106,2);
       fireRedText.setTextColor(TFT_DARKGREY, kSettingsWell);
-      fireRedText.drawStringFitted("CHOOSE A REGION", 23, 138, 154, 1);
-      button(188, 114, 114, 42, "BACKGROUNDS", TFT_DARKGREEN);
-
-      drawSettingsBattleTextCard();
-    } else if (settingsScroll == 2U) {
-      drawGbaInsetPanel(13, 47, 294, 76, 7, kBattleFrameShadow,
-                        kSettingsWell, kBattleFrameGold);
-      fireRedText.setTextColor(kBattleInk, kSettingsWell);
-      fireRedText.drawString("COLOR THEME", 23, 54, 2);
-      fireRedText.setTextColor(TFT_DARKGREY, kSettingsWell);
-      fireRedText.drawStringFitted("CHANGES THE WHOLE GAME", 23, 72, 272, 1);
-
-      constexpr int16_t choiceX[3] = {14, 113, 212};
-      constexpr const char* choiceLabel[3] = {"SAPPHIRE", "RUBY", "EMERALD"};
-      const UiColorTheme selectedTheme = gameSave.settings.colorTheme();
-      for (uint8_t index = 0; index < 3U; ++index) {
-        const UiColorTheme candidate = static_cast<UiColorTheme>(index);
-        const UiThemePalette& palette = uiThemePaletteFor(candidate);
-        button(choiceX[index], 84, 94, 30, choiceLabel[index], palette.primary);
-        if (candidate == selectedTheme) {
-          display.drawRoundRect(choiceX[index] - 2, 82, 98, 34, 7, TFT_YELLOW);
-          display.drawRoundRect(choiceX[index] - 1, 83, 96, 32, 6, TFT_WHITE);
-          display.fillCircle(choiceX[index] + 84, 89, 4, TFT_YELLOW);
-        }
+      fireRedText.drawString("ADVANCE MODE",23,126,1);
+      button(211,105,90,29,gameSave.settings.autoBattleText()?"AUTO":"TAP",
+          gameSave.settings.autoBattleText()?TFT_DARKGREEN:themePrimary());
+      drawGbaInsetPanel(13,145,294,52,7,kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+      fireRedText.setTextColor(kBattleInk,kSettingsWell);fireRedText.drawString("COLOR THEME",23,151,2);
+      constexpr int16_t choiceX[3]={14,113,212};
+      constexpr const char* choiceLabel[3]={"SAPPHIRE","RUBY","EMERALD"};
+      const UiColorTheme selectedTheme=gameSave.settings.colorTheme();
+      for(uint8_t index=0;index<3U;++index){
+        const UiColorTheme candidate=static_cast<UiColorTheme>(index);
+        button(choiceX[index],166,94,25,choiceLabel[index],uiThemePaletteFor(candidate).primary);
+        if(candidate==selectedTheme)display.drawRoundRect(choiceX[index]-1,165,96,27,6,TFT_YELLOW);
       }
-
-      const UiThemePalette& preview = uiThemePalette();
-      drawGbaInsetPanel(42, 127, 236, 44, 6, kBattleFrameShadow,
-                        preview.pale, kBattleFrameGold);
-      display.fillRoundRect(49, 133, 222, 9, 3, preview.dark);
-      display.fillRoundRect(49, 145, 222, 19, 4, preview.primary);
-      display.drawFastHLine(55, 148, 210, preview.accent);
-      fireRedText.setTextDatum(MC_DATUM);
-      fireRedText.setTextColor(TFT_WHITE, preview.primary);
-      fireRedText.drawStringFitted(themeName(selectedTheme), 160, 155, 208, 1);
-      display.fillRoundRect(48, 176, 224, 18, 6, themePale());
-      display.drawRoundRect(48, 176, 224, 18, 6, themeDark());
-      fireRedText.setTextColor(themeDark(), themePale());
-      fireRedText.drawStringFitted("APPLIES TO EVERY SCREEN", 160, 185, 208, 1);
-      fireRedText.setTextDatum(TL_DATUM);
-    } else {
-      drawGbaInsetPanel(13, 47, 294, 144, 7, kBattleFrameShadow,
+    } else if (settingsScroll == 2U) {
+      drawGbaInsetPanel(13,53,294,134,7,kBattleFrameShadow,
                         kSettingsWell, kBattleFrameGold);
-      // A compact wireless/link emblem drawn locally keeps this entry usable
-      // even when the asset pack itself is what needs updating.
-      display.fillCircle(51, 91, 28, themePrimary());
-      display.drawCircle(51, 91, 28, themeDark());
-      display.drawLine(50, 69, 50, 113, TFT_WHITE);
-      display.drawLine(50, 69, 66, 82, TFT_WHITE);
-      display.drawLine(66, 82, 38, 104, TFT_WHITE);
-      display.drawLine(38, 78, 66, 101, TFT_WHITE);
-      display.drawLine(66, 101, 50, 113, TFT_WHITE);
       fireRedText.setTextColor(kBattleInk, kSettingsWell);
-      fireRedText.drawString("WIRELESS UPDATE", 88, 57, 2);
+      fireRedText.drawString("HOME BACKGROUND",23,63,2);
       fireRedText.setTextColor(TFT_DARKGREY, kSettingsWell);
-      fireRedText.drawStringFitted("FIRMWARE + MICROSD", 88, 80, 203, 1);
-      fireRedText.drawStringFitted("SIGNED AND RESUMABLE", 88, 96, 203, 1);
-      fireRedText.drawStringFitted("YOUR SAVE IS NEVER REPLACED", 88, 112, 203, 1);
-      char versions[48];
-      std::snprintf(versions, sizeof(versions), "FW %s  ASSETS %u",
-                    kGameVersion, static_cast<unsigned>(kRequiredAssetPackVersion));
+      fireRedText.drawStringFitted("CHOOSE AN ORIGINAL REGION MAP",23,89,274,1);
       fireRedText.setTextDatum(MC_DATUM);
-      fireRedText.setTextColor(themeDark(), kSettingsWell);
-      fireRedText.drawStringFitted(versions, 160, 137, 270, 1);
+      fireRedText.setTextColor(themeDark(),kSettingsWell);
+      fireRedText.drawStringFitted(HomeBackgrounds::name(gameSave.settings.homeBackground),
+                                   160,119,270,2);
       fireRedText.setTextDatum(TL_DATUM);
-      button(73, 151, 174, 34, "OPEN UPDATER", TFT_DARKGREEN);
+      button(54,143,212,36,"BROWSE MAPS",TFT_DARKGREEN);
+    } else if (settingsScroll == 3U) {
+      drawGbaInsetPanel(13,47,294,79,7,kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+      const uint16_t minute=currentWorldMinute();char timeText[12];
+      std::snprintf(timeText,sizeof(timeText),"%02u:%02u",minute/60U,minute%60U);
+      fireRedText.setTextDatum(MC_DATUM);
+      fireRedText.setTextColor(themeDark(),kSettingsWell);fireRedText.drawString(timeText,160,72,4);
+      fireRedText.drawString(WorldClock::periodName(currentWorldPeriod()),160,102,1);
+      fireRedText.setTextColor(gameSave.clockLocalEpochSeconds?TFT_DARKGREEN:TFT_RED,kSettingsWell);
+      fireRedText.drawStringFitted(gameSave.clockLocalEpochSeconds?"SYNCED WITH PHONE":"SYNC ON NEXT WIRELESS UPDATE",160,116,270,1);
+      fireRedText.setTextDatum(TL_DATUM);
+      drawGbaInsetPanel(13,133,294,58,7,kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+      fireRedText.setTextColor(kBattleInk,kSettingsWell);fireRedText.drawString("BERRY GARDEN",23,142,2);
+      fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);fireRedText.drawString("PLANT, WATER, HARVEST",23,165,1);
+      button(190,142,111,35,"OPEN",TFT_DARKGREEN);
+    } else {
+      drawGbaInsetPanel(13,kSettingsMoreWirelessY,294,kSettingsMoreCardHeight,7,
+                        kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+      fireRedText.setTextColor(kBattleInk,kSettingsWell);
+      fireRedText.drawStringFitted("WIRELESS UPDATE",23,56,
+                                   kSettingsMoreTextRight-23,2);
+      fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);
+      fireRedText.drawStringFitted("FIRMWARE, SD, CLOCK",23,80,
+                                   kSettingsMoreTextRight-23,1);
+      button(kSettingsMoreButtonX,58,kSettingsMoreButtonWidth,
+             kSettingsMoreButtonHeight,"OPEN",TFT_DARKGREEN);
+      drawGbaInsetPanel(13,kSettingsMoreKidsY,294,kSettingsMoreCardHeight,7,
+                        kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+      drawKidsPokeball(48,141,17);
+      fireRedText.setTextColor(kBattleInk,kSettingsWell);
+      fireRedText.drawStringFitted("KIDS GAMES",74,120,
+                                   kSettingsMoreTextRight-74,2);
+      fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);
+      fireRedText.drawStringFitted("3 MINI GAMES",74,144,
+                                   kSettingsMoreTextRight-74,1);
+      button(kSettingsMoreButtonX,122,kSettingsMoreButtonWidth,
+             kSettingsMoreButtonHeight,"OPEN",0x04D3);
+      char buildInfo[48];std::snprintf(buildInfo,sizeof(buildInfo),"ID:%05lu  FW:%s  ASSETS:%u",
+          static_cast<unsigned long>(multiplayer.playerId()),kGameVersion,
+          static_cast<unsigned>(kRequiredAssetPackVersion));
+      drawGbaInsetPanel(13,kSettingsMoreInfoY,294,kSettingsMoreInfoHeight,5,
+                        kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+      fireRedText.setTextDatum(MC_DATUM);fireRedText.setTextColor(themeDark(),kSettingsWell);
+      fireRedText.drawStringFitted(buildInfo,160,186,278,1);fireRedText.setTextDatum(TL_DATUM);
     }
-    drawSettingsFooter(settingsScroll);
+    constexpr const char* tabLabels[5]={"SCREEN","GAME","HOME","WORLD","MORE"};
+    for(uint8_t tab=0;tab<5U;++tab){
+      button(10+tab*60,kSettingsTabY,58,28,tabLabels[tab],
+             tab==settingsScroll?themeAccent():themePrimary());
+      if(tab==settingsScroll)
+        display.drawRoundRect(9+tab*60,kSettingsTabY-1,60,30,6,TFT_YELLOW);
+    }
     return;
   }
 
   drawSettingsBackgroundPreview();
-  button(10, 201, 82, 29, "< PREV", themePrimary());
-  button(110, 201, 100, 29, "DONE", TFT_RED);
-  button(228, 201, 82, 29, "NEXT >", themePrimary());
+  button(8,201,70,29,"<",themePrimary());
+  button(84,201,152,29,"DONE",TFT_RED);
+  button(242,201,70,29,">",themePrimary());
+}
+
+
+void drawBerryGarden(){
+  const bool entering=beginScreenPresentation(Screen::BerryGarden,TFT_BLACK);
+  if(!entering)invalidatePixels(1,1,318,238);
+  if(!AssetRenderer::draw(display,"/pokegochi/assets/emerald/berry_garden/background.pkg",0,0))
+    display.fillRect(0,0,320,192,0x4E4E);
+
+  // Route 123 already contains the six real loamy-soil beds. Overlay the
+  // matching Emerald object-event cel for each saved growth stage.
+  const uint8_t animationFrame=static_cast<uint8_t>((millis()/640U)&1U);
+  for(uint8_t plot=0;plot<kBerryGardenPlotCount;++plot){
+    const BerryPlotState& state=gameSave.berryGarden.plots[plot];
+    if(state.berry==HeldItem::None)continue;
+    const uint8_t stage=BerryGarden::growthStage(state);
+    char treePath[112];
+    if(stage<=1U){
+      std::snprintf(treePath,sizeof(treePath),
+          "/pokegochi/assets/emerald/berry_garden/sprout_%u.pkg",animationFrame);
+    }else{
+      std::snprintf(treePath,sizeof(treePath),
+          "/pokegochi/assets/emerald/berry_garden/tree_%02u_stage_%u_%u.pkg",
+          static_cast<unsigned>(state.berry),static_cast<unsigned>(stage),animationFrame);
+    }
+    AssetRenderer::draw(display,treePath,kBerryGardenTreeX[plot%3U],
+                        kBerryGardenTreeY[plot/3U]);
+  }
+
+  drawGbaInsetPanel(62,5,196,28,5,kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+  fireRedText.setTextDatum(MC_DATUM);fireRedText.setTextColor(kBattleInk,kSettingsWell);
+  fireRedText.drawString("BERRY GARDEN",160,19,2);fireRedText.setTextDatum(TL_DATUM);
+  button(7,7,48,24,"BACK",TFT_RED);
+
+  drawGbaInsetPanel(4,186,312,50,5,kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
+  const HeldItem selected=BerryGarden::plantableBerry(gardenBerrySelection);
+  button(9,197,30,29,"<",themePrimary());
+  button(281,197,30,29,">",themePrimary());
+  char berryPath[80];
+  std::snprintf(berryPath,sizeof(berryPath),
+      "/pokegochi/assets/firered/items/held_%02u.pkg",static_cast<unsigned>(selected));
+  AssetRenderer::draw(display,berryPath,45,195);
+  char berryLabel[38];
+  std::snprintf(berryLabel,sizeof(berryLabel),"%s  x%u",heldItemName(selected),
+      gameSave.inventory.heldItems[static_cast<uint8_t>(selected)]);
+  fireRedText.setTextColor(kBattleInk,kSettingsWell);
+  fireRedText.drawStringFitted(berryLabel,78,194,195,1);
+  fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);
+  fireRedText.drawStringFitted(worldFeatureNotice[0]?worldFeatureNotice:
+      "SOIL: PLANT  TREE: WATER / PICK",78,213,195,1);
+}
+
+uint32_t nextKidsRandom() {
+  kidsRandomState ^= kidsRandomState << 13;
+  kidsRandomState ^= kidsRandomState >> 17;
+  kidsRandomState ^= kidsRandomState << 5;
+  return kidsRandomState;
+}
+
+uint8_t kidsMemoryPairCount(){
+  uint8_t cards=0;
+  for(uint8_t index=0;index<12U;++index)
+    if(kidsMemoryMatched&(1U<<index))++cards;
+  return static_cast<uint8_t>(cards/2U);
+}
+
+void formatKidsTime(char* output,size_t outputSize,uint32_t startedMs,
+                    uint32_t finishedMs){
+  if(!output||!outputSize)return;
+  const uint32_t elapsedMs=finishedMs-startedMs;
+  const uint32_t totalTenths=elapsedMs/100U;
+  const uint32_t minutes=totalTenths/600U;
+  const uint32_t seconds=(totalTenths/10U)%60U;
+  const uint32_t tenths=totalTenths%10U;
+  std::snprintf(output,outputSize,"%02lu:%02lu.%lu",
+      static_cast<unsigned long>(minutes),static_cast<unsigned long>(seconds),
+      static_cast<unsigned long>(tenths));
+}
+
+// Real-animal silhouettes that are easy to name at a glance. A round picks
+// only six unique entries, so the board remains 12 cards while repeat plays
+// get a much wider cast.
+constexpr uint16_t kKidsAnimalSpecies[] = {
+    19,   // Rattata - rat
+    16,   // Pidgey - bird
+    10,   // Caterpie - caterpillar
+    129,  // Magikarp - fish
+    58,   // Growlithe - dog
+    179,  // Mareep - sheep
+    216,  // Teddiursa - bear cub
+    217,  // Ursaring - bear
+    21,   // Spearow - bird
+    144,  // Articuno - legendary bird
+    54,   // Psyduck - duck
+    83,   // Farfetch'd - duck
+    77,   // Ponyta - horse
+    241,  // Miltank - cow
+    128,  // Tauros - bull
+    98,   // Krabby - crab
+    228,  // Houndour - dog
+    309,  // Electrike - dog
+    52,   // Meowth - cat
+    161,  // Sentret - ferret
+    118,  // Goldeen - fish
+    255,  // Torchic - chick
+    158,  // Totodile - crocodile
+    319,  // Sharpedo - shark
+    320,  // Wailmer - whale
+    203,  // Girafarig - giraffe
+    301,  // Delcatty - cat
+    277,  // Swellow - bird
+    279,  // Pelipper - pelican
+    262,  // Mightyena - wolf/dog
+    264,  // Linoone - badger
+    322,  // Numel - camel
+    324,  // Torkoal - tortoise
+    341,  // Corphish - crayfish
+    335,  // Zangoose - mongoose
+};
+
+void resetKidsMemory() {
+  kidsRandomState ^= millis() + static_cast<uint32_t>(gameSave.playTimeSeconds);
+  constexpr uint8_t speciesCount=static_cast<uint8_t>(
+      sizeof(kKidsAnimalSpecies)/sizeof(kKidsAnimalSpecies[0]));
+  uint8_t choices[speciesCount];
+  for(uint8_t index=0;index<speciesCount;++index)choices[index]=index;
+  for(uint8_t index=speciesCount-1U;index>0;--index){
+    const uint8_t other=static_cast<uint8_t>(nextKidsRandom()%(index+1U));
+    std::swap(choices[index],choices[other]);
+  }
+  for(uint8_t index=0;index<12U;++index)kidsMemoryCards[index]=choices[index%6U];
+  for (uint8_t index = 11; index > 0; --index) {
+    const uint8_t other = static_cast<uint8_t>(nextKidsRandom() % (index + 1U));
+    std::swap(kidsMemoryCards[index], kidsMemoryCards[other]);
+  }
+  // A round owns the complete sprite workspace. Clearing it first prevents
+  // assets from previous rounds/screens accumulating across repeated entry.
+  AssetRenderer::clearCache();
+  for(uint8_t index=0;index<12U;++index){
+    OwnedPokemon visual{};
+    visual.speciesId=kKidsAnimalSpecies[kidsMemoryCards[index]];
+    char path[112];
+    pokemonAssetPath(path,sizeof(path),visual,PokemonAssetView::Front);
+    AssetRenderer::preload(path);
+  }
+  kidsMemoryMatched = 0;
+  kidsMemoryFirst = -1;
+  kidsMemorySecond = -1;
+  kidsMemoryCardClicks=0;
+}
+
+constexpr int16_t kKidsExitX=199;
+constexpr int16_t kKidsExitY=10;
+constexpr int16_t kKidsExitWidth=110;
+constexpr int16_t kKidsExitHeight=29;
+constexpr int16_t kKidsExitKnob=25;
+constexpr uint8_t kKidsExitTravel=kKidsExitWidth-kKidsExitKnob-4;
+
+void endKidsPaintCanvas();
+
+void resetKidsExitSlider(){
+  kidsExitSlide=0;kidsExitDragging=false;kidsExitAwaitRelease=false;
+}
+
+bool serviceKidsExitSlider(const TouchPoint& point){
+  const bool kidsScreen=screen==Screen::KidsMenu||screen==Screen::KidsMemory||
+                        screen==Screen::KidsPaint||screen==Screen::KidsCatch;
+  if(!kidsScreen){resetKidsExitSlider();return false;}
+  if(kidsExitAwaitRelease){
+    if(!point.touched)resetKidsExitSlider();
+    return point.touched;
+  }
+  if(!point.touched){
+    if(kidsExitDragging){
+      kidsExitDragging=false;kidsExitSlide=0;
+      invalidatePixels(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight);
+      requestRetainedFrame();
+    }
+    return false;
+  }
+  const bool insideTrack=point.x>=kKidsExitX&&point.x<kKidsExitX+kKidsExitWidth&&
+                         point.y>=kKidsExitY-5&&point.y<kKidsExitY+kKidsExitHeight+5;
+  if(!kidsExitDragging){
+    if(!insideTrack||point.x>kKidsExitX+kKidsExitKnob+8)return false;
+    kidsExitDragging=true;
+  }
+  if(!insideTrack){kidsExitDragging=false;kidsExitSlide=0;return true;}
+  const int16_t travelX=std::clamp<int16_t>(point.x-(kKidsExitX+kKidsExitKnob/2),0,kKidsExitTravel);
+  kidsExitSlide=static_cast<uint8_t>(travelX*100/kKidsExitTravel);
+  invalidatePixels(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight);
+  requestRetainedFrame();
+  if(kidsExitSlide<96U)return true;
+  const Screen leaving=screen;
+  kidsExitDragging=false;kidsExitSlide=0;kidsExitAwaitRelease=true;
+  AssetRenderer::clearSmallCache();
+  if(leaving==Screen::KidsMenu){settingsPage=0;settingsScroll=4;screen=Screen::Settings;drawSettings();}
+  else{
+    if(leaving==Screen::KidsPaint)endKidsPaintCanvas();
+    screen=Screen::KidsMenu;drawKidsMenu();
+  }
+  return true;
+}
+
+void drawKidsExitSlider(){
+  display.fillRoundRect(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight,8,kSettingsWell);
+  display.drawRoundRect(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight,8,themeDark());
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(themeDark(),kSettingsWell);
+  fireRedText.drawString("SLIDE",kKidsExitX+68,kKidsExitY+15,1);
+  display.fillTriangle(kKidsExitX+98,kKidsExitY+10,kKidsExitX+98,kKidsExitY+20,
+                       kKidsExitX+104,kKidsExitY+15,themeDark());
+  const int16_t knobX=kKidsExitX+2+(static_cast<uint16_t>(kidsExitSlide)*kKidsExitTravel/100U);
+  display.fillRoundRect(knobX,kKidsExitY+2,kKidsExitKnob,kKidsExitHeight-4,6,0x04D3);
+  display.drawRoundRect(knobX,kKidsExitY+2,kKidsExitKnob,kKidsExitHeight-4,6,themeDark());
+  display.fillTriangle(knobX+9,kKidsExitY+9,knobX+9,kKidsExitY+21,
+                       knobX+16,kKidsExitY+15,TFT_WHITE);
+  fireRedText.setTextDatum(TL_DATUM);
+}
+
+void drawKidsPokeball(int16_t cx,int16_t cy,int16_t radius){
+  display.fillCircle(cx,cy,radius,TFT_WHITE);
+  // Paint only pixels inside the upper semicircle. A rectangular lower-half
+  // overlay used to protrude beyond the circle and looked like a square tab.
+  for(int16_t dy=-radius+1;dy<0;++dy)
+    for(int16_t dx=-radius+1;dx<radius;++dx)
+      if(dx*dx+dy*dy<(radius-1)*(radius-1))display.drawPixel(cx+dx,cy+dy,TFT_RED);
+  display.fillRect(cx-radius,cy-2,radius*2+1,4,themeDark());
+  display.fillCircle(cx,cy,static_cast<int16_t>(radius/3+2),themeDark());
+  display.fillCircle(cx,cy,static_cast<int16_t>(radius/3),TFT_WHITE);
+  display.drawCircle(cx,cy,radius,themeDark());
+}
+
+void drawKidsPaintIcon(int16_t cx,int16_t cy){
+  display.fillCircle(cx-3,cy,18,0xFF5C);
+  display.drawCircle(cx-3,cy,18,themeDark());
+  display.fillCircle(cx-10,cy-6,3,TFT_RED);
+  display.fillCircle(cx-1,cy-10,3,TFT_BLUE);
+  display.fillCircle(cx+7,cy-4,3,TFT_GREEN);
+  display.fillCircle(cx+4,cy+7,4,TFT_WHITE);
+  for(int8_t offset=-2;offset<=2;++offset)
+    display.drawLine(cx+4+offset,cy+13,cx+16+offset,cy-13,TFT_WHITE);
+  display.drawLine(cx+4,cy+13,cx+16,cy-13,0x8410);
+}
+
+void drawKidsMenu() {
+  const bool entering = beginScreenPresentation(Screen::KidsMenu, TFT_BLACK);
+  if (!entering) invalidatePixels(1, 1, 318, 238);
+  drawSettingsShell("KIDS GAMES");
+  drawKidsExitSlider();
+  display.fillCircle(12,46,4,0xFFE0);display.fillCircle(309,125,5,0xF81F);
+  display.fillCircle(9,218,3,0x07FF);display.fillCircle(313,226,3,0xFFE0);
+  constexpr const char* labels[3] = {"ANIMAL CARDS", "BERRY CATCH", "FREE PAINT"};
+  constexpr const char* captions[3] = {"MATCH THE PAIRS", "CATCH TEN BERRIES", "DRAW WITH YOUR FINGER"};
+  constexpr uint16_t colors[3] = {0xFEB2, 0x8E7F, 0xBDF7};
+  for (uint8_t index = 0; index < 3U; ++index) {
+    const int16_t y = 50 + index * 57;
+    display.fillRoundRect(21,y+3,284,49,10,0x6B4D);
+    display.fillRoundRect(18, y, 284, 49, 10, colors[index]);
+    display.drawRoundRect(18,y,284,49,10,TFT_WHITE);
+    display.drawRoundRect(19,y+1,282,47,9,themeDark());
+    display.fillCircle(54, y + 24, 19, TFT_WHITE);
+    display.drawCircle(54, y + 24, 19, themeDark());
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.setTextColor(themeDark(), colors[index]);
+    fireRedText.drawString(labels[index], 187, y + 17, 2);
+    fireRedText.drawString(captions[index], 187, y + 36, 1);
+    if(index==0)drawKidsPokeball(54,y+24,13);
+    else if(index==1){
+      display.fillCircle(54,y+24,11,TFT_RED);
+      display.fillCircle(50,y+20,3,TFT_WHITE);
+      display.fillRect(52,y+9,5,6,TFT_DARKGREEN);
+    }else drawKidsPaintIcon(54,y+24);
+  }
+  fireRedText.setTextDatum(TL_DATUM);
+}
+
+void drawKidsAnimal(uint8_t animal, int16_t x, int16_t y) {
+  constexpr uint8_t speciesCount=static_cast<uint8_t>(
+      sizeof(kKidsAnimalSpecies)/sizeof(kKidsAnimalSpecies[0]));
+  OwnedPokemon visual{};
+  visual.speciesId=kKidsAnimalSpecies[animal%speciesCount];
+  char path[112];
+  pokemonAssetPath(path,sizeof(path),visual,PokemonAssetView::Front);
+  // Original FireRed pixels at 1:1. Fractional downscaling made a one-pixel
+  // outline alternate in thickness and look corrupted around the silhouette.
+  if(sdReady&&AssetRenderer::draw(display,path,x-32,y-32))return;
+  creature(x,y,visual);
+}
+
+void drawKidsMemory() {
+  const bool entering = beginScreenPresentation(Screen::KidsMemory, TFT_BLACK);
+  if (!entering) invalidatePixels(1, 1, 318, 238);
+  drawSettingsShell("ANIMAL CARDS");
+  drawKidsExitSlider();
+  for (uint8_t index = 0; index < 12U; ++index) {
+    const int16_t x = 12 + (index % 4U) * 77;
+    const int16_t y = 48 + (index / 4U) * 61;
+    const bool faceUp = (kidsMemoryMatched & (1U << index)) ||
+        kidsMemoryFirst==static_cast<int8_t>(index) ||
+        kidsMemorySecond==static_cast<int8_t>(index);
+    display.fillRoundRect(x+2,y+3,68,53,7,0x6B4D);
+    display.fillRoundRect(x, y, 68, 53, 7, faceUp ? TFT_WHITE : themePrimary());
+    display.drawRoundRect(x, y, 68, 53, 7, themeDark());
+    if (faceUp) {
+      drawKidsAnimal(kidsMemoryCards[index], x + 34, y + 27);
+      // The 64px source has transparent padding slightly taller than the card.
+      // Restore the frame on top so every revealed card keeps a clean edge.
+      display.drawRoundRect(x,y,68,53,7,themeDark());
+    } else {
+      display.drawRoundRect(x+4,y+4,60,45,5,TFT_WHITE);
+      drawKidsPokeball(x+34,y+27,13);
+    }
+  }
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(themeDark(), kSettingsPaper);
+  char footer[52];
+  const uint8_t pairs=kidsMemoryPairCount();
+  std::snprintf(footer,sizeof(footer),"PAIRS %u/6   CLICKS %u",pairs,
+                static_cast<unsigned>(kidsMemoryCardClicks));
+  fireRedText.drawStringFitted(footer,160,230,302,1);
+  fireRedText.setTextDatum(TL_DATUM);
+}
+
+void resetKidsCatch(){
+  kidsCatchScore=0;
+  kidsCatchTimerStarted=false;
+  kidsCatchStartedMs=0;
+  kidsCatchFinishedMs=0;
+  kidsRandomState^=millis()+gameSave.playTimeSeconds;
+  kidsCatchBerry=static_cast<uint8_t>(nextKidsRandom()%BerryGarden::kPlantableBerryCount);
+  kidsCatchX=static_cast<int16_t>(30+nextKidsRandom()%260U);
+  kidsCatchY=static_cast<int16_t>(67+nextKidsRandom()%112U);
+}
+
+void drawKidsCatch(){
+  const bool entering=beginScreenPresentation(Screen::KidsCatch,TFT_BLACK);
+  if(!entering)invalidatePixels(1,1,318,238);
+  drawSettingsShell("BERRY CATCH");
+  drawKidsExitSlider();
+  static constexpr const char* kSceneAssets[]={
+    "/pokegochi/assets/firered/ui/home_background_16.pkg",
+    "/pokegochi/assets/firered/items/held_01.pkg",
+    "/pokegochi/assets/firered/items/held_02.pkg",
+    "/pokegochi/assets/firered/items/held_03.pkg",
+    "/pokegochi/assets/firered/items/held_04.pkg",
+    "/pokegochi/assets/firered/items/held_05.pkg",
+    "/pokegochi/assets/firered/items/held_06.pkg",
+    "/pokegochi/assets/firered/items/held_07.pkg",
+    "/pokegochi/assets/firered/items/held_08.pkg",
+    "/pokegochi/assets/firered/items/held_09.pkg",
+  };
+  prepareUiScene(0x42455252UL,kSceneAssets,sizeof(kSceneAssets)/sizeof(kSceneAssets[0]));
+  if(!AssetRenderer::draw(display,kSceneAssets[0],8,49))display.fillRect(8,49,304,134,TFT_GREEN);
+  display.drawRect(8,49,304,134,themeDark());
+  if(kidsCatchScore<10U){
+    const HeldItem berry=BerryGarden::plantableBerry(kidsCatchBerry);
+    char berryPath[80];std::snprintf(berryPath,sizeof(berryPath),
+        "/pokegochi/assets/firered/items/held_%02u.pkg",static_cast<unsigned>(berry));
+    display.fillCircle(kidsCatchX,kidsCatchY,18,TFT_WHITE);
+    display.drawCircle(kidsCatchX,kidsCatchY,18,themeDark());
+    AssetRenderer::draw(display,berryPath,kidsCatchX-12,kidsCatchY-12);
+  }
+  display.fillRoundRect(68,189,184,36,7,kSettingsWell);
+  display.drawRoundRect(68,189,184,36,7,themeDark());
+  char score[40];
+  if(kidsCatchScore>=10U)std::snprintf(score,sizeof(score),"BERRIES  10 / 10");
+  else std::snprintf(score,sizeof(score),"BERRIES  %u / 10",kidsCatchScore);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(themeDark(),kSettingsWell);
+  fireRedText.drawString(score,160,kidsCatchScore>=10U?200:207,
+                         kidsCatchScore>=10U?1:2);
+  if(kidsCatchScore>=10U){
+    char elapsed[16];formatKidsTime(elapsed,sizeof(elapsed),kidsCatchStartedMs,
+                                    kidsCatchFinishedMs);
+    char timeText[28];std::snprintf(timeText,sizeof(timeText),"TIME  %s",elapsed);
+    fireRedText.drawString(timeText,160,216,1);
+  }
+  fireRedText.setTextDatum(TL_DATUM);
+}
+
+constexpr uint16_t kKidsPaintColors[4] = {TFT_WHITE, TFT_RED, TFT_BLUE, TFT_GREEN};
+
+uint8_t kidsPaintPixel(uint8_t x, uint8_t y) {
+  if (!kidsPaintPixels) return 0;
+  const uint16_t index = static_cast<uint16_t>(y) * kKidsCanvasWidth + x;
+  return static_cast<uint8_t>((kidsPaintPixels[index >> 2U] >> ((index & 3U) * 2U)) & 0x03U);
+}
+
+void setKidsPaintPixel(int16_t x, int16_t y, uint8_t color) {
+  if (!kidsPaintPixels || x < 0 || y < 0 ||
+      x >= kKidsCanvasWidth || y >= kKidsCanvasHeight) return;
+  const uint16_t index = static_cast<uint16_t>(y) * kKidsCanvasWidth + x;
+  uint8_t& packed = kidsPaintPixels[index >> 2U];
+  const uint8_t shift=static_cast<uint8_t>((index & 3U) * 2U);
+  packed=static_cast<uint8_t>((packed & ~(0x03U << shift)) | ((color & 0x03U) << shift));
+}
+
+void stampKidsPaint(int16_t x, int16_t y) {
+  for (int8_t dy=-2;dy<=2;++dy) for (int8_t dx=-2;dx<=2;++dx)
+    if (dx*dx+dy*dy<=5) setKidsPaintPixel(x+dx,y+dy,kidsPaintColor);
+}
+
+void drawKidsPaintLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
+  const int16_t dx=std::abs(x1-x0), sx=x0<x1?1:-1;
+  const int16_t dy=-std::abs(y1-y0), sy=y0<y1?1:-1;
+  int16_t error=dx+dy;
+  while (true) {
+    stampKidsPaint(x0,y0);
+    if (x0==x1&&y0==y1) break;
+    const int16_t twice=2*error;
+    if (twice>=dy) { error+=dy;x0+=sx; }
+    if (twice<=dx) { error+=dx;y0+=sy; }
+  }
+}
+
+bool beginKidsPaintCanvas() {
+  if (kidsPaintPixels) return true;
+  kidsPaintPixels = static_cast<uint8_t*>(heap_caps_calloc(
+      kKidsCanvasBytes, 1, MALLOC_CAP_8BIT));
+  if (!kidsPaintPixels)
+    Serial.printf("[KIDS] paint canvas allocation failed bytes=%u heap=%u block=%u\n",
+                  static_cast<unsigned>(kKidsCanvasBytes),
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+  return kidsPaintPixels != nullptr;
+}
+
+void endKidsPaintCanvas() {
+  if (kidsPaintPixels) heap_caps_free(kidsPaintPixels);
+  kidsPaintPixels=nullptr;kidsPaintLastX=-1;kidsPaintLastY=-1;kidsPaintLastTouchMs=0;
+  kidsPaintSampleCount=0;kidsPaintSampleCursor=0;
+}
+
+void drawKidsPaint() {
+  const bool entering = beginScreenPresentation(Screen::KidsPaint, TFT_BLACK);
+  if (!entering) invalidatePixels(1, 1, 318, 238);
+  drawSettingsShell("PAINT");
+  drawKidsExitSlider();
+  display.fillRect(11,46,298,142,TFT_WHITE);
+  for (uint8_t y=0;y<kKidsCanvasHeight;++y) {
+    uint8_t runStart=0; uint8_t runColor=kidsPaintPixel(0,y);
+    for (uint8_t x=1;x<=kKidsCanvasWidth;++x) {
+      const uint8_t color=x<kKidsCanvasWidth?kidsPaintPixel(x,y):0xFF;
+      if (color==runColor) continue;
+      display.fillRect(12+runStart*2,47+y*2,(x-runStart)*2,2,kKidsPaintColors[runColor]);
+      runStart=x;runColor=color;
+    }
+  }
+  display.drawRect(11,46,298,142,themeDark());
+  for (uint8_t color = 1; color < 4U; ++color) {
+    const int16_t x = 18 + (color - 1U) * 52;
+    display.fillCircle(x + 14, 211, 12, kKidsPaintColors[color]);
+    display.drawCircle(x + 14, 211, kidsPaintColor == color ? 14 : 12, TFT_BLACK);
+  }
+  button(233, 197, 76, 29, "CLEAR", TFT_DARKGREY);
+}
+
+void serviceKidsPaintStroke(const TouchPoint& point) {
+  if (!kidsPaintPixels || screen != Screen::KidsPaint) {
+    kidsPaintLastX=-1;kidsPaintLastY=-1;kidsPaintLastTouchMs=0;
+    kidsPaintSampleCount=0;kidsPaintSampleCursor=0;
+    return;
+  }
+  const uint32_t now=millis();
+  if (!point.touched) {
+    // The resistive panel occasionally reports a one-frame release while a
+    // finger is still sliding. Keep the stroke anchor briefly so that those
+    // electrical dropouts do not split a continuous line.
+    if (kidsPaintLastTouchMs && now-kidsPaintLastTouchMs>120U)
+      kidsPaintLastX=-1,kidsPaintLastY=-1,kidsPaintLastTouchMs=0,
+      kidsPaintSampleCount=0,kidsPaintSampleCursor=0;
+    return;
+  }
+  if (point.x < 12 || point.x >= 308 || point.y < 47 || point.y >= 187) {
+    kidsPaintLastX=-1;kidsPaintLastY=-1;kidsPaintLastTouchMs=0;
+    kidsPaintSampleCount=0;kidsPaintSampleCursor=0;
+    return;
+  }
+  const int16_t rawX=(point.x-12)/2, rawY=(point.y-47)/2;
+  kidsPaintSampleX[kidsPaintSampleCursor]=rawX;
+  kidsPaintSampleY[kidsPaintSampleCursor]=rawY;
+  kidsPaintSampleCursor=static_cast<uint8_t>((kidsPaintSampleCursor+1U)%3U);
+  if(kidsPaintSampleCount<3U)++kidsPaintSampleCount;
+  auto median3=[](int16_t a,int16_t b,int16_t c){
+    return std::max(std::min(a,b),std::min(std::max(a,b),c));
+  };
+  int16_t x=rawX,y=rawY;
+  if(kidsPaintSampleCount==2U){
+    x=(kidsPaintSampleX[0]+kidsPaintSampleX[1])/2;
+    y=(kidsPaintSampleY[0]+kidsPaintSampleY[1])/2;
+  }else if(kidsPaintSampleCount>=3U){
+    x=median3(kidsPaintSampleX[0],kidsPaintSampleX[1],kidsPaintSampleX[2]);
+    y=median3(kidsPaintSampleY[0],kidsPaintSampleY[1],kidsPaintSampleY[2]);
+  }
+  const int16_t previousX=kidsPaintLastX, previousY=kidsPaintLastY;
+  if (previousX<0 || std::abs(x-previousX)>30 || std::abs(y-previousY)>30)
+    stampKidsPaint(x,y);
+  else
+    drawKidsPaintLine(previousX,previousY,x,y);
+  kidsPaintLastX=x;kidsPaintLastY=y;
+  kidsPaintLastTouchMs=now;
+  // Redraw the complete segment, not only the newest brush stamp. Fast finger
+  // movement can span several touch samples and used to leave visible gaps.
+  const int16_t previousScreenX=previousX<0?point.x:12+previousX*2;
+  const int16_t previousScreenY=previousY<0?point.y:47+previousY*2;
+  const int16_t left=std::max<int16_t>(11,std::min<int16_t>(previousScreenX,point.x)-7);
+  const int16_t top=std::max<int16_t>(46,std::min<int16_t>(previousScreenY,point.y)-7);
+  const int16_t right=std::min<int16_t>(309,std::max<int16_t>(previousScreenX,point.x)+8);
+  const int16_t bottom=std::min<int16_t>(188,std::max<int16_t>(previousScreenY,point.y)+8);
+  invalidatePixels(left,top,right-left,bottom-top);
+  requestRetainedFrame();
+}
+
+TouchPoint filterGameTouch(const TouchPoint& raw){
+  // Never combine coordinates sampled on opposite sides of a screen change.
+  // A fast tap after BACK previously averaged the old right-side coordinate
+  // with the new Home press and produced a phantom point near mid-screen.
+  if(gameTouchFilterScreen!=screen){
+    gameTouchFilter.reset();
+    gameTouchFilterScreen=screen;
+  }
+  // Paint already has a stroke-specific median plus dropout handling.
+  if(screen==Screen::KidsPaint){
+    if(!raw.touched)gameTouchFilter.reset();
+    return raw;
+  }
+  TouchPoint filtered=raw;
+  const FilteredTouchPoint sample=gameTouchFilter.update(
+      raw.touched,raw.x,raw.y,gameSave.settings.touchInputMode());
+  filtered.touched=sample.touched;
+  filtered.x=sample.x;
+  filtered.y=sample.y;
+  return filtered;
 }
 
 void drawPlayerStats() {
@@ -14506,7 +15464,7 @@ void closeWirelessUpdate() {
     drawDiagnostic();
   } else {
     settingsPage = 0;
-    settingsScroll = 3;
+    settingsScroll = 4;
     screen = Screen::Settings;
     requestRetainedFrame();
     drawSettings();
@@ -14517,13 +15475,18 @@ void closeWirelessUpdate() {
 // not the screen: the retained presenter then transmits only the changed
 // pixels and the layered chrome never leaves stale edges behind.
 void refreshSettingsBrightness() {
-  invalidatePixels(13, 47, 294, 66);
+  invalidatePixels(13, 47, 294, 55);
   drawSettingsBrightnessCard();
 }
 
 void refreshSettingsTimeout() {
-  invalidatePixels(13, 117, 294, 80);
+  invalidatePixels(13, 106, 294, 45);
   drawSettingsTimeoutCard();
+}
+
+void refreshSettingsTouchMode() {
+  invalidatePixels(13, 155, 294, 42);
+  drawSettingsTouchModeCard();
 }
 
 void refreshSettingsBattleText() {
@@ -15766,6 +16729,7 @@ uint16_t battleStatusColor(StatusCondition status) {
     default: return TFT_WHITE;
   }
 }
+
 
 void drawTinyPokeBall(int16_t x, int16_t y, bool available = true) {
   const uint16_t edge = available ? TFT_DARKGREY : TFT_LIGHTGREY;
@@ -17331,7 +18295,7 @@ void drawBattleSummaryLegacy() {
       fireRedText.setTextColor(TFT_WHITE, themePrimary()); fireRedText.drawStringFitted(pokemonTypeName(secondary), 222, 65, 73, 1);
     }
     fireRedText.setTextColor(TFT_DARKGREY, 0xFDF0); fireRedText.drawString("ITEM", 166, 94, 1);
-    fireRedText.drawStringAuto(heldItemName(pokemon->heldItem), 216, 91, 83);
+    fireRedText.drawStringAuto(heldItemDisplayName(*pokemon),216,91,83);
     fireRedText.drawString("NATURE", 166, 119, 1);
     fireRedText.drawStringAuto(CollectionLogic::natureName(pokemon->nature), 216, 116, 83);
     fireRedText.drawString("STATUS", 166, 144, 1);
@@ -17341,7 +18305,7 @@ void drawBattleSummaryLegacy() {
     fireRedText.setTextColor(TFT_DARKGREY, 0xFDF0);
     char line[46]; std::snprintf(line, sizeof(line), "FRIENDSHIP %u/255", pokemon->friendship);
     fireRedText.drawStringAuto(line, 16, 175, 286);
-    std::snprintf(line, sizeof(line), "HELD ITEM: %s", heldItemName(pokemon->heldItem));
+    std::snprintf(line,sizeof(line),"HELD ITEM: %s",heldItemDisplayName(*pokemon));
     fireRedText.drawStringAuto(line, 16, 191, 286);
   } else if (summaryPage == 1) {
     constexpr uint16_t yellow = 0xFDF0;
@@ -17722,6 +18686,19 @@ void initializeSummaryEvDraft(const OwnedPokemon& pokemon, bool force = false) {
   summaryEvApplyConfirm = false;
 }
 
+bool summaryEvDraftChanged(const OwnedPokemon& pokemon){
+  for(uint8_t row=0;row<6U;++row)
+    if(summaryEvAt(pokemon.evs,row)!=summaryEvAt(summaryEvDraft,row))return true;
+  return false;
+}
+
+uint8_t summaryEvChangedStatCount(const OwnedPokemon& pokemon){
+  uint8_t changed=0;
+  for(uint8_t row=0;row<6U;++row)
+    if(summaryEvAt(pokemon.evs,row)!=summaryEvAt(summaryEvDraft,row))++changed;
+  return changed;
+}
+
 void drawSummaryEvButton(int16_t x, int16_t width, const char* label, bool enabled) {
   constexpr uint16_t kFrame = 0x6B6D;
   const uint16_t fill = enabled ? 0xD69A : 0xC618;
@@ -17739,33 +18716,48 @@ void drawSummaryEvRow(const OwnedPokemon& pokemon, uint8_t row) {
   constexpr uint16_t kSelected = 0xD69A;
   const int16_t y = static_cast<int16_t>(50 + row * 17);
   const uint16_t fill = row == summaryEvSelected ? kSelected : kPaper;
+  const bool changed=summaryEvAt(pokemon.evs,row)!=summaryEvAt(summaryEvDraft,row);
   display.fillRect(11, y, 298, 16, fill);
   if (row) display.drawFastHLine(11, y - 1, 298, 0xC618);
   if (row == summaryEvSelected)
     display.fillRect(11, y, 4, 16, themePrimary());
   fireRedText.setTextColor(TFT_DARKGREY, fill);
-  fireRedText.drawStringAuto(names[row], 15, y + 1, 86);
+  fireRedText.drawStringAuto(names[row], 15, y + 1, 76);
   char value[8];
   fireRedText.setTextDatum(MC_DATUM);
   std::snprintf(value, sizeof(value), "%u", summaryBaseAt(pokemon, row));
-  fireRedText.drawStringAuto(value, 151, y + 7, 43);
+  fireRedText.drawStringAuto(value, 121, y + 7, 37);
   std::snprintf(value, sizeof(value), "%u", summaryIvAt(pokemon.ivs, row));
-  fireRedText.drawStringAuto(value, 211, y + 7, 43);
+  fireRedText.drawStringAuto(value, 166, y + 7, 37);
+  std::snprintf(value, sizeof(value), "%u", summaryEvAt(pokemon.evs, row));
+  fireRedText.drawStringAuto(value, 216, y + 7, 43);
+  const uint16_t draftFill=changed?0xFFE0:fill;
+  display.fillRoundRect(250,y+1,57,14,3,draftFill);
+  if(changed)display.drawRoundRect(250,y+1,57,14,3,themeAccent());
+  fireRedText.setTextColor(TFT_DARKGREY,draftFill);
   std::snprintf(value, sizeof(value), "%u", summaryEvAt(summaryEvDraft, row));
-  fireRedText.drawStringAuto(value, 275, y + 7, 51);
+  fireRedText.drawStringAuto(value, 278, y + 7, 51);
   fireRedText.setTextDatum(TL_DATUM);
 }
 
-void drawSummaryEvCounters() {
+void drawSummaryEvCounters(const OwnedPokemon& pokemon) {
   constexpr uint16_t kPaper = 0xFD68;
   display.fillRoundRect(8, 154, 304, 22, 4, kPaper);
   fireRedText.setTextColor(TFT_DARKGREY, kPaper);
   char text[44];
-  std::snprintf(text, sizeof(text), "EARNED %u / %u", summaryEvEarned, summaryEvMaximum);
-  fireRedText.drawStringAuto(text, 13, 158, 150);
+  std::snprintf(text, sizeof(text), "TOTAL %u/%u", summaryEvEarned, summaryEvMaximum);
+  fireRedText.drawStringAuto(text, 13, 158, 105);
+  const bool changed=summaryEvDraftChanged(pokemon);
+  const uint16_t badge=changed?0xFFE0:0xA7F3;
+  display.fillRoundRect(119,156,88,18,5,badge);
+  display.drawRoundRect(119,156,88,18,5,changed?themeAccent():TFT_DARKGREEN);
+  fireRedText.setTextColor(TFT_DARKGREY,badge);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawString(changed?"NOT APPLIED":"APPLIED",163,165,1);
   std::snprintf(text, sizeof(text), "FREE %u", summaryEvFree);
   fireRedText.setTextDatum(TR_DATUM);
-  fireRedText.drawStringAuto(text, 307, 158, 112);
+  fireRedText.setTextColor(TFT_DARKGREY,kPaper);
+  fireRedText.drawStringAuto(text, 307, 158, 96);
   fireRedText.setTextDatum(TL_DATUM);
 }
 
@@ -17780,7 +18772,7 @@ void drawSummaryEvControls(bool editable) {
       summaryEvAt(summaryEvDraft, summaryEvSelected) < CollectionLogic::kMaximumEffortValue);
 }
 
-void drawSummaryEvFooter(bool editable) {
+void drawSummaryEvFooter(bool editable,const OwnedPokemon& pokemon) {
   display.fillRect(0, 213, 320, 27, themePrimary());
   auto footerButton = [&](int16_t x, int16_t width, const char* label, bool enabled) {
     const uint16_t fill = enabled ? TFT_WHITE : 0xC618;
@@ -17791,21 +18783,27 @@ void drawSummaryEvFooter(bool editable) {
     fireRedText.drawStringAuto(label, x + width / 2, 226, width - 8);
     fireRedText.setTextDatum(TL_DATUM);
   };
-  footerButton(8, 91, "BACK", true);
-  footerButton(209, 103, "APPLY", editable && summaryEvFree == 0U);
+  const bool changed=summaryEvDraftChanged(pokemon);
+  footerButton(8, 91, changed?"DISCARD":"BACK", true);
+  footerButton(185, 127,
+      !changed?"APPLIED":summaryEvFree?"USE FREE EVS":"APPLY CHANGES",
+      editable&&changed&&summaryEvFree==0U);
 }
 
-void drawSummaryEvApplyConfirmation() {
+void drawSummaryEvApplyConfirmation(const OwnedPokemon& pokemon) {
   constexpr uint16_t kPaper = 0xFFDF;
   constexpr uint16_t kFrame = 0x6B6D;
   display.fillRoundRect(54, 62, 212, 104, 6, kFrame);
   display.fillRect(58, 66, 204, 96, kPaper);
   fireRedText.setTextColor(TFT_DARKGREY, kPaper);
   fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.drawString("APPLY THIS EV SPREAD?", 160, 84, 1);
+  fireRedText.drawString("SAVE THESE EV CHANGES?", 160, 82, 1);
   char total[28];
+  std::snprintf(total,sizeof(total),"%u STATS CHANGED",
+                summaryEvChangedStatCount(pokemon));
+  fireRedText.drawString(total,160,101,1);
   std::snprintf(total, sizeof(total), "TOTAL %u / %u", summaryEvEarned, summaryEvMaximum);
-  fireRedText.drawString(total, 160, 104, 1);
+  fireRedText.drawString(total, 160, 116, 1);
   fireRedText.setTextDatum(TL_DATUM);
   display.fillRect(69, 126, 78, 27, TFT_DARKGREY);
   display.fillRect(72, 129, 72, 21, 0xD69A);
@@ -17826,13 +18824,14 @@ void drawSummaryEvEditor(const OwnedPokemon& pokemon) {
   fireRedText.setTextColor(TFT_DARKGREY, kPaper);
   fireRedText.drawString("STAT", 15, 32, 1);
   fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.drawString("BASE", 151, 39, 1);
-  fireRedText.drawString("IV", 211, 39, 1);
-  fireRedText.drawString("EV", 275, 39, 1);
+  fireRedText.drawString("BASE", 121, 39, 1);
+  fireRedText.drawString("IV", 166, 39, 1);
+  fireRedText.drawString("SAVED", 216, 39, 1);
+  fireRedText.drawString("DRAFT", 278, 39, 1);
   fireRedText.setTextDatum(TL_DATUM);
   display.drawFastHLine(11, 48, 298, 0x6B6D);
   for (uint8_t row = 0; row < 6U; ++row) drawSummaryEvRow(pokemon, row);
-  drawSummaryEvCounters();
+  drawSummaryEvCounters(pokemon);
   const bool editable = summaryEvEditable(pokemon);
   drawSummaryEvControls(editable);
   if (!editable) {
@@ -17843,8 +18842,8 @@ void drawSummaryEvEditor(const OwnedPokemon& pokemon) {
         ? "EDITING UNLOCKS AT LV.90" : "LOCKED DURING BATTLE", 160, 193, 1);
     fireRedText.setTextDatum(TL_DATUM);
   }
-  drawSummaryEvFooter(editable);
-  if (summaryEvApplyConfirm) drawSummaryEvApplyConfirmation();
+  drawSummaryEvFooter(editable,pokemon);
+  if (summaryEvApplyConfirm) drawSummaryEvApplyConfirmation(pokemon);
 }
 
 void drawBattleSummary() {
@@ -17888,7 +18887,7 @@ void drawBattleSummary() {
     drawSummaryInfoValue("POKEGOCHI", 84);
     std::snprintf(value, sizeof(value), "%05lu", static_cast<unsigned long>(pokemon->uid % 100000U));
     drawSummaryInfoValue(value, 103);
-    drawSummaryInfoValue(heldItemName(pokemon->heldItem), 122);
+    drawSummaryInfoValue(heldItemDisplayName(*pokemon),122);
     // The memo field itself is an empty FireRed panel. Clear it on every
     // page draw so a previously scrolled line can never remain underneath a
     // freshly rendered description.
@@ -18321,6 +19320,36 @@ void drawInventoryTarget() {
   }
 }
 
+void drawMegaFormSelect(){
+  OwnedPokemon* target=CollectionLogic::find(gameSave.collection,megaVariantTargetUid);
+  if(!target){inventoryMode=InventoryMode::Browse;screen=Screen::Inventory;drawInventory();return;}
+  const bool entering=beginScreenPresentation(Screen::MegaFormSelect,TFT_BLACK);
+  if(!entering)invalidatePixels(1,1,318,238);
+  drawSettingsShell("CHOOSE MEGA FORM");
+  const SpeciesData* species=findSpecies(target->speciesId);
+  fireRedText.setTextDatum(MC_DATUM);fireRedText.setTextColor(themeDark(),kSettingsPaper);
+  fireRedText.drawStringFitted(species?species->name:"POKEMON",160,50,280,2);
+  const uint8_t count=std::min<uint8_t>(2U,MegaEvolution::variantChoiceCount(target->speciesId));
+  for(uint8_t index=0;index<count;++index){
+    const int16_t x=12+index*153;const MegaVariant variant=MegaEvolution::variantChoice(target->speciesId,index);
+    const MegaFormData* form=MegaEvolution::formData(target->speciesId,variant);
+    display.fillRoundRect(x,61,143,130,8,index?0xD7FF:0xFFF0);
+    display.drawRoundRect(x,61,143,130,8,themeDark());
+    if(!form)continue;
+    OwnedPokemon preview=*target;preview.heldItem=HeldItem::MegaStone;
+    MegaEvolution::setVariantChoice(preview,variant);CollectionLogic::refreshAbility(preview);
+    char path[112];pokemonAssetPath(path,sizeof(path),preview,PokemonAssetView::Front);
+    if(!sdReady||!AssetRenderer::draw(display,path,x+39,68))creature(x+71,100,preview);
+    fireRedText.setTextColor(themeDark(),index?0xD7FF:0xFFF0);
+    fireRedText.drawString(form->displayName,x+71,137,2);
+    char stats[42];std::snprintf(stats,sizeof(stats),"ATK %u  SPA %u",form->baseAttack,form->baseSpAttack);
+    fireRedText.drawStringFitted(stats,x+71,158,130,1);
+    std::snprintf(stats,sizeof(stats),"DEF %u  SPE %u",form->baseDefense,form->baseSpeed);
+    fireRedText.drawStringFitted(stats,x+71,174,130,1);
+  }
+  fireRedText.setTextDatum(TL_DATUM);button(105,202,110,29,"CANCEL",TFT_RED);
+}
+
 void drawInventoryMoveTarget() {
   const InventoryEntry entry=selectedInventoryEntry();
   OwnedPokemon* target=CollectionLogic::find(gameSave.collection,inventoryMoveTargetUid);
@@ -18662,9 +19691,9 @@ void drawInventory() {
       fireRedText.drawString("EMPTY", 178, 76, 2);
     }
     const uint8_t total = inventoryTotalEntries();
-    if (inventoryListOffset > 0U)
+    if (total > kInventoryVisibleRows)
       display.fillTriangle(296, 24, 304, 24, 300, 17, TFT_DARKGREY);
-    if (inventoryListOffset + count < total)
+    if (total > kInventoryVisibleRows)
       display.fillTriangle(296, 148, 304, 148, 300, 155, TFT_DARKGREY);
   }
 
@@ -18778,9 +19807,9 @@ void refreshInventoryPanels(bool refreshPocket) {
       fireRedText.drawString("EMPTY", 178, 76, 2);
     }
     const uint8_t total = inventoryTotalEntries();
-    if (inventoryListOffset > 0U)
+    if (total > kInventoryVisibleRows)
       display.fillTriangle(296, 24, 304, 24, 300, 17, TFT_DARKGREY);
-    if (inventoryListOffset + count < total)
+    if (total > kInventoryVisibleRows)
       display.fillTriangle(296, 148, 304, 148, 300, 155, TFT_DARKGREY);
   }
 
@@ -19124,19 +20153,19 @@ void drawBoxSortMenu() {
   constexpr uint16_t kChrome = 0x6B4D;
   constexpr uint16_t kPaper = 0xFFDF;
   constexpr uint16_t kDivider = 0xA514;
-  constexpr const char* kLabels[] = {"DEX No.", "LEVEL", "CANCEL"};
-  const int16_t height = 3 * kBoxSortMenuRowH + 8;
+  constexpr const char* kLabels[] = {"DEX No.", "LEVEL", "EV TOTAL", "CANCEL"};
+  const int16_t height = 4 * kBoxSortMenuRowH + 8;
   display.fillRoundRect(kBoxSortMenuX + 2, kBoxSortMenuY + 2,
                         kBoxSortMenuW, height, 5, 0x4228);
   drawGbaInsetPanel(kBoxSortMenuX, kBoxSortMenuY, kBoxSortMenuW, height,
                     5, kChrome, kPaper);
-  for (uint8_t row = 1; row < 3; ++row)
+  for (uint8_t row = 1; row < 4; ++row)
     display.drawFastHLine(kBoxSortMenuX + 4,
                           kBoxSortMenuY + 4 + row * kBoxSortMenuRowH,
                           kBoxSortMenuW - 8, kDivider);
   fireRedText.setTextColor(TFT_DARKGREY, kPaper);
   fireRedText.setTextDatum(MC_DATUM);
-  for (uint8_t row = 0; row < 3; ++row)
+  for (uint8_t row = 0; row < 4; ++row)
     fireRedText.drawStringFitted(kLabels[row],
         kBoxSortMenuX + kBoxSortMenuW / 2,
         kBoxSortMenuY + 4 + row * kBoxSortMenuRowH + kBoxSortMenuRowH / 2,
@@ -19434,6 +20463,29 @@ void drawBoxPreviewPanelContents(const OwnedPokemon* selected,
   }
 }
 
+// Party cards keep HP readable at a glance without spending the narrow row on
+// a current/maximum number.  The same thresholds as the battle HUD make the
+// meter green above half HP, orange at half or below, and red at a quarter or
+// below.  Keeping this in one painter prevents the full Box draw and its
+// retained partial refresh from drifting apart again.
+void drawBoxPartyHpMeter(const OwnedPokemon& pokemon, int16_t rowY,
+                         uint16_t panel) {
+  constexpr int16_t kLabelX = kBoxGridX + 105;
+  constexpr int16_t kTrackX = kBoxGridX + 125;
+  constexpr uint16_t kTrackWidth = 68;
+  constexpr uint16_t kFillWidth = kTrackWidth - 4U;
+  constexpr uint16_t kTrackColor = 0x4208;
+  fireRedText.setTextColor(TFT_ORANGE, panel);
+  fireRedText.drawString("HP", kLabelX, rowY + 23, 3);
+  display.fillRect(kTrackX, rowY + 23, kTrackWidth, 7, kTrackColor);
+  display.fillRect(kTrackX + 2, rowY + 25, kFillWidth, 3, TFT_WHITE);
+  const uint16_t filled = meterFillPixels(
+      kFillWidth, pokemon.currentHp, pokemon.maximumHp);
+  if (filled)
+    display.fillRect(kTrackX + 2, rowY + 25, filled, 3,
+                     battleHpColor(pokemon.currentHp, pokemon.maximumHp));
+}
+
 void drawBox() {
   // This is the FireRed storage layout adapted proportionally from 240x160
   // to the CYD's 320x240 landscape screen: data panel left, tabs above and
@@ -19519,7 +20571,6 @@ void drawBox() {
     const uint16_t partySelectedCard = 0xFFF2;
     const uint16_t partySelectedFrame = 0xFD60;
     const uint16_t partyIconPad = 0xFFFF;
-    const uint16_t partyHpTrack = 0x4208;
     display.fillRoundRect(kBoxGridX, kBoxGridY, kBoxGridW, kBoxGridH,
                           5, partyBackdrop);
     for (int16_t y = kBoxGridY + 3; y < kBoxGridY + kBoxGridH; y += 6)
@@ -19531,7 +20582,7 @@ void drawBox() {
       const uint16_t frame = activeSlot ? partySelectedFrame : partyFrame;
       display.fillRoundRect(kBoxGridX + 8, y + 2, kBoxGridW - 14, 37, 6, 0x4228);
       display.fillRoundRect(kBoxGridX + 7, y, kBoxGridW - 14, 37, 6, frame);
-      display.fillRoundRect(kBoxGridX + 10, y + 3, kBoxGridW - 20, 31, 4, panel);
+      display.fillRoundRect(kBoxGridX + 10, y + 3, kBoxGridW - 20, 33, 4, panel);
       // A plain white pad gives the 32x32 FireRed party sprite a reliable
       // silhouette regardless of the card or of the Pokémon's own colours.
       display.fillRoundRect(kBoxGridX + 13, y + 4, 36, 29, 4, partyIconPad);
@@ -19545,21 +20596,11 @@ void drawBox() {
         char label[42];
         std::snprintf(label, sizeof(label), "%s", data ? data->name : "PKMN");
         fireRedText.setTextColor(TFT_DARKGREY, panel);
-        fireRedText.drawStringAuto(label, kBoxGridX + 53, y + 6, 92);
+        fireRedText.drawStringAuto(label, kBoxGridX + 53, y + 3, 92);
         std::snprintf(label, sizeof(label), "Lv%u", pokemon->level);
-        fireRedText.setTextDatum(TR_DATUM);
-        fireRedText.drawStringFitted(label, kBoxGridX + kBoxGridW - 14, y + 9, 47, 3);
-        fireRedText.setTextDatum(TL_DATUM);
-        fireRedText.setTextColor(TFT_DARKGREY, panel); fireRedText.drawString("HP", kBoxGridX + 53, y + 20, 1);
-        display.fillRect(kBoxGridX + 73, y + 21, 68, 7, partyHpTrack);
-        display.fillRect(kBoxGridX + 75, y + 23, 64, 3, TFT_WHITE);
-        const uint16_t hpWidth = meterFillPixels(64U, pokemon->currentHp, pokemon->maximumHp);
-        display.fillRect(kBoxGridX + 75, y + 23, hpWidth, 3, battleHpColor(pokemon->currentHp, pokemon->maximumHp));
-        std::snprintf(label, sizeof(label), "%u/%u", pokemon->currentHp, pokemon->maximumHp);
         fireRedText.setTextColor(TFT_DARKGREY, panel);
-        fireRedText.setTextDatum(TR_DATUM);
-        fireRedText.drawStringFitted(label, kBoxGridX + kBoxGridW - 14, y + 22, 53, 3);
-        fireRedText.setTextDatum(TL_DATUM);
+        fireRedText.drawStringFitted(label, kBoxGridX + 53, y + 19, 50, 2);
+        drawBoxPartyHpMeter(*pokemon, y, panel);
       } else {
         fireRedText.setTextColor(TFT_DARKGREY, panel);
         fireRedText.drawString("EMPTY", kBoxGridX + 55, y + 12, 2);
@@ -19730,7 +20771,6 @@ void refreshBoxPartySurface(bool refreshPreview) {
   constexpr uint16_t kPartySelectedCard = 0xFFF2;
   constexpr uint16_t kPartySelectedFrame = 0xFD60;
   constexpr uint16_t kPartyIconPad = 0xFFFF;
-  constexpr uint16_t kPartyHpTrack = 0x4208;
 
   // Prepare the Party cards, all members and the selected preview as one
   // scene.  This replaces the former piecemeal preloads that accumulated old
@@ -19766,7 +20806,7 @@ void refreshBoxPartySurface(bool refreshPreview) {
     const uint16_t frame = activeSlot ? kPartySelectedFrame : kPartyFrame;
     display.fillRoundRect(kBoxGridX + 8, y + 2, kBoxGridW - 14, 37, 6, 0x4228);
     display.fillRoundRect(kBoxGridX + 7, y, kBoxGridW - 14, 37, 6, frame);
-    display.fillRoundRect(kBoxGridX + 10, y + 3, kBoxGridW - 20, 31, 4, panel);
+    display.fillRoundRect(kBoxGridX + 10, y + 3, kBoxGridW - 20, 33, 4, panel);
     display.fillRoundRect(kBoxGridX + 13, y + 4, 36, 29, 4, kPartyIconPad);
     display.drawRoundRect(kBoxGridX + 13, y + 4, 36, 29, 4, frame);
     if (activeSlot) display.fillCircle(kBoxGridX + 15, y + 6, 3, 0xFD60);
@@ -19778,20 +20818,10 @@ void refreshBoxPartySurface(bool refreshPreview) {
       char label[42];
       fireRedText.setTextColor(TFT_DARKGREY, panel);
       std::snprintf(label, sizeof(label), "%s", data ? data->name : "PKMN");
-      fireRedText.drawStringAuto(label, kBoxGridX + 53, y + 6, 92);
+      fireRedText.drawStringAuto(label, kBoxGridX + 53, y + 3, 92);
       std::snprintf(label, sizeof(label), "Lv%u", pokemon->level);
-      fireRedText.setTextDatum(TR_DATUM);
-      fireRedText.drawStringFitted(label, kBoxGridX + kBoxGridW - 14, y + 9, 47, 3);
-      fireRedText.setTextDatum(TL_DATUM);
-      fireRedText.drawString("HP", kBoxGridX + 53, y + 20, 1);
-      display.fillRect(kBoxGridX + 73, y + 21, 68, 7, kPartyHpTrack);
-      display.fillRect(kBoxGridX + 75, y + 23, 64, 3, TFT_WHITE);
-      const uint16_t hpWidth = meterFillPixels(64U, pokemon->currentHp, pokemon->maximumHp);
-      display.fillRect(kBoxGridX + 75, y + 23, hpWidth, 3, battleHpColor(pokemon->currentHp, pokemon->maximumHp));
-      std::snprintf(label, sizeof(label), "%u/%u", pokemon->currentHp, pokemon->maximumHp);
-      fireRedText.setTextDatum(TR_DATUM);
-      fireRedText.drawStringFitted(label, kBoxGridX + kBoxGridW - 14, y + 22, 53, 3);
-      fireRedText.setTextDatum(TL_DATUM);
+      fireRedText.drawStringFitted(label, kBoxGridX + 53, y + 19, 50, 2);
+      drawBoxPartyHpMeter(*pokemon, y, panel);
     } else {
       fireRedText.setTextColor(TFT_DARKGREY, panel);
       fireRedText.drawString("EMPTY", kBoxGridX + 55, y + 12, 2);
@@ -20369,10 +21399,8 @@ void drawMartListPanel() {
   // keeps exactly the same table structure as every other offer.
   display.drawFastVLine(217, 27, 128, 0xDED8);
   display.drawFastVLine(255, 27, 128, 0xDED8);
-  if (martListOffset)
-    display.fillTriangle(310, 15, 306, 22, 314, 22, kMartMenuBorder);
-  if (martListOffset < kMartLastPageOffset)
-    display.fillTriangle(310, 158, 306, 151, 314, 151, kMartMenuBorder);
+  display.fillTriangle(310, 15, 306, 22, 314, 22, kMartMenuBorder);
+  display.fillTriangle(310, 158, 306, 151, 314, 151, kMartMenuBorder);
 }
 
 void drawMartInfoPanel() {
@@ -20558,9 +21586,12 @@ void awardLeagueRewards(const SeriesProgressResult& progress) {
   if (masterBalls < kInventoryStackLimit) ++masterBalls;
   // The first League alone awards Lucky Egg. Later League clears retain their
   // existing Master Ball reward without creating another Egg.
-  if (gameSave.battle.leagueRegion == 1U)
-    LeagueSystem::reconcileKantoLuckyEggReward(
-        gameSave.gymProgress, gameSave.collection, gameSave.ownedMachines);
+  if (gameSave.battle.leagueRegion == 1U&&
+     LeagueSystem::reconcileKantoLuckyEggReward(
+        gameSave.gymProgress, gameSave.collection, gameSave.ownedMachines)){
+    BattleEngine::setPermanentExperienceBoost(true);
+    luckyEggMessagePending=true;
+  }
 }
 
 BattleTowerRewardResult awardTowerReward(const SeriesProgressResult& progress) {
@@ -20709,6 +21740,7 @@ void finishPendingBattleFlow() {
   const BattleTowerRewardResult towerReward=awardTowerReward(series);
   towerRareCandyMessagePending=towerReward.kind==BattleTowerRewardKind::RareCandy;
   towerSpecialEggMessagePending=towerReward.kind==BattleTowerRewardKind::SpecialEgg;
+  towerMasterBallMessagePending=towerReward.kind==BattleTowerRewardKind::MasterBall;
   megaStoneMessagePending=series.megaChallengeCompleted;
   gameSave.money += result.moneyGained;
   bool oakRescueTriggered=false;
@@ -22093,7 +23125,13 @@ bool useRareCandyOutsideBattle(OwnedPokemon& target) {
 void useSelectedInventoryEntryOutsideBattle(OwnedPokemon& target) {
   const InventoryEntry entry=selectedInventoryEntry();
   const SpeciesData* species=findSpecies(target.speciesId);
-  if(entry.kind==InventoryEntryKind::Medicine&&
+  if(entry.kind==InventoryEntryKind::Held&&
+     static_cast<HeldItem>(entry.id)==HeldItem::MegaStone&&
+     MegaEvolution::variantChoiceCount(target.speciesId)>1U){
+    megaVariantTargetUid=target.uid;inventoryMode=InventoryMode::Browse;
+    boxOverlay=BoxOverlay::None;boxPartyView=false;
+    screen=Screen::MegaFormSelect;drawMegaFormSelect();return;
+  }else if(entry.kind==InventoryEntryKind::Medicine&&
      static_cast<BattleItem>(entry.id)==BattleItem::RareCandy){
     if(useRareCandyOutsideBattle(target))return;
     std::snprintf(inventoryNotice,sizeof(inventoryNotice),"IT WON'T HAVE ANY EFFECT.");
@@ -22471,6 +23509,22 @@ void handleTap(const TouchPoint& p) {
       drawHomeStatusLine();
       return;
     }
+    int16_t npcX=0,npcY=0;homeNpcPosition(npcX,npcY);
+    if(inside(p,npcX-16,npcY-25,32,45)){
+      const uint32_t today=currentWorldDay();
+      if(gameSave.lastNpcGiftDay!=today){
+        HeldItem gift=HeldItem::OranBerry;
+        const WorldTimePeriod period=currentWorldPeriod();
+        if(period==WorldTimePeriod::Evening)gift=HeldItem::SitrusBerry;
+        else if(period==WorldTimePeriod::Night)gift=HeldItem::LumBerry;
+        uint16_t& quantity=gameSave.inventory.heldItems[static_cast<uint8_t>(gift)];
+        if(quantity<UINT16_MAX)++quantity;
+        gameSave.lastNpcGiftDay=today;saveDirty=true;saveNow();
+        char giftText[48];std::snprintf(giftText,sizeof(giftText),"VISITOR GAVE YOU %s!",heldItemName(gift));
+        showHomeNotice(giftText);
+      }else showHomeNotice("VISITOR: COME BACK TOMORROW!");
+      return;
+    }
     if (inside(p, 12, 146, 296, 39) && homePokemonStatusVisible) {
       homePokemonStatusVisible = false;
       drawHomeStatusLine();
@@ -22553,7 +23607,7 @@ void handleTap(const TouchPoint& p) {
     }
     if (inside(p, kHomeBottomX[3], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); screen = Screen::Pokedex; drawPokedex(); Serial.printf("[UI] Pokedex draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
     if (inside(p, kHomeBottomX[4], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); selectedUid = currentPet() ? currentPet()->uid : 0; screen = Screen::Box; drawBox(); Serial.printf("[UI] Box draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
-    if (inside(p, kHomeBottomX[5], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); if(!gameSave.mart.offers[0].remaining) Economy::rotate(gameSave.mart,GymSystem::badgeCount(gameSave.gymProgress),gameSave.ownedMachines);setMartSeenDay(gameSave.mart.day);saveDirty=true;saveNow(); martSelection=0;martListOffset=0;martPurchaseQuantity=1;martSelectionArmed=false;martNotice[0]=0;screen=Screen::Mart; drawMart(); Serial.printf("[UI] Mart draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
+    if (inside(p, kHomeBottomX[5], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); Economy::refreshIfDue(gameSave.mart,GymSystem::badgeCount(gameSave.gymProgress),gameSave.ownedMachines);setMartSeenDay(gameSave.mart.day);saveDirty=true;saveNow(); martSelection=0;martListOffset=0;martPurchaseQuantity=1;martSelectionArmed=false;martNotice[0]=0;screen=Screen::Mart; drawMart(); Serial.printf("[UI] Mart draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
     // Restore only the local balloon area; never redraw the full Home screen.
     if (!dismissHomePokemonInfoBubble()) { homeInfoPokemonUid=kEmptyPokemonUid; homeInfoBubbleVisible=false; }
     return;
@@ -22577,32 +23631,58 @@ void handleTap(const TouchPoint& p) {
   }
   if (screen == Screen::Settings) {
     if (settingsPage == 0) {
-      if (settingsScroll == 0 && inside(p, 18, 75, 42, 31) && gameSave.settings.brightnessPercent > 20) {
+      if(inside(p,280,13,26,24)){screen=Screen::Home;drawHome();return;}
+      for(uint8_t tab=0;tab<5U;++tab)
+        if(inside(p,10+tab*60,kSettingsTabY,58,28)){
+          settingsScroll=tab;drawSettings();return;
+        }
+      if (settingsScroll == 0 && inside(p, 18, 71, 42, 27) && gameSave.settings.brightnessPercent > 20) {
         gameSave.settings.brightnessPercent -= 20; backlight.setBrightness(gameSave.settings.brightnessPercent);
         saveDirty = true; saveNow(); refreshSettingsBrightness(); return;
       }
-      if (settingsScroll == 0 && inside(p, 260, 75, 42, 31) && gameSave.settings.brightnessPercent < 100) {
+      if (settingsScroll == 0 && inside(p, 260, 71, 42, 27) && gameSave.settings.brightnessPercent < 100) {
         gameSave.settings.brightnessPercent += 20; backlight.setBrightness(gameSave.settings.brightnessPercent);
         saveDirty = true; saveNow(); refreshSettingsBrightness(); return;
       }
-      if (settingsScroll == 0 && inside(p, 18, 146, 42, 31)) {
+      if (settingsScroll == 0 && inside(p, 126, 112, 35, 33)) {
         const uint8_t timeout = gameSave.settings.screenTimeout();
         gameSave.settings.setScreenTimeout(timeout == 0
             ? kScreenTimeoutCount - 1U : timeout - 1U);
         saveDirty = true; saveNow(); refreshSettingsTimeout(); return;
       }
-      if (settingsScroll == 0 && inside(p, 260, 146, 42, 31)) {
+      if (settingsScroll == 0 && inside(p, 264, 112, 38, 33)) {
         gameSave.settings.setScreenTimeout(static_cast<uint8_t>(
             (gameSave.settings.screenTimeout() + 1U) % kScreenTimeoutCount));
         saveDirty = true; saveNow(); refreshSettingsTimeout(); return;
       }
-      if (inside(p, 15, 202, 105, 28)) { screen = Screen::Home; drawHome(); return; }
-      if (settingsScroll == 0 && inside(p, 238, 202, 67, 28)) { settingsScroll=1;drawSettings();return; }
-      if (settingsScroll == 1 && inside(p, 238, 202, 67, 28)) { settingsScroll=2;drawSettings();return; }
-      if (settingsScroll == 2 && inside(p, 238, 202, 67, 28)) { settingsScroll=3;drawSettings();return; }
-      if (settingsScroll == 3 && inside(p, 238, 202, 67, 28)) { settingsScroll=0;drawSettings();return; }
-      if (settingsScroll == 1 && inside(p, 208, 64, 94, 36)) { playerStatsOffset=0;screen=Screen::PlayerStats;drawPlayerStats();return; }
-      if (settingsScroll == 1 && inside(p, 188, 114, 114, 42)) {
+      if(settingsScroll==0){
+        TouchInputMode selected=gameSave.settings.touchInputMode();
+        if(inside(p,142,160,75,31))selected=TouchInputMode::Finger;
+        else if(inside(p,222,160,80,31))selected=TouchInputMode::Stylus;
+        else selected=gameSave.settings.touchInputMode();
+        if(selected!=gameSave.settings.touchInputMode()){
+          gameSave.settings.setTouchInputMode(selected);
+          touch.setFingerMode(selected==TouchInputMode::Finger);
+          gameTouchFilter.reset();
+          saveDirty=true;saveNow();refreshSettingsTouchMode();return;
+        }
+      }
+      if(settingsScroll==1&&inside(p,211,54,90,32)){
+        playerStatsOffset=0;screen=Screen::PlayerStats;drawPlayerStats();return;
+      }
+      if(settingsScroll==1&&inside(p,211,105,90,29)){
+        gameSave.settings.setAutoBattleText(!gameSave.settings.autoBattleText());
+        battleTextAutoAdvanceAtMs=0;saveDirty=true;saveNow();drawSettings();return;
+      }
+      if(settingsScroll==1){
+        constexpr int16_t choiceX[3]={14,113,212};
+        for(uint8_t index=0;index<3U;++index)if(inside(p,choiceX[index],166,94,25)){
+          gameSave.settings.setColorTheme(static_cast<UiColorTheme>(index));
+          saveDirty=true;saveNow();drawSettings();return;
+        }
+      }
+      if (settingsScroll == 2 && inside(p,54,143,212,36)) {
+        AssetRenderer::invalidateHomeSceneCache();renderedHomeBackground=0xFF;
         settingsPage = 1;
         drawSettings();
         // NEXT is the natural first browsing direction. It is loaded only
@@ -22610,29 +23690,20 @@ void handleTap(const TouchPoint& p) {
         scheduleSettingsBackgroundPrefetch(1);
         return;
       }
-      if (settingsScroll == 1 && inside(p, 208, 165, 94, 29)) {
-        gameSave.settings.setAutoBattleText(!gameSave.settings.autoBattleText());
-        battleTextAutoAdvanceAtMs = 0;
-        saveDirty = true; saveNow(); refreshSettingsBattleText(); return;
+      if(settingsScroll==3&&inside(p,190,142,111,35)){
+        worldFeatureNotice[0]=0;screen=Screen::BerryGarden;drawBerryGarden();return;
       }
-      if (settingsScroll == 2) {
-        constexpr int16_t choiceX[3] = {14, 113, 212};
-        for (uint8_t index = 0; index < 3U; ++index) {
-          if (!inside(p, choiceX[index], 84, 94, 30)) continue;
-          gameSave.settings.setColorTheme(static_cast<UiColorTheme>(index));
-          saveDirty = true;
-          saveNow();
-          drawSettings();
-          return;
-        }
+      if(settingsScroll==4&&inside(p,kSettingsMoreButtonX,58,
+                                   kSettingsMoreButtonWidth,kSettingsMoreButtonHeight)){
+        openWirelessUpdate();return;
       }
-      if (settingsScroll == 3 && inside(p, 73, 151, 174, 34)) {
-        openWirelessUpdate();
-        return;
+      if(settingsScroll==4&&inside(p,kSettingsMoreButtonX,122,
+                                   kSettingsMoreButtonWidth,kSettingsMoreButtonHeight)){
+        screen=Screen::KidsMenu;drawKidsMenu();return;
       }
       return;
     }
-    if (inside(p, 10, 201, 82, 29)) {
+    if (inside(p,8,201,70,29)) {
       gameSave.settings.homeBackground = gameSave.settings.homeBackground == 0
           ? HomeBackgrounds::kCount - 1U : gameSave.settings.homeBackground - 1U;
       // The preview is separate from the Home scene; invalidate the old
@@ -22644,7 +23715,7 @@ void handleTap(const TouchPoint& p) {
       scheduleSettingsBackgroundPrefetch(-1);
       return;
     }
-    if (inside(p, 228, 201, 82, 29)) {
+    if (inside(p,242,201,70,29)) {
       gameSave.settings.homeBackground =
           static_cast<uint8_t>((gameSave.settings.homeBackground + 1U) % HomeBackgrounds::kCount);
       AssetRenderer::invalidateHomeSceneCache();
@@ -22654,7 +23725,7 @@ void handleTap(const TouchPoint& p) {
       scheduleSettingsBackgroundPrefetch(1);
       return;
     }
-    if (inside(p, 110, 201, 100, 29)) {
+    if (inside(p,84,201,152,29)) {
       // Browsing may touch dozens of entries. Commit the final choice once,
       // rather than rewriting and verifying the complete persistent save for
       // every arrow press.
@@ -22666,11 +23737,120 @@ void handleTap(const TouchPoint& p) {
     }
     return;
   }
+  if(screen==Screen::BerryGarden){
+    if(inside(p,9,197,30,29)){
+      gardenBerrySelection=gardenBerrySelection?gardenBerrySelection-1U:
+          BerryGarden::kPlantableBerryCount-1U;worldFeatureNotice[0]=0;drawBerryGarden();return;
+    }
+    if(inside(p,281,197,30,29)){
+      gardenBerrySelection=static_cast<uint8_t>((gardenBerrySelection+1U)%
+          BerryGarden::kPlantableBerryCount);worldFeatureNotice[0]=0;drawBerryGarden();return;
+    }
+    for(uint8_t plot=0;plot<kBerryGardenPlotCount;++plot){
+      const int16_t x=kBerryGardenTouchX[plot%3U];
+      const int16_t y=kBerryGardenTouchY[plot/3U];
+      if(!inside(p,x,y,64,66))continue;
+      BerryPlotState& state=gameSave.berryGarden.plots[plot];
+      if(state.berry==HeldItem::None){
+        const HeldItem berry=BerryGarden::plantableBerry(gardenBerrySelection);
+        std::snprintf(worldFeatureNotice,sizeof(worldFeatureNotice),
+            BerryGarden::plant(gameSave.berryGarden,plot,berry,gameSave.inventory.heldItems)?
+            "BERRY PLANTED!":"YOU NEED THAT BERRY.");
+      }else if(BerryGarden::ready(state)){
+        const uint8_t harvested=BerryGarden::harvest(gameSave.berryGarden,plot,
+                                                      gameSave.inventory.heldItems);
+        std::snprintf(worldFeatureNotice,sizeof(worldFeatureNotice),"HARVESTED %u BERRIES!",harvested);
+      }else{
+        std::snprintf(worldFeatureNotice,sizeof(worldFeatureNotice),
+            BerryGarden::water(gameSave.berryGarden,plot)?"THE PLOT WAS WATERED!":"ALREADY WATERED.");
+      }
+      saveDirty=true;saveNow();drawBerryGarden();return;
+    }
+    if(inside(p,7,7,48,24)){settingsPage=0;settingsScroll=3;screen=Screen::Settings;drawSettings();return;}
+    return;
+  }
   if(screen==Screen::PlayerStats){
     if(inside(p,251,13,54,24)){settingsPage=0;settingsScroll=1;screen=Screen::Settings;drawSettings();return;}
     // The whole table scrolls, while the arrows remain visible as a hint.
     if((inside(p,12,44,295,80)||inside(p,291,44,16,40))&&playerStatsOffset){--playerStatsOffset;drawPlayerStats();return;}
     if((inside(p,12,124,295,91)||inside(p,291,175,16,40))&&playerStatsOffset<2){++playerStatsOffset;drawPlayerStats();return;}
+    return;
+  }
+  if (screen == Screen::KidsMenu) {
+    if (inside(p,18,50,284,49)) { resetKidsMemory();screen=Screen::KidsMemory;drawKidsMemory();return; }
+    if (inside(p,18,107,284,49)) { resetKidsCatch();screen=Screen::KidsCatch;drawKidsCatch();return; }
+    if (inside(p,18,164,284,49)) {
+      AssetRenderer::clearCache();
+      beginKidsPaintCanvas();kidsPaintLastX=-1;kidsPaintLastY=-1;
+      screen=Screen::KidsPaint;drawKidsPaint();return;
+    }
+    return;
+  }
+  if (screen == Screen::KidsMemory) {
+    for (uint8_t index=0;index<12U;++index) {
+      const int16_t x=12+(index%4U)*77; const int16_t y=48+(index/4U)*61;
+      if (!inside(p,x,y,68,53)) continue;
+      if(kidsMemoryMatched&(1U<<index))return;
+      if(kidsMemoryCardClicks<UINT16_MAX)++kidsMemoryCardClicks;
+      if(kidsMemorySecond>=0){kidsMemoryFirst=kidsMemorySecond=-1;}
+      if(kidsMemoryFirst<0)kidsMemoryFirst=static_cast<int8_t>(index);
+      else if(kidsMemoryFirst!=static_cast<int8_t>(index)){
+        kidsMemorySecond=static_cast<int8_t>(index);
+        if(kidsMemoryCards[kidsMemoryFirst]==kidsMemoryCards[index]){
+          kidsMemoryMatched=static_cast<uint16_t>(kidsMemoryMatched|
+              (1U<<kidsMemoryFirst)|(1U<<index));
+          kidsMemoryFirst=kidsMemorySecond=-1;
+        }
+      }
+      drawKidsMemory();return;
+    }
+    return;
+  }
+  if(screen==Screen::KidsCatch){
+    if(kidsCatchScore<10U&&inside(p,kidsCatchX-23,kidsCatchY-27,46,50)){
+      if(!kidsCatchTimerStarted){
+        kidsCatchTimerStarted=true;
+        kidsCatchStartedMs=millis();
+      }
+      ++kidsCatchScore;
+      if(kidsCatchScore>=10U)kidsCatchFinishedMs=millis();
+      kidsCatchBerry=static_cast<uint8_t>(nextKidsRandom()%BerryGarden::kPlantableBerryCount);
+      kidsCatchX=static_cast<int16_t>(30+nextKidsRandom()%260U);
+      kidsCatchY=static_cast<int16_t>(67+nextKidsRandom()%112U);
+      drawKidsCatch();
+    }
+    return;
+  }
+  if(screen==Screen::MegaFormSelect){
+    if(inside(p,105,202,110,29)){
+      megaVariantTargetUid=0;screen=Screen::Inventory;drawInventory();return;
+    }
+    OwnedPokemon* target=CollectionLogic::find(gameSave.collection,megaVariantTargetUid);
+    if(!target){megaVariantTargetUid=0;screen=Screen::Inventory;drawInventory();return;}
+    for(uint8_t choice=0;choice<2U;++choice){
+      if(!inside(p,12+choice*153,61,143,130))continue;
+      const MegaVariant variant=MegaEvolution::variantChoice(target->speciesId,choice);
+      const InventoryEntry entry=selectedInventoryEntry();
+      if(variant!=MegaVariant::None&&MegaEvolution::setVariantChoice(*target,variant)&&
+         applyInventoryItem(entry,*target)){
+        const MegaFormData* form=MegaEvolution::formData(target->speciesId,variant);
+        std::snprintf(inventoryNotice,sizeof(inventoryNotice),"%s WILL USE %s.",
+            findSpecies(target->speciesId)?findSpecies(target->speciesId)->name:"POKEMON",
+            form?form->displayName:"MEGA");
+        saveDirty=true;saveNow();
+      }else std::snprintf(inventoryNotice,sizeof(inventoryNotice),"IT WON'T HAVE ANY EFFECT.");
+      megaVariantTargetUid=0;screen=Screen::Inventory;drawInventory();return;
+    }
+    return;
+  }
+  if (screen == Screen::KidsPaint) {
+    if (inside(p,233,197,76,29)) {
+      if (kidsPaintPixels) std::memset(kidsPaintPixels,0,kKidsCanvasBytes);
+      drawKidsPaint();return;
+    }
+    for (uint8_t color=1;color<4U;++color) {
+      if (inside(p,18+(color-1U)*52,197,29,29)) { kidsPaintColor=color;drawKidsPaint();return; }
+    }
     return;
   }
   if (screen == Screen::WirelessUpdate) {
@@ -22719,14 +23899,20 @@ void handleTap(const TouchPoint& p) {
       if (!inside(p, 13 + slot * 105, 169, 84, 34)) continue;
       OwnedPokemon* pokemon = CollectionLogic::active(gameSave.collection, slot);
       if (!pokemon || pokemon->currentHp == 0 || pokemon->recoverySecondsRemaining) return;
+      const HomeWeatherSample startingWorldWeather=currentHomeWeather();
       bool started=false;
-      if(pendingBattleKind==BattleKind::Wild)started=BattleEngine::startWild(gameSave.battle,gameSave.collection,pokemon->uid,micros(),gameSave.gymProgress.unlockedGeneration,beginnerProtectionActive());
+      if(pendingBattleKind==BattleKind::Wild)started=BattleEngine::startWild(
+          gameSave.battle,gameSave.collection,pokemon->uid,micros(),
+          gameSave.gymProgress.unlockedGeneration,beginnerProtectionActive(),
+          static_cast<uint8_t>(currentWorldPeriod()));
       else if(pendingBattleKind==BattleKind::Gym)started=GymSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,GymSystem::next(gameSave.gymProgress),micros());
       else if(pendingBattleKind==BattleKind::League)started=LeagueSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,micros());
       else if(pendingBattleKind==BattleKind::MegaChallenge)started=MegaChallengeSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,micros());
       else if(pendingBattleKind==BattleKind::Tower)started=BattleTowerSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,micros());
       else started=BattleEngine::startTrainer(gameSave.battle,gameSave.encounterCharges,gameSave.collection,pokemon->uid,micros(),gameSave.gymProgress.unlockedGeneration);
       if (!started) return;
+      if(BattleEnvironment::applyHomeWeather(gameSave.battle,startingWorldWeather.kind))
+        BattleEngine::synchronizeWeatherForms(gameSave.battle,gameSave.collection);
       selectedBattleTerrainSceneKey = 0;
       battlePresentationPlayerHidden = false;
       battlePresentationOpponentHidden = false;
@@ -22737,7 +23923,13 @@ void handleTap(const TouchPoint& p) {
         // Reaching the actual battle is the point at which a Wild charge is
         // spent. Backing out of this picker never wastes one.
       }
-      pendingBattleKind = BattleKind::None; message[0] = 0; runConfirmVisible = false; saveDirty = true; saveNow();
+      pendingBattleKind = BattleKind::None;
+      const char* entryWeatherMessage=BattleEnvironment::entryWeatherMessage(
+          gameSave.battle.weather);
+      if(entryWeatherMessage)
+        std::snprintf(message,sizeof(message),"%s",entryWeatherMessage);
+      else message[0]=0;
+      runConfirmVisible = false; saveDirty = true; saveNow();
       if (gameSave.battle.kind == BattleKind::Trainer || gameSave.battle.kind == BattleKind::Gym ||
           gameSave.battle.kind == BattleKind::League || gameSave.battle.kind == BattleKind::Tower ||
           gameSave.battle.kind == BattleKind::MegaChallenge) {
@@ -22795,6 +23987,11 @@ void handleTap(const TouchPoint& p) {
       if(towerRareCandyMessagePending){
         towerRareCandyMessagePending=false;
         std::snprintf(message,sizeof(message),"PLAYER RECEIVED A RARE CANDY!");
+        battlePromptScroll=0;refreshBattleHud();return;
+      }
+      if(towerMasterBallMessagePending){
+        towerMasterBallMessagePending=false;
+        std::snprintf(message,sizeof(message),"PLAYER RECEIVED A MASTER BALL!");
         battlePromptScroll=0;refreshBattleHud();return;
       }
       if(towerSpecialEggMessagePending){
@@ -23101,13 +24298,15 @@ void handleTap(const TouchPoint& p) {
       if(editable&&inside(p,7,180,55,27)){
         uint8_t& value=summaryEvAt(summaryEvDraft,summaryEvSelected);
         summaryEvFree=static_cast<uint16_t>(summaryEvFree+value);value=0;
-        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters();drawSummaryEvControls(true);return;
+        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters(*summaryPokemon);
+        drawSummaryEvControls(true);drawSummaryEvFooter(true,*summaryPokemon);return;
       }
       if(editable&&inside(p,65,180,45,27)){
         uint8_t& value=summaryEvAt(summaryEvDraft,summaryEvSelected);
         const uint8_t amount=std::min<uint8_t>(value,summaryEvStep);
         value=static_cast<uint8_t>(value-amount);summaryEvFree=static_cast<uint16_t>(summaryEvFree+amount);
-        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters();drawSummaryEvControls(true);return;
+        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters(*summaryPokemon);
+        drawSummaryEvControls(true);drawSummaryEvFooter(true,*summaryPokemon);return;
       }
       if(editable&&inside(p,113,180,94,27)){
         summaryEvStep=summaryEvStep==1U?10U:summaryEvStep==10U?50U:1U;
@@ -23118,17 +24317,20 @@ void handleTap(const TouchPoint& p) {
         const uint16_t room=static_cast<uint16_t>(CollectionLogic::kMaximumEffortValue-value);
         const uint8_t amount=static_cast<uint8_t>(std::min<uint16_t>(summaryEvStep,std::min<uint16_t>(summaryEvFree,room)));
         value=static_cast<uint8_t>(value+amount);summaryEvFree=static_cast<uint16_t>(summaryEvFree-amount);
-        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters();drawSummaryEvControls(true);return;
+        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters(*summaryPokemon);
+        drawSummaryEvControls(true);drawSummaryEvFooter(true,*summaryPokemon);return;
       }
       if(editable&&inside(p,258,180,55,27)){
         uint8_t& value=summaryEvAt(summaryEvDraft,summaryEvSelected);
         const uint16_t room=static_cast<uint16_t>(CollectionLogic::kMaximumEffortValue-value);
         const uint8_t amount=static_cast<uint8_t>(std::min<uint16_t>(summaryEvFree,room));
         value=static_cast<uint8_t>(value+amount);summaryEvFree=static_cast<uint16_t>(summaryEvFree-amount);
-        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters();drawSummaryEvControls(true);return;
+        drawSummaryEvRow(*summaryPokemon,summaryEvSelected);drawSummaryEvCounters(*summaryPokemon);
+        drawSummaryEvControls(true);drawSummaryEvFooter(true,*summaryPokemon);return;
       }
-      if(editable&&summaryEvFree==0U&&inside(p,209,213,103,27)){
-        summaryEvApplyConfirm=true;drawSummaryEvApplyConfirmation();return;
+      if(editable&&summaryEvFree==0U&&summaryEvDraftChanged(*summaryPokemon)&&
+         inside(p,185,213,127,27)){
+        summaryEvApplyConfirm=true;drawSummaryEvApplyConfirmation(*summaryPokemon);return;
       }
       if(inside(p,8,213,91,27)){
         summaryEvDraftUid=0;summaryEvApplyConfirm=false;
@@ -23361,16 +24563,21 @@ void handleTap(const TouchPoint& p) {
       trainerCardRegion = gameSave.gymProgress.unlockedGeneration;
       screen = Screen::TrainerCard; drawTrainerCard(); return;
     }
-    if (bagPage != kKeyItemsPage && inside(p, 286, 11, 23, 31) && inventoryListOffset > 0U) {
-      inventoryListOffset = inventoryListOffset > kInventoryVisibleRows
-          ? static_cast<uint8_t>(inventoryListOffset - kInventoryVisibleRows) : 0U;
+    if (bagPage != kKeyItemsPage && inside(p, 286, 11, 23, 31)) {
+      const uint8_t total=inventoryTotalEntries();
+      if(total<=kInventoryVisibleRows)return;
+      inventoryListOffset=inventoryListOffset
+          ? static_cast<uint8_t>(inventoryListOffset>=kInventoryVisibleRows
+              ? inventoryListOffset-kInventoryVisibleRows : 0U)
+          : static_cast<uint8_t>(((total-1U)/kInventoryVisibleRows)*kInventoryVisibleRows);
       inventorySelection = 0; inventoryNotice[0] = 0; inventoryDescriptionScroll = 0;
       refreshInventoryPanels(false); return;
     }
     if (bagPage != kKeyItemsPage && inside(p, 286, 134, 23, 28)) {
       const uint8_t total = inventoryTotalEntries();
-      if (inventoryListOffset + kInventoryVisibleRows < total) {
-        inventoryListOffset = static_cast<uint8_t>(inventoryListOffset + kInventoryVisibleRows);
+      if(total>kInventoryVisibleRows){
+        inventoryListOffset=inventoryListOffset+kInventoryVisibleRows<total
+            ? static_cast<uint8_t>(inventoryListOffset+kInventoryVisibleRows):0U;
         inventorySelection = 0; inventoryNotice[0] = 0; inventoryDescriptionScroll = 0;
         refreshInventoryPanels(false);
       }
@@ -23525,13 +24732,15 @@ void handleTap(const TouchPoint& p) {
     }
 
     if (boxOverlay == BoxOverlay::SortSelect) {
-      for (uint8_t row = 0; row < 3; ++row) {
+      for (uint8_t row = 0; row < 4; ++row) {
         if (!inside(p, kBoxSortMenuX + 4,
                     kBoxSortMenuY + 4 + row * kBoxSortMenuRowH,
                     kBoxSortMenuW - 8, kBoxSortMenuRowH)) continue;
-        if (row < 2U) {
-          CollectionLogic::sortBox(gameSave.collection,
-              row == 0U ? BoxSortMode::DexNumber : BoxSortMode::Level);
+        if (row < 3U) {
+          const BoxSortMode mode = row == 0U ? BoxSortMode::DexNumber
+              : row == 1U ? BoxSortMode::Level
+                          : BoxSortMode::EffortValues;
+          CollectionLogic::sortBox(gameSave.collection, mode);
           // Keep the currently previewed Pokemon visible after its physical
           // storage slot moves, instead of unexpectedly jumping to Box 1.
           for (uint16_t index = 0; index < kBoxCapacity; ++index) {
@@ -23539,9 +24748,10 @@ void handleTap(const TouchPoint& p) {
             boxPage = static_cast<uint8_t>(index / 30U);
             break;
           }
-          std::snprintf(boxNotice, sizeof(boxNotice), row == 0U
-              ? "SORTED BY DEX NUMBER."
-              : "SORTED BY LEVEL (HIGH TO LOW)." );
+          const char* notice = row == 0U ? "SORTED BY DEX NUMBER."
+              : row == 1U ? "SORTED BY LEVEL (HIGH TO LOW)."
+                          : "SORTED BY EV TOTAL (HIGH TO LOW).";
+          std::snprintf(boxNotice, sizeof(boxNotice), "%s", notice);
           saveDirty = true;
           saveNow();
           preparedUiSceneKey = 0;
@@ -23606,8 +24816,9 @@ void handleTap(const TouchPoint& p) {
       if(contextAction == BoxContextAction::TakeItem){
         OwnedPokemon* mutablePokemon=CollectionLogic::find(gameSave.collection,selectedUid);
         const HeldItem removed=mutablePokemon?mutablePokemon->heldItem:HeldItem::None;
-        if(mutablePokemon&&unequipHeldItem(mutablePokemon->heldItem,gameSave.inventory.heldItems,
-                                           gameSave.ownedMachines)){
+        if(mutablePokemon&&unequipHeldItem(*mutablePokemon,gameSave.inventory.heldItems,
+                                            gameSave.specialHeldItems,
+                                            gameSave.ownedMachines)){
           CollectionLogic::refreshAbility(*mutablePokemon);
           CollectionLogic::refreshDerivedStats(*mutablePokemon,true);
           std::snprintf(boxNotice,sizeof(boxNotice),"TOOK %s.",heldItemName(removed));
@@ -23867,15 +25078,16 @@ void handleTap(const TouchPoint& p) {
     if (inside(p, kMartCancelX, kMartCancelY, kMartCancelW, kMartCancelH)) {
       screen = Screen::Home; drawHome(); return;
     }
-    if(inside(p,292,7,28,25)&&martListOffset){
+    if(inside(p,292,7,28,25)){
       martListOffset=martListOffset>=kMartVisibleRows
-          ? static_cast<uint8_t>(martListOffset-kMartVisibleRows) : 0U;
+          ? static_cast<uint8_t>(martListOffset-kMartVisibleRows):kMartLastPageOffset;
       martSelection=martListOffset;martPurchaseQuantity=1;martSelectionArmed=false;martNotice[0]=0;
       martDescriptionScroll=0;refreshMartPanels();return;
     }
-    if(inside(p,292,140,28,25)&&martListOffset<kMartLastPageOffset){
-      martListOffset=std::min<uint8_t>(
-          static_cast<uint8_t>(martListOffset+kMartVisibleRows),kMartLastPageOffset);
+    if(inside(p,292,140,28,25)){
+      martListOffset=martListOffset<kMartLastPageOffset
+          ? std::min<uint8_t>(static_cast<uint8_t>(martListOffset+kMartVisibleRows),kMartLastPageOffset)
+          : 0U;
       martSelection=std::min<uint8_t>(martListOffset,kMartOfferCount-1U);
       martPurchaseQuantity=1;martSelectionArmed=false;martNotice[0]=0;martDescriptionScroll=0;
       refreshMartPanels();return;
@@ -23900,8 +25112,14 @@ void redrawCurrentScreen() {
     case Screen::Home: drawHome(); break;
     case Screen::PokecenterConfirm: drawPokecenterConfirm(); break;
     case Screen::Settings: drawSettings(); break;
+    case Screen::BerryGarden: drawBerryGarden(); break;
     case Screen::PlayerStats: drawPlayerStats(); break;
     case Screen::WirelessUpdate: drawWirelessUpdate(); break;
+    case Screen::KidsMenu: drawKidsMenu(); break;
+    case Screen::KidsMemory: drawKidsMemory(); break;
+    case Screen::KidsPaint: drawKidsPaint(); break;
+    case Screen::KidsCatch: drawKidsCatch(); break;
+    case Screen::MegaFormSelect: drawMegaFormSelect(); break;
     case Screen::EggOffer: drawEggOffer(); break;
     case Screen::EggStatus: drawEggStatus(); break;
     case Screen::EggHatch: drawEggHatch(); break;
@@ -24206,7 +25424,9 @@ void advanceGameClocks() {
   lastClockUs += static_cast<uint64_t>(seconds) * 1000000ULL;
   const uint32_t previousPlayTime = gameSave.playTimeSeconds;
   gameSave.playTimeSeconds += seconds;
+  if(gameSave.clockLocalEpochSeconds)gameSave.clockLocalEpochSeconds+=seconds;
   EncounterLogic::advance(gameSave.encounterCharges, seconds);
+  BerryGarden::advance(gameSave.berryGarden, seconds);
   const uint32_t martDayBefore=gameSave.mart.day;
   const uint8_t martProgressBefore=martRotationProgressSlices();
   Economy::advance(gameSave.mart, seconds, GymSystem::badgeCount(gameSave.gymProgress), gameSave.ownedMachines);
@@ -24245,6 +25465,13 @@ void advanceGameClocks() {
 }
 
 void processTimedEvents(uint32_t now) {
+  if(!displaySleeping&&!swipeUnlock.active()&&screen==Screen::Home){
+    const uint16_t minute=currentWorldMinute();
+    if(lastRenderedWorldMinute!=minute){
+      lastRenderedWorldMinute=minute;drawHomeScene();
+      invalidatePixels(8,49,304,134);requestRetainedFrame();
+    }
+  }
   if (centerChargeUiDirty && !displaySleeping && !swipeUnlock.active() &&
       screen == Screen::Home && !gameSave.battle.active) {
     centerChargeUiDirty = false;
@@ -24262,6 +25489,37 @@ void processTimedEvents(uint32_t now) {
       EggSystem::offerRegionalGift(gameSave.egg, gameSave.gymProgress, gameSave.playTimeSeconds ^ micros())) {
     saveDirty = true; saveNow(); screen = Screen::EggOffer; drawEggOffer();
   }
+}
+
+[[noreturn]] void enterLowBatteryDormancy() {
+  if(lowBatteryDormancyStarting)sleepUntilBatteryRecheck();
+  lowBatteryDormancyStarting=true;
+  Serial.printf("[BAT] critical charge: %u%% (%umV); saving and sleeping\n",
+                batteryPercent,batteryMillivolts);
+
+  // Capture the last whole seconds and synchronously commit every durable
+  // game mutation before power-hungry peripherals are stopped. PvP combat is
+  // intentionally never serialized; its pre-session save is already safe.
+  advanceGameClocks();
+  saveNow();
+  if(saveDirty&&pvpSessionActive)
+    Serial.println("[BAT] temporary PvP state omitted; durable pre-link save retained");
+
+  wirelessUpdate.shutdown(false);
+  multiplayer.shutdown();
+  stopWildLedAlert();
+  rgbLed.off();
+  backlight.setEnabled(false);
+  if(!displaySleeping){
+    panel.writecommand(kIli9341DisplayOff);
+    panel.writecommand(kIli9341SleepIn);
+    displaySleeping=true;
+  }
+  lowBatteryDormantMarker=kLowBatteryDormantMagic;
+  Serial.printf("[BAT] dormant; rechecking every %lus and resuming only above %u%%\n",
+      static_cast<unsigned long>(BatteryProtection::kDormantRecheckSeconds),
+      BatteryProtection::kCutoffPercent);
+  sleepUntilBatteryRecheck();
 }
 
 void turnDisplayOff() {
@@ -24371,9 +25629,9 @@ void processSerialTestInput(uint32_t loopNow) {
         const uint32_t seed=(megaY?0x4D455759U:0x4D455758U)^
             gameSave.collection.nextUid^gameSave.bootCount;
         OwnedPokemon pokemon=CollectionLogic::createPokemon(0,150U,70U,false,seed);
-        pokemon.personality=megaY?(pokemon.personality|1U):(pokemon.personality&~1U);
-        pokemon.nature=static_cast<PokemonNature>(pokemon.personality%25U);
         pokemon.heldItem=HeldItem::MegaStone;
+        MegaEvolution::setVariantChoice(
+            pokemon,megaY?MegaVariant::MegaY:MegaVariant::MegaX);
         CollectionLogic::refreshAbility(pokemon);
         CollectionLogic::refreshDerivedStats(pokemon,false);
         uint32_t assignedUid=0;
@@ -24512,6 +25770,7 @@ void processSerialTestInput(uint32_t loopNow) {
 
 void setup() {
   Serial.begin(115200); delay(250); Serial.println("[BOOT] Pokegochi startup");
+  resumeLowBatteryDormancyAtBoot();
   // Reserve the sole 80 KiB scene arena before NVS, the TFT canvas and FAT
   // split the internal heap into smaller blocks.  Its lifetime is the whole
   // firmware, so allocating it first is both deterministic and cheaper than
@@ -24568,12 +25827,7 @@ void setup() {
                 retainedCanvasReady ? "OK" : "FAIL",
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
-  pinMode(board::kBatterySensePin, INPUT);
-  analogReadResolution(12);
-  // Arduino-ESP32 3.x registers a pin with the ADC one-shot driver on its
-  // first read. Configure per-pin attenuation only after that registration.
-  (void)analogRead(board::kBatterySensePin);
-  analogSetPinAttenuation(board::kBatterySensePin, ADC_11db);
+  configureBatteryAdc();
   beginBatterySampleBurst(millis());
   backlight.begin(board::kBacklightPin, board::kBacklightOnLevel);
   rgbLed.begin(board::kRgbLedRedPin, board::kRgbLedGreenPin, board::kRgbLedBluePin, board::kRgbLedActiveLow);
@@ -24604,9 +25858,15 @@ void setup() {
   Serial.println("[BOOT] sprite asset pack");
   assetsReady = sdReady && testSdAssets();
   Serial.printf("[BOOT] sprite asset pack %s\n", assetsReady ? "OK" : "FAIL");
-  wirelessUpdate.confirmBoot(sdReady && assetsReady && saveReady);
+  // A candidate without the retained TFT canvas can finish every storage
+  // self-test while leaving the physical display permanently black. Treat
+  // the display framebuffer as boot-critical so OTAP rolls that image back
+  // instead of accepting an unusable firmware.
+  wirelessUpdate.confirmBoot(sdReady && assetsReady && saveReady && retainedCanvasReady);
   if (saveReady) {
     normalizeSettings();
+    touch.setFingerMode(
+        gameSave.settings.touchInputMode()==TouchInputMode::Finger);
     // A BLE opponent cannot survive a reboot. Older development builds could
     // accidentally persist a temporary PvP BattleState; discard only that
     // transient state while leaving the single-player save untouched.
@@ -24624,6 +25884,12 @@ void setup() {
       luckyEggMessagePending=true;
       Serial.println("[SAVE] reconciled Kanto Lucky Egg reward");
     }
+    BattleEngine::setPermanentExperienceBoost(
+        (gameSave.ownedMachines&kLuckyEggOwnershipBit)!=0U);
+    const HeldItem speciesItem=SpeciesHeldItems::reconcile(
+        gameSave.collection,gameSave.specialHeldItems);
+    if(speciesItem!=HeldItem::None)
+      Serial.printf("[SAVE] granted species item %s\n",heldItemName(speciesItem));
     if (repairedMoves) Serial.println("[SAVE] repaired legacy move sets");
     if (gameSave.battle.active && BattleEngine::ensureOpponentUids(gameSave.battle))
       Serial.println("[SAVE] repaired legacy opponent identities");
@@ -24654,6 +25920,15 @@ void loop() {
 #endif
   uint32_t now = millis();
   wirelessUpdate.update();
+  uint32_t synchronizedLocalTime=0;
+  if(wirelessUpdate.takeSynchronizedTime(synchronizedLocalTime)){
+    gameSave.clockLocalEpochSeconds=synchronizedLocalTime;
+    // The previous fallback clock used a different day domain. Let the first
+    // real local day offer its NPC interaction normally.
+    gameSave.lastNpcGiftDay=UINT32_MAX;
+    saveDirty=true;
+    saveNow();
+  }
   if (wirelessUpdate.active() && screen == Screen::WirelessUpdate &&
       now - lastWirelessUpdateDrawMs >= 250U && wirelessUpdate.takeChanged()) {
     lastWirelessUpdateDrawMs = now;
@@ -24758,11 +26033,13 @@ void loop() {
       drawMultiplayerPocket();
     }
   }
-  if(!displaySleeping && !batterySampleBurst.active && now-lastBatterySampleMs>=30000U)
+  if(!batterySampleBurst.active && now-lastBatterySampleMs>=30000U)
     beginBatterySampleBurst(now);
   {
     const uint8_t previousBars=batteryBars; const bool wasValid=batteryReadingValid;
     const bool batteryUpdated=serviceBatterySampleBurst(now);
+    if(batteryUpdated&&BatteryProtection::shouldEnterDormancy(
+        batteryReadingValid,batteryPercent))enterLowBatteryDormancy();
     if(batteryUpdated && screen==Screen::Home&&!displaySleeping&&!swipeUnlock.active()&&
        (previousBars!=batteryBars||wasValid!=batteryReadingValid)){
       if(homeMoveMode){
@@ -24895,8 +26172,18 @@ void loop() {
     return;
   }
 
-  const TouchPoint point = touch.read();
+  const TouchPoint rawPoint = touch.read();
+  const TouchPoint point = filterGameTouch(rawPoint);
   if (point.touched) lastInteractionMs = now;
+  serviceKidsPaintStroke(point);
+  if(serviceKidsExitSlider(point)){
+    wasTouched=point.touched;
+    advanceGameClocks();processTimedEvents(now);
+    if(saveDirty&&now-lastSaveMs>=60000U)saveNow();
+    presentRetainedFrame();
+    delay(2);
+    return;
+  }
 
   if (swipeUnlock.active()) {
     const SwipeUnlock::Event unlockEvent = swipeUnlock.update(point.touched, point.x, point.y);

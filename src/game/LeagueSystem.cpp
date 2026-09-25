@@ -132,15 +132,17 @@ bool LeagueSystem::isChampionStage(const BattleState& battle) {
 }
 
 bool LeagueSystem::reconcileKantoLuckyEggReward(const GymProgress& progress,
-                                                const PokemonCollection& collection,
+                                                PokemonCollection& collection,
                                                 uint64_t& ownedMachines) {
-  if (!GymSystem::leagueComplete(progress, 1U) ||
-      (ownedMachines & kLuckyEggOwnershipBit)) return false;
-  for (const OwnedPokemon& pokemon : collection.box)
-    if (pokemon.uid != kEmptyPokemonUid && pokemon.heldItem == HeldItem::LuckyEgg)
-      return false;
+  if (!GymSystem::leagueComplete(progress, 1U)) return false;
+  bool removedLegacyHolder=false;
+  for (OwnedPokemon& pokemon : collection.box)
+    if (pokemon.uid != kEmptyPokemonUid && pokemon.heldItem == HeldItem::LuckyEgg){
+      pokemon.heldItem=HeldItem::None;removedLegacyHolder=true;
+    }
+  const bool newlyUnlocked=(ownedMachines&kLuckyEggOwnershipBit)==0;
   ownedMachines |= kLuckyEggOwnershipBit;
-  return true;
+  return newlyUnlocked||removedLegacyHolder;
 }
 
 uint8_t LeagueSystem::minimumLevel(uint8_t region) {

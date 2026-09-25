@@ -161,8 +161,19 @@ BattleTowerRewardResult BattleTowerSystem::awardCompletionReward(
   roll^=roll>>16U;roll*=0x7FEB352DUL;
   roll^=roll>>15U;roll*=0x846CA68BUL;
   roll^=roll>>16U;
+  static_assert(kMasterBallOddsDenominator==kSpecialEggOddsDenominator,
+                "Tower reward buckets must share one exact probability table");
+  const uint16_t rewardBucket=static_cast<uint16_t>(
+      roll%kMasterBallOddsDenominator);
+  if(rewardBucket==0U){
+    uint16_t& masterBalls=
+        inventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)];
+    if(masterBalls<kInventoryStackLimit){
+      ++masterBalls;reward.kind=BattleTowerRewardKind::MasterBall;return reward;
+    }
+  }
   if(!egg.active&&!egg.offerPending&&
-     (roll%kSpecialEggOddsDenominator)==0U&&
+     rewardBucket==1U&&
      EggSystem::grantBattleTowerSpecial(egg,pokedex,roll^0x45474721UL)){
     reward.kind=BattleTowerRewardKind::SpecialEgg;
     reward.eggSpeciesId=egg.speciesId;

@@ -1,4 +1,5 @@
 #include "game/BattleEngine.h"
+#include "game/WorldFeatures.h"
 #include "game/MegaEvolution.h"
 #include <algorithm>
 #include <cmath>
@@ -7,6 +8,7 @@
 #include "game/Pokedex.h"
 
 namespace {
+bool gPermanentExperienceBoost=false;
 bool abilityIs(const OwnedPokemon& pokemon,const char* name);
 // Shiny encounters use FireRed's original 1/8192 roll. The temporary 50%
 // visual-QA override has been retired now that the shiny presentation was
@@ -463,6 +465,7 @@ PokemonType effectiveMoveType(const BattleState& battle,const FullMoveData& move
     if(abilityIs(attacker,"AERILATE"))return PokemonType::Flying;
     if(abilityIs(attacker,"PIXILATE"))return PokemonType::Fairy;
     if(abilityIs(attacker,"REFRIGERATE"))return PokemonType::Ice;
+    if(abilityIs(attacker,"DRAGONIZE"))return PokemonType::Dragon;
   }
   return move.type;
 }
@@ -948,7 +951,7 @@ void consumeHeld(OwnedPokemon& pokemon,CombatVolatile& volatileState,
   const HeldItem consumed=heldItemFor(pokemon,volatileState);
   if(moveEffects&&consumed!=HeldItem::None)moveEffects->recyclableItem=consumed;
   if(volatileState.hasHeldItemOverride)setBattleHeldItem(volatileState,HeldItem::None);
-  else pokemon.heldItem=HeldItem::None;
+  else CollectionLogic::consumeHeldItem(pokemon);
 }
 bool stealBattleHeldItem(OwnedPokemon& source,CombatVolatile& sourceVolatile,OwnedPokemon& target,CombatVolatile& targetVolatile){
   const HeldItem sourceItem=heldItemFor(source,sourceVolatile),targetItem=heldItemFor(target,targetVolatile);
@@ -970,7 +973,10 @@ bool swapPersistentHeldItems(OwnedPokemon& source,CombatVolatile& sourceVolatile
   const HeldItem targetItem=heldItemFor(target,targetVolatile);
   if((sourceItem==HeldItem::None&&targetItem==HeldItem::None)||
      heldItemIsTransferLocked(sourceItem)||heldItemIsTransferLocked(targetItem))return false;
-  source.heldItem=targetItem;target.heldItem=sourceItem;
+  const uint8_t sourceQuantity=CollectionLogic::heldItemQuantity(source);
+  const uint8_t targetQuantity=CollectionLogic::heldItemQuantity(target);
+  CollectionLogic::setHeldItemQuantity(source,targetItem,targetQuantity);
+  CollectionLogic::setHeldItemQuantity(target,sourceItem,sourceQuantity);
   sourceVolatile.heldItemOverride=HeldItem::None;sourceVolatile.hasHeldItemOverride=false;
   sourceVolatile.heldItemSuppressed=false;sourceVolatile.choiceMove=MoveId::None;
   targetVolatile.heldItemOverride=HeldItem::None;targetVolatile.hasHeldItemOverride=false;
@@ -2824,11 +2830,25 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
 
 void resolveFaintVows(BattleActionResult& result,BattleSide faintedSide,
     OwnedPokemon& fainted,DedicatedMoveEffectState& faintedEffects,
-    OwnedPokemon& attacker,MoveId finishingMove,uint8_t finishingMoveSlot){
+    OwnedPokemon& attacker,MoveId finishingMove,uint8_t finishingMoveSlot,
+    uint16_t finishingDamage){
   if(faintedEffects.grudge&&finishingMoveSlot<kMoveSlots&&
      attacker.moves[finishingMoveSlot]==finishingMove)
     attacker.movePp[finishingMoveSlot]=0;
   faintedEffects.grudge=false;
+  // Innards Out returns the HP actually lost to the finishing hit.  Resolve it
+  // before Destiny Bond so the journal always shows the direct retaliation
+  // before a possible bond knockout.
+  if(abilityIs(fainted,"INNARDS OUT")&&attacker.currentHp&&finishingDamage){
+    const uint16_t before=attacker.currentHp;
+    attacker.currentHp=finishingDamage>=attacker.currentHp?0U:
+        static_cast<uint16_t>(attacker.currentHp-finishingDamage);
+    appendAbilityActivation(result,faintedSide,fainted);
+    const BattleSide attackerSide=faintedSide==BattleSide::Player?
+        BattleSide::Opponent:BattleSide::Player;
+    appendHpChange(result,attackerSide,attacker.uid,before,attacker.currentHp);
+    if(!attacker.currentHp)appendFaintedOnce(result,attackerSide,attacker);
+  }
   if(!faintedEffects.destinyBond||!attacker.currentHp)return;
   faintedEffects.destinyBond=false;
   // FireRed presents the knocked-out Destiny Bond user first, then announces
@@ -2870,6 +2890,11 @@ void normalizeTrainerTarget(EncounterCharges& charges) {
   if (!validTrainerTarget(charges)) rollTrainerTarget(charges);
 }
 }
+
+void BattleEngine::setPermanentExperienceBoost(bool active){
+  gPermanentExperienceBoost=active;
+}
+bool BattleEngine::permanentExperienceBoost(){return gPermanentExperienceBoost;}
 
 void EncounterLogic::advance(EncounterCharges& charges, uint32_t elapsedSeconds) {
   if (charges.available > EncounterCharges::kMaximum) charges.available = EncounterCharges::kMaximum;
@@ -3154,7 +3179,7 @@ bool BattleEngine::moveIsSelectable(const BattleState& battle,
 
 bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
                              uint32_t playerUid, uint32_t seed, uint8_t unlockedGeneration,
-                             bool beginnerProtection) {
+                             bool beginnerProtection, uint8_t worldTimePeriod) {
   if (battle.active || !CollectionLogic::validate(collection) || !selectablePartyMember(collection, playerUid)) return false;
   clear(battle);
   battle.active = true; battle.kind = BattleKind::Wild; battle.outcome = BattleOutcome::Ongoing;
@@ -3218,6 +3243,20 @@ bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
           speciesSelectionLevel,unlockedGeneration,random(battle));
       const SpeciesData* data=findSpecies(candidate);
       if(data&&(data->type1==preferredType||data->type2==preferredType)){
+        speciesId=candidate;break;
+      }
+    }
+  }
+  // Time changes encounter flavour, never evolution.  Rejection-sampling the
+  // existing legal table retains its level/generation rules while making the
+  // morning, evening and nocturnal groups noticeably different.
+  if(worldTimePeriod<=static_cast<uint8_t>(WorldTimePeriod::Night)&&
+     random(battle)%4U!=0U){
+    const WorldTimePeriod period=static_cast<WorldTimePeriod>(worldTimePeriod);
+    for(uint8_t attempt=0;attempt<64U;++attempt){
+      const uint16_t candidate=chooseEncounterSpecies(
+          speciesSelectionLevel,unlockedGeneration,random(battle));
+      if(WorldClock::encounterPreferred(candidate,period)){
         speciesId=candidate;break;
       }
     }
@@ -3312,7 +3351,8 @@ void BattleEngine::applyEntryAbilities(BattleState& battle,PokemonCollection& co
       battle.weather=BattleWeather::StrongWinds;battle.weatherTurns=0xFF;
     }else if(!strongAlready&&abilityIdIs(entryAbility,"DRIZZLE")){
       battle.weather=BattleWeather::Rain;battle.weatherTurns=0xFF;
-    }else if(!strongAlready&&abilityIdIs(entryAbility,"DROUGHT")){
+    }else if(!strongAlready&&(abilityIdIs(entryAbility,"DROUGHT")||
+                              abilityIdIs(entryAbility,"MEGA SOL"))){
       battle.weather=BattleWeather::Sun;battle.weatherTurns=0xFF;
     }else if(!strongAlready&&abilityIdIs(entryAbility,"SAND STREAM")){
       battle.weather=BattleWeather::Sandstorm;battle.weatherTurns=0xFF;
@@ -3322,13 +3362,16 @@ void BattleEngine::applyEntryAbilities(BattleState& battle,PokemonCollection& co
   // Primal weather and Delta Stream end as soon as their last source leaves.
   // Ordinary Gen-III Drizzle/Drought/Sand Stream weather remains permanent.
   const BattleWeather strongWeatherBefore=battle.weather;
-  if(battle.weather==BattleWeather::HeavyRain&&!abilityIs(*player,"PRIMORDIAL SEA")&&
+  if(battle.weatherTurns==0xFF&&battle.weather==BattleWeather::HeavyRain&&
+     !abilityIs(*player,"PRIMORDIAL SEA")&&
      !abilityIs(*opponent,"PRIMORDIAL SEA")){
     battle.weather=BattleWeather::Clear;battle.weatherTurns=0;
-  }else if(battle.weather==BattleWeather::HarshSun&&!abilityIs(*player,"DESOLATE LAND")&&
+  }else if(battle.weatherTurns==0xFF&&battle.weather==BattleWeather::HarshSun&&
+           !abilityIs(*player,"DESOLATE LAND")&&
            !abilityIs(*opponent,"DESOLATE LAND")){
     battle.weather=BattleWeather::Clear;battle.weatherTurns=0;
-  }else if(battle.weather==BattleWeather::StrongWinds&&!abilityIs(*player,"DELTA STREAM")&&
+  }else if(battle.weatherTurns==0xFF&&battle.weather==BattleWeather::StrongWinds&&
+           !abilityIs(*player,"DELTA STREAM")&&
            !abilityIs(*opponent,"DELTA STREAM")){
     battle.weather=BattleWeather::Clear;battle.weatherTurns=0;
   }
@@ -3422,6 +3465,11 @@ void BattleEngine::applyEntryAbilities(BattleState& battle,PokemonCollection& co
     else triggerHeldItem(*opponent,battle.opponentVolatiles[battle.opponentIndex],
                          &battle.opponentMoveEffects[battle.opponentIndex]);
   }
+}
+
+void BattleEngine::synchronizeWeatherForms(BattleState& battle,
+                                           PokemonCollection& collection){
+  refreshForecastForms(battle,collection,nullptr);
 }
 
 uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& attacker,
@@ -3634,13 +3682,22 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
      named("DRAGON PULSE")||named("WATER PULSE")))power=power*150U/100U;
   if(abilityIs(attacker,"STRONG JAW")&&(named("BITE")||named("CRUNCH")||named("HYPER FANG")||
      named("POISON FANG")||named("ICE FANG")||named("FIRE FANG")||named("THUNDER FANG")))power=power*150U/100U;
+  if(abilityIs(attacker,"SHARPNESS")&&(named("CUT")||named("SLASH")||
+     named("RAZOR WIND")||named("FURY CUTTER")||named("AIR CUTTER")||
+     named("LEAF BLADE")))power=power*150U/100U;
   if(abilityIs(attacker,"SHEER FORCE")&&sheerForceApplies(move))power=power*130U/100U;
   // The 20% conversion boost belongs only to -ate Abilities. Weather Ball
   // and Hidden Power may also change type, but do not receive this bonus.
   if(!typelessStruggle&&move->type==PokemonType::Normal&&attackType!=PokemonType::Normal&&
      !effectIs(move,"HIDDEN_POWER")&&!effectIs(move,"WEATHER_BALL")&&
-     (abilityIs(attacker,"AERILATE")||abilityIs(attacker,"PIXILATE")||
-      abilityIs(attacker,"REFRIGERATE")))power=power*120U/100U;
+      (abilityIs(attacker,"AERILATE")||abilityIs(attacker,"PIXILATE")||
+       abilityIs(attacker,"REFRIGERATE")||abilityIs(attacker,"DRAGONIZE")))
+    power=power*120U/100U;
+  // Pokegochi battles are one-on-one and do not carry a separate terrain
+  // timer. Electric Surge's useful singles effect is adapted as a persistent
+  // field charge for its holder while that Mega remains active.
+  if(!typelessStruggle&&abilityIs(attacker,"ELECTRIC SURGE")&&
+     attackType==PokemonType::Electric)power=power*130U/100U;
   if(!typelessStruggle&&!suppressWeather&&abilityIs(attacker,"SAND FORCE")&&battle.weather==BattleWeather::Sandstorm&&
      (attackType==PokemonType::Rock||attackType==PokemonType::Ground||attackType==PokemonType::Steel))power=power*130U/100U;
   const HeldItem attackItem=heldItemFor(attacker,attackerVolatile);
@@ -3702,6 +3759,9 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   damage = damage * effectiveness / 100U;
   if(!typelessStruggle&&!ignoreDefenderAbility&&abilityIs(defender,"FILTER")&&effectiveness>100U)
     damage=damage*3U/4U;
+  if(!ignoreDefenderAbility&&abilityIs(defender,"MULTISCALE")&&
+     defender.currentHp==defender.maximumHp)
+    damage=std::max<uint32_t>(1U,damage/2U);
   if(!typelessStruggle&&!suppressWeather){
     // FireRed/Emerald halve Solar Beam in rain, sandstorm and hail. Sunny
     // weather instead removes its charge turn in isChargingMove().
@@ -4142,14 +4202,17 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
       (opponent->movePp[moveSlot] == 0&&!forcedLocked&&
        enemyVolatile.chargingMove!=opponent->moves[moveSlot]))
     moveSlot = chooseEnemyMove(battle, player);
-  // If Disable is the reason the AI has no legal command, FireRed executes
-  // Struggle. Preserve the engine's existing no-command behavior for synthetic
-  // opponents whose complete move list has zero PP; several diagnostics use
-  // those as a deliberate "opponent does not act" fixture.
-  const uint8_t disabledSlot=enemyVolatile.disabledMove==MoveId::None?kMoveSlots:
-      moveSlotFor(*opponent,enemyVolatile.disabledMove,false);
-  const bool enemyUsingStruggle=moveSlot>=kMoveSlots&&disabledSlot<kMoveSlots&&
-      opponent->movePp[disabledSlot]!=0;
+  // Like the player, an opponent with moves but no legal command must use
+  // Struggle. This includes every move reaching zero PP as well as Disable,
+  // Taunt, Torment or Imprison blocking the remaining commands. A completely
+  // empty synthetic battler still has no command at all.
+  bool enemyKnowsMove=false;
+  for(uint8_t slot=0;slot<kMoveSlots;++slot){
+    if(opponent->moves[slot]!=MoveId::None&&findFullMove(opponent->moves[slot])){
+      enemyKnowsMove=true;break;
+    }
+  }
+  const bool enemyUsingStruggle=moveSlot>=kMoveSlots&&enemyKnowsMove;
   if(moveSlot>=kMoveSlots&&!enemyUsingStruggle){result.enemyActed=true;return;}
   MoveId enemyMove = enemyUsingStruggle ? MoveId::Struggle : opponent->moves[moveSlot];
   const FullMoveData* enemyMoveData = findFullMove(enemyMove);
@@ -4295,7 +4358,7 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
                               &battle.playerMoveEffects);
     if(!player.currentHp){
       resolveFaintVows(result,BattleSide::Player,player,battle.playerMoveEffects,
-                       *opponent,static_cast<MoveId>(117),moveSlot);
+                       *opponent,static_cast<MoveId>(117),moveSlot,result.damageTaken);
       player.recoverySecondsRemaining=1;
       appendFaintedOnce(result,BattleSide::Player,player);
       if(!opponent->currentHp){
@@ -4998,7 +5061,8 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   triggerHeldItemWithResult(result,player,battle.playerVolatile,BattleSide::Player,&playerEffects);
   triggerHeldItemWithResult(result,*opponent,enemyVolatile,BattleSide::Opponent,&enemyEffects);
   if(player.currentHp==0)
-    resolveFaintVows(result,BattleSide::Player,player,playerEffects,*opponent,enemyMove,moveSlot);
+    resolveFaintVows(result,BattleSide::Player,player,playerEffects,*opponent,
+                     enemyMove,moveSlot,enemyInflictedDamage);
   if(opponent->currentHp==0){appendFaintedOnce(result,BattleSide::Opponent,*opponent);result.opponentDefeated=true;awardExperience(battle,collection,result);finishOpponentFaint(battle,collection,result);}
   if (player.currentHp == 0) {
     appendFaintedOnce(result, BattleSide::Player, player);
@@ -5316,15 +5380,10 @@ void BattleEngine::awardExperience(BattleState& battle, PokemonCollection& colle
     totalExperience *= kWildExperienceMultiplier;
   if (highestPartyLevel(collection) < kEarlyExperienceLevelLimit)
     totalExperience *= kEarlyExperienceMultiplier;
-  bool partyHasLuckyEgg=false;
-  for(uint8_t slot=0;slot<kPartyCapacity;++slot){
-    const OwnedPokemon* recipient=CollectionLogic::active(collection,slot);
-    if(recipient&&recipient->heldItem==HeldItem::LuckyEgg){partyHasLuckyEgg=true;break;}
-  }
-  // Pokegochi treats the unique Lucky Egg as a party-wide modifier.  A
-  // holder doubles the complete award before it is divided equally, so every
-  // selected partner benefits without stacking a second equipped copy.
-  if(partyHasLuckyEgg)totalExperience*=2U;
+  // Lucky Egg is a permanent account reward in Pokegochi. Once unlocked it
+  // doubles the complete award before the equal party split and never occupies
+  // a Pokemon's held-item slot.
+  if(gPermanentExperienceBoost)totalExperience*=2U;
   const uint32_t sharedExperience=totalExperience/recipients;
   result.experienceGained = static_cast<uint16_t>(std::min<uint32_t>(65535U, sharedExperience));
   if (result.experienceGained) {
@@ -5347,8 +5406,8 @@ void BattleEngine::awardExperience(BattleState& battle, PokemonCollection& colle
   };
   uint16_t statsBefore[6]{};
   readStats(player, statsBefore);
-  // Pokegochi deliberately treats Lucky Egg as a team bonus: if any selected
-  // partner holds the unique item, the 2x award remains equal for all.
+  // Every active partner receives the same share. The permanent Lucky Egg
+  // bonus, when unlocked, has already been applied to that shared award.
   player.experience += result.experienceGained;
   // XP is shared among all active partners by Pokégochi's deliberate rule.
   // Gen III awards the defeated species' full EV yield to every qualifying
@@ -5771,6 +5830,10 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   if (opponent->status == StatusCondition::Paralysis) enemySpeed /= 4;
   if(heldIs(*player,selfVolatile,HeldItem::MachoBrace))playerSpeed=std::max<int32_t>(1,playerSpeed/2);
   if(heldIs(*opponent,targetVolatile,HeldItem::MachoBrace))enemySpeed=std::max<int32_t>(1,enemySpeed/2);
+  if(player->speciesId==132U&&heldIs(*player,selfVolatile,HeldItem::QuickPowder)&&
+     !battle.playerMoveEffects.transformed)playerSpeed*=2;
+  if(opponent->speciesId==132U&&heldIs(*opponent,targetVolatile,HeldItem::QuickPowder)&&
+     !battle.opponentMoveEffects[battle.opponentIndex].transformed)enemySpeed*=2;
   const int8_t playerPriority = plannedPlayerMove ? static_cast<int8_t>(plannedPlayerMove->priority+
       (plannedPlayerMove->power==0&&abilityIs(*player,"PRANKSTER")?1:0)) : 0;
   const int8_t enemyPriority = plannedEnemyMove ? static_cast<int8_t>(plannedEnemyMove->priority+
@@ -5911,7 +5974,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
       triggerHeldItemWithResult(result,*opponent,targetVolatile,BattleSide::Opponent,&targetEffects);
       if(!opponent->currentHp){
         resolveFaintVows(result,BattleSide::Opponent,*opponent,targetEffects,*player,
-                         static_cast<MoveId>(117),moveSlot);
+                         static_cast<MoveId>(117),moveSlot,result.damageDealt);
         appendFaintedOnce(result,BattleSide::Opponent,*opponent);
         result.opponentDefeated=true;awardExperience(battle,collection,result);
         finishOpponentFaint(battle,collection,result);
@@ -6601,7 +6664,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   if (playerFaintedFromMove) player->recoverySecondsRemaining = 1;
   if (opponent->currentHp == 0) {
     resolveFaintVows(result,BattleSide::Opponent,*opponent,targetEffects,*player,
-                     selectedMove,moveSlot);
+                     selectedMove,moveSlot,appliedDamage);
     appendFaintedOnce(result,BattleSide::Opponent,*opponent);
     result.opponentDefeated = true; awardExperience(battle, collection, result);
     finishOpponentFaint(battle, collection, result);

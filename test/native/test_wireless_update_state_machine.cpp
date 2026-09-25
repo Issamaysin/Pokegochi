@@ -60,6 +60,11 @@ int main() {
                            update.pairingCode()};
   update.transportControl(reinterpret_cast<const uint8_t*>(&auth), sizeof(auth));
   assert(update.state() == DeviceState::AwaitingManifest);
+  TimeSyncCommand clock{static_cast<uint8_t>(Command::SynchronizeTime),1735749000UL};
+  update.transportControl(reinterpret_cast<const uint8_t*>(&clock),sizeof(clock));
+  uint32_t synchronized=0;
+  assert(update.takeSynchronizedTime(synchronized)&&synchronized==1735749000UL);
+  assert(!update.takeSynchronizedTime(synchronized));
 
   Manifest manifest{};
   std::memcpy(manifest.magic, "PGU1", 4);

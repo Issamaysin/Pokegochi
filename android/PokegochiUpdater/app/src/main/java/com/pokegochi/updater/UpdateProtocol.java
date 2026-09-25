@@ -3,12 +3,14 @@ package com.pokegochi.updater;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.UUID;
+import java.util.TimeZone;
 
 final class UpdateProtocol {
     static final int VERSION = 1;
     static final int DEVICE_MODEL = 1;
     static final int LEGACY_MAXIMUM_DATA_BYTES = 184;
     static final int MAXIMUM_DATA_BYTES = 508;
+    static final int CAPABILITY_TIME_SYNC = 1;
     static final UUID SERVICE = UUID.fromString("70564743-4849-5550-8000-504f4b45474f");
     static final UUID CONTROL = UUID.fromString("70564743-4849-5550-8001-504f4b45474f");
     static final UUID DATA = UUID.fromString("70564743-4849-5550-8002-504f4b45474f");
@@ -24,6 +26,7 @@ final class UpdateProtocol {
     static final int COMMIT = 7;
     static final int ABORT = 8;
     static final int QUERY_STATUS = 9;
+    static final int SYNCHRONIZE_TIME = 10;
 
     static final int STATUS_HELLO = 1;
     static final int STATUS_AUTHENTICATED = 2;
@@ -35,6 +38,7 @@ final class UpdateProtocol {
     static final int STATUS_COMPLETE = 8;
     static final int STATUS_ABORTED = 9;
     static final int STATUS_ERROR = 10;
+    static final int STATUS_TIME_SYNCHRONIZED = 11;
 
     static final int OBJECT_FIRMWARE = 0;
     static final int OBJECT_ASSET = 1;
@@ -43,6 +47,13 @@ final class UpdateProtocol {
 
     static byte[] authenticate(int code) {
         return little(6).put((byte) AUTHENTICATE).put((byte) VERSION).putInt(code).array();
+    }
+
+    static byte[] synchronizeTime() {
+        long nowMillis = System.currentTimeMillis();
+        long localSeconds = nowMillis / 1000L +
+                TimeZone.getDefault().getOffset(nowMillis) / 1000L;
+        return little(5).put((byte) SYNCHRONIZE_TIME).putInt((int) localSeconds).array();
     }
 
     static byte[] manifestBegin(int size) {
