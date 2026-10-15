@@ -1,5 +1,20 @@
 # Índice de pedidos do Codex
 
+## R20261015-159 - publicar politica de privacidade para APKPure
+
+```mermaid
+graph TD
+    R20261015_159["R20261015-159: URL de privacidade Android"]
+    R20261015_159 --> P1["Auditar permissoes e armazenamento do app"]
+    P1 --> P2["Escrever politica sem coleta de dados"]
+    P2 --> P3["Publicar pagina no GitHub"]
+    P3 --> P4["Entregar URL para APKPure"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261015-159 | 2026-10-15 | Fornecer uma URL de politica de privacidade para o cadastro na APKPure | Concluido e publicado | Criado `PRIVACY_POLICY.md` com o comportamento real do release Android: save local, multiplayer BLE direto entre aparelhos, nenhum servidor, nenhum analytics/anuncios e sem dumps no release. A pagina sera publicada em `github.com/Issamaysin/Pokegochi/blob/main/PRIVACY_POLICY.md`. |
+
 ## R20261015-158 - publicar codigo e APK Android 1.0 no GitHub
 
 ```mermaid
