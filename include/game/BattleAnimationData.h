@@ -250,6 +250,26 @@ enum class BattleAnimationMotion : uint8_t {
   // initializer and incorrectly rendered every family below as Static.
   SwordRise,
   SliceArc,
+  TrumpCardArc,
+  PoisonJabProjectile,
+  AquaTailSweep,
+  DracoMeteorRock,
+  DragonRushStrike,
+  SmallCloudDrift,
+  SpriteOnMonDuration,
+  MaxFlutterbyArc,
+  WringOutCircle,
+  WoodHammerHammer,
+  PowerSwapGuardSwapArc,
+  TargetSinWave,
+  GunkShotParticleWave,
+  PsychoCutStrike,
+  StealthRockArc,
+  WorrySeedArc,
+  LavaPlumeDrift,
+  PluckParticleJump,
+  TrumpCardParticleScatter,
+  RockPolishStreak,
   EllipticalGust,
   StompDrop,
   HornLunge,
@@ -309,6 +329,7 @@ enum class BattleAnimationMotion : uint8_t {
   RevengeScratchExact,
   ClappingHandWindowMask,
   TailGlowOrbExact,
+  ZenHeadbuttExact,
   BasicFistOrFootExact,
   SpinningKickOrPunchExact,
   InvertedHitSplatExact,
@@ -358,6 +379,12 @@ enum class BattleAnimationMotion : uint8_t {
   IceImpact,
   BattlerLunge,
   BattlerDip,
+  // FireRed's dummy SpriteTemplates move the selected battler itself.  They
+  // are not a generic wave: the callback arguments are a battler selector,
+  // target offset, mirror flag and linear duration.
+  BattlerSlideToOffset,
+  BattlerRestorePosition,
+  BattlerSlideToOffsetAndBack,
   BattlerSlide,
   BattlerBow,
   BattlerShake,
@@ -452,6 +479,8 @@ enum class BattleAnimationTaskMotion : uint8_t {
   // and affine state machines in FireRed.
   AcidArmor,
   AttackerStretchAndDisappear,
+  CompressTargetHorizontally,
+  CompressTargetHorizontallyFast,
   CurseStretchingBlackBg,
   DeepInhale,
   DefenseCurlDeformMon,
@@ -561,6 +590,7 @@ enum class BattleAnimationTaskMotion : uint8_t {
   TagBlendInOut,
   TagBlendToColor,
   TagFlash,
+  NightSlashPalette,
   MagicalLeafPaletteCycle,
   MusicNotePaletteSetup,
   MusicNotePaletteClear,
@@ -683,6 +713,11 @@ struct BattleAnimationSpriteResource {
   // cel animation ends (Amnesia's question mark is the canonical case).
   // Starting that transform at spawn visibly skips the first phase.
   uint8_t affineStartAge;
+  // Some source callbacks create a second SpriteTemplate directly from the
+  // first sprite (Close Combat's fist/foot impact is the retained example).
+  // Keep that relationship in generated data so the child uses the same
+  // source position and lifetime instead of being silently dropped.
+  uint16_t childResourceId = 0xFFFFU;
 };
 
 struct BattleAnimationFrameStep {
@@ -718,13 +753,40 @@ struct BattleAnimationAffineState {
 };
 
 struct BattleAnimationCommand {
-  uint16_t resourceId;
+  // Commands are flash-resident and numerous (the complete FireRed + Sinnoh
+  // catalog is over eleven thousand entries). Resource id (9 bits), opcode
+  // (5 bits) and anchor (2 bits) share one word; this keeps each command at
+  // six bytes instead of eight without changing the generated initializer
+  // ABI. The remaining priority and argument count stay byte-addressable.
+  uint16_t resourceOpcode;
   uint16_t argumentOffset;
-  uint8_t opcode;
-  uint8_t anchor;
   uint8_t priority;
   uint8_t argumentCount;
+
+  constexpr BattleAnimationCommand(uint16_t resource, uint16_t arguments,
+                                   uint8_t opcodeValue, uint8_t anchorValue,
+                                   uint8_t priorityValue,
+                                   uint8_t argumentCountValue)
+      : resourceOpcode(static_cast<uint16_t>(
+            (resource & 0x01FFU) |
+            ((static_cast<uint16_t>(opcodeValue) & 0x001FU) << 9U) |
+            ((static_cast<uint16_t>(anchorValue) & 0x0003U) << 14U))),
+        argumentOffset(arguments), priority(priorityValue),
+        argumentCount(argumentCountValue) {}
+
+  constexpr uint16_t resourceId() const {
+    return static_cast<uint16_t>(resourceOpcode & 0x01FFU);
+  }
+  constexpr uint8_t opcode() const {
+    return static_cast<uint8_t>((resourceOpcode >> 9U) & 0x001FU);
+  }
+  constexpr uint8_t anchor() const {
+    return static_cast<uint8_t>((resourceOpcode >> 14U) & 0x0003U);
+  }
 };
+
+static_assert(sizeof(BattleAnimationCommand) == 6,
+              "Battle animation command must stay compact in flash");
 
 struct BattleAnimationProgram {
   uint16_t moveId;
@@ -747,6 +809,7 @@ const BattleAnimationProgram* findBattleAnimationProgram(uint16_t moveId);
 const BattleAnimationCommand* battleAnimationProgramCommand(
     const BattleAnimationProgram& program, uint16_t index);
 const int16_t* battleAnimationCommandArguments(const BattleAnimationCommand& command);
+bool battleAnimationArgumentsValid(const int16_t* arguments, uint8_t count);
 const BattleAnimationSpriteResource* battleAnimationSpriteResource(uint16_t resourceId);
 uint8_t battleAnimationSpriteFrameAtAge(
     const BattleAnimationSpriteResource& resource, uint8_t age,

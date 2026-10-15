@@ -13,6 +13,11 @@ class WirelessUpdate {
  public:
   using DeviceState = PokegochiUpdateProtocol::DeviceState;
   using ErrorCode = PokegochiUpdateProtocol::ErrorCode;
+  using SaveCommitCallback = bool (*)(void* context);
+  using SaveResetCallback = bool (*)(void* context);
+  using DiagnosticReadCallback = size_t (*)(void* context, uint8_t section,
+                                            uint16_t selector, char* output,
+                                            size_t capacity);
 
   // Called immediately after the SD mount and before the asset pack is used.
   // It completes an interrupted atomic commit or restores the previous pack
@@ -24,6 +29,16 @@ class WirelessUpdate {
 
   bool begin(uint32_t playerId, const char* firmwareVersion,
              uint16_t currentAssetPackVersion, bool sdMounted);
+  // The update transport deliberately sees the save as an opaque byte range.
+  // Persistence and default initialization remain owned by PersistentSave.
+  void configureSaveManagement(void* saveData, uint32_t saveBytes,
+                               uint16_t saveFormatVersion,
+                               SaveCommitCallback commitCallback,
+                               SaveResetCallback resetCallback,
+                               void* callbackContext);
+  // The callback only formats read-only state into the supplied buffer. It
+  // runs on the normal Arduino loop, never from a BLE callback task.
+  void configureDiagnostics(DiagnosticReadCallback callback, void* context);
   void update();
   void shutdown(bool discardReceivingSession = false);
   void abort();
@@ -31,6 +46,10 @@ class WirelessUpdate {
   bool active() const { return active_; }
   bool connected() const { return connected_; }
   bool busy() const;
+  bool canAbort() const {
+    return busy() && state_ != DeviceState::Committing &&
+           state_ != DeviceState::Rebooting;
+  }
   DeviceState state() const { return state_; }
   ErrorCode error() const { return error_; }
   uint32_t pairingCode() const { return pairingCode_; }
@@ -41,6 +60,14 @@ class WirelessUpdate {
   const char* statusText() const { return status_; }
   bool takeChanged();
   bool takeSynchronizedTime(uint32_t& localEpochSeconds);
+
+  // A live log uses the authenticated updater link but is independent from
+  // the updater screen. The UI can close after the host starts capture while
+  // the BLE transport keeps running in the background.
+  bool liveLogActive() const { return liveLogEnabled_; }
+  bool takeLiveLogStarted();
+  void detachLiveUi() { liveUiDetached_ = true; }
+  void emitLiveLog(const char* format, ...);
 
   // BLE callbacks only enqueue bounded packets. All flash and SD writes run
   // later on Arduino's main loop, never inside the NimBLE host task.
@@ -83,6 +110,7 @@ class WirelessUpdate {
   void processControl(const uint8_t* bytes, size_t length);
   void processData(const uint8_t* bytes, size_t length);
   void sendStatus(PokegochiUpdateProtocol::StatusCode code);
+  bool sendDiagnostic(uint8_t section, uint16_t selector);
   void setState(DeviceState state, const char* status,
                 ErrorCode error = ErrorCode::None);
   void fail(ErrorCode error, const char* status);
@@ -115,7 +143,19 @@ class WirelessUpdate {
   bool storePendingBoot(const char* target, const char* previous,
                         uint32_t sequence, uint8_t attempts) const;
   void clearPendingBoot() const;
+  // `esp_ota_set_boot_partition` only requests a slot change. Read the
+  // bootloader's authoritative choice back before telling the phone that a
+  // candidate can reboot, otherwise a stale OTA record can silently retain
+  // the older application slot.
+  bool selectBootPartition(const char* label) const;
   void recalculatePackageProgress();
+  bool prepareSaveExport();
+  bool sendSaveExportChunk(const PokegochiUpdateProtocol::SaveExportChunkCommand& request);
+  bool finishSaveExport();
+  bool beginSaveImport(const PokegochiUpdateProtocol::SaveImportBeginCommand& request);
+  bool finishSaveImport();
+  bool resetSave();
+  void closeSaveTransfer(bool removeFiles);
 
   bool active_ = false;
   bool initialized_ = false;
@@ -130,6 +170,11 @@ class WirelessUpdate {
   uint32_t pairingCode_ = 0;
   uint32_t synchronizedTime_ = 0;
   bool synchronizedTimePending_ = false;
+  bool liveLogEnabled_ = false;
+  bool liveLogStartPending_ = false;
+  bool liveUiDetached_ = false;
+  uint32_t liveLogSequence_ = 0;
+  uint32_t liveLogLastHeartbeatMs_ = 0;
   uint16_t currentAssetPackVersion_ = 0;
   char firmwareVersion_[24]{};
   char status_[72] = "WIRELESS UPDATE IS OFF.";
@@ -151,9 +196,23 @@ class WirelessUpdate {
   const uint8_t* objectHash_ = nullptr;
   uint32_t packageBytesDone_ = 0;
   uint32_t packageBytesTotal_ = 0;
+  void* saveData_ = nullptr;
+  uint32_t saveBytes_ = 0;
+  uint16_t saveFormatVersion_ = 0;
+  uint32_t saveImportFileCrc32_ = 0;
+  SaveCommitCallback saveCommitCallback_ = nullptr;
+  SaveResetCallback saveResetCallback_ = nullptr;
+  void* saveCallbackContext_ = nullptr;
+  DiagnosticReadCallback diagnosticReadCallback_ = nullptr;
+  void* diagnosticCallbackContext_ = nullptr;
+  // Keep the readback buffer below the ESP32's tight internal DRAM budget.
+  // The transport chunks it over BLE, and the report deliberately truncates
+  // only after the useful header/resource checks have been written.
+  char diagnosticBuffer_[2048]{};
 
 #if defined(ARDUINO_ARCH_ESP32)
   File assetFile_{};
+  File saveTransferFile_{};
   esp_ota_handle_t otaHandle_ = 0;
   const esp_partition_t* targetPartition_ = nullptr;
 #endif

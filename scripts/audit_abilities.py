@@ -27,7 +27,8 @@ custom = re.findall(r'\{\s*\w+\s*,\s*"([A-Z0-9 .\'-]+)"\s*,', mega_text[start:en
 abilities = list(dict.fromkeys(base + custom))
 engine = "\n".join(
     (ROOT / relative).read_text(encoding="utf-8", errors="strict")
-    for relative in ("src/game/BattleEngine.cpp", "src/game/EggSystem.cpp")
+    for relative in ("src/game/BattleEngine.cpp", "src/game/EggSystem.cpp",
+                     "src/game/MegaEvolution.cpp", "src/game/HeldItems.cpp")
 )
 
 # Every supported Ability belongs to an explicitly reviewed mechanic family.
@@ -39,14 +40,16 @@ HANDLER_GROUPS = {
     "entry/weather/form": {
         "DRIZZLE", "INTIMIDATE", "TRACE", "FORECAST", "SAND STREAM",
         "DROUGHT", "PRIMORDIAL SEA", "DESOLATE LAND", "DELTA STREAM",
-        "MEGA SOL",
+        "MEGA SOL", "SNOW WARNING", "DOWNLOAD", "MULTITYPE",
     },
     "end-turn/cadence": {
         "SPEED BOOST", "RAIN DISH", "SHED SKIN", "TRUANT", "SOLAR POWER",
+        "HYDRATION", "ICE BODY", "DRY SKIN", "POISON HEAL", "BAD DREAMS",
     },
     "accuracy/priority/PP": {
         "SAND VEIL", "COMPOUND EYES", "PRESSURE", "HUSTLE", "NO GUARD",
-        "PRANKSTER",
+        "PRANKSTER", "TANGLED FEET", "SNOW CLOAK", "QUICK FEET", "STALL",
+        "UNBURDEN",
     },
     "damage and critical modifiers": {
         "BATTLE ARMOR", "SHELL ARMOR", "STURDY", "DAMP", "SHIELD DUST",
@@ -57,15 +60,19 @@ HANDLER_GROUPS = {
         "TECHNICIAN", "SKILL LINK", "PIXILATE", "FILTER", "STRONG JAW",
         "SHEER FORCE", "REFRIGERATE", "MULTISCALE", "INNARDS OUT",
         "SHARPNESS", "DRAGONIZE", "ELECTRIC SURGE",
+        "RIVALRY", "ANGER POINT", "HEATPROOF", "SIMPLE", "IRON FIST",
+        "NORMALIZE", "SNIPER", "MAGIC GUARD", "SUPER LUCK",
+        "AFTERMATH", "UNAWARE", "TINTED LENS", "SLOW START", "SCRAPPY",
+        "SOLID ROCK", "RECKLESS", "FLOWER GIFT",
     },
     "type immunity/absorption/weather suppression": {
         "CLOUD NINE", "AIR LOCK", "VOLT ABSORB", "WATER ABSORB",
-        "FLASH FIRE", "LEVITATE",
+        "FLASH FIRE", "LEVITATE", "MOTOR DRIVE", "STORM DRAIN",
     },
     "status immunity/cure": {
         "LIMBER", "OBLIVIOUS", "INSOMNIA", "IMMUNITY", "OWN TEMPO",
         "INNER FOCUS", "MAGMA ARMOR", "WATER VEIL", "VITAL SPIRIT",
-        "NATURAL CURE", "STEADFAST", "EARLY BIRD",
+        "NATURAL CURE", "STEADFAST", "EARLY BIRD", "LEAF GUARD",
     },
     "contact/post-damage": {
         "STATIC", "COLOR CHANGE", "ROUGH SKIN", "EFFECT SPORE",
@@ -79,7 +86,7 @@ HANDLER_GROUPS = {
         "SUCTION CUPS", "SHADOW TAG", "MAGNET PULL", "SOUNDPROOF",
         "ARENA TRAP", "CACOPHONY",
     },
-    "items/escape/field": {"RUN AWAY", "PICKUP", "STICKY HOLD"},
+    "items/escape/field": {"RUN AWAY", "PICKUP", "STICKY HOLD", "GLUTTONY", "KLUTZ"},
     "weather speed": {"SWIFT SWIM", "CHLOROPHYLL"},
     "secondary effects/reflection": {"SERENE GRACE", "MAGIC BOUNCE"},
 }
@@ -95,6 +102,10 @@ ADAPTED_NO_EFFECT = {
     "PLUS": "requires an allied MINUS user in a double battle",
     "MINUS": "requires an allied PLUS user in a double battle",
     "STALWART": "move redirection does not exist in one-on-one battles",
+    "ANTICIPATION": "warning-only ability; moves are selected openly in Pokegochi battles",
+    "FOREWARN": "warning-only ability; move details are already inspectable",
+    "FRISK": "opponent held-item identity is intentionally kept hidden until an item interaction",
+    "HONEY GATHER": "no Honey item exists in the compact Bag; Underground research replaces field pickup loops",
 }
 
 errors: list[str] = []
@@ -122,8 +133,8 @@ unknown_adaptations = sorted(set(ADAPTED_NO_EFFECT) - set(abilities))
 if unknown_adaptations:
     errors.append("stale adaptations: " + ", ".join(unknown_adaptations))
 
-if len(base) != 77:
-    errors.append(f"expected 77 FireRed abilities, parsed {len(base)}")
+if len(base) != 124:
+    errors.append(f"expected 124 Gen-I--IV abilities, parsed {len(base)}")
 if len(custom) != 29:
     errors.append(f"expected 29 custom Mega/Primal abilities, parsed {len(custom)}")
 
@@ -134,7 +145,7 @@ if errors:
     raise SystemExit(1)
 
 print(
-    f"Ability audit passed: {len(base)} FireRed + {len(custom)} Mega/Primal; "
+    f"Ability audit passed: {len(base)} Gen-I--IV + {len(custom)} Mega/Primal; "
     f"{len(abilities) - len(ADAPTED_NO_EFFECT)} implemented, "
     f"{len(ADAPTED_NO_EFFECT)} documented singles/manual adaptations"
 )

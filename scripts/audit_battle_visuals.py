@@ -19,6 +19,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import build_sd_asset_pack as pack  # noqa: E402
 
 
+def flattened_data(image):
+    """Read raw pixels on both Pillow 10 and Pillow 11 runtimes."""
+    return pack.flattened_data(image)
+
+
 def read_pkg(relative: str) -> dict[str, object]:
     path = pack.OUTPUT / relative
     raw = path.read_bytes()
@@ -86,7 +91,7 @@ def assert_plane(relative: str, source, palette,
         raise RuntimeError(
             f"Dimension mismatch {relative}: "
             f"{package['width']}x{package['height']} != {source.size}")
-    source_indices = list(pack.palette_index_plane(source).get_flattened_data())
+    source_indices = list(flattened_data(pack.palette_index_plane(source)))
     if package["indices"] != source_indices:
         raise RuntimeError(f"Palette-index plane changed: {relative}")
     if package["palette"] != expected_palette(palette, transparent_index):
@@ -108,7 +113,7 @@ def assert_rgba_asset(relative: str, source) -> None:
     palette: list[int] = []
     palette_indices: dict[int, int] = {}
     indices: list[int] = []
-    for red, green, blue, alpha in source.get_flattened_data():
+    for red, green, blue, alpha in flattened_data(source):
         value = pack.TRANSPARENT if alpha < 128 else pack.rgb565(red, green, blue)
         if value == pack.TRANSPARENT and alpha >= 128:
             value = 0xF81E
@@ -147,8 +152,14 @@ def main() -> None:
     audit_path = ROOT / ".generated/battle_animation_audit.json"
     animation = json.loads(audit_path.read_text(encoding="utf-8"))
     moves = animation["moves"]
-    if len(moves) != 354 or animation["program"]["moves"] != 354:
-        raise RuntimeError("The generated VM does not contain all 354 moves")
+    # FireRed's 354 moves are followed by the complete Platinum Gen-IV range
+    # (ROOST through SHADOW_FORCE, IDs 355..467), not only the four moves that
+    # were initially spot-checked on hardware.
+    expected_moves = 354 + (467 - 355 + 1)
+    if len(moves) != expected_moves or animation["program"]["moves"] != expected_moves:
+        raise RuntimeError(
+            "The generated VM does not contain the FireRed catalog plus the "
+            "exact Gen-IV overlay")
     incomplete = [
         f"{move_id}:{move['symbol']}" for move_id, move in moves.items()
         if (not move["sourceFound"] or move["untranslated"] or
@@ -167,7 +178,8 @@ def main() -> None:
             "gSolarBeamBigOrbSpriteTemplate"] or
             "AnimTask_CreateSmallSolarBeamOrbs" not in
             solar_beam["taskCallbacks"] or
-            solar_beam["programSprites"] != 28):
+            solar_beam["programSprites"] != 28 or
+            "Task:SolarBeamOrbs" not in solar_beam["visualCoverage"]):
         raise RuntimeError("Solar Beam no longer matches its two-turn FireRed program")
     sunny_day = moves["241"]
     if (sunny_day["spriteTemplates"] != ["gSunlightRaySpriteTemplate"] or
@@ -211,6 +223,55 @@ def main() -> None:
             rock_tomb["particles"] != 5):
         raise RuntimeError(
             "Rock Tomb no longer matches its four-rock plus target-X program")
+    refresh = moves["287"]
+    if (refresh["spriteTemplates"] != [
+            "gGrantingStarsSpriteTemplate",
+            "gSimplePaletteBlendSpriteTemplate",
+            "gThinRingExpandingSpriteTemplate"] or
+            refresh["taskCallbacks"] != ["AnimTask_StatusClearedEffect"] or
+            refresh["programCommands"] != 12 or
+            refresh["programSprites"] != 4 or
+            refresh["visualCoverage"] != [
+                "Sprite:LocalStarVelocity", "Sprite:OrientedStatic",
+                "Sprite:PalettePulse", "Task:StatusClearedEffectExact"]):
+        raise RuntimeError(
+            "Refresh no longer matches its cure-mask, stars and ring program")
+    aura_sphere = moves["396"]
+    if (aura_sphere["spriteTemplates"] != ["gAuraSphereBlast"] or
+            aura_sphere["taskCallbacks"] != [
+                "AnimTask_ShakeMon2", "AnimTask_StartSlidingBg"] or
+            "AnimBackgroundChange" not in aura_sphere["flags"] or
+            aura_sphere["programCommands"] != 23 or
+            "Task:SlidingBackground" not in aura_sphere["visualCoverage"]):
+        raise RuntimeError(
+            "Aura Sphere no longer matches its authored sliding-background program")
+    megahorn = moves["224"]
+    if (megahorn["taskCallbacks"] != [
+            "AnimTask_ShakeMon", "AnimTask_ShakeMonInPlace",
+            "AnimTask_StartSlidingBg"] or
+            "AnimBackgroundChange" not in megahorn["flags"] or
+            "Sprite:MegahornStrike" not in megahorn["visualCoverage"] or
+            "Task:SlidingBackground" not in megahorn["visualCoverage"]):
+        raise RuntimeError(
+            "Megahorn no longer retains its strike and sliding-background paths")
+    extreme_speed = moves["245"]
+    if ("AnimTask_StartSlidingBg" not in extreme_speed["taskCallbacks"] or
+            "AnimTask_SpeedDust" not in extreme_speed["taskCallbacks"] or
+            "Task:SlidingBackground" not in extreme_speed["visualCoverage"] or
+            "Task:SpeedDust" not in extreme_speed["visualCoverage"] or
+            "Task:ExtremeSpeedImpact" not in extreme_speed["visualCoverage"]):
+        raise RuntimeError(
+            "Extreme Speed no longer composes its background, dust and impact tasks")
+    luster_purge = moves["295"]
+    if (luster_purge["spriteTemplates"] != [
+            "gLusterPurgeCircleSpriteTemplate",
+            "gRandomPosHitSplatSpriteTemplate"] or
+            "AnimTask_FadeScreenToWhite" not in
+            luster_purge["taskCallbacks"] or
+            "AnimBackgroundChange" not in luster_purge["flags"] or
+            luster_purge["programCommands"] != 41):
+        raise RuntimeError(
+            "Luster Purge no longer matches its authored background program")
 
     invalid_sprites = [
         name for name, handler in animation["spriteHandlers"].items()
@@ -238,6 +299,41 @@ def main() -> None:
     # exact switch and require every emitted callback profile to be named
     # before the fail-closed boundary.
     runtime_source = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+
+    # A real screen transition invalidates battle-owned cache descriptors.
+    # Every painter that owns a UI manifest must therefore enter the screen
+    # before calling prepareUiScene(); reversing those two calls discards the
+    # freshly loaded pack and makes the retained no-I/O pass draw placeholders.
+    ui_scene_painters = (
+        "drawHome", "drawKidsCatch", "drawPokecenterConfirm",
+        "drawTowerInvite", "drawMegaChallengeInvite", "drawBossInvite",
+        "drawLeagueComplete", "drawChooseBattler", "drawInventoryTarget",
+        "drawBadgeCase", "drawMart",
+    )
+    for painter in ui_scene_painters:
+        start = runtime_source.index(f"void {painter}(")
+        begin = runtime_source.index("beginScreenPresentation(", start)
+        prepare = runtime_source.index("prepareUiScene(", start)
+        if begin > prepare:
+            raise RuntimeError(
+                f"{painter} prepares its cache before transition cleanup")
+    ui_scene_helper_callers = {
+        "drawKidsTowerCampaign": "prepareKidsTowerScene(",
+        "drawKidsTowerTeam": "prepareKidsTowerScene(",
+        "drawKidsTowerBattle": "prepareKidsTowerScene(",
+        "drawBattleParty": "prepareBattlePartySceneAssets(",
+        "drawBattleSummary": "prepareSummarySceneAssets(",
+        "drawInventory": "prepareInventoryBrowseScene(",
+        "drawBox": "prepareBoxSceneAssets(",
+        "drawSinnohExpedition": "prepareSinnohExpeditionAssets(",
+    }
+    for painter, helper in ui_scene_helper_callers.items():
+        start = runtime_source.index(f"void {painter}(")
+        begin = runtime_source.index("beginScreenPresentation(", start)
+        prepare = runtime_source.index(helper, start)
+        if begin > prepare:
+            raise RuntimeError(
+                f"{painter} calls {helper[:-1]} before transition cleanup")
 
     timed_red_x = re.search(
         r"case BattleAnimationMotion::TimedRedX:\s*\{(.*?)"
@@ -287,6 +383,32 @@ def main() -> None:
             "(std::abs(end - start) + 1) * delay" not in spawn_source):
         raise RuntimeError(
             "FireRed palette blends must derive their lifetime from start/end/delay")
+    refresh_task = re.search(
+        r"case BattleAnimationTaskMotion::StatusClearedEffectExact:(.*?)"
+        r"case BattleAnimationTaskMotion::TeeterDanceMovement:",
+        spawn_source, re.S)
+    refresh_motion = re.search(
+        r"case BattleAnimationTaskMotion::StatusClearedEffectExact:\s*\{(.*?)"
+        r"case BattleAnimationTaskMotion::SetCamouflageBlendExact:",
+        runtime_source, re.S)
+    if (not refresh_task or "boundedLifetime(90)" not in refresh_task.group(1) or
+            not refresh_motion or
+            "original BG1 mask is intentionally omitted" not in
+            refresh_motion.group(1)):
+        raise RuntimeError(
+            "Refresh no longer keeps its authored task timing and safe OBJ path")
+    palette_case_start = runtime_source.index(
+        "case BattleAnimationMotion::PalettePulse:")
+    palette_case_end = runtime_source.index(
+        "case BattleAnimationMotion::ProceduralPulse:", palette_case_start)
+    palette_source = runtime_source[palette_case_start:palette_case_end]
+    for required in (
+            "const bool simpleBlend = particle.argumentCount < 7U",
+            "battleVisualOverlay.arenaColorEffect = AssetColorEffect::Blend",
+            "if (!amount) continue"):
+        if required not in palette_source:
+            raise RuntimeError(
+                "PalettePulse is not applying the authored simple palette blend")
     layer_capacity_match = re.search(
         r"kBattleVisualLayerCapacity\s*=\s*(\d+)", runtime_source)
     if not layer_capacity_match or int(layer_capacity_match.group(1)) < 31:
@@ -329,9 +451,11 @@ def main() -> None:
     # unrelated slideshow even though every callback had a renderer.
     if "constexpr uint8_t kFrameQuantum = 1;" not in runtime_source:
         raise RuntimeError("Animation VM no longer advances every FireRed tick")
-    if "phaseChanged || commandBoundary || regularSample" not in runtime_source:
+    if ("const bool phaseKeyFrame = phaseChanged" not in runtime_source or
+            "phaseKeyFrame || commandBoundary || regularSample" not in
+            runtime_source):
         raise RuntimeError("Discrete animation phases are not presentation-mandatory")
-    if "kBattleAnimationSourceFps = 60U" not in runtime_source:
+    if "BattlePresentationTiming::sourceTickDeadlineMs(" not in runtime_source:
         raise RuntimeError("Animation VM is no longer paced to FireRed's 60 Hz script clock")
     if "maximumPhysicalFrames" in runtime_source:
         raise RuntimeError("Animation playback still contains a whole-move frame cap")
@@ -344,9 +468,26 @@ def main() -> None:
         raise RuntimeError("Production moves are not routed through the generated VM")
     if re.search(r"moveNumber\s*==|switch\s*\(\s*moveNumber", play_move_source):
         raise RuntimeError("Production route contains a move-specific animation bypass")
+    preload_end = runtime_source.find(
+        "bool preloadMoveAnimationWithCapacityRetry", preload_move_start)
+    if preload_end <= preload_move_start:
+        raise RuntimeError("Could not locate the move preload boundary")
+    preload_move_source = runtime_source[preload_move_start:preload_end]
+    if "if (!restoreBattleArenaBeforeAnimation()) return false;" not in preload_move_source:
+        raise RuntimeError(
+            "Every move preload must restore an opaque previous animation plane first")
+    if "battleAnimationArenaRestorePending = opaqueMovePlaneUsed;" not in runtime_source:
+        raise RuntimeError(
+            "Animation end no longer latches the physical arena restore")
+    if "bool restoreBattleArenaBeforeAnimation()" not in runtime_source:
+        raise RuntimeError("Missing shallow battle arena restore boundary")
     band = re.search(r"kRetainedBandHeight\s*=\s*(\d+)", runtime_source)
-    if not band or int(band.group(1)) < 12:
-        raise RuntimeError("Retained compositor regressed below twelve scanlines")
+    # The hardware renderer deliberately uses eight scanlines after the
+    # canvas/SD recovery work.  The old ten-line floor was a stale audit
+    # assertion and made a valid production build fail before any animation
+    # coverage was checked.
+    if not band or int(band.group(1)) < 8:
+        raise RuntimeError("Retained compositor regressed below eight scanlines")
     particles = re.search(
         r"kBattleAnimationParticleCapacity\s*=\s*(\d+)", runtime_source)
     if not particles or int(particles.group(1)) < 64:
@@ -359,6 +500,11 @@ def main() -> None:
     exact_section = runtime_source[render_start:fail_closed]
     exact_motions = set(re.findall(
         r"case BattleAnimationTaskMotion::([A-Za-z0-9_]+)", exact_section))
+    # Palette-only handlers execute in the palette compositor before the
+    # sprite-frame task switch. They are still production exact handlers, so
+    # include those cases in the same fail-closed coverage check.
+    exact_motions.update(re.findall(
+        r"case BattleAnimationTaskMotion::([A-Za-z0-9_]+)", runtime_source))
     # Runtime-query callbacks branch the generated script but never spawn a
     # render task, so their audit record intentionally has no ``motion``.
     # Only callbacks that emit a visual/control task belong in the executor
@@ -376,6 +522,24 @@ def main() -> None:
     if not re.search(r"if \(handledExactTask\) continue;\s*//[\s\S]*?continue;",
                      boundary):
         raise RuntimeError("Task executor is not fail-closed before legacy fallback")
+    psychic_case = re.search(
+        r"case BattleAnimationTaskMotion::PsychicPaletteCycle:(.*?)"
+        r"case BattleAnimationTaskMotion::SandstormField:",
+        exact_section, re.S)
+    if not psychic_case or (
+            "kind == BattleAnimationTaskKind::PsychicBackground" not in
+            psychic_case.group(1) or
+            "setBattleVisualPsychicField" not in psychic_case.group(1) or
+            "setBattleVisualPrimitive(BattleVisualPrimitive::PsychicField" not in
+            psychic_case.group(1) or
+            "addBattleAnimationDirtyPoint" not in psychic_case.group(1)):
+        raise RuntimeError(
+            "PsychicBackground exact handler must compose the psychic field cue")
+    if ("void drawBattleVisualPsychicField()" not in runtime_source or
+            "psychicFieldActive" not in runtime_source or
+            "drawBattleVisualPsychicField();" not in runtime_source):
+        raise RuntimeError(
+            "PsychicBackground must use a retained compositor plane")
 
     broad_motions = {
         "ShakeHorizontal", "ShakeVertical", "ShakeSink", "ShakePattern",
@@ -390,6 +554,19 @@ def main() -> None:
         raise RuntimeError(
             "Generated callbacks still use broad fallback motions: " +
             ", ".join(generic_emitted))
+
+    # Field-only FireRed programs share the large terrain slot with their
+    # retained task plane.  The runtime must restore terrain before attaching
+    # that plane, and a valid authored program must never be sent through the
+    # procedural emergency renderer after a transient preload miss.
+    if "const char* terrain = chooseBattleTerrain(presentedBattleOpponent())" not in runtime_source:
+        raise RuntimeError("Battle animation preload does not resolve terrain before plane setup")
+    if "AssetRenderer::preload(terrainPath)" not in runtime_source:
+        raise RuntimeError("Battle animation preload does not restore terrain before field programs")
+    fallback_guard = runtime_source[runtime_source.find("void playMoveAnimationFallback"):
+                                    runtime_source.find("void playMoveAnimation(")]
+    if "findBattleAnimationProgram(renderNumber)" not in fallback_guard:
+        raise RuntimeError("Authored animation fallback can still call the procedural renderer")
 
     terrain_paths: list[str] = []
     for terrain in pack.BATTLE_TERRAINS:
@@ -421,7 +598,7 @@ def main() -> None:
             if tiled.size != (512, 256):
                 raise RuntimeError("Fissure is not a 512x256 GBA BG3 plane")
             right = tiled.crop((256, 0, 512, 256))
-            if set(right.get_flattened_data()) != {3}:
+            if set(flattened_data(right)) != {3}:
                 raise RuntimeError(
                     "Fissure compact representation is not lossless")
         static = tiled.crop((0, 0, 240, 138)).resize(
@@ -436,6 +613,20 @@ def main() -> None:
         assert_plane(tiled_relative, tiled_runtime, palette)
         secondary_plane_paths.extend((static_relative, tiled_relative))
         background_count += 1
+    expansion_background_id = len(pack.BATTLE_ANIMATION_BACKGROUNDS)
+    for gfx, tilemap, palette_name in pack.EXPANSION_BATTLE_ANIMATION_BACKGROUNDS:
+        tiled, palette = pack.battle_animation_indexed_plane(
+            gfx, tilemap, palette_name, pack.EXPANSION)
+        static = tiled.resize((320, 184), pack.Image.Resampling.NEAREST)
+        static_relative = (
+            f"firered/battle_anims/backgrounds/bg_{expansion_background_id:02}.pkg")
+        tiled_relative = (
+            f"firered/battle_anims/backgrounds/tiled_bg_{expansion_background_id:02}.pkg")
+        assert_plane(static_relative, static, palette)
+        assert_plane(tiled_relative, tiled, palette)
+        secondary_plane_paths.extend((static_relative, tiled_relative))
+        background_count += 1
+        expansion_background_id += 1
 
     task_background_count = 0
     for name, gfx, tilemap in pack.BATTLE_ANIMATION_TASK_BACKGROUNDS:
@@ -461,11 +652,10 @@ def main() -> None:
     # Runtime keeps terrain pixels plus one secondary plane and its palette
     # in a fixed 64 KiB bank.  Prove every legal pairing fits; a previous
     # 256x512 Fissure package exceeded this bound and silently disappeared.
-    # Kept in lockstep with AssetRenderer.  The generated-asset loop below is
-    # the proof that the 61 KiB bank still holds every legal terrain/secondary
-    # plane pair; its reclaimed 3 KiB and the smaller retained hash table fund
-    # the wider TFT band.
-    scene_capacity = 61 * 1024
+    # Kept in lockstep with AssetRenderer. Boot uses a smaller bank so SPIFFS,
+    # GameSave and the retained canvas can start reliably; battle promotes the
+    # shared arena before loading a terrain/changebg pair.
+    scene_capacity = 64 * 1024
     largest_scene = 0
     largest_pair = ("", "")
     largest_terrain_bytes = 0
@@ -513,15 +703,158 @@ def main() -> None:
     # translated yet lose its later sprites on the physical ESP32.
     renderer_source = (ROOT / "src/drivers/AssetRenderer.cpp").read_text(
         encoding="utf-8")
-    cache_bytes_match = re.search(
+    pattern_source = renderer_source[
+        renderer_source.index("bool drawIndexedPatternMasked"):
+        renderer_source.index("bool drawDirectFile")]
+    if ("static_cast<int32_t>(maskX) + localX + sourceOffsetX" not in
+            pattern_source or
+            "static_cast<int32_t>(maskY) + localY + sourceOffsetY" not in
+            pattern_source):
+        raise RuntimeError(
+            "Pattern masks are not sampling the BG plane in screen coordinates")
+    if ("display.readPixel565Fast" not in pattern_source or
+            "alphaBlend565(candidate, background, opacity16)" not in
+            pattern_source):
+        raise RuntimeError(
+            "Pattern masks must reproduce FireRed's per-pixel BG1 alpha blend")
+    main_source = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+    retained_presenter_start = main_source.index(
+        "bool presentRetainedFrame() {")
+    retained_presenter_end = main_source.index(
+        "void stopWildLedAlert()", retained_presenter_start)
+    retained_presenter = main_source[retained_presenter_start:
+                                     retained_presenter_end]
+    if ("paintRetainedSceneStripe();" not in retained_presenter or
+            "A failed preflight must never reach the panel" not in
+            retained_presenter):
+        raise RuntimeError(
+            "Retained presenter must compose the complete battle scene before "
+            "copying a cleared stripe")
+    if ("skipAnimationPreflight" not in retained_presenter or
+            "battleAnimationRetainedCompositionWarm = true" not in
+            retained_presenter):
+        raise RuntimeError(
+            "Animation presenter lost its validated RAM-only fast path")
+    if ("return false;" not in retained_presenter or
+            "return true;" not in retained_presenter):
+        raise RuntimeError(
+            "Retained presenter no longer reports whether a frame reached the panel")
+    if ("if (committed) battleAnimationAtomicRevealPending = false;" not in
+            retained_presenter):
+        raise RuntimeError(
+            "Android clears the atomic arena latch before a frame is committed")
+    hp_animation_start = main_source.index(
+        "BattleHpAnimationOutcome animateBattleHpEvent(")
+    hp_animation_end = main_source.index(
+        "void animateBattleExperienceEvent(", hp_animation_start)
+    hp_animation_source = main_source[hp_animation_start:hp_animation_end]
+    if ("if (!restoreBattleArenaBeforePresentation())" not in
+            hp_animation_source or
+            "const bool frameCommitted = presentRetainedFrame();" not in
+            hp_animation_source or
+            "return BattleHpAnimationOutcome::Deferred;" not in
+            hp_animation_source):
+        raise RuntimeError(
+            "HP animation can advance without an arena restore and a committed frame")
+    show_event_start = main_source.index("void showCurrentBattleEvent()")
+    show_event_end = main_source.index(
+        "void advancePendingBattleFlow()", show_event_start)
+    show_event_source = main_source[show_event_start:show_event_end]
+    deferred_check = show_event_source.index(
+        "if (outcome == BattleHpAnimationOutcome::Deferred)")
+    event_advance = show_event_source.index("++battleFlow.eventIndex;")
+    if deferred_check > event_advance:
+        raise RuntimeError(
+            "A deferred HP frame is consumed before it can be retried")
+    if ("battleAnimationAtomicRevealPending" not in retained_presenter or
+            "beginAtomicBattleBackgroundReveal();" not in retained_presenter or
+            "finishAtomicBattleBackgroundReveal();" not in retained_presenter):
+        raise RuntimeError(
+            "Full-field animation transitions are exposed one retained band at a time")
+    atomic_hold_start = main_source.index(
+        "void beginAtomicBattleBackgroundReveal()")
+    atomic_hold_end = main_source.index(
+        "constexpr uint8_t kBallPocket", atomic_hold_start)
+    atomic_hold_source = main_source[atomic_hold_start:atomic_hold_end]
+    if ("backlight.setEnabled(" in atomic_hold_source or
+            "panel.writecommand(kIli9341DisplayOff)" in atomic_hold_source or
+            "panel.writecommand(kIli9341DisplayOn)" in atomic_hold_source):
+        raise RuntimeError(
+            "Atomic background commits must keep both the LCD and its backlight enabled")
+    if ("if (battleAnimationAtomicRevealPending)" not in retained_presenter or
+            "firstColumn = 0;" not in retained_presenter or
+            "lastColumn = 320;" not in retained_presenter or
+            "lastPixel = std::max<int16_t>(lastPixel, 184);" not in
+            retained_presenter or
+            "ANIM_BG_WHOLE_FRAME" not in retained_presenter or
+            "pushRetainedStripeTiles(" not in retained_presenter or
+            retained_presenter.index("beginAtomicBattleBackgroundReveal();") >
+            retained_presenter.index("panel.startWrite()")):
+        raise RuntimeError(
+            "Atomic background commits must stream the complete arena in one TFT transaction")
+    playback_start = main_source.index("void playBattleAnimationProgram(")
+    playback_end = main_source.index("void playMoveAnimation(", playback_start)
+    playback_source = main_source[playback_start:playback_end]
+    if ("presentAtomicBackgroundFrame(16U);" in playback_source or
+            "presentAtomicBackgroundFrame(0U);" not in playback_source or
+            "if (backgroundRestoreDeferred) return;" not in playback_source or
+            "if (opaqueMovePlaneUsed) battleAnimationAtomicRevealPending = true;"
+            not in playback_source):
+        raise RuntimeError(
+            "Authored background entry/exit must directly swap complete frames without a black key frame")
+    frame_renderer_start = main_source.index(
+        "bool renderBattleAnimationProgramFrame(")
+    frame_renderer_end = main_source.index(
+        "void advanceBattleAnimationRuntime", frame_renderer_start)
+    frame_renderer = main_source[frame_renderer_start:frame_renderer_end]
+    if ("if (!ensureBattleVisualLayers())" not in frame_renderer or
+            "retained layer tables unavailable" not in frame_renderer):
+        raise RuntimeError(
+            "Animation frame damage history must be allocated before it is "
+            "read; field-only effects must not null-dereference")
+    if ("kBattleNativeViewportOriginX = 40" not in main_source or
+            "kBattleNativeViewportOriginY = 12" not in main_source or
+            "battleVisualOverlay.cureOffsetX -" not in main_source or
+            "battleVisualOverlay.cureOffsetY -" not in main_source):
+        raise RuntimeError(
+            "BG1 mask sampling must subtract the retained panel viewport origin")
+    if ("case BattleAnimationTaskMotion::CurseStretchingBlackBg:" not in
+            main_source or
+            "slot->lifetime = 0xFFFFU;" not in main_source or
+            "task.age >= 18U" not in main_source or
+            "kBattleNativeViewportOriginX + 240" not in main_source or
+            "applyArenaColor(AssetColorEffect::Blend, TFT_BLACK, 16U)" not in
+            main_source or
+            "if ((paletteMask & 0x01U) && start > end)" not in main_source or
+            main_source.count(
+                "BattleAnimationTaskMotion::CurseStretchingBlackBg") < 4):
+        raise RuntimeError(
+            "Curse Ghost must retain its black FireRed background after WIN0 setup")
+    battle_engine_source = (ROOT / "src/game/BattleEngine.cpp").read_text(
+        encoding="utf-8")
+    if (battle_engine_source.count('effectIs(enemyMoveData,"CURSE")') < 1 or
+            battle_engine_source.count('effectIs(usedMove,"CURSE")') < 1 or
+            battle_engine_source.count("PokemonType::Ghost) ? 0 : 1") < 2):
+        raise RuntimeError(
+            "Curse animation turn must be selected from the effective user type")
+    if ("std::memset(retainedTileHash, 0, sizeof(retainedTileHash))" not in
+            main_source or
+            retained_presenter.count("invalidatePixels(0, 0, 320, 240);") < 2):
+        raise RuntimeError(
+            "Cancelled retained frames and screen transitions must force a full retry")
+    cache_bytes_matches = re.findall(
         r"kCacheArenaBytes\s*=\s*(\d+)", renderer_source)
     scene_bytes_match = re.search(
-        r"kSceneWorkspaceBytes\s*=\s*(\d+)U?\s*\*\s*1024U?",
+        r"kBattleSceneWorkspaceBytes\s*=\s*(\d+)U?\s*\*\s*1024U?",
         renderer_source)
     cache_slots_match = re.search(r"kCacheSlots\s*=\s*(\d+)", renderer_source)
-    if not cache_bytes_match or not scene_bytes_match or not cache_slots_match:
+    if not cache_bytes_matches or not scene_bytes_match or not cache_slots_match:
         raise RuntimeError("Cannot audit renderer cache constants")
-    small_arena_bytes = int(cache_bytes_match.group(1))
+    # The source keeps a multi-megabyte Android bank and the constrained
+    # ESP32 bank under the same symbol. The last definition is the production
+    # hardware value; taking the first match made the audit report a bogus
+    # four-byte cache and reject otherwise valid move manifests.
+    small_arena_bytes = int(cache_bytes_matches[-1])
     audited_scene_capacity = int(scene_bytes_match.group(1)) * 1024
     if audited_scene_capacity != scene_capacity:
         raise RuntimeError("Visual audit and renderer scene capacities differ")

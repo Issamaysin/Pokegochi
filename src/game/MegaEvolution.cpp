@@ -1,5 +1,6 @@
 #include "game/MegaEvolution.h"
 #include "game/Collection.h"
+#include <algorithm>
 
 namespace {
 enum CustomAbility : uint8_t {
@@ -43,10 +44,9 @@ constexpr AbilityData kCustomAbilities[] = {
   {MegaSol,"MEGA SOL","THE HOLDER BATTLES AS IF IN SUNLIGHT."},
 };
 
-// Official Mega Evolutions whose base species exists in National Dex #001-386,
-// plus the two official Primal Reversions. Stats/types/abilities are the
-// canonical forms; no Radical Red fan form or ordinary Gen-IV+ species enters
-// this table.
+// Official Mega Evolutions in the available National Dex, plus the two
+// official Primal Reversions. Sinnoh's five canonical Mega species use this
+// exact same Mega Stone/selection flow as the older regions.
 constexpr MegaFormData kForms[] = {
  {26,MegaVariant::MegaX,60,135,95,90,95,110,PokemonType::Electric,PokemonType::Electric,ElectricSurge,"mega_x","MEGA X"},
  {26,MegaVariant::MegaY,60,100,55,160,80,130,PokemonType::Electric,PokemonType::Electric,NoGuard,"mega_y","MEGA Y"},
@@ -102,6 +102,11 @@ constexpr MegaFormData kForms[] = {
  {382,MegaVariant::Primal,100,150,90,180,160,90,PokemonType::Water,PokemonType::Water,PrimordialSea,"primal","PRIMAL"},
  {383,MegaVariant::Primal,100,180,160,150,90,90,PokemonType::Ground,PokemonType::Fire,DesolateLand,"primal","PRIMAL"},
  {384,MegaVariant::Mega,105,180,100,180,100,115,PokemonType::Dragon,PokemonType::Flying,DeltaStream,"mega","MEGA"},
+ {428,MegaVariant::Mega,65,136,94,54,96,135,PokemonType::Normal,PokemonType::Fighting,114,"mega","MEGA"},
+ {445,MegaVariant::Mega,108,170,115,120,95,92,PokemonType::Dragon,PokemonType::Ground,SandForce,"mega","MEGA"},
+ {448,MegaVariant::Mega,70,145,88,140,70,112,PokemonType::Fighting,PokemonType::Steel,92,"mega","MEGA"},
+ {460,MegaVariant::Mega,90,132,105,132,105,30,PokemonType::Grass,PokemonType::Ice,118,"mega","MEGA"},
+ {475,MegaVariant::Mega,68,165,95,65,115,110,PokemonType::Psychic,PokemonType::Fighting,39,"mega","MEGA"},
 };
 }
 
@@ -138,12 +143,68 @@ MegaVariant variantFor(const OwnedPokemon& pokemon){
   // until the player next equips the stone and chooses a form.
   return variantChoice(pokemon.speciesId,0);
 }
-uint8_t baseHp(const OwnedPokemon& pokemon,uint8_t fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->baseHp:fallback;}
-uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));if(!f)return fallback;const uint8_t s[]={f->baseAttack,f->baseDefense,f->baseSpeed,f->baseSpAttack,f->baseSpDefense};return statIndex<5?s[statIndex]:fallback;}
-PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type1:fallback;}
-PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type2:fallback;}
-uint8_t abilityId(const OwnedPokemon& pokemon,uint8_t fallback){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->abilityId:fallback;}
+uint8_t baseHp(const OwnedPokemon& pokemon,uint8_t fallback){
+  if (pokemon.speciesId == 479U || pokemon.speciesId == 487U || pokemon.speciesId == 492U)
+    return fallback;
+  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->baseHp:fallback;
+}
+uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback){
+  // Platinum's selectable forms carry real stat changes. These are kept here
+  // beside Mega stat overrides so every battle/stat-summary caller sees the
+  // same resolved values without changing the persistent SpeciesData table.
+  const uint8_t form = CollectionLogic::resolvedForm(pokemon);
+  if (pokemon.speciesId == 479U && form > 0U) {
+    static constexpr uint8_t kRotom[5] = {65,107,86,105,107};
+    return statIndex < 5U ? kRotom[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 487U && form == 1U) {
+    static constexpr uint8_t kOrigin[5] = {120,100,90,120,100};
+    return statIndex < 5U ? kOrigin[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 492U && form == 1U) {
+    static constexpr uint8_t kSky[5] = {103,75,127,120,75};
+    return statIndex < 5U ? kSky[statIndex] : fallback;
+  }
+  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));
+  if(!f)return fallback;
+  const uint8_t s[]={f->baseAttack,f->baseDefense,f->baseSpeed,f->baseSpAttack,f->baseSpDefense};
+  return statIndex<5?s[statIndex]:fallback;
+}
+PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){
+  // "MULTITYPE" resolves Arceus through the currently held Plate.
+  if (pokemon.speciesId == 493U && pokemon.abilityId == 122U &&
+      heldItemIsArceusPlate(pokemon.heldItem))
+    return arceusPlateType(pokemon.heldItem);
+  const uint8_t form = CollectionLogic::resolvedForm(pokemon);
+  if (pokemon.speciesId == 479U && form > 0U) return PokemonType::Electric;
+  if (pokemon.speciesId == 492U && form == 1U) return PokemonType::Grass;
+  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type1:fallback;
+}
+PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){
+  if (pokemon.speciesId == 493U && pokemon.abilityId == 122U &&
+      heldItemIsArceusPlate(pokemon.heldItem))
+    return arceusPlateType(pokemon.heldItem);
+  if (pokemon.speciesId == 479U) {
+    static constexpr PokemonType kRotomTypes[] = {
+        PokemonType::Ghost, PokemonType::Fire, PokemonType::Water,
+        PokemonType::Ice, PokemonType::Flying, PokemonType::Grass};
+    return kRotomTypes[std::min<uint8_t>(CollectionLogic::resolvedForm(pokemon), 5U)];
+  }
+  if (pokemon.speciesId == 492U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Flying;
+  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type2:fallback;
+}
+uint8_t abilityId(const OwnedPokemon& pokemon,uint8_t fallback){
+  // Shaymin-Sky uses Serene Grace in Platinum; the other selectable Sinnoh
+  // forms retain their species ability (Levitate/Natural Cure).
+  const uint8_t form = CollectionLogic::resolvedForm(pokemon);
+  if (pokemon.speciesId == 492U && form == 1U) return 32U;
+  if (pokemon.speciesId == 487U && form == 1U) return 26U; // Origin: Levitate
+  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->abilityId:fallback;
+}
 const AbilityData* customAbility(uint8_t id){for(const auto& a:kCustomAbilities)if(a.id==id)return &a;return nullptr;}
 const char* variantName(const OwnedPokemon& pokemon){const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->displayName:"NORMAL";}
 uint8_t officialFormCount(){return static_cast<uint8_t>(sizeof(kForms)/sizeof(kForms[0]));}
+const MegaFormData* officialForm(uint8_t index){
+  return index<officialFormCount()?&kForms[index]:nullptr;
+}
 }

@@ -5,6 +5,25 @@
 #include "game/Pokedex.h"
 
 enum class EggRarity:uint8_t{Common,Uncommon,Rare,Special};
+struct StoredEgg{
+  uint32_t shinyRoll=1;
+  uint16_t speciesId=0;
+  uint8_t region=1;
+  EggRarity rarity=EggRarity::Common;
+};
+static_assert(sizeof(StoredEgg)==8,"Stored Egg save layout changed");
+
+// Eggs waiting in the Bag are independent from the one active incubator.
+// A fixed array keeps the save deterministic and makes reward capacity
+// explicit instead of silently replacing an Egg that is already hatching.
+struct EggInventory{
+  static constexpr uint8_t kCapacity=32;
+  StoredEgg slots[kCapacity]{};
+  uint8_t count=0;
+  uint8_t reserved[3]{};
+};
+static_assert(sizeof(EggInventory)==260,"Egg Bag save layout changed");
+
 struct EggState{
   bool offerPending=false;bool active=false;
   uint16_t speciesId=0;uint32_t remainingSeconds=0;
@@ -27,6 +46,11 @@ class EggSystem{
   // never owned; after all nine are registered as caught it uses the complete
   // Generation-I-to-III legendary/mythical pool instead.
   static bool grantBattleTowerSpecial(EggState&,const PokedexState&,uint32_t seed);
+  // Reward Eggs wait in the dedicated Bag pocket. Their incubation clock
+  // starts only when the player explicitly places one in the empty incubator.
+  static bool storeBattleTowerSpecial(EggInventory&,const PokedexState&,
+                                      uint32_t seed,uint16_t* speciesId=nullptr);
+  static bool incubateStored(EggInventory&,uint8_t index,EggState&);
   static bool accept(EggState&);static void reject(EggState&);
   static void advance(EggState&,uint32_t seconds,
                       const PokemonCollection* collection=nullptr);

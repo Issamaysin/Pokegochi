@@ -1,5 +1,8 @@
 #include "drivers/TouchDriver.h"
 #include "config/BoardConfig.h"
+#if defined(POKEGOCHI_ANDROID)
+#include "android_runtime.h"
+#endif
 
 namespace { constexpr uint8_t kReadX = 0xD0; constexpr uint8_t kReadY = 0x90; }
 
@@ -48,6 +51,11 @@ uint16_t TouchDriver::median5(uint16_t values[5]) {
 }
 
 TouchPoint TouchDriver::read() {
+#if defined(POKEGOCHI_ANDROID)
+  TouchPoint point;
+  pokegochi_android_take_touch(point);
+  return point;
+#else
   TouchPoint point;
   if (digitalRead(board::kTouchIrqPin) != LOW) return point;
   digitalWrite(board::kTouchCsPin, LOW);
@@ -69,4 +77,5 @@ TouchPoint TouchDriver::read() {
   point.x = constrain(point.x, 0, board::kScreenWidth - 1);
   point.y = constrain(point.y, 0, board::kScreenHeight - 1);
   return point;
+#endif
 }

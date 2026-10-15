@@ -2,6 +2,7 @@ package com.pokegochi.updater;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.bluetooth.BluetoothDevice;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -11,7 +12,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -23,63 +23,71 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity implements BleUpdateClient.Listener {
     private static final int PICK_PACKAGE = 100;
     private static final int BLE_PERMISSION = 101;
+    private static final int PICK_SAVE_FILE = 102;
+    private static final int CREATE_SAVE_FILE = 103;
     private static final int STATUS_COLOR = Color.rgb(72, 88, 110);
+    private static final int BLUE = Color.rgb(38, 111, 190);
+    private static final int GREEN = Color.rgb(30, 142, 76);
+    private static final int RED = Color.rgb(180, 46, 52);
+
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final DecimalFormat megabytes = new DecimalFormat("0.0");
     private BleUpdateClient client;
     private UpdatePackage updatePackage;
-    private TextView packageLabel, connectionLabel, statusLabel, progressLabel;
+    private SaveBackup selectedSave;
+    private Uri pendingExportUri;
+    private boolean dashboardVisible;
+    private boolean operationBusy;
+    private boolean rebootExpected;
+    private boolean saveManagementAvailable;
+    private boolean timeSyncAvailable;
+    private long authenticatedPlayerId;
+
+    private TextView packageLabel, connectionLabel, statusLabel, progressLabel, saveLabel;
     private LinearLayout deviceList;
     private EditText pairingCode;
     private ProgressBar progress;
-    private Button scanButton, updateButton, syncButton;
+    private Button scanButton, authenticateButton, updateButton, syncButton;
+    private Button loadButton, saveButton, resetButton, disconnectButton, cancelButton;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         client = new BleUpdateClient(this, this);
-        setContentView(buildUi());
+        showConnectScreen();
         ensurePermissions();
     }
 
-    private View buildUi() {
+    private void showConnectScreen() {
+        dashboardVisible = false;
+        rebootExpected = false;
         int pad = dp(18);
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(Color.rgb(238, 244, 252));
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(pad, pad, pad, pad);
-        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
-
-        TextView title = text("POKEGOCHI UPDATER", 26, Color.rgb(16, 40, 76), true);
-        root.addView(title);
-        TextView subtitle = text("Signed firmware + microSD updates over Bluetooth", 14,
-                Color.rgb(72, 88, 110), false);
+        ScrollView scroll = shell();
+        LinearLayout root = content(scroll, pad);
+        root.addView(text("POKEGOCHI LINK", 27, Color.rgb(16, 40, 76), true));
+        TextView subtitle = text("Connect securely, then choose what you want to do", 14,
+                STATUS_COLOR, false);
         subtitle.setPadding(0, dp(2), 0, dp(18));
         root.addView(subtitle);
 
-        LinearLayout packageCard = card();
-        packageCard.addView(text("1  UPDATE PACKAGE", 16, Color.rgb(16, 40, 76), true));
-        packageLabel = text("No .pgota package selected", 14, Color.DKGRAY, false);
-        packageLabel.setPadding(0, dp(10), 0, dp(10));
-        packageCard.addView(packageLabel);
-        Button pick = action("SELECT .PGOTA FILE", Color.rgb(38, 111, 190));
-        pick.setOnClickListener(v -> selectPackage());
-        packageCard.addView(pick);
-        root.addView(packageCard);
-
         LinearLayout deviceCard = card();
-        deviceCard.addView(text("2  FIND POKEGOCHI", 16, Color.rgb(16, 40, 76), true));
-        connectionLabel = text("On the console: Settings > Wireless Update", 14, Color.DKGRAY, false);
+        deviceCard.addView(text("1  CONNECT TO POKEGOCHI", 16, Color.rgb(16, 40, 76), true));
+        connectionLabel = text("On the console: Settings > Wireless Update", 14,
+                Color.DKGRAY, false);
         connectionLabel.setPadding(0, dp(10), 0, dp(8));
         deviceCard.addView(connectionLabel);
-        scanButton = action("SCAN NEARBY", Color.rgb(38, 111, 190));
+        scanButton = action("SCAN NEARBY", BLUE);
         scanButton.setOnClickListener(v -> {
             deviceList.removeAllViews();
             if (ensurePermissions()) client.scan();
@@ -91,45 +99,153 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         deviceCard.addView(deviceList);
         root.addView(deviceCard);
 
-        LinearLayout installCard = card();
-        installCard.addView(text("3  VERIFY AND INSTALL", 16, Color.rgb(16, 40, 76), true));
+        LinearLayout authCard = card();
+        authCard.addView(text("2  ENTER THE CONSOLE CODE", 16, Color.rgb(16, 40, 76), true));
         pairingCode = new EditText(this);
         pairingCode.setHint("6-digit code shown on console");
-        pairingCode.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        pairingCode.setInputType(InputType.TYPE_CLASS_NUMBER |
+                InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         pairingCode.setGravity(Gravity.CENTER);
         pairingCode.setTextSize(20);
         pairingCode.setMaxLines(1);
         pairingCode.setPadding(dp(12), dp(10), dp(12), dp(10));
         LinearLayout.LayoutParams codeParams = new LinearLayout.LayoutParams(-1, dp(55));
         codeParams.setMargins(0, dp(10), 0, dp(10));
-        installCard.addView(pairingCode, codeParams);
-        updateButton = action("START UPDATE", Color.rgb(30, 142, 76));
-        updateButton.setOnClickListener(v -> startUpdate());
-        installCard.addView(updateButton);
-        syncButton = action("SYNC CLOCK ONLY", Color.rgb(38, 111, 190));
+        authCard.addView(pairingCode, codeParams);
+        authenticateButton = action("UNLOCK TOOLS", GREEN);
+        authenticateButton.setOnClickListener(v -> authenticate());
+        authCard.addView(authenticateButton);
+        root.addView(authCard);
+
+        statusLabel = text("The code is valid only while the Wireless Update screen is open.",
+                13, STATUS_COLOR, false);
+        statusLabel.setPadding(dp(4), dp(4), dp(4), dp(24));
+        root.addView(statusLabel);
+        setContentView(scroll);
+    }
+
+    private void showDashboard(long playerId, boolean timeSync, boolean saveManagement) {
+        dashboardVisible = true;
+        operationBusy = false;
+        rebootExpected = false;
+        authenticatedPlayerId = playerId;
+        saveManagementAvailable = saveManagement;
+        timeSyncAvailable = timeSync;
+        int pad = dp(18);
+        ScrollView scroll = shell();
+        LinearLayout root = content(scroll, pad);
+        root.addView(text("POKEGOCHI TOOLS", 27, Color.rgb(16, 40, 76), true));
+        TextView connected = text(String.format(Locale.US, "Pokegochi %05d authenticated", playerId),
+                14, GREEN, true);
+        connected.setPadding(0, dp(2), 0, dp(14));
+        root.addView(connected);
+
+        LinearLayout deviceCard = card();
+        deviceCard.addView(text("DEVICE", 16, Color.rgb(16, 40, 76), true));
+        syncButton = action("SYNC CLOCK", BLUE);
+        syncButton.setEnabled(timeSync);
         syncButton.setOnClickListener(v -> synchronizeClock());
-        installCard.addView(syncButton);
+        deviceCard.addView(syncButton);
+        TextView clockHelp = text(timeSync ?
+                "Copies the phone's local date and time to the Pokegochi." :
+                "Clock sync needs a newer Pokegochi firmware.", 13, STATUS_COLOR, false);
+        clockHelp.setPadding(0, dp(7), 0, 0);
+        deviceCard.addView(clockHelp);
+        root.addView(deviceCard);
+
+        LinearLayout updateCard = card();
+        updateCard.addView(text("OTAP UPDATE", 16, Color.rgb(16, 40, 76), true));
+        packageLabel = text(updatePackage == null ? "No .pgota package selected" :
+                updatePackage.displayName + "\n" +
+                        megabytes.format(updatePackage.totalBytes / 1048576.0) + " MiB verified",
+                14, Color.DKGRAY, false);
+        packageLabel.setPadding(0, dp(9), 0, dp(8));
+        updateCard.addView(packageLabel);
+        Button pick = action("SELECT .PGOTA FILE", BLUE);
+        pick.setOnClickListener(v -> selectPackage());
+        updateCard.addView(pick);
+        updateButton = action("INSTALL UPDATE", GREEN);
+        updateButton.setEnabled(updatePackage != null);
+        updateButton.setOnClickListener(v -> startUpdate());
+        updateCard.addView(updateButton);
+        root.addView(updateCard);
+
+        LinearLayout saveCard = card();
+        saveCard.addView(text("SAVE FILE", 16, Color.rgb(16, 40, 76), true));
+        saveLabel = text(saveManagement ?
+                "Backups are verified before download or restore." :
+                "Install the matching Pokegochi firmware before using save tools.",
+                13, STATUS_COLOR, false);
+        saveLabel.setPadding(0, dp(8), 0, dp(8));
+        saveCard.addView(saveLabel);
+        loadButton = action("LOAD FILE  ·  POKEGOCHI → ANDROID", BLUE);
+        loadButton.setEnabled(saveManagement);
+        loadButton.setOnClickListener(v -> chooseBackupDestination());
+        saveCard.addView(loadButton);
+        saveCard.addView(help("Downloads a .pgsav backup without changing the console."));
+        saveButton = action("SAVE FILE  ·  ANDROID → POKEGOCHI", Color.rgb(105, 78, 166));
+        saveButton.setEnabled(saveManagement);
+        saveButton.setOnClickListener(v -> chooseSaveToRestore());
+        saveCard.addView(saveButton);
+        saveCard.addView(help("Selects a .pgsav file, verifies it, then replaces the console save."));
+        resetButton = action("RESET FILE  ·  ERASE PROGRESS", RED);
+        resetButton.setEnabled(saveManagement);
+        resetButton.setOnClickListener(v -> confirmReset());
+        saveCard.addView(resetButton);
+        saveCard.addView(help("Creates a fresh save. This cannot be undone without a backup."));
+        root.addView(saveCard);
+
+        LinearLayout progressCard = card();
+        progressCard.addView(text("STATUS", 16, Color.rgb(16, 40, 76), true));
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setMax(1000);
         progress.setProgress(0);
         LinearLayout.LayoutParams progressParams = new LinearLayout.LayoutParams(-1, dp(18));
-        progressParams.setMargins(0, dp(16), 0, dp(4));
-        installCard.addView(progress, progressParams);
-        progressLabel = text("0%", 13, Color.DKGRAY, false);
-        installCard.addView(progressLabel);
-        statusLabel = text("The save stored inside the console is not included or replaced.",
-                13, Color.rgb(72, 88, 110), false);
-        statusLabel.setPadding(0, dp(10), 0, 0);
-        installCard.addView(statusLabel);
-        root.addView(installCard);
+        progressParams.setMargins(0, dp(12), 0, dp(4));
+        progressCard.addView(progress, progressParams);
+        progressLabel = text("Ready", 13, Color.DKGRAY, false);
+        progressCard.addView(progressLabel);
+        statusLabel = text("Choose an operation above.", 13, STATUS_COLOR, false);
+        statusLabel.setPadding(0, dp(8), 0, 0);
+        progressCard.addView(statusLabel);
+        cancelButton = action("CANCEL OPERATION", RED);
+        cancelButton.setVisibility(View.GONE);
+        cancelButton.setOnClickListener(v -> cancelOperation());
+        progressCard.addView(cancelButton);
+        root.addView(progressCard);
 
-        TextView safety = text("Keep both devices close and powered. If Bluetooth drops while assets are " +
-                "being sent, reconnect and select the same package to resume. The console installs only " +
-                "after every SHA-256 hash and the package signature pass.", 13,
-                Color.rgb(72, 88, 110), false);
-        safety.setPadding(dp(4), dp(8), dp(4), dp(24));
+        disconnectButton = action("DISCONNECT / CHANGE DEVICE", Color.rgb(83, 92, 108));
+        disconnectButton.setOnClickListener(v -> {
+            client.disconnect();
+            showConnectScreen();
+        });
+        root.addView(disconnectButton);
+        TextView safety = text("Keep both devices close and powered during writes. Restores are " +
+                "transactional: the active save changes only after the complete file passes every check.",
+                13, STATUS_COLOR, false);
+        safety.setPadding(dp(4), dp(10), dp(4), dp(24));
         root.addView(safety);
+        setContentView(scroll);
+    }
+
+    private ScrollView shell() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(Color.rgb(238, 244, 252));
         return scroll;
+    }
+
+    private LinearLayout content(ScrollView scroll, int pad) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root, new ScrollView.LayoutParams(-1, -2));
+        return root;
+    }
+
+    private TextView help(String value) {
+        TextView result = text(value, 12, STATUS_COLOR, false);
+        result.setPadding(dp(3), dp(5), dp(3), dp(8));
+        return result;
     }
 
     private LinearLayout card() {
@@ -174,24 +290,63 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         return button;
     }
 
+    private void authenticate() {
+        String value = pairingCode.getText().toString().trim();
+        if (value.length() != 6) { showError("Enter the six-digit code from the console"); return; }
+        authenticateButton.setEnabled(false);
+        statusLabel.setTextColor(STATUS_COLOR);
+        statusLabel.setText("Authenticating...");
+        client.authenticate(Integer.parseInt(value));
+    }
+
     private void selectPackage() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"application/zip", "application/octet-stream"});
+        intent.putExtra(Intent.EXTRA_MIME_TYPES,
+                new String[]{"application/zip", "application/octet-stream"});
         startActivityForResult(intent, PICK_PACKAGE);
+    }
+
+    private void chooseBackupDestination() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        String stamp = new SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(new Date());
+        intent.putExtra(Intent.EXTRA_TITLE,
+                String.format(Locale.US, "pokegochi-%05d-%s.pgsav", authenticatedPlayerId, stamp));
+        startActivityForResult(intent, CREATE_SAVE_FILE);
+    }
+
+    private void chooseSaveToRestore() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/octet-stream");
+        startActivityForResult(intent, PICK_SAVE_FILE);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != PICK_PACKAGE || resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
+        if (requestCode == PICK_PACKAGE) loadPackage(uri);
+        else if (requestCode == PICK_SAVE_FILE) inspectSave(uri);
+        else if (requestCode == CREATE_SAVE_FILE) {
+            pendingExportUri = uri;
+            beginOperation("Preparing save backup...");
+            client.exportSave();
+        }
+    }
+
+    private void loadPackage(Uri uri) {
         packageLabel.setText("Checking package hashes...");
         updateButton.setEnabled(false);
         worker.execute(() -> {
             try {
                 UpdatePackage loaded = UpdatePackage.load(this, uri, new UpdatePackage.Progress() {
-                    @Override public void message(String text) { runOnUiThread(() -> packageLabel.setText(text)); }
+                    @Override public void message(String value) {
+                        runOnUiThread(() -> packageLabel.setText(value));
+                    }
                     @Override public void value(int current, int total) {
                         runOnUiThread(() -> progress.setProgress(current * 1000 / total));
                     }
@@ -207,7 +362,6 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
                     statusLabel.setTextColor(STATUS_COLOR);
                     statusLabel.setText("Package hashes passed. The console will verify its signature.");
                     updateButton.setEnabled(true);
-                    updateButton.setText("START UPDATE");
                 });
             } catch (Exception error) {
                 runOnUiThread(() -> {
@@ -219,34 +373,103 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         });
     }
 
+    private void inspectSave(Uri uri) {
+        beginOperation("Verifying selected save file...");
+        worker.execute(() -> {
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                SaveBackup backup = SaveBackup.read(input);
+                selectedSave = backup;
+                runOnUiThread(() -> {
+                    endOperation();
+                    new AlertDialog.Builder(this)
+                            .setTitle("Replace Pokegochi save?")
+                            .setMessage(String.format(Locale.US,
+                                    "Source: Pokegochi %05d\nSave format: %d\nSize: %s KiB\n\n" +
+                                            "The current progress will be replaced after verification.",
+                                    backup.sourcePlayerId, backup.saveFormatVersion,
+                                    new DecimalFormat("0.0").format(backup.bytes.length / 1024.0)))
+                            .setNegativeButton("CANCEL", null)
+                            .setPositiveButton("SAVE TO POKEGOCHI", (dialog, which) -> {
+                                beginOperation("Sending verified save to Pokegochi...");
+                                client.importSave(backup);
+                            }).show();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> showError("Save rejected: " + error.getMessage()));
+            }
+        });
+    }
+
+    private void confirmReset() {
+        new AlertDialog.Builder(this)
+                .setTitle("Reset the save file?")
+                .setMessage("This permanently erases Pokémon, items and all progress on the Pokegochi. " +
+                        "Load a backup to Android first if you may want it later.")
+                .setNegativeButton("CANCEL", null)
+                .setPositiveButton("RESET FILE", (dialog, which) -> {
+                    beginOperation("Resetting save to a fresh game...");
+                    client.resetSave();
+                }).show();
+    }
+
     private void startUpdate() {
         if (updatePackage == null) { showError("Select a verified .pgota package first"); return; }
-        String text = pairingCode.getText().toString().trim();
-        if (text.length() != 6) { showError("Enter the six-digit code from the console"); return; }
-        statusLabel.setTextColor(STATUS_COLOR);
-        statusLabel.setText("Authenticating signed update...");
-        updateButton.setText("UPDATING...");
-        updateButton.setEnabled(false);
-        syncButton.setEnabled(false);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        client.start(updatePackage, Integer.parseInt(text));
+        beginOperation("Authenticating signed update...");
+        client.start(updatePackage);
     }
 
     private void synchronizeClock() {
-        String text = pairingCode.getText().toString().trim();
-        if (text.length() != 6) { showError("Enter the six-digit code from the console"); return; }
+        beginOperation("Synchronizing with the phone clock...");
+        client.synchronizeClock();
+    }
+
+    private void beginOperation(String message) {
+        operationBusy = true;
+        setToolButtonsEnabled(false);
+        if (cancelButton != null) {
+            cancelButton.setVisibility(View.VISIBLE);
+            cancelButton.setEnabled(true);
+        }
         statusLabel.setTextColor(STATUS_COLOR);
-        statusLabel.setText("Synchronizing with the phone clock...");
-        updateButton.setEnabled(false);
-        syncButton.setEnabled(false);
+        statusLabel.setText(message);
+        progress.setProgress(0);
+        progressLabel.setText("Starting...");
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        client.synchronizeClock(Integer.parseInt(text));
+    }
+
+    private void endOperation() {
+        operationBusy = false;
+        if (cancelButton != null) {
+            cancelButton.setEnabled(false);
+            cancelButton.setVisibility(View.GONE);
+        }
+        setToolButtonsEnabled(true);
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    private void cancelOperation() {
+        if (!operationBusy) return;
+        cancelButton.setEnabled(false);
+        statusLabel.setTextColor(STATUS_COLOR);
+        statusLabel.setText("Cancelling safely and releasing Bluetooth...");
+        client.cancelOperation();
+    }
+
+    private void setToolButtonsEnabled(boolean enabled) {
+        if (!dashboardVisible) return;
+        if (updateButton != null) updateButton.setEnabled(enabled && updatePackage != null);
+        if (syncButton != null) syncButton.setEnabled(enabled && timeSyncAvailable);
+        if (loadButton != null) loadButton.setEnabled(enabled && saveManagementAvailable);
+        if (saveButton != null) saveButton.setEnabled(enabled && saveManagementAvailable);
+        if (resetButton != null) resetButton.setEnabled(enabled && saveManagementAvailable);
+        if (disconnectButton != null) disconnectButton.setEnabled(enabled);
     }
 
     @Override public void onDevice(BluetoothDevice device, long playerId, int rssi) {
         runOnUiThread(() -> {
-            Button choice = action(String.format("Pokegochi %05d   (%d dBm)", playerId, rssi),
-                    Color.rgb(63, 86, 119));
+            if (dashboardVisible || deviceList == null) return;
+            Button choice = action(String.format(Locale.US, "Pokegochi %05d   (%d dBm)",
+                    playerId, rssi), Color.rgb(63, 86, 119));
             choice.setOnClickListener(v -> client.connect(device));
             deviceList.addView(choice);
         });
@@ -254,53 +477,119 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
 
     @Override public void onConnection(boolean connected, String message) {
         runOnUiThread(() -> {
-            connectionLabel.setText(message);
-            scanButton.setEnabled(!connected);
+            if (!dashboardVisible) {
+                if (connectionLabel != null) connectionLabel.setText(message);
+                if (scanButton != null) scanButton.setEnabled(!connected);
+                if (!connected && authenticateButton != null) authenticateButton.setEnabled(true);
+            } else if (!connected && !rebootExpected) {
+                showConnectScreen();
+                statusLabel.setTextColor(RED);
+                statusLabel.setText(message + " Scan and authenticate again.");
+            }
         });
+    }
+
+    @Override public void onAuthenticated(long playerId, boolean timeSync, boolean saveManagement) {
+        runOnUiThread(() -> showDashboard(playerId, timeSync, saveManagement));
     }
 
     @Override public void onTransfer(long done, long total, String message) {
         runOnUiThread(() -> {
+            if (!dashboardVisible || progress == null) return;
             int value = total == 0 ? 0 : (int) Math.min(1000, done * 1000L / total);
             progress.setProgress(value);
-            progressLabel.setText(String.format("%.1f%%   %s / %s MiB", value / 10.0,
+            progressLabel.setText(String.format(Locale.US, "%.1f%%   %s / %s MiB", value / 10.0,
                     megabytes.format(done / 1048576.0), megabytes.format(total / 1048576.0)));
             statusLabel.setTextColor(STATUS_COLOR);
             statusLabel.setText(message);
         });
     }
 
-    @Override public void onComplete() {
+    @Override public void onComplete(String expectedFirmwareVersion) {
         runOnUiThread(() -> {
-            updateButton.setEnabled(true);
-            syncButton.setEnabled(true);
-            updateButton.setText("UPDATE COMPLETE");
-            pairingCode.setText("");
+            rebootExpected = true;
+            endOperation();
+            // A COMMIT acknowledgement only proves that the ESP32 accepted
+            // the staged image. It can still roll back while booting, so do
+            // not falsely promise a completed firmware update here.
+            statusLabel.setTextColor(Color.rgb(193, 103, 0));
+            statusLabel.setText("Transfer accepted. After reboot, confirm Settings > More shows FW " +
+                    expectedFirmwareVersion + ".");
+            progressLabel.setText("Awaiting console validation");
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         });
     }
 
     @Override public void onClockSynchronized() {
         runOnUiThread(() -> {
-            statusLabel.setTextColor(Color.rgb(30,142,76));
+            endOperation();
+            statusLabel.setTextColor(GREEN);
             statusLabel.setText("Clock synchronized with this phone.");
             progressLabel.setText("Clock ready");
-            updateButton.setEnabled(true);
-            syncButton.setEnabled(true);
-            pairingCode.setText("");
+        });
+    }
+
+    @Override public void onSaveExported(byte[] backup) {
+        Uri destination = pendingExportUri;
+        pendingExportUri = null;
+        worker.execute(() -> {
+            try (OutputStream output = destination == null ? null :
+                    getContentResolver().openOutputStream(destination, "wt")) {
+                if (output == null) throw new Exception("Could not open the Android destination");
+                output.write(backup);
+                output.flush();
+                runOnUiThread(() -> {
+                    endOperation();
+                    statusLabel.setTextColor(GREEN);
+                    statusLabel.setText("Save loaded to Android and verified successfully.");
+                    progressLabel.setText("Backup complete");
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> showError("Could not write backup: " + error.getMessage()));
+            }
+        });
+    }
+
+    @Override public void onSaveImported() {
+        runOnUiThread(() -> {
+            rebootExpected = true;
+            endOperation();
+            statusLabel.setTextColor(GREEN);
+            statusLabel.setText("Save file restored. Pokegochi is restarting.");
+            progressLabel.setText("Restore complete");
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
+    }
+
+    @Override public void onSaveReset() {
+        runOnUiThread(() -> {
+            rebootExpected = true;
+            endOperation();
+            statusLabel.setTextColor(GREEN);
+            statusLabel.setText("Fresh save created. Pokegochi is restarting.");
+            progressLabel.setText("Reset complete");
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });
+    }
+
+    @Override public void onOperationCancelled() {
+        runOnUiThread(() -> {
+            endOperation();
+            statusLabel.setTextColor(RED);
+            statusLabel.setText("Operation cancelled. The installed game and save were kept unchanged.");
+            progressLabel.setText("Cancelled — reconnect to resume safely");
         });
     }
 
     @Override public void onError(String message) { runOnUiThread(() -> showError(message)); }
 
     private void showError(String message) {
-        statusLabel.setText(message);
-        statusLabel.setTextColor(Color.rgb(190, 35, 45));
-        updateButton.setEnabled(true);
-        syncButton.setEnabled(true);
-        updateButton.setText("RETRY UPDATE");
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (statusLabel != null) {
+            statusLabel.setText(message);
+            statusLabel.setTextColor(RED);
+        }
+        if (dashboardVisible) endOperation();
+        else if (authenticateButton != null) authenticateButton.setEnabled(true);
     }
 
     private boolean ensurePermissions() {
@@ -318,7 +607,18 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
         return false;
     }
 
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    @Override public void onBackPressed() {
+        if (dashboardVisible && operationBusy) {
+            cancelOperation();
+        } else if (dashboardVisible) {
+            client.disconnect();
+            showConnectScreen();
+        } else super.onBackPressed();
+    }
 
     @Override protected void onDestroy() {
         client.close();

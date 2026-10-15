@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_pokegochi"
+        android:label="Pokegochi"
+        android:roundIcon="@drawable/ic_pokegochi"
+        android:theme="@style/AppTheme">
+        <provider
+            android:name=".DiagnosticDumpProvider"
+            android:authorities="com.pokegochi.app.diagnostics"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".SaveImportActivity"
+            android:exported="true"
+            android:label="Importar save no Pokegochi"
+            android:process=":save_import"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:pathPattern=".*\.pgsav" />
+                <data android:scheme="file" android:pathPattern=".*\.pgsav" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/vnd.pokegochi.save" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/vnd.pokegochi.save" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

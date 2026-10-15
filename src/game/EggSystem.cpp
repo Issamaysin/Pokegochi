@@ -18,6 +18,25 @@ uint16_t choose(uint8_t region,EggRarity rarity,uint32_t& seed){uint16_t weight=
 uint8_t badges(const GymProgress& p,uint8_t region){uint8_t n=0,first=(region-1U)*8U;for(uint8_t i=0;i<8;++i)if(p.badgeBits&(1UL<<(first+i)))++n;return n;}
 void makeOffer(EggState& e,uint8_t region,uint32_t seed){const uint32_t roll=rng(seed)%100U;e.rarity=roll<75?EggRarity::Common:roll<97?EggRarity::Uncommon:EggRarity::Rare;e.region=region;e.speciesId=choose(region,e.rarity,seed);e.shinyRoll=rng(seed);e.offerPending=true;}
 uint32_t bonus(EggState& e,uint32_t seconds){if(!e.active||!e.remainingSeconds)return 0;const uint32_t room=EggSystem::kDailyBonusLimitSeconds-e.dailyBonusUsedSeconds;const uint32_t used=std::min({seconds,room,e.remainingSeconds});e.remainingSeconds-=used;e.dailyBonusUsedSeconds+=used;return used;}
+StoredEgg makeSpecialEgg(const PokedexState& pokedex,uint32_t seed){
+  uint16_t availableStarters[sizeof(kStarterSpecies)/sizeof(kStarterSpecies[0])]{};
+  uint8_t availableCount=0;
+  for(uint16_t species:kStarterSpecies)
+    if(!PokedexLogic::hasCaught(pokedex,species))availableStarters[availableCount++]=species;
+  StoredEgg egg;
+  egg.speciesId=availableCount?availableStarters[rng(seed)%availableCount]:
+      kLegendarySpecies[rng(seed)%(sizeof(kLegendarySpecies)/sizeof(kLegendarySpecies[0]))];
+  egg.shinyRoll=rng(seed);egg.region=3;egg.rarity=EggRarity::Special;
+  return egg;
+}
+void beginIncubation(EggState& state,const StoredEgg& stored){
+  const uint8_t gifts=state.giftResolvedBits;
+  state=EggState{};state.giftResolvedBits=gifts;
+  state.active=true;state.speciesId=stored.speciesId;state.shinyRoll=stored.shinyRoll;
+  state.region=stored.region;state.rarity=stored.rarity;
+  state.remainingSeconds=stored.rarity==EggRarity::Common?EggSystem::kCommonSeconds:
+      stored.rarity==EggRarity::Uncommon?EggSystem::kUncommonSeconds:EggSystem::kRareSeconds;
+}
 }
 bool EggSystem::daycareUnlocked(const GymProgress& p,uint8_t region){return region>=1&&region<=p.unlockedGeneration&&badges(p,region)>=3;}
 bool EggSystem::offerRegionalGift(EggState& e,const GymProgress& p,uint32_t seed){if(e.active||e.offerPending)return false;for(uint8_t region=1;region<=p.unlockedGeneration;++region){const uint8_t bit=1U<<(region-1U);if(daycareUnlocked(p,region)&&!(e.giftResolvedBits&bit)){makeOffer(e,region,seed);return true;}}return false;}
@@ -25,15 +44,25 @@ bool EggSystem::offerAfterTrainer(EggState& e,const GymProgress& p,uint32_t seed
 bool EggSystem::grantBattleTowerSpecial(EggState& e,const PokedexState& pokedex,
                                         uint32_t seed){
   if(e.active||e.offerPending)return false;
-  uint16_t availableStarters[sizeof(kStarterSpecies)/sizeof(kStarterSpecies[0])]{};
-  uint8_t availableCount=0;
-  for(uint16_t species:kStarterSpecies)
-    if(!PokedexLogic::hasCaught(pokedex,species))availableStarters[availableCount++]=species;
-  e.speciesId=availableCount?availableStarters[rng(seed)%availableCount]:
-      kLegendarySpecies[rng(seed)%(sizeof(kLegendarySpecies)/sizeof(kLegendarySpecies[0]))];
-  e.offerPending=false;e.active=true;e.remainingSeconds=kRareSeconds;
-  e.dailyBonusUsedSeconds=0;e.bonusWindowSeconds=86400;e.shinyRoll=rng(seed);
-  e.region=3;e.rarity=EggRarity::Special;
+  beginIncubation(e,makeSpecialEgg(pokedex,seed));
+  return true;
+}
+bool EggSystem::storeBattleTowerSpecial(EggInventory& inventory,
+                                        const PokedexState& pokedex,
+                                        uint32_t seed,uint16_t* speciesId){
+  if(inventory.count>=EggInventory::kCapacity)return false;
+  const StoredEgg egg=makeSpecialEgg(pokedex,seed);
+  inventory.slots[inventory.count++]=egg;
+  if(speciesId)*speciesId=egg.speciesId;
+  return true;
+}
+bool EggSystem::incubateStored(EggInventory& inventory,uint8_t index,
+                               EggState& state){
+  if(state.active||state.offerPending||index>=inventory.count)return false;
+  beginIncubation(state,inventory.slots[index]);
+  for(uint8_t slot=index;slot+1U<inventory.count;++slot)
+    inventory.slots[slot]=inventory.slots[slot+1U];
+  --inventory.count;inventory.slots[inventory.count]=StoredEgg{};
   return true;
 }
 bool EggSystem::accept(EggState& e){if(!e.offerPending)return false;e.offerPending=false;e.active=true;e.remainingSeconds=e.rarity==EggRarity::Common?kCommonSeconds:e.rarity==EggRarity::Uncommon?kUncommonSeconds:kRareSeconds;e.dailyBonusUsedSeconds=0;e.bonusWindowSeconds=86400;e.giftResolvedBits|=1U<<(e.region-1U);return true;}

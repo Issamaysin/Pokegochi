@@ -26,7 +26,11 @@ PRIVATE_KEY = ROOT / ".keys/pokegochi-update-private.key"
 LAST_SEQUENCE = ROOT / ".keys/pokegochi-update-sequence.txt"
 PUBLIC_HEADER = ROOT / "include/config/UpdateSigningKey.h"
 OUTPUT = ROOT / "dist/pokegochi-wireless-update.pgota"
-OTA_SLOT_SIZE = 0x1A0000
+# Keep this guard aligned with partitions.csv and the firmware's actual OTA
+# slots. The old 0x1A0000 value rejected valid images after the partition table
+# was expanded to 0x1B0000, making OTA impossible even though app0/app1 had
+# enough room.
+OTA_SLOT_SIZE = 0x1C0000
 
 PROTOCOL_VERSION = 1
 DEVICE_MODEL = 1

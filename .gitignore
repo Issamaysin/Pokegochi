@@ -34,3 +34,10 @@ legend-fighter/
 /dist/*
 !/dist/README.md
 !POKEGOCHI_V2/ota/*.pgota
+
+# Android firmware mirror build outputs and local emulator captures.
+/android/PokegochiApp/.gradle/
+/android/PokegochiApp/build/
+/android/PokegochiApp/app/.cxx/
+/android/PokegochiApp/app/build/
+/android/PokegochiApp/firmware-*.png

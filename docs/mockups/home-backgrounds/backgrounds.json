@@ -427,5 +427,93 @@
       48,
       0
     ]
+  },
+  {
+    "id": 39,
+    "key": "fr_pallet_town",
+    "name": "PALLET TOWN",
+    "game": "firered",
+    "layout": "PalletTown",
+    "crop": [
+      32,
+      96
+    ]
+  },
+  {
+    "id": 40,
+    "key": "fr_cerulean_cave",
+    "name": "CERULEAN CAVE",
+    "game": "firered",
+    "layout": "CeruleanCave_B1F",
+    "crop": [
+      128,
+      144
+    ]
+  },
+  {
+    "id": 41,
+    "key": "fr_navel_rock_summit",
+    "name": "NAVEL ROCK SUMMIT",
+    "game": "firered",
+    "layout": "NavelRock_Summit",
+    "crop": [
+      0,
+      192
+    ]
+  },
+  {
+    "id": 42,
+    "key": "em_abandoned_ship",
+    "name": "ABANDONED SHIP",
+    "game": "emerald",
+    "layout": "AbandonedShip_Deck",
+    "crop": [
+      32,
+      160
+    ]
+  },
+  {
+    "id": 43,
+    "key": "em_frontier_factory_arena",
+    "name": "BATTLE FACTORY ARENA",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattleFactoryBattleRoom",
+    "crop": [
+      -48,
+      32
+    ]
+  },
+  {
+    "id": 44,
+    "key": "em_frontier_pike_paths",
+    "name": "BATTLE PIKE PATHS",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattlePyramidLobby",
+    "crop": [
+      -32,
+      32
+    ]
+  },
+  {
+    "id": 45,
+    "key": "em_frontier_arena_ring",
+    "name": "BATTLE ARENA RING",
+    "game": "emerald",
+    "layout": "BattleFrontier_BattleArenaBattleRoom",
+    "crop": [
+      -16,
+      16
+    ]
+  },
+  {
+    "id": 46,
+    "key": "em_artisan_cave",
+    "name": "ARTISAN CAVE",
+    "game": "emerald",
+    "layout": "ArtisanCave_B1F",
+    "crop": [
+      368,
+      384
+    ]
   }
 ]

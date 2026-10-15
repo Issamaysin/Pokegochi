@@ -21,8 +21,12 @@ struct SpeciesData {
   uint8_t catchRate;
   uint8_t baseExperience;
   GrowthRate growthRate;
+  // The first pair is the original FireRed/Gen-III identity. The second pair
+  // is Platinum's ability pair and is enabled only once Sinnoh is unlocked.
   uint8_t ability1;
   uint8_t ability2;
+  uint8_t sinnohAbility1;
+  uint8_t sinnohAbility2;
   // Generation-III effort-value yield granted when this species is defeated.
   // These values come directly from FireRed's species_info table.
   uint8_t evYieldHp;
@@ -53,6 +57,11 @@ enum class MoveTarget : uint8_t {
   OpponentsField = 1U << 6,
 };
 
+// Gen IV introduced the per-move physical/special split.  Older moves retain
+// their original Gen-III category when generated, while Sinnoh moves use the
+// category authored by Platinum instead of inferring it from their type.
+enum class MoveCategory : uint8_t { Physical, Special, Status };
+
 struct MoveData {
   MoveId id;
   const char* name;
@@ -62,7 +71,7 @@ struct MoveData {
 };
 struct FullMoveData {
   uint16_t id; const char* name; PokemonType type; uint8_t power; uint8_t accuracy;
-  uint8_t pp; int8_t priority; uint8_t effectChance; const char* effect;
+  MoveCategory category; uint8_t pp; int8_t priority; uint8_t effectChance; const char* effect;
   MoveTarget target; bool makesContact;
   bool magicCoatAffected;
   bool snatchAffected;
@@ -70,7 +79,13 @@ struct FullMoveData {
   bool mirrorMoveAffected;
   bool kingsRockAffected;
 };
-struct LearnsetEntry { uint16_t speciesId; uint8_t level; uint16_t moveId; };
+struct LearnsetEntry {
+  uint16_t speciesId;
+  uint8_t level;
+  uint16_t moveId;
+  // 1 = the original FireRed/Hoenn-era learnset, 4 = Platinum additions.
+  uint8_t generation = 1;
+};
 
 struct EvolutionData { uint16_t fromSpeciesId; uint16_t toSpeciesId; uint8_t level; };
 struct EncounterSpecies { uint16_t speciesId; uint8_t unlockLevel; uint8_t weight; uint8_t generation; };
@@ -83,12 +98,27 @@ const char* moveDescription(MoveId id);
 // one-on-one battle format. Doubles-only moves remain in the canonical data
 // and battle engine, but are not offered to players or selected by the AI.
 bool isMoveAvailableInSingleBattle(MoveId id);
-uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4]);
+uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
+                      uint8_t unlockedGeneration = 1);
+// Form-aware level-up table. Platinum keeps the same TM table for the
+// supported alternate forms, but Shaymin-Sky has three level-up replacements.
+uint8_t movesForForm(uint16_t speciesId, uint8_t form, uint8_t level,
+                     MoveId output[4], uint8_t unlockedGeneration = 1);
 // Returns every level-up move available to this species and each of its
 // pre-evolutions up to the Pokemon's current level, without duplicates.
 uint8_t relearnableMovesForLine(uint16_t speciesId, uint8_t level,
-                               MoveId output[], uint8_t maximum);
-MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level);
+                               MoveId output[], uint8_t maximum,
+                               uint8_t unlockedGeneration = 1);
+// Form-aware Summary/move-reminder pool. This includes Platinum's Rotom
+// appliance move and replaces the normal Shaymin entries with the Sky table.
+uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
+                                uint8_t level, MoveId output[], uint8_t maximum,
+                                uint8_t unlockedGeneration = 1);
+// Rotom's appliance move is taught by changing form, not by a TM. Returning
+// None for every other species keeps this table explicit and auditable.
+MoveId formSignatureMove(uint16_t speciesId, uint8_t form);
+MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
+                          uint8_t unlockedGeneration = 1);
 MoveId defaultMoveForSpecies(uint16_t speciesId);
 uint32_t experienceForLevel(GrowthRate growth, uint8_t level);
 const EvolutionData* evolutionFor(uint16_t speciesId);

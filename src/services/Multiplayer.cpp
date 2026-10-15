@@ -1,4 +1,5 @@
 #include "services/Multiplayer.h"
+#include "services/MultiplayerProtocol.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -17,11 +18,11 @@ namespace {
 // Increment whenever a packed packet changes. Devices with an older beta are
 // deliberately hidden from discovery instead of exchanging incompatible
 // roster/state records.
-constexpr uint8_t kProtocolVersion = 6;
-constexpr uint16_t kPacketMagic = 0x4750;  // "PG" on the wire.
-constexpr char kServiceUuid[] = "70564743-4849-4d50-8000-504f4b45474f";
-constexpr char kRxUuid[] = "70564743-4849-4d50-8001-504f4b45474f";
-constexpr char kTxUuid[] = "70564743-4849-4d50-8002-504f4b45474f";
+constexpr uint8_t kProtocolVersion = PokegochiMultiplayerProtocol::kVersion;
+constexpr uint16_t kPacketMagic = PokegochiMultiplayerProtocol::kPacketMagic;
+constexpr const char* kServiceUuid = PokegochiMultiplayerProtocol::kServiceUuid;
+constexpr const char* kRxUuid = PokegochiMultiplayerProtocol::kRxUuid;
+constexpr const char* kTxUuid = PokegochiMultiplayerProtocol::kTxUuid;
 
 enum PacketType : uint8_t {
   Invite = 1,
@@ -48,6 +49,30 @@ enum PacketType : uint8_t {
   BattleSyncAck,
 };
 
+static_assert(Invite == PokegochiMultiplayerProtocol::Invite &&
+              InviteAccept == PokegochiMultiplayerProtocol::InviteAccept &&
+              InviteReject == PokegochiMultiplayerProtocol::InviteReject &&
+              SessionClose == PokegochiMultiplayerProtocol::SessionClose &&
+              ActivityRequest == PokegochiMultiplayerProtocol::ActivityRequest &&
+              ActivityAccept == PokegochiMultiplayerProtocol::ActivityAccept &&
+              ActivityReject == PokegochiMultiplayerProtocol::ActivityReject &&
+              TradeOfferPacket == PokegochiMultiplayerProtocol::TradeOffer &&
+              TradeConfirm == PokegochiMultiplayerProtocol::TradeConfirm &&
+              TradeReject == PokegochiMultiplayerProtocol::TradeReject &&
+              TradeCommitRequest == PokegochiMultiplayerProtocol::TradeCommitRequest &&
+              TradeCommitApplied == PokegochiMultiplayerProtocol::TradeCommitApplied &&
+              BattlePartyMember == PokegochiMultiplayerProtocol::BattlePartyMember &&
+              BattlePartyReady == PokegochiMultiplayerProtocol::BattlePartyReady &&
+              BattleLead == PokegochiMultiplayerProtocol::BattleLead &&
+              BattleStart == PokegochiMultiplayerProtocol::BattleStart &&
+              ActivityCancel == PokegochiMultiplayerProtocol::ActivityCancel &&
+              BattleCommandPacket == PokegochiMultiplayerProtocol::BattleCommand &&
+              BattleSyncPokemon == PokegochiMultiplayerProtocol::BattleSyncPokemon &&
+              BattleSyncVolatile == PokegochiMultiplayerProtocol::BattleSyncVolatile &&
+              BattleSyncCore == PokegochiMultiplayerProtocol::BattleSyncCore &&
+              BattleSyncAck == PokegochiMultiplayerProtocol::BattleSyncAck,
+              "Multiplayer packet type ABI changed");
+
 #pragma pack(push, 1)
 struct PacketHeader {
   uint16_t magic;
@@ -56,11 +81,6 @@ struct PacketHeader {
   uint32_t sourceId;
   uint32_t transaction;
   uint16_t payloadLength;
-};
-struct Advertisement {
-  char signature[4];
-  uint8_t version;
-  uint32_t playerId;
 };
 struct ActivityPayload { uint8_t activity; };
 struct TradePayload { OwnedPokemon pokemon; };
@@ -204,18 +224,18 @@ class ScanCallbacks final : public NimBLEScanCallbacks {
     // so NimBLE silently omitted this record and every Pokegochi was rejected
     // by the scanner. The full UUID is still verified after connecting.
     const std::string data = device->getManufacturerData();
-    if (data.size() != sizeof(Advertisement)) return;
-    Advertisement advertisement{};
-    std::memcpy(&advertisement, data.data(), sizeof(advertisement));
-    if (std::memcmp(advertisement.signature, "PGCH", 4) || advertisement.version != kProtocolVersion ||
+    PokegochiMultiplayerProtocol::Advertisement advertisement{};
+    if (!PokegochiMultiplayerProtocol::decodeManufacturerAdvertisement(
+            reinterpret_cast<const uint8_t*>(data.data()), data.size(), advertisement) ||
         advertisement.playerId == gMultiplayer->playerId()) return;
     const std::string address = device->getAddress().toString();
     TransportEvent event{}; event.kind = TransportEventKind::Discovered;
     event.id = advertisement.playerId; event.rssi = device->getRSSI();
     event.addressType = device->getAddressType();
     std::strncpy(event.address, address.c_str(), sizeof(event.address) - 1U);
-    Serial.printf("[BLE] discovered player=%05lu rssi=%d address=%s\n",
-                  static_cast<unsigned long>(event.id), static_cast<int>(event.rssi), event.address);
+    Serial.printf("[BLE] discovered player=%05lu rssi=%d address=%s framing=%u\n",
+                  static_cast<unsigned long>(event.id), static_cast<int>(event.rssi), event.address,
+                  static_cast<unsigned>(data.size()));
     queueTransportEvent(event);
   }
 } gScanCallbacks;
@@ -255,6 +275,16 @@ bool Multiplayer::begin() {
   playerId_ = 12345;
 #endif
   setState(State::Off, "TURN BLUETOOTH ON TO PLAY.");
+  return true;
+}
+
+bool Multiplayer::beginWithPlayerId(uint32_t playerId) {
+  if (!begin()) return false;
+#if !defined(ARDUINO_ARCH_ESP32)
+  if (playerId) playerId_ = playerId;
+#else
+  (void)playerId;
+#endif
   return true;
 }
 
@@ -353,7 +383,8 @@ bool Multiplayer::startTransport() {
   rx->setCallbacks(&gRxCallbacks);
   gServer->start();
 
-  Advertisement payload{{'P','G','C','H'}, kProtocolVersion, playerId_};
+  const PokegochiMultiplayerProtocol::Advertisement payload =
+      PokegochiMultiplayerProtocol::makeAdvertisement(playerId_);
   NimBLEAdvertisementData data;
   const bool flagsReady = data.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
   // Keep the legacy advertisement comfortably below 31 bytes. The PGCH
@@ -479,17 +510,46 @@ void Multiplayer::transportDisconnected() {
 }
 
 bool Multiplayer::sendPacket(uint8_t type, const void* payload, uint16_t length, uint32_t transaction) {
-  if (length > 160U) return false;
-  uint8_t bytes[sizeof(PacketHeader) + 160]{};
+  if (length > PokegochiMultiplayerProtocol::kMaximumPayload) return false;
+  uint8_t bytes[sizeof(PacketHeader) + PokegochiMultiplayerProtocol::kMaximumPayload]{};
   const PacketHeader header{kPacketMagic, kProtocolVersion, type, playerId_, transaction, length};
   std::memcpy(bytes, &header, sizeof(header));
   if (length && payload) std::memcpy(bytes + sizeof(header), payload, length);
 #if !defined(ARDUINO_ARCH_ESP32)
+  if (outgoingPacketCount_ >= kOutgoingPacketCapacity) return false;
+  OutgoingPacket& queued = outgoingPackets_[outgoingPacketCount_++];
+  queued.length = static_cast<uint16_t>(sizeof(header) + length);
+  std::memcpy(queued.bytes, bytes, queued.length);
   return true;
 #else
   if (outbound_) return gRemoteRx && gRemoteRx->writeValue(bytes, sizeof(header) + length, true);
   return gServerTx && gServerTx->notify(bytes, sizeof(header) + length);
 #endif
+}
+
+bool Multiplayer::takeOutgoingPacket(uint8_t* bytes, uint16_t& length) {
+#if !defined(ARDUINO_ARCH_ESP32)
+  if (!bytes || !outgoingPacketCount_) { length = 0; return false; }
+  const OutgoingPacket& queued = outgoingPackets_[0];
+  length = queued.length;
+  std::memcpy(bytes, queued.bytes, length);
+  for (uint8_t index = 1; index < outgoingPacketCount_; ++index)
+    outgoingPackets_[index - 1] = outgoingPackets_[index];
+  outgoingPackets_[--outgoingPacketCount_] = OutgoingPacket{};
+  return true;
+#else
+  (void)bytes; length = 0; return false;
+#endif
+}
+
+bool Multiplayer::requestPeer(uint32_t playerId) {
+  if (!enabled_ || !playerId || playerId == playerId_) return false;
+  peerId_ = playerId;
+  invitationToken_ = playerId_ ^ (playerId << 1U) ^ 0x50474F43U;
+  transportConnected_ = true;
+  outbound_ = true;
+  setState(State::Connecting, "CONNECTING...");
+  return sendPacket(Invite, nullptr, 0, invitationToken_);
 }
 
 void Multiplayer::transportPacket(const uint8_t* bytes, size_t length) { processPacket(bytes, length); }

@@ -17,7 +17,182 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 D = ROOT / ".downloads/pokefirered-tree/pokefirered-master"
-SCRIPT = (D / "data/battle_anim_scripts.s").read_text(encoding="utf-8")
+EXPANSION = ROOT / ".downloads/pokeemerald-expansion"
+
+
+def _split_macro_operands(text: str) -> list[str]:
+    """Split an assembler macro call without splitting nested expressions."""
+    result: list[str] = []
+    start = 0
+    depth = 0
+    for index, character in enumerate(text):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            result.append(text[start:index].strip())
+            start = index + 1
+    tail = text[start:].strip()
+    if tail:
+        result.append(tail)
+    return result
+
+
+def _expand_battle_script_macros(script: str, macro_source: Path) -> str:
+    """Materialise the expansion's source macros before the VM parser sees them.
+
+    pokeemerald-expansion keeps its authored animation scripts readable with
+    wrappers such as ``simple_palette_blend`` and
+    ``create_basic_hitsplat_sprite``.  The ROM assembler expands those before
+    execution.  Doing the same here is required for the generated Pokegochi
+    program to contain the original SpriteTemplate, arguments and timing.
+    """
+    definitions: dict[str, tuple[list[tuple[str, str | None, bool]], list[str]]] = {}
+    macro_text = macro_source.read_text(encoding="utf-8")
+    macro_pattern = re.compile(
+        r"\.macro\s+([A-Za-z_][A-Za-z0-9_]*)([^\r\n]*)\r?\n"
+        r"(.*?)\.endm", re.S)
+    for match in macro_pattern.finditer(macro_text):
+        parameters: list[tuple[str, str | None, bool]] = []
+        for raw in _split_macro_operands(match.group(2).strip()):
+            raw = raw.strip()
+            if not raw:
+                continue
+            name = raw.split("=", 1)[0].strip().split(":", 1)[0]
+            default = raw.split("=", 1)[1].strip() if "=" in raw else None
+            parameters.append((name, default, ":req" in raw))
+        definitions[match.group(1)] = (parameters, match.group(3).splitlines())
+
+    def expand_line(line: str, depth: int) -> list[str]:
+        if depth > 12:
+            raise RuntimeError("Battle animation macro expansion is recursive")
+        code = line.split("@", 1)[0].strip()
+        if not code:
+            return [line]
+        parts = code.split(None, 1)
+        definition = definitions.get(parts[0])
+        # These are real battle-script opcodes.  They also have assembler
+        # macro definitions in macros.inc, but expanding those byte encoders
+        # would destroy the symbolic script we intentionally feed to the VM.
+        if parts[0] in {
+                "createsprite", "createvisualtask", "loadspritegfx",
+                "unloadspritegfx", "delay", "waitforvisualfinish",
+                "monbg", "monbg_static", "clearmonbg", "clearmonbg_static",
+                "setalpha", "blendoff", "setbldcnt", "changebg", "fadetobg",
+                "restorebg", "splitbgprio", "setarg", "call", "goto",
+                "return", "end", "invisible", "visible", "waitbgfadeout",
+                "waitbgfadein", "choosetwoturnanim"}:
+            definition = None
+        if definition is None:
+            return [line]
+        parameters, body = definition
+        actuals = _split_macro_operands(parts[1] if len(parts) > 1 else "")
+        values: dict[str, str] = {}
+        positional = 0
+        for actual in actuals:
+            if "=" in actual:
+                key, value = actual.split("=", 1)
+                values[key.strip()] = value.strip()
+            elif positional < len(parameters):
+                values[parameters[positional][0]] = actual.strip()
+                positional += 1
+        for name, default, _required in parameters:
+            if name not in values and default is not None:
+                values[name] = default
+        # These wrappers contain assembler conditionals whose result is a
+        # normal visual command. Materialise the selected branch explicitly so
+        # the VM receives the same SpriteTemplate/task and argument ABI as the
+        # expansion assembler, instead of carrying an opaque macro name.
+        if parts[0] == "metallic_shine":
+            color = values.get("color")
+            return [
+                "createvisualtask AnimTask_MetallicShine, " +
+                values.get("priority", "5") + ", " +
+                values["permanent"] + ", " +
+                ("TRUE, " + color if color else "FALSE, RGB_BLACK")
+            ]
+        if parts[0] == "createspriteontargets_onpos":
+            actual = [values.get(name, "") for name, _default, _required in parameters]
+            # The only supported on-pos wrapper in the Gen-IV catalog targets
+            # one battle side at a time. Keeping its exact template, priority,
+            # offsets and relative-battler arguments is equivalent on the
+            # Pokegochi single-target battle scene.
+            raw = _split_macro_operands(parts[1] if len(parts) > 1 else "")
+            if len(raw) < 4:
+                return [line]
+            template, battler, priority, battler_arg = raw[:4]
+            argv = raw[4:]
+            return ["createsprite " + ", ".join(
+                [template, battler, priority] + argv)]
+        if parts[0] == "create_random_pos_hitsplat_sprite":
+            raw = _split_macro_operands(parts[1] if len(parts) > 1 else "")
+            positional = [item for item in raw if "=" not in item]
+            named = {
+                key.strip(): value.strip()
+                for item in raw if "=" in item
+                for key, value in [item.split("=", 1)]
+            }
+            if len(positional) < 2 or "relative_to" not in named:
+                return [line]
+            animation = named.get("animation", "-1")
+            return ["createsprite gRandomPosHitSplatSpriteTemplate, " +
+                    ", ".join([positional[0], positional[1],
+                                named["relative_to"], animation])]
+        # This wrapper contains assembler conditionals because it supports
+        # both platform and battler shakes.  The emitted createsprite is the
+        # same in either branch; only the optional battler selector changes.
+        # Materialise that exact result instead of carrying an untranslated
+        # macro into the VM audit.
+        if parts[0] == "shake_mon_or_platform":
+            missing = [name for name, _default, required in parameters
+                       if name not in values and required]
+            if missing:
+                raise RuntimeError(
+                    f"Missing battle animation macro arguments: {parts[0]} {missing}")
+            arguments = [
+                values.get("unused_anim_battler", "ANIM_ATTACKER"),
+                values.get("unused_subpriority_offset", "2"),
+                values["velocity"], values["shake_timer"],
+                values["shake_duration"], values["type"],
+            ]
+            if "battler_selector" in values:
+                arguments.append(values["battler_selector"])
+            return ["createsprite gShakeMonOrPlatformSpriteTemplate, " +
+                    ", ".join(arguments)]
+        expanded: list[str] = []
+        for body_line in body:
+            # The selected source macros are pure wrappers.  Do not silently
+            # flatten conditional assembler logic; if a future selected move
+            # needs it, the generator must be taught that macro explicitly.
+            if any(body_line.strip().startswith(prefix)
+                   for prefix in (".if", ".else", ".endif", ".warning", ".error")):
+                # This macro is outside the selected source path. Preserve
+                # its invocation so a future move that actually reaches it
+                # fails the source audit explicitly instead of being silently
+                # approximated.
+                return [line]
+            substituted = re.sub(
+                r"\\([A-Za-z_][A-Za-z0-9_]*)",
+                lambda token: values.get(token.group(1), token.group(0)),
+                body_line)
+            expanded.extend(expand_line(substituted, depth + 1))
+        return expanded
+
+    output: list[str] = []
+    for line in script.splitlines():
+        output.extend(expand_line(line, 0))
+    return "\n".join(output) + "\n"
+
+
+FIRERED_SCRIPT = (D / "data/battle_anim_scripts.s").read_text(encoding="utf-8")
+EXPANSION_SCRIPT = _expand_battle_script_macros(
+    (EXPANSION / "data/battle_anim_scripts.s").read_text(encoding="utf-8"),
+    EXPANSION / "asm/macros/battle_anim_script.inc")
+# Keep the original catalog intact and append the complete Gen-IV program
+# range from pokeemerald-expansion. Their ids are above FireRed's 354, so the
+# merged arrays remain sorted and the existing VM needs no numeric remapping.
+SCRIPT = FIRERED_SCRIPT + "\n" + EXPANSION_SCRIPT
 MOVES = (D / "include/constants/moves.h").read_text(encoding="utf-8")
 GRAPHICS = (D / "src/graphics.c").read_text(encoding="utf-8")
 BATTLE_DATA = (D / "src/data/battle_anim.h").read_text(encoding="utf-8")
@@ -25,6 +200,38 @@ BATTLE_ANIM_CONSTANTS = (
     D / "include/constants/battle_anim.h").read_text(encoding="utf-8")
 GRAPHICS_RULES = (D / "graphics_file_rules.mk").read_text(encoding="utf-8")
 SPRITES = D / "graphics/battle_anims/sprites"
+EXPANSION_GRAPHICS = (EXPANSION / "src/graphics.c").read_text(encoding="utf-8")
+EXPANSION_BATTLE_DATA = (EXPANSION / "src/data/battle_anim.h").read_text(encoding="utf-8")
+EXPANSION_GRAPHICS_RULES = (EXPANSION / "graphics_file_rules.mk").read_text(encoding="utf-8")
+EXPANSION_SPRITES = EXPANSION / "graphics/battle_anims/sprites"
+EXPANSION_MOVE_IDS = set(range(355, 468))
+SOURCE_NUMERIC_CONSTANTS: dict[str, int] = {}
+
+
+def _parse_source_int(text: str) -> int:
+    """Evaluate the numeric arithmetic used by GBA ANIMCMD declarations."""
+    node = ast.parse(text.strip(), mode="eval").body
+
+    def visit(value: ast.AST) -> int:
+        if isinstance(value, ast.Constant) and isinstance(value.value, int):
+            return int(value.value)
+        if isinstance(value, ast.Name) and value.id in SOURCE_NUMERIC_CONSTANTS:
+            return SOURCE_NUMERIC_CONSTANTS[value.id]
+        if isinstance(value, ast.UnaryOp):
+            operand = visit(value.operand)
+            if isinstance(value.op, ast.USub):
+                return -operand
+            if isinstance(value.op, ast.UAdd):
+                return operand
+        if isinstance(value, ast.BinOp):
+            left, right = visit(value.left), visit(value.right)
+            if isinstance(value.op, ast.Add): return left + right
+            if isinstance(value.op, ast.Sub): return left - right
+            if isinstance(value.op, ast.Mult): return left * right
+            if isinstance(value.op, (ast.Div, ast.FloorDiv)): return left // right
+        raise ValueError(f"Unsupported animation constant: {text}")
+
+    return visit(node)
 
 # Battle animation scripts are deliberately split into hundreds of reusable
 # `call LABEL` fragments.  Looking only between `Move_FOO:` and its `end`
@@ -118,6 +325,10 @@ def reachable_animation_labels(label: str) -> list[str]:
                     "jumpreteq", "choosetwoturnanim"}:
                 continue
             operands = split_operands(parts[1]) if len(parts) > 1 else []
+            if command == "choosetwoturnanim":
+                operands = [token for token in re.findall(
+                    r"[A-Za-z_][A-Za-z0-9_]*", parts[1] if len(parts) > 1 else "")
+                    if token in LABEL_BODIES]
             for operand in operands:
                 if operand in LABEL_BODIES:
                     visit(operand)
@@ -152,42 +363,146 @@ def snake(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
 
 
-def symbol_paths(kind: str, extension: str) -> dict[str, str]:
-    pattern = (rf'const u32\s+(gBattleAnimSprite{kind}_\w+)\[\]\s*=\s*'
-               rf'INCBIN_U32\("graphics/battle_anims/sprites/([^\"]+)\.{extension}\.lz"\)')
-    return {match.group(1): match.group(2) for match in re.finditer(pattern, GRAPHICS)}
+def symbol_paths(kind: str, source_text: str, source_name: str,
+                 extension: str) -> dict[str, tuple[str, str]]:
+    """Map a GBA graphics symbol to its source tree and stable asset stem."""
+    paths: dict[str, tuple[str, str]] = {}
+    legacy = re.compile(
+        rf'const (?:u32|u16)\s+(gBattleAnimSprite{kind}_\w+)\[\]\s*=\s*'
+        rf'INCBIN_U(?:32|16)\("graphics/battle_anims/sprites/([^\"]+)\.'
+        rf'{extension}\.lz"\)')
+    modern = re.compile(
+        rf'const (?:u32|u16)\s+(gBattleAnimSprite{kind}_\w+)\[\]\s*=\s*'
+        rf'INCGFX_U(?:32|16)\("graphics/battle_anims/sprites/([^\"]+)\.'
+        rf'(?:png|pal|4bpp)"\s*,\s*"(?:\.{extension}(?:\.smol)?|\.smol)"\)')
+    for match in legacy.finditer(source_text):
+        paths[match.group(1)] = (source_name, match.group(2))
+    for match in modern.finditer(source_text):
+        paths[match.group(1)] = (source_name, match.group(2))
+    return paths
 
 
-gfx_symbol_paths = symbol_paths("Gfx", "4bpp")
-palette_symbol_paths = symbol_paths("Pal", "gbapal")
+gfx_symbol_paths_by_source = {
+    "firered": symbol_paths("Gfx", GRAPHICS, "firered", "4bpp"),
+    "expansion": symbol_paths("Gfx", EXPANSION_GRAPHICS, "expansion", "4bpp"),
+}
+palette_symbol_paths_by_source = {
+    "firered": symbol_paths("Pal", GRAPHICS, "firered", "gbapal"),
+    "expansion": symbol_paths("Pal", EXPANSION_GRAPHICS, "expansion", "gbapal"),
+}
+# Keep the legacy names available to diagnostics, with FireRed taking
+# precedence when both trees declare the same C symbol.
+gfx_symbol_paths = dict(gfx_symbol_paths_by_source["firered"])
+gfx_symbol_paths.update({key: value for key, value in
+                         gfx_symbol_paths_by_source["expansion"].items()
+                         if key not in gfx_symbol_paths})
+palette_symbol_paths = dict(palette_symbol_paths_by_source["firered"])
+palette_symbol_paths.update({key: value for key, value in
+                             palette_symbol_paths_by_source["expansion"].items()
+                             if key not in palette_symbol_paths})
 
-tag_to_gfx: dict[str, str] = {}
-for match in re.finditer(
-        r"\{\s*(gBattleAnimSpriteGfx_\w+)\s*,\s*0x[0-9a-fA-F]+\s*,\s*"
-        r"ANIM_TAG_([A-Z0-9_]+)\s*\}", BATTLE_DATA):
-    if match.group(1) not in gfx_symbol_paths:
-        raise RuntimeError(f"Missing FireRed graphics path for {match.group(1)}")
-    tag_to_gfx[match.group(2)] = gfx_symbol_paths[match.group(1)]
 
-tag_to_palette: dict[str, str] = {}
-for match in re.finditer(
-        r"\{\s*(gBattleAnimSpritePal_\w+)\s*,\s*ANIM_TAG_([A-Z0-9_]+)\s*\}",
-        BATTLE_DATA):
-    if match.group(1) not in palette_symbol_paths:
-        raise RuntimeError(f"Missing FireRed palette path for {match.group(1)}")
-    tag_to_palette[match.group(2)] = palette_symbol_paths[match.group(1)]
+def animation_source_dir(source_name: str) -> Path:
+    return SPRITES if source_name == "firered" else EXPANSION_SPRITES
+
+
+tag_to_gfx: dict[str, tuple[str, str]] = {}
+tag_to_palette: dict[str, tuple[str, str]] = {}
+tag_to_gfx_by_source: dict[str, dict[str, tuple[str, str]]] = {
+    "firered": {}, "expansion": {},
+}
+tag_to_palette_by_source: dict[str, dict[str, tuple[str, str]]] = {
+    "firered": {}, "expansion": {},
+}
+
+
+def load_animation_table(source_text: str, source_name: str,
+                         table_text: str, table_kind: str) -> None:
+    source_gfx_paths = gfx_symbol_paths_by_source[source_name]
+    source_palette_paths = palette_symbol_paths_by_source[source_name]
+    # FireRed uses a brace table while the expansion uses BATTLE_ANIMATION.
+    if table_kind == "firered":
+        entries = re.finditer(
+            r"\{\s*(gBattleAnimSpriteGfx_\w+)\s*,\s*0x[0-9a-fA-F]+\s*,\s*"
+            r"ANIM_TAG_([A-Z0-9_]+)\s*\}", table_text)
+        palette_entries = re.finditer(
+            r"\{\s*(gBattleAnimSpritePal_\w+)\s*,\s*ANIM_TAG_([A-Z0-9_]+)\s*\}",
+            table_text)
+    else:
+        # BATTLE_ANIMATION also contains build-flag ternaries such as
+        # `new_particle ? g...New : g...`.  Select the final (legacy/default)
+        # branch while retaining the expansion's own source asset.  The old
+        # regex silently dropped those tags, producing purple/missing cels.
+        expansion_entries: list[tuple[object, str, str]] = []
+        expansion_palette_entries: list[tuple[object, str, str]] = []
+        for line in table_text.splitlines():
+            match = re.search(
+                r"BATTLE_ANIMATION\(\s*ANIM_TAG_([A-Z0-9_]+)\s*,\s*(.*?)\)\s*,?\s*$",
+                line)
+            if not match:
+                continue
+            tag = match.group(1)
+            body = match.group(2)
+            gfx_symbols = re.findall(r"gBattleAnimSpriteGfx_\w+", body)
+            palette_symbols = re.findall(r"gBattleAnimSpritePal_\w+", body)
+            if gfx_symbols:
+                expansion_entries.append((match, tag, gfx_symbols[-1]))
+            if palette_symbols:
+                expansion_palette_entries.append((match, palette_symbols[-1], tag))
+        entries = expansion_entries
+        palette_entries = expansion_palette_entries
+    for entry in entries:
+        if table_kind == "firered":
+            gfx_symbol, tag = entry.group(1), entry.group(2)
+        else:
+            _, tag, gfx_symbol = entry
+        if gfx_symbol not in source_gfx_paths:
+            if source_name == "firered":
+                raise RuntimeError(
+                    f"Missing {source_name} graphics path for {gfx_symbol}")
+            continue
+        mapping = source_gfx_paths[gfx_symbol]
+        tag_to_gfx_by_source[source_name][tag] = mapping
+        # FireRed remains the default for the legacy catalog. Expansion-only
+        # tags are added globally so move-level loadspritegfx still resolve.
+        if source_name == "firered" or tag not in tag_to_gfx:
+            tag_to_gfx[tag] = mapping
+    for entry in palette_entries:
+        if table_kind == "firered":
+            palette_symbol, tag = entry.group(1), entry.group(2)
+        else:
+            _, palette_symbol, tag = entry
+        if palette_symbol not in source_palette_paths:
+            if source_name == "firered":
+                raise RuntimeError(
+                    f"Missing {source_name} palette path for {palette_symbol}")
+            continue
+        mapping = source_palette_paths[palette_symbol]
+        tag_to_palette_by_source[source_name][tag] = mapping
+        if source_name == "firered" or tag not in tag_to_palette:
+            tag_to_palette[tag] = mapping
+
+
+load_animation_table(GRAPHICS, "firered", BATTLE_DATA, "firered")
+load_animation_table(EXPANSION_GRAPHICS, "expansion",
+                     EXPANSION_BATTLE_DATA, "expansion")
 
 # Smokescreen owns a private sheet/palette outside the global ANIM_TAG tables.
 # Treat that original private tag as a regular exact asset so its four impact
 # quadrants are not emitted as an invisible, tagless callback.
-tag_to_gfx["SMOKESCREEN_IMPACT"] = "smokescreen_impact"
-tag_to_palette["SMOKESCREEN_IMPACT"] = "smokescreen_impact"
+tag_to_gfx["SMOKESCREEN_IMPACT"] = ("firered", "smokescreen_impact")
+tag_to_palette["SMOKESCREEN_IMPACT"] = ("firered", "smokescreen_impact")
+tag_to_gfx_by_source["firered"]["SMOKESCREEN_IMPACT"] = tag_to_gfx["SMOKESCREEN_IMPACT"]
+tag_to_palette_by_source["firered"]["SMOKESCREEN_IMPACT"] = tag_to_palette["SMOKESCREEN_IMPACT"]
 PRIVATE_SYNTHETIC_TAGS = {"SMOKESCREEN_IMPACT"}
 
 # A few original sheets are produced by concatenating smaller PNG sources.
 # Parse the official make rules rather than guessing which numbered PNG is a
 # representative frame (the previous code picked e.g. ice_crystals_4).
 composite_sources: dict[str, list[str]] = {}
+composite_sources_by_source: dict[str, dict[str, list[str]]] = {
+    "firered": {}, "expansion": {},
+}
 for match in re.finditer(
         r"\$\(BTLANMSPRGFXDIR\)/([a-z0-9_]+)\.4bpp:\s*(.*?)\n\s*@cat\s+\$\^",
         GRAPHICS_RULES, re.S):
@@ -195,6 +510,15 @@ for match in re.finditer(
         r"\$\(BTLANMSPRGFXDIR\)/([a-z0-9_]+)\.4bpp", match.group(2))
     if components:
         composite_sources[match.group(1)] = components
+        composite_sources_by_source["firered"][match.group(1)] = components
+for match in re.finditer(
+        r"\$\(BTLANMSPRGFXDIR\)/([a-z0-9_]+)\.4bpp:\s*(.*?)\n\s*@cat\s+\$\^",
+        EXPANSION_GRAPHICS_RULES, re.S):
+    components = re.findall(
+        r"\$\(BTLANMSPRGFXDIR\)/([a-z0-9_]+)\.4bpp", match.group(2))
+    if components:
+        composite_sources_by_source["expansion"][match.group(1)] = components
+        composite_sources.setdefault(match.group(1), components)
 
 # SpriteTemplate is the authoritative size of one OAM cel. Multiple templates
 # can share a sheet; the largest cel is the safe canonical view because it
@@ -212,20 +536,39 @@ for source_path in (D / "src").glob("battle_anim*.c"):
         if tag and size:
             tag_oam_sizes.setdefault(tag.group(1), set()).add(
                 (int(size.group(1)), int(size.group(2))))
+for source_path in (EXPANSION / "src").glob("battle_anim*.c"):
+    source = source_path.read_text(encoding="utf-8", errors="ignore")
+    for body in template_pattern.findall(source):
+        tag = re.search(r"\.tileTag\s*=\s*ANIM_TAG_([A-Z0-9_]+)", body)
+        size = re.search(r"gOamData_[A-Za-z0-9_]+_(\d+)x(\d+)", body)
+        if tag and size:
+            tag_oam_sizes.setdefault(tag.group(1), set()).add(
+                (int(size.group(1)), int(size.group(2))))
 tag_oam_sizes["SMOKESCREEN_IMPACT"] = {(16, 16)}
 
 
-def visual_asset_spec(tag: str) -> dict[str, object]:
-    gfx = tag_to_gfx.get(tag)
-    palette = tag_to_palette.get(tag)
+def visual_asset_spec(tag: str, palette_tag: str | None = None,
+                      source_name: str | None = None,
+                      palette_source_name: str | None = None) -> dict[str, object]:
+    gfx_table = (tag_to_gfx_by_source.get(source_name, tag_to_gfx)
+                 if source_name else tag_to_gfx)
+    palette_table = (tag_to_palette_by_source.get(
+        palette_source_name or source_name, tag_to_palette)
+                     if palette_source_name or source_name else tag_to_palette)
+    gfx = gfx_table.get(tag)
+    palette = palette_table.get(palette_tag or tag)
     if not gfx or not palette:
-        raise RuntimeError(f"FireRed animation tag has no complete gfx/palette mapping: {tag}")
-    sources = composite_sources.get(gfx, [gfx])
+        raise RuntimeError(
+            f"Animation tag has no complete gfx/palette mapping: {tag} "
+            f"source={source_name or 'merged'} palette={palette_tag or tag}")
+    gfx_source, gfx_name = gfx
+    palette_source, palette_name = palette
+    sources = composite_sources.get(gfx_name, [gfx_name])
     images: list[tuple[str, int, int]] = []
     for source in sources:
-        path = SPRITES / f"{source}.png"
+        path = animation_source_dir(gfx_source) / f"{source}.png"
         if not path.exists():
-            raise RuntimeError(f"FireRed animation source is missing: {path}")
+            raise RuntimeError(f"Animation source is missing: {path}")
         with Image.open(path) as image:
             images.append((source, image.width, image.height))
 
@@ -244,7 +587,7 @@ def visual_asset_spec(tag: str) -> dict[str, object]:
 
     frame_boxes: list[dict[str, int | str]] = []
     for source, width, height in images:
-        with Image.open(SPRITES / f"{source}.png") as image:
+        with Image.open(animation_source_dir(gfx_source) / f"{source}.png") as image:
             columns = width // cell_width
             rows = height // cell_height
             if not columns or not rows:
@@ -257,7 +600,11 @@ def visual_asset_spec(tag: str) -> dict[str, object]:
             for left, top, right, bottom in boxes:
                 crop = image.crop((left, top, right, bottom))
                 if image.mode == "P":
-                    visible = any(value != 0 for value in crop.get_flattened_data())
+                    # Pillow 11 exposes the flattened pixels through
+                    # getdata(); the newer get_flattened_data() helper is
+                    # not present in the bundled development runtime used
+                    # to regenerate the catalog.
+                    visible = any(value != 0 for value in crop.getdata())
                 else:
                     visible = crop.convert("RGBA").getchannel("A").getbbox() is not None
                 if visible:
@@ -275,8 +622,10 @@ def visual_asset_spec(tag: str) -> dict[str, object]:
     return {
         "key": snake(tag),
         "tag": tag,
-        "gfx": gfx,
-        "palette": palette,
+        "gfx": gfx_name,
+        "palette": palette_name,
+        "source": gfx_source,
+        "paletteSource": palette_source,
         "sources": [source for source, _, _ in images],
         "cellWidth": cell_width,
         "cellHeight": cell_height,
@@ -355,8 +704,24 @@ MANUAL_TILE_PHASE_VARIANTS: dict[str, tuple[int, ...]] = {
     "AnimCurseNail": (0, 8, 16, 24),
 }
 
+# Some expansion templates intentionally reuse a callback's shared animation
+# table while loading a compact one-cel sheet. Keep only the sequence selected
+# by the authored script instead of exporting unrelated frames past that
+# template's source image.
+TEMPLATE_SEQUENCE_LIMITS: dict[str, int] = {
+    "gPalmSpriteTemplate": 1,
+    # Power Orbs reuses the two-frame spore table, but the expansion asset is
+    # one 16x16 cel and the authored scripts always select sequence 0.
+    "gPowerOrbs_Float": 1,
+    # Crush Grip reuses the six rock-size sequences but its purple-hand sheet
+    # contains only the default four-tile cel; AnimRockBlastRock never changes
+    # the sprite animation index.
+    "gCrushGripHandTemplate": 1,
+}
 
-def template_visual_asset_spec(template: str, tag: str) -> dict[str, object] | None:
+
+def template_visual_asset_spec(template: str, tag: str,
+                               source_name: str = "firered") -> dict[str, object] | None:
     override = ICE_TEMPLATE_CELS.get(template)
     if override is not None:
         key, source, x, y, width, height = override
@@ -390,21 +755,25 @@ def template_visual_asset_spec(template: str, tag: str) -> dict[str, object] | N
         }
 
     spec = template_specs.get(template)
-    gfx = tag_to_gfx.get(tag)
-    palette = tag_to_palette.get(tag)
+    gfx = tag_to_gfx_by_source.get(source_name, tag_to_gfx).get(tag)
+    palette_tag = str(spec.get("paletteTag", tag)) if spec else tag
+    palette = tag_to_palette_by_source.get(source_name, tag_to_palette).get(palette_tag)
     if not spec or not gfx or not palette:
         return None
+    gfx_source, gfx_name = gfx
+    palette_source, palette_name = palette
     width = int(spec.get("width", 0))
     height = int(spec.get("height", 0))
     if width <= 0 or height <= 0 or width % 8 or height % 8:
         raise RuntimeError(f"Invalid OAM dimensions for {template}: {width}x{height}")
 
-    sources = composite_sources.get(gfx, [gfx])
+    sources = composite_sources_by_source.get(source_name, {}).get(
+        gfx_name, composite_sources.get(gfx_name, [gfx_name]))
     tiles: list[dict[str, int | str]] = []
     for source in sources:
-        path = SPRITES / f"{source}.png"
+        path = animation_source_dir(gfx_source) / f"{source}.png"
         if not path.exists():
-            raise RuntimeError(f"Missing FireRed template sheet: {path}")
+            raise RuntimeError(f"Missing animation template sheet: {path}")
         with Image.open(path) as image:
             if image.width % 8 or image.height % 8:
                 raise RuntimeError(f"Non-tile animation source: {path} {image.size}")
@@ -460,6 +829,9 @@ def template_visual_asset_spec(template: str, tag: str) -> dict[str, object] | N
         else:
             command_sequences = [shifted_sequence(base_sequence, offset)
                                  for offset in phase_variants or (0,)]
+    sequence_limit = TEMPLATE_SEQUENCE_LIMITS.get(template)
+    if sequence_limit is not None:
+        command_sequences = command_sequences[:sequence_limit]
     frame_commands = [command for sequence in command_sequences
                       for command in sequence["steps"]]
 
@@ -528,8 +900,10 @@ def template_visual_asset_spec(template: str, tag: str) -> dict[str, object] | N
     return {
         "key": f"tpl_{hashlib.sha1(template.encode('ascii')).hexdigest()[:12]}",
         "tag": tag,
-        "gfx": gfx,
-        "palette": palette,
+        "gfx": gfx_name,
+        "palette": palette_name,
+        "source": gfx_source,
+        "paletteSource": palette_source,
         "sources": sources,
         "cellWidth": width,
         "cellHeight": height,
@@ -562,6 +936,16 @@ def split_operands(text: str) -> list[str]:
     return result
 
 
+def _gba_rgb(red: int, green: int, blue: int) -> int:
+    """Pack native five-bit GBA channels exactly like rgb.h's RGB macro."""
+    return red | (green << 5) | (blue << 10)
+
+
+def _gba_rgb2gba(red: int, green: int, blue: int) -> int:
+    """Quantize eight-bit channels exactly like rgb.h's RGB2GBA macro."""
+    return ((red >> 3) & 31) | (((green >> 3) & 31) << 5) | (((blue >> 3) & 31) << 10)
+
+
 EXPRESSION_CONSTANTS = {
     "FALSE": 0,
     "TRUE": 1,
@@ -573,8 +957,22 @@ EXPRESSION_CONSTANTS = {
     "SOUND_PAN_ATTACKER": -64,
     "SOUND_PAN_TARGET": 63,
     "SOUND_PAN_CENTER": 0,
-    "RGB_BLACK": 0,
-    "RGB_WHITE": 0x7FFF,
+    # Keep the source rgb.h constants verbatim.  Palette tasks distinguish
+    # these values; silently resolving an expansion-only name to zero turns a
+    # white flash (notably Roar of Time) into a second black fade.
+    "RGB_ALPHA": 1 << 15,
+    "RGB_BLACK": _gba_rgb(0, 0, 0),
+    "RGB_WHITE": _gba_rgb(31, 31, 31),
+    "RGB_GRAY": _gba_rgb(15, 15, 15),
+    "RGB_RED": _gba_rgb(31, 0, 0),
+    "RGB_GREEN": _gba_rgb(0, 31, 0),
+    "RGB_BLUE": _gba_rgb(0, 0, 31),
+    "RGB_PURPLE": _gba_rgb(24, 0, 24),
+    "RGB_YELLOW": _gba_rgb(31, 31, 0),
+    "RGB_MAGENTA": _gba_rgb(31, 0, 31),
+    "RGB_CYAN": _gba_rgb(0, 31, 31),
+    "RGB_WHITEALPHA": _gba_rgb(31, 31, 31) | (1 << 15),
+    "RGB_LIME_GREEN": _gba_rgb2gba(222, 230, 49),
     "F_PAL_BG": 1,
     "F_PAL_ATTACKER": 2,
     "F_PAL_TARGET": 4,
@@ -601,6 +999,16 @@ EXPRESSION_CONSTANTS = {
     "ANIM_WEATHER_SANDSTORM": 3,
     "ANIM_WEATHER_HAIL": 4,
 }
+
+# Every named source color must be explicit above.  Other script operands have
+# historical zero-default behavior, but a missing RGB symbol is never a valid
+# approximation: it changes the authored palette animation into black.
+_used_rgb_constants = set(re.findall(r"\bRGB_[A-Z0-9_]+\b", SCRIPT))
+_missing_rgb_constants = sorted(_used_rgb_constants - EXPRESSION_CONSTANTS.keys())
+if _missing_rgb_constants:
+    raise RuntimeError(
+        "Battle animation source uses unresolved RGB constants: " +
+        ", ".join(_missing_rgb_constants))
 # Task arguments use the public ANIM_TAG_* constants, while SpriteTemplates
 # retain the symbolic tag.  Previously expression_value() silently converted
 # every unknown identifier to zero, so all tag-addressed palette tasks acted
@@ -612,6 +1020,16 @@ for _tag_name, _tag_offset in re.findall(
         r"\(ANIM_SPRITES_START\s*\+\s*(\d+)\)",
         BATTLE_ANIM_CONSTANTS):
     EXPRESSION_CONSTANTS[_tag_name] = 10000 + int(_tag_offset)
+# Gen-IV scripts use expansion-only tags (for example the horseshoe fist and
+# hammer graphics). Their numeric tag ids are still needed by palette tasks;
+# import them without replacing any FireRed value with a different source
+# table entry.
+for _tag_name, _tag_offset in re.findall(
+        r"#define\s+(ANIM_TAG_[A-Z0-9_]+)\s+"
+        r"\(ANIM_SPRITES_START\s*\+\s*(\d+)\)",
+        (EXPANSION / "include/constants/battle_anim.h").read_text(
+            encoding="utf-8")):
+    EXPRESSION_CONSTANTS.setdefault(_tag_name, 10000 + int(_tag_offset))
 for _background_id, _background_name in enumerate((
         "BG_NONE", "BG_DARK", "BG_GHOST", "BG_PSYCHIC", "BG_IMPACT_OPPONENT",
         "BG_IMPACT_PLAYER", "BG_IMPACT_CONTESTS", "BG_DRILL", "BG_DRILL_CONTESTS",
@@ -621,12 +1039,18 @@ for _background_id, _background_name in enumerate((
         "BG_AURORA", "BG_FISSURE", "BG_BUG_OPPONENT", "BG_BUG_PLAYER",
         "BG_SOLAR_BEAM_OPPONENT", "BG_SOLAR_BEAM_PLAYER", "BG_SOLAR_BEAM_CONTESTS")):
     EXPRESSION_CONSTANTS[_background_name] = _background_id
+# The expansion's BG table continues far beyond FireRed.  The Pokegochi
+# archive gives Aura Sphere one explicit local slot, backed by the expansion's
+# own Focus Blast tilemap and Aura Sphere palette.
+EXPRESSION_CONSTANTS["BG_AURA_SPHERE"] = 27
 
 
 def _eval_expression_node(node: ast.AST) -> int:
     if isinstance(node, ast.Constant) and isinstance(node.value, int):
         return int(node.value)
     if isinstance(node, ast.Name):
+        if node.id.startswith("RGB_") and node.id not in EXPRESSION_CONSTANTS:
+            raise RuntimeError(f"Unresolved battle animation color: {node.id}")
         return EXPRESSION_CONSTANTS.get(node.id, 0)
     if isinstance(node, ast.UnaryOp):
         value = _eval_expression_node(node.operand)
@@ -653,10 +1077,13 @@ def _eval_expression_node(node: ast.AST) -> int:
             return left - right
         if isinstance(node.op, ast.Mult):
             return left * right
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "RGB":
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and
+            node.func.id in {"RGB", "RGB2", "_RGB", "RGB2GBA"}):
         values = [_eval_expression_node(argument) for argument in node.args]
         if len(values) == 3:
-            return values[0] | (values[1] << 5) | (values[2] << 10)
+            if node.func.id == "RGB2GBA":
+                return _gba_rgb2gba(values[0], values[1], values[2])
+            return _gba_rgb(values[0], values[1], values[2])
     return 0
 
 
@@ -699,7 +1126,14 @@ def animation_source_lines(label: str, stack: tuple[str, ...] = ()) -> list[str]
             terminated = True
             break
         if command == "choosetwoturnanim" and operands:
-            output.extend(animation_source_lines(operands[-1], next_stack))
+            # Expansion accepts the two labels separated by whitespace while
+            # FireRed commonly emits commas. Normalize both spellings before
+            # choosing the attack path for the hardware battle journal.
+            choices = [token for token in re.findall(
+                r"[A-Za-z_][A-Za-z0-9_]*", parts[1] if len(parts) > 1 else "")
+                if token in LABEL_BODIES]
+            if choices:
+                output.extend(animation_source_lines(choices[-1], next_stack))
             terminated = True
             break
         if command in {"jumpifcontest", "jumpargeq", "jumpifmoveturn",
@@ -718,9 +1152,26 @@ def animation_source_lines(label: str, stack: tuple[str, ...] = ()) -> list[str]
 
 
 animation_sources = [
-    source_path.read_text(encoding="utf-8", errors="ignore")
+    (source_path.read_text(encoding="utf-8", errors="ignore"), "firered")
     for source_path in (D / "src").glob("battle_anim*.c")
+] + [
+    (source_path.read_text(encoding="utf-8", errors="ignore"), "expansion")
+    for source_path in (EXPANSION / "src").glob("battle_anim*.c")
 ]
+
+# Modern expansion callbacks keep affine constants next to their source
+# tables. Resolve those exact constants before decoding ANIMCMD/AFFINEANIMCMD;
+# a missing symbolic value is an audit error when its template is actually
+# referenced, never a reason to invent a transform.
+for _ in range(8):
+    for _source, _ in animation_sources:
+        for _name, _value in re.findall(
+                r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+([^/\r\n]+)",
+                _source, re.M):
+            try:
+                SOURCE_NUMERIC_CONSTANTS[_name] = _parse_source_int(_value)
+            except (SyntaxError, ValueError, ZeroDivisionError):
+                pass
 
 
 def c_function_bodies(source: str) -> dict[str, str]:
@@ -743,8 +1194,13 @@ def c_function_bodies(source: str) -> dict[str, str]:
 
 
 animation_function_bodies: dict[str, str] = {}
-for source in animation_sources:
-    animation_function_bodies.update(c_function_bodies(source))
+for source, source_name in animation_sources:
+    functions = c_function_bodies(source)
+    if source_name == "firered":
+        animation_function_bodies.update(functions)
+    else:
+        for name, body in functions.items():
+            animation_function_bodies.setdefault(name, body)
 
 
 def expanded_callback_body(callback: str, stack: tuple[str, ...] = ()) -> str:
@@ -897,28 +1353,31 @@ def expanded_task_callback_body(callback: str,
 # unrelated effects are incorrectly cycled as frames.
 anim_command_arrays: dict[str, dict[str, object]] = {}
 anim_pointer_tables: dict[str, list[str]] = {}
-for source in animation_sources:
+for source, _source_name in animation_sources:
     for match in re.finditer(
             r"(?:static\s+)?const\s+union\s+AnimCmd\s+(\w+)\[\]\s*=\s*"
             r"\{(.*?)\};", source, re.S):
         raw_commands: list[dict[str, object]] = []
         for command_match in re.finditer(
-                r"ANIMCMD_(FRAME|LOOP|JUMP|END)\s*(?:\((.*?)\))?",
+                r"ANIMCMD_(FRAME|LOOP|JUMP|END)\s*"
+                r"(?:\(((?:[^()]|\([^()]*\))*)\))?",
                 match.group(2), re.S):
             kind = command_match.group(1)
             operands = split_operands(command_match.group(2) or "")
             if kind == "FRAME" and operands:
                 raw_commands.append({
                     "kind": kind,
-                    "tile": int(operands[0], 0),
-                    "duration": int(operands[1], 0) if len(operands) > 1 else 1,
+                    "tile": _parse_source_int(operands[0]),
+                    "duration": _parse_source_int(operands[1])
+                    if len(operands) > 1 else 1,
                     "hFlip": any("hFlip" in operand and "TRUE" in operand
                                  for operand in operands[2:]),
                     "vFlip": any("vFlip" in operand and "TRUE" in operand
                                  for operand in operands[2:]),
                 })
             elif kind in {"LOOP", "JUMP"} and operands:
-                raw_commands.append({"kind": kind, "value": int(operands[0], 0)})
+                raw_commands.append({"kind": kind,
+                                     "value": _parse_source_int(operands[0])})
             elif kind == "END":
                 raw_commands.append({"kind": kind})
 
@@ -952,6 +1411,8 @@ for source in animation_sources:
         if len(steps) > 255:
             raise RuntimeError(
                 f"Expanded animation sequence is too long: {match.group(1)} ({len(steps)})")
+        if _source_name == "expansion" and match.group(1) in anim_command_arrays:
+            continue
         anim_command_arrays[match.group(1)] = {
             "steps": steps,
             "loopStep": infinite_loop_step,
@@ -959,6 +1420,8 @@ for source in animation_sources:
     for match in re.finditer(
             r"(?:static\s+)?const\s+union\s+AnimCmd\s*\*\s*const\s+"
             r"(\w+)\[\]\s*=\s*\{(.*?)\};", source, re.S):
+        if _source_name == "expansion" and match.group(1) in anim_pointer_tables:
+            continue
         anim_pointer_tables[match.group(1)] = re.findall(
             r"^\s*(\w+)\s*,?\s*$", match.group(2), re.M)
 
@@ -969,27 +1432,27 @@ for source in animation_sources:
 # transform at its sampled GBA age.
 affine_command_arrays: dict[str, dict[str, object]] = {}
 affine_pointer_tables: dict[str, list[str]] = {}
-for source in animation_sources:
+for source, _source_name in animation_sources:
     for match in re.finditer(
             r"(?:static\s+)?const\s+union\s+AffineAnimCmd\s+(\w+)\[\]\s*=\s*"
             r"\{(.*?)\};", source, re.S):
         raw_commands: list[dict[str, int | str]] = []
         for command_match in re.finditer(
                 r"AFFINEANIMCMD_(FRAME|LOOP|JUMP|END(?:_ALT)?)\s*"
-                r"(?:\((.*?)\))?", match.group(2), re.S):
+                r"(?:\(((?:[^()]|\([^()]*\))*)\))?", match.group(2), re.S):
             kind = command_match.group(1)
             operands = split_operands(command_match.group(2) or "")
             if kind == "FRAME" and len(operands) >= 4:
                 raw_commands.append({
                     "kind": kind,
-                    "x": int(operands[0], 0),
-                    "y": int(operands[1], 0),
-                    "rotation": int(operands[2], 0),
-                    "duration": int(operands[3], 0),
+                    "x": _parse_source_int(operands[0]),
+                    "y": _parse_source_int(operands[1]),
+                    "rotation": _parse_source_int(operands[2]),
+                    "duration": _parse_source_int(operands[3]),
                 })
             elif kind in {"LOOP", "JUMP"} and operands:
                 raw_commands.append({"kind": kind,
-                                     "value": int(operands[0], 0)})
+                                     "value": _parse_source_int(operands[0])})
             elif kind.startswith("END"):
                 raw_commands.append({"kind": "END"})
         commands: list[dict[str, int]] = []
@@ -1019,6 +1482,8 @@ for source in animation_sources:
         if len(commands) > 255:
             raise RuntimeError(
                 f"Expanded affine sequence is too long: {match.group(1)} ({len(commands)})")
+        if _source_name == "expansion" and match.group(1) in affine_command_arrays:
+            continue
         affine_command_arrays[match.group(1)] = {
             "commands": commands,
             "loopCommand": infinite_loop_command,
@@ -1026,17 +1491,26 @@ for source in animation_sources:
     for match in re.finditer(
             r"(?:static\s+)?const\s+union\s+AffineAnimCmd\s*\*\s*const\s+"
             r"(\w+)\[\]\s*=\s*\{(.*?)\};", source, re.S):
+        if _source_name == "expansion" and match.group(1) in affine_pointer_tables:
+            continue
         affine_pointer_tables[match.group(1)] = re.findall(
             r"^\s*(\w+)\s*,?\s*$", match.group(2), re.M)
 
 template_specs: dict[str, dict[str, object]] = {}
-for source in animation_sources:
+for source, source_name in animation_sources:
     for match in re.finditer(
             r"(?:const|static const)\s+struct\s+SpriteTemplate\s+(\w+)\s*=\s*\{(.*?)\};",
             source, re.S):
+        if source_name == "expansion" and match.group(1) in template_specs:
+            # The expansion intentionally carries the same GBA templates for
+            # legacy moves. Keep FireRed's already audited definition for a
+            # shared symbol; only genuinely new Gen-IV templates are added.
+            continue
         body = match.group(2)
         tag = re.search(r"\.tileTag\s*=\s*ANIM_TAG_([A-Z0-9_]+)", body)
         callback = re.search(r"\.callback\s*=\s*(\w+)", body)
+        palette_tag = re.search(
+            r"\.paletteTag\s*=\s*ANIM_TAG_([A-Z0-9_]+)", body)
         animations = re.search(r"\.anims\s*=\s*(\w+)", body)
         affine_animations = re.search(r"\.affineAnims\s*=\s*(\w+)", body)
         oam_size = re.search(r"gOamData_[A-Za-z0-9_]+_(\d+)x(\d+)", body)
@@ -1044,6 +1518,9 @@ for source in animation_sources:
             "tag": (tag.group(1) if tag else
                     "SMOKESCREEN_IMPACT" if match.group(1) ==
                     "sSmokescreenImpactSpriteTemplate" else ""),
+            "paletteTag": palette_tag.group(1) if palette_tag else
+                          (tag.group(1) if tag else ""),
+            "source": source_name,
             "callback": callback.group(1) if callback else "",
             "animations": animations.group(1) if animations else "",
             "affineAnimations": (affine_animations.group(1)
@@ -1095,6 +1572,12 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     "AnimVoltTackleOrbSlide": ("BattleAnimationMotion::VoltTackleSlide", 66),
     "AnimVoltTackleBolt": ("BattleAnimationMotion::Static", 16),
     "AnimRockBlastRock": ("BattleAnimationMotion::TargetLocationProjectile", 26),
+    # These expansion callbacks are position/affine state machines, not
+    # generic projectiles. Their exact source coordinates are retained by the
+    # generated origin and affine streams below.
+    "AnimAquaTail": ("BattleAnimationMotion::Static", 32),
+    "AnimateZenHeadbutt": ("BattleAnimationMotion::ZenHeadbuttExact", 64),
+    "AnimShakeMonOrBattlePlatforms": ("BattleAnimationMotion::BattlerShake", 24),
     "AnimGrowingShockWaveOrb": ("BattleAnimationMotion::Static", 172),
     "AnimShockWaveProgressingBolt": ("BattleAnimationMotion::Static", 16),
     "AnimPsychoBoost": ("BattleAnimationMotion::Rising", 30),
@@ -1103,6 +1586,32 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     "AnimRainDrop": ("BattleAnimationMotion::Falling", 18),
     "AnimSuperpowerOrb": ("BattleAnimationMotion::Projectile", 20),
     "AnimWavyMusicNotes": ("BattleAnimationMotion::Wave", 36),
+    # Expansion-only Gen-IV callbacks. Their source state machines are
+    # translated to explicit retained motions with the same travel direction;
+    # they never fall through to a name-based placeholder.
+    "AnimMoveAccupressure": ("BattleAnimationMotion::StandardLinearProjectile", 31),
+    "AnimMoveFeintSwipe": ("BattleAnimationMotion::SliceArc", 31),
+    # Trump Card initializes at the target and then runs its own 80px
+    # horizontal arc; its arguments are not the public projectile ABI.
+    "AnimMoveTrumpCard": ("BattleAnimationMotion::TrumpCardArc", 31),
+    # Poison Jab starts from an explicit offset around the target and uses
+    # arg2 as its travel duration, not the standard five-argument layout.
+    "AnimPoisonJabProjectile": ("BattleAnimationMotion::PoisonJabProjectile", 31),
+    "AnimWoodHammerSmall": ("BattleAnimationMotion::TargetLocalLinear", 31),
+    "AvalancheAnim_Step": ("BattleAnimationMotion::FallingRockEllipse", 64),
+    "AnimKnockOffAquaTail": ("BattleAnimationMotion::AquaTailSweep", 32),
+    "AnimDracoMeteorRock": ("BattleAnimationMotion::DracoMeteorRock", 64),
+    "AnimDragonRush": ("BattleAnimationMotion::DragonRushStrike", 8),
+    "AnimMoveSmallCloud": ("BattleAnimationMotion::SmallCloudDrift", 64),
+    "SpriteCB_SpriteOnMonForDuration": ("BattleAnimationMotion::SpriteOnMonDuration", 64),
+    # These callbacks only place a source-authored affine/cel sequence. The
+    # motion is static, but the callback still owns battler selection and the
+    # generated affine stream must remain intact.
+    "AnimMoveFeintZoom": ("BattleAnimationMotion::Static", 64),
+    "AnimForcePalm": ("BattleAnimationMotion::Static", 64),
+    "AnimGunkShotImpact": ("BattleAnimationMotion::Static", 64),
+    "AnimPunishment": ("BattleAnimationMotion::Static", 64),
+    "AnimRockPolishSparkle": ("BattleAnimationMotion::Static", 32),
 }
 
 # Stationary is a valid FireRed contract only for callbacks reviewed here.
@@ -1134,6 +1643,18 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
     # translation for the primary motion (Swords Dance is a classic example).
     body = expanded_callback_body(callback).lower()
     key = f"{template} {callback} {body}".lower()
+    # These dummy sprites do not draw an OBJ of their own.  Their callbacks
+    # translate the selected battler through x2/y2 using a distinct ABI.  The
+    # retained renderer must keep the three profiles separate so a duration
+    # or mirror flag is never mistaken for a screen offset.
+    if template in {"gSlideMonToOffsetSpriteTemplate",
+                    "gSlideMonToOffsetPartnerSpriteTemplate"}:
+        return "BattleAnimationMotion::BattlerSlideToOffset", 16
+    if template in {"gSlideMonToOriginalPosSpriteTemplate",
+                    "gSlideMonToOriginalPosPartnerSpriteTemplate"}:
+        return "BattleAnimationMotion::BattlerRestorePosition", 16
+    if template == "gSlideMonToOffsetAndBackSpriteTemplate":
+        return "BattleAnimationMotion::BattlerSlideToOffsetAndBack", 16
     # This public FireRed helper has a six-argument ABI that the broad
     # Projectile renderer cannot safely approximate.  In particular arg 4 is
     # the travel duration and args 2/3 are destination offsets.
@@ -1353,6 +1874,7 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimSparkElectricity": ("BattleAnimationMotion::StaticElectricity", 64),
         "InitIceBallParticle": ("BattleAnimationMotion::IceBallImpactShard", 21),
         "AnimSlashSlice": ("BattleAnimationMotion::SlashFlicker", 34),
+        "AnimNightSlash": ("BattleAnimationMotion::SlashFlicker", 34),
         "AnimConversion": ("BattleAnimationMotion::ConversionHold", 255),
         "AnimMoon": ("BattleAnimationMotion::MoonAbsolute", 255),
         "AnimMoonlightSparkle": ("BattleAnimationMotion::MoonlightSparkleFall", 255),
@@ -1419,6 +1941,20 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimBlockX": ("BattleAnimationMotion::BlockBounce", 74),
         "AnimWaterPulseBubble": ("BattleAnimationMotion::WaterPulseBubble", 38),
         "AnimWaterPulseRing": ("BattleAnimationMotion::WaterPulseRing", 34),
+        "SpriteCB_MaxFlutterby": ("BattleAnimationMotion::MaxFlutterbyArc", 16),
+        "AnimMoveWringOut": ("BattleAnimationMotion::WringOutCircle", 80),
+        "AnimWoodHammerHammer": ("BattleAnimationMotion::WoodHammerHammer", 84),
+        "AnimMovePowerSwapGuardSwap": ("BattleAnimationMotion::PowerSwapGuardSwapArc", 31),
+        "AnimGrassKnot": ("BattleAnimationMotion::TargetSinWave", 31),
+        "AnimGunkShotParticles": ("BattleAnimationMotion::GunkShotParticleWave", 31),
+        "AnimPsychoCut": ("BattleAnimationMotion::PsychoCutStrike", 31),
+        "AnimStealthRock": ("BattleAnimationMotion::StealthRockArc", 64),
+        "AnimSuckerPunch": ("BattleAnimationMotion::TargetSinWave", 31),
+        "AnimMoveWorrySeed": ("BattleAnimationMotion::WorrySeedArc", 31),
+        "AnimLavaPlumeOrbitScatter": ("BattleAnimationMotion::LavaPlumeDrift", 20),
+        "AnimPluck": ("BattleAnimationMotion::PluckParticleJump", 32),
+        "AnimMoveTrumpCardParticle": ("BattleAnimationMotion::TrumpCardParticleScatter", 32),
+        "AnimRockPolishStreak": ("BattleAnimationMotion::RockPolishStreak", 27),
     }
     explicit_state_machine = state_machine_callbacks.get(callback)
     if explicit_state_machine is not None:
@@ -1462,6 +1998,7 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimEruptionLaunchRock": ("BattleAnimationMotion::Static", 112),
         "AnimVoltTackleBolt": ("BattleAnimationMotion::Static", 13),
         "AnimShockWaveProgressingBolt": ("BattleAnimationMotion::Static", 13),
+        "AnimMoveFeintSwipe": ("BattleAnimationMotion::SliceArc", 31),
     }
     reviewed_stationary = reviewed_stationary_callbacks.get(callback)
     if reviewed_stationary is not None:
@@ -1483,7 +2020,7 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         return "BattleAnimationMotion::IceImpact", 20
     if callback == "AnimBowMon":
         return "BattleAnimationMotion::BattlerBow", 20
-    if callback == "AnimShakeMonOrBattleTerrain":
+    if callback in {"AnimShakeMonOrBattleTerrain", "AnimShakeMonOrBattlePlatforms"}:
         return "BattleAnimationMotion::BattlerShake", 24
     if callback in {"AnimSimplePaletteBlend", "AnimComplexPaletteBlend"}:
         return "BattleAnimationMotion::PalettePulse", 24
@@ -1947,7 +2484,7 @@ def task_kind(name: str) -> str:
             lowered.startswith("getis") or
             any(word in lowered for word in (
                 "allocbackuppal", "freebackuppal", "loadmusicnotespals",
-                "freemusicnotespals", "startsinanimtimer"))):
+                "freemusicnotespals", "startsinanimtimer", "setanimtarget"))):
         return "BattleAnimationTaskKind::Control"
     # Singles renderer: this task only adjusts BG priority in a double battle.
     if "sporedoublebattle" in lowered:
@@ -2040,6 +2577,8 @@ TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_AttackerStretchAndDisappear": ("AttackerStretchAndDisappear", "Attacker"),
     "AnimTask_CurseStretchingBlackBg": ("CurseStretchingBlackBg", "Screen"),
     "AnimTask_DeepInhale": ("DeepInhale", "Attacker"),
+    "AnimTask_CompressTargetHorizontally": ("CompressTargetHorizontally", "Target"),
+    "AnimTask_CompressTargetHorizontallyFast": ("CompressTargetHorizontallyFast", "Target"),
     "AnimTask_DefenseCurlDeformMon": ("DefenseCurlDeformMon", "Attacker"),
     "AnimTask_DigDownMovement": ("DigDownMovement", "Attacker"),
     "AnimTask_DigUpMovement": ("DigUpMovement", "Attacker"),
@@ -2076,6 +2615,10 @@ TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_SlackOffSquish": ("SlackOffSquish", "Attacker"),
     "AnimTask_SlideOffScreen": ("SlideOffScreenExact", "ScriptAnchor"),
     "AnimTask_SmellingSaltsSquish": ("SmellingSaltsSquish", "Target"),
+    # The expansion names the same target deformation directly for Gen-IV
+    # moves; the retained renderer already has the source-compatible squish
+    # profile used by Smelling Salts.
+    "AnimTask_SquishTarget": ("SmellingSaltsSquish", "Target"),
     "AnimTask_SpitUpDeformMon": ("SpitUpDeformMon", "Attacker"),
     "AnimTask_Splash": ("Splash", "ScriptAnchor"),
     "AnimTask_SquishAndSweatDroplets": ("SquishAndSweatDroplets", "Attacker"),
@@ -2135,6 +2678,10 @@ TASK_PALETTE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_MoonlightEndFade": ("MoonlightEndFadeExact", "Screen"),
     "AnimTask_MusicNotesClearRainbowBlend": ("MusicNotePaletteClear", "None"),
     "AnimTask_MusicNotesRainbowBlend": ("MusicNotePaletteSetup", "None"),
+    # The source task blends the loaded ANIM_TAG_SLASH palette directly; it
+    # does not receive a palette tag in gBattleAnimArgs like the generic tag
+    # helpers do.
+    "AnimTask_BlendNightSlash": ("NightSlashPalette", "None"),
     "AnimTask_ScaryFace": ("ScaryFaceExact", "Target"),
     "AnimTask_SetCamouflageBlend": ("SetCamouflageBlendExact", "Attacker"),
     "AnimTask_SpiteTargetShadow": ("SpiteTargetShadowExact", "Target"),
@@ -2149,6 +2696,8 @@ TASK_SHAKE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_HorizontalShake": ("HorizontalShakeExact", "ScriptAnchor"),
     "AnimTask_ShakeAndSinkMon": ("ShakeAndSinkMonExact", "ScriptAnchor"),
     "AnimTask_ShakeBattleTerrain": ("ShakeBattleTerrainExact", "Screen"),
+    # Expansion's macro spelling for the same authored platform callback.
+    "AnimTask_ShakeBattlePlatforms": ("ShakeBattleTerrainExact", "Screen"),
     "AnimTask_ShakeMon": ("ShakeMonExact", "ScriptAnchor"),
     "AnimTask_ShakeMon2": ("ShakeMon2Exact", "ScriptAnchor"),
     "AnimTask_ShakeMonInPlace": ("ShakeMonInPlaceExact", "ScriptAnchor"),
@@ -2159,6 +2708,7 @@ TASK_SHAKE_RESOURCES: dict[str, tuple[str, str]] = {
 TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_AirCutterProjectile": ("AirCutterProjectiles", "Target"),
     "AnimTask_BarrageBall": ("BarrageBall", "Target"),
+    "AnimTask_BrineRain": ("Raindrops", "Screen"),
     "AnimTask_CreateRaindrops": ("Raindrops", "Screen"),
     "AnimTask_CreateSmallSolarBeamOrbs": ("SolarBeamOrbs", "Attacker"),
     "AnimTask_DestinyBondWhiteShadow": ("DestinyBondShadow", "Attacker"),
@@ -2175,6 +2725,10 @@ TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_Rollout": ("RolloutDebris", "Attacker"),
     "AnimTask_ShockWaveLightning": ("ShockWaveLightning", "Target"),
     "AnimTask_ShockWaveProgressingBolt": ("ShockWaveProgressingBolt", "Target"),
+    # Heart Swap is explicitly copied from Skill Swap in the expansion; it
+    # only swaps the orb palette, so the retained orb-vault renderer is the
+    # source-faithful implementation for both.
+    "AnimTask_HeartSwap": ("SkillSwapOrbs", "Target"),
     "AnimTask_SkillSwap": ("SkillSwapOrbs", "Target"),
     "AnimTask_SmokescreenImpact": ("SmokescreenImpact", "Target"),
     "AnimTask_SpeedDust": ("SpeedDust", "Attacker"),
@@ -2251,7 +2805,8 @@ TASK_MOTION_LIFETIMES = {
     "PaletteCycle": 24, "PaletteTint": 20,
     "TagPaletteRotate": 96, "TagBlendCycle": 192,
     "TagBlendInOut": 192, "TagBlendToColor": 96,
-    "TagFlash": 192, "MagicalLeafPaletteCycle": 0xFFFF,
+    "TagFlash": 192, "NightSlashPalette": 1,
+    "MagicalLeafPaletteCycle": 0xFFFF,
     "MusicNotePaletteSetup": 1, "MusicNotePaletteClear": 1,
     "PaletteBackupSave": 1, "PaletteBackupRestore": 1,
     "PaletteBackupCommit": 1, "CurseWhiteLines": 64,
@@ -2277,6 +2832,7 @@ TASK_MOTION_LIFETIMES = {
 # instead of silently inheriting an unrelated generic animation.
 TASK_MOTION_LIFETIMES.update({
     "AcidArmor": 112, "AttackerStretchAndDisappear": 24,
+    "CompressTargetHorizontally": 96, "CompressTargetHorizontallyFast": 64,
     "CurseStretchingBlackBg": 32, "DeepInhale": 32,
     "DefenseCurlDeformMon": 32, "DigDownMovement": 64,
     "DigUpMovement": 16, "DoubleTeam": 96,
@@ -2335,7 +2891,11 @@ def task_motion_resource(name: str, kind: str,
     if background is not None:
         return background
     mapping = TASK_EXACT_SPRITE_RESOURCES.get(name)
-    if mapping is None and kind_name == "BattlerMotion":
+    if mapping is None and kind_name in {"BattlerMotion", "Effect"}:
+        # A few expansion scripts classify a source affine deformation as an
+        # Effect even though the retained renderer owns it as a battler
+        # motion (UproarDistortion is the first example).  Only an explicit
+        # audited table entry may cross this boundary.
         mapping = TASK_MOTION_RESOURCES.get(name)
     elif mapping is None and kind_name == "Palette":
         mapping = TASK_PALETTE_RESOURCES.get(name)
@@ -2386,6 +2946,20 @@ visual_assets: dict[str, dict[str, object]] = audit["visualAssets"]  # type: ign
 unsupported_commands: dict[str, int] = audit["unsupportedCommands"]  # type: ignore[assignment]
 task_handler_audit: dict[str, dict[str, object]] = audit["taskHandlers"]  # type: ignore[assignment]
 sprite_handler_audit: dict[str, dict[str, object]] = audit["spriteHandlers"]  # type: ignore[assignment]
+
+
+def move_script_label(symbol: str, number: int) -> str:
+    if number < 355:
+        return f"Move_{symbol}"
+    normalized = re.sub(r"[^a-z0-9]", "", symbol.lower())
+    candidates = [label for label in LABEL_BODIES
+                  if label.startswith("gBattleAnimMove_") and
+                  re.sub(r"[^a-z0-9]", "", label[len("gBattleAnimMove_"):].lower())
+                  == normalized]
+    if len(candidates) != 1:
+        raise RuntimeError(
+            f"Expansion move {symbol} ({number}) does not resolve to one source label: {candidates}")
+    return candidates[0]
 
 
 def sprite_animation_selector(callback: str,
@@ -2565,6 +3139,7 @@ def sprite_resource_id(template: str) -> int:
     if spec is None:
         raise RuntimeError(f"Animation template is not defined in FireRed sources: {template}")
     tag = spec["tag"]
+    template_source = str(spec.get("source", "firered"))
     palette_tag = 0
     if tag:
         tag_constant = f"ANIM_TAG_{tag}"
@@ -2579,7 +3154,18 @@ def sprite_resource_id(template: str) -> int:
         palette_tag = EXPRESSION_CONSTANTS.get(tag_constant, 0)
     callback = spec["callback"]
     if tag:
-        asset = template_visual_asset_spec(template, tag) or visual_asset_spec(tag)
+        asset = template_visual_asset_spec(template, tag, template_source)
+        if asset is None and tag == "SMOKESCREEN_IMPACT":
+            # Smokescreen's private TAG_* sheet has no normal SpriteTemplate
+            # ANIM_TAG entry. Its source and 16x16 OAM contract are explicit
+            # above, so reuse that exact private asset rather than dropping it
+            # into the generic HIT family.
+            asset = visual_asset_spec(tag, source_name=template_source,
+                                      palette_source_name=template_source)
+            asset["template"] = template
+        if asset is None:
+            asset = visual_asset_spec(tag, source_name=template_source,
+                                      palette_source_name=template_source)
         if asset.get("template") != template:
             raise RuntimeError(
                 f"Tagged SpriteTemplate lacks an exact cel export: {template} / {tag}")
@@ -2667,6 +3253,7 @@ def sprite_resource_id(template: str) -> int:
         "AnimAngerMark": (1, 2),
         "AnimHitSplatOnMonEdge": (1, 2),
         "AnimSlashSlice": (1, 2),
+        "SpriteCB_SpriteOnMonForDuration": (1, 2),
         "AnimElectricPuff": (1, 2),
         "AnimFrenzyPlantRoot": (1, 2),
         "AnimAssistPawprint": (-1, -1),
@@ -2687,6 +3274,7 @@ def sprite_resource_id(template: str) -> int:
         "AnimDiveWaterSplash": (-1, -1),
         "AnimBellyDrumHand": (-1, -1),
         "AnimQuestionMark": (-1, -1),
+        "AnimateZenHeadbutt": (-1, -1),
     }
     x_offset_argument, y_offset_argument = offset_argument_overrides.get(
         callback, (0, 1))
@@ -2727,13 +3315,21 @@ def sprite_resource_id(template: str) -> int:
         "lifetimeProof": lifetime_proof,
     }
     identifier = len(sprite_resource_rows)
+    # AnimFistOrFootRandomPos creates gBasicHitSplatSpriteTemplate directly
+    # from the primary sprite.  The GBA therefore displays both cels at the
+    # same sampled impact position; dropping the child is what made
+    # Close Combat look like a bare placeholder on the retained renderer.
+    child_resource_id = 0xFFFF
+    if template == "gFistFootRandomPosSpriteTemplate":
+        child_resource_id = sprite_resource_id("gBasicHitSplatSpriteTemplate")
     sprite_resource_ids[template] = identifier
     sprite_resource_rows.append(
         f'  {{"{asset_key}", {palette_tag}, {frames}, {sequence_offset}, {len(sequences)}, '
         f'{selector_argument}, {selector_constant}, {motion}, {travel}, {origin}, '
         f'{x_offset_argument}, {y_offset_argument}, {lifetime}, '
         f'{affine_sequence_offset}, {affine_sequence_count}, '
-        f'{affine_selector_argument}, {affine_selector_constant}, {affine_start_age}}}, '
+        f'{affine_selector_argument}, {affine_selector_constant}, {affine_start_age}, '
+        f'{child_resource_id}}}, '
         f'// {template} / {callback}')
     sprite_asset_catalog_rows.append(
         f'  {{"{asset_key}", {frames}, {motion}, {lifetime}}}, // {template} / {callback}')
@@ -2793,12 +3389,30 @@ def append_program_command(opcode: str, resource: str = "0", anchor: int = 0,
         f"  {{{resource}, {offset}, static_cast<uint8_t>(BattleAnimationOpcode::{opcode}), "
         f"{anchor & 0xFF}, {priority & 0xFF}, {len(values)}}},")
 
-for symbol, number_text in re.findall(r"#define MOVE_([A-Z0-9_]+)\s+(\d+)", MOVES):
-    number = int(number_text)
-    if not 1 <= number <= 354:
-        continue
-    body, source_found = expanded_script(f"Move_{symbol}")
-    ordered_source = animation_source_lines(f"Move_{symbol}")
+move_definitions: list[tuple[str, int]] = [
+    (symbol, int(number_text))
+    for symbol, number_text in re.findall(
+        r"#define MOVE_([A-Z0-9_]+)\s+(\d+)", MOVES)
+    if 1 <= int(number_text) <= 354
+]
+expansion_move_definitions = [
+    (symbol, int(number_text))
+    for symbol, number_text in re.findall(
+        r"\bMOVE_([A-Z0-9_]+)\s*=\s*(\d+)\s*,?",
+        (EXPANSION / "include/constants/moves.h").read_text(encoding="utf-8"))
+    if int(number_text) in EXPANSION_MOVE_IDS
+]
+# The first Gen-IV enum entry aliases MOVES_COUNT_GEN3 instead of spelling
+# out 355. Keep Roost in the exact catalog rather than silently losing the
+# boundary entry to the parser's numeric-only expression.
+if 355 in EXPANSION_MOVE_IDS:
+    expansion_move_definitions.insert(0, ("ROOST", 355))
+move_definitions += expansion_move_definitions
+
+for symbol, number in move_definitions:
+    source_label = move_script_label(symbol, number)
+    body, source_found = expanded_script(source_label)
+    ordered_source = animation_source_lines(source_label)
     counting_body = "\n".join(ordered_source)
 
     tags: list[str] = []
@@ -2845,7 +3459,7 @@ for symbol, number_text in re.findall(r"#define MOVE_([A-Z0-9_]+)\s+(\d+)", MOVE
         f'{len(specs)}, {particle}, {cadence}, {flag_expr}}},')
 
     command_start = len(program_command_rows)
-    labels = reachable_animation_labels(f"Move_{symbol}")
+    labels = reachable_animation_labels(source_label)
     move_sprite_templates = sorted({
         match.group(1)
         for label in labels
@@ -2881,12 +3495,28 @@ for symbol, number_text in re.findall(r"#define MOVE_([A-Z0-9_]+)\s+(\d+)", MOVE
             command = parts[0].lower()
             operands = split_operands(parts[1]) if len(parts) > 1 else []
             if command == "createsprite" and len(operands) >= 3:
-                emit("SpawnSprite", str(sprite_resource_id(operands[0])),
-                     expression_value(operands[1]), expression_value(operands[2]),
-                     [expression_value(value) for value in operands[3:]])
+                # As with visual tasks, expansion also permits the template
+                # anchor to be separated from the first comma by whitespace.
+                sprite_operands = operands
+                first_parts = sprite_operands[0].split()
+                if len(first_parts) >= 2:
+                    sprite_operands = [first_parts[0], first_parts[1],
+                                       *sprite_operands[1:]]
+                emit("SpawnSprite", str(sprite_resource_id(sprite_operands[0])),
+                     expression_value(sprite_operands[1]), expression_value(sprite_operands[2]),
+                     [expression_value(value) for value in sprite_operands[3:]])
             elif command == "createvisualtask" and len(operands) >= 2:
-                task_name = operands[0]
-                args = [expression_value(value) for value in operands[2:]]
+                # Expansion accepts both `Task, priority, ...` and the
+                # canonical assembler spelling `Task priority, ...`.  Keep
+                # the priority in the normalized slot so both forms share
+                # the same argument ABI.
+                task_operands = operands
+                first_parts = task_operands[0].split()
+                if len(first_parts) >= 2:
+                    task_operands = [first_parts[0], first_parts[1],
+                                     *task_operands[1:]]
+                task_name = task_operands[0]
+                args = [expression_value(value) for value in task_operands[2:]]
                 if task_name in QUERY_TASKS:
                     emit("Query", f"static_cast<uint16_t>({QUERY_TASKS[task_name]})",
                          arguments=args)
@@ -3016,11 +3646,17 @@ for symbol, number_text in re.findall(r"#define MOVE_([A-Z0-9_]+)\s+(\d+)", MOVE
             elif command == "jumpifmoveturn" and len(operands) >= 2:
                 emit("JumpIfMoveTurnEquals", arguments=[expression_value(operands[0]), -1],
                      target=operands[1])
-            elif command == "choosetwoturnanim" and len(operands) >= 2:
+            elif command == "choosetwoturnanim":
                 # The GBA selects the second address on odd animation turns.
                 # Multi-hit moves can exceed turn 1, hence the explicit mask.
-                emit("JumpIfMoveTurnEquals", arguments=[1, 1], target=operands[1])
-                emit("Jump", target=operands[0])
+                choices = [token for token in re.findall(
+                    r"[A-Za-z_][A-Za-z0-9_]*", parts[1] if len(parts) > 1 else "")
+                    if token in LABEL_BODIES]
+                if len(choices) < 2:
+                    raise RuntimeError(
+                        f"Move {symbol} has malformed choosetwoturnanim: {line}")
+                emit("JumpIfMoveTurnEquals", arguments=[1, 1], target=choices[1])
+                emit("Jump", target=choices[0])
                 terminated = True
                 break
             elif command == "jumpifcontest":
@@ -3094,7 +3730,7 @@ for symbol, number_text in re.findall(r"#define MOVE_([A-Z0-9_]+)\s+(\d+)", MOVE
         "conditionalBranches": sum(
             generated["opcode"] in {"JumpIfArgumentEquals", "JumpIfMoveTurnEquals"}
             for generated in move_commands),
-        "implicitFallthrough": has_physical_fallthrough(f"Move_{symbol}"),
+        "implicitFallthrough": has_physical_fallthrough(source_label),
         "spriteTemplates": move_sprite_templates,
         "taskCallbacks": move_task_callbacks,
         "untranslated": unknown,
@@ -3265,7 +3901,7 @@ output = ("// Generated from local FireRed battle_anim_scripts.s and exact anima
           "constexpr BattleAnimationProgram kBattleAnimationPrograms[] = {\n" +
           "\n".join(program_rows) + "\n};\n")
 (ROOT / "src/game/BattleAnimationGenerated.inc").write_text(
-    output, encoding="utf-8", newline="\n")
+    output, encoding="utf-8")
 
 # PlatformIO's dependency scanner does not consistently notice changes to an
 # extension-less generated include on Windows. Keep a content stamp for the
@@ -3280,7 +3916,7 @@ if re.search(stamp_pattern, owner):
 else:
     stamped_owner = owner.rstrip() + f"\n\n{stamp}\n"
 if stamped_owner != owner:
-    owner_path.write_text(stamped_owner, encoding="utf-8", newline="\n")
+    owner_path.write_text(stamped_owner, encoding="utf-8")
 audit["catalogHash"] = catalog_hash
 audit["assetFingerprint"] = asset_fingerprint
 audit["programHash"] = program_hash
@@ -3311,9 +3947,10 @@ audit["spriteCoverage"] = sprite_coverage_counts
 (ROOT / ".generated/battle_animation_audit.json").write_text(
     json.dumps(audit, indent=2), encoding="utf-8")
 matrix_lines = [
-    "# FireRed battle animation coverage",
+    "# FireRed + expansion battle animation coverage",
     "",
-    "Generated from every reachable branch of the original 354 move scripts. "
+    "Generated from every reachable branch of the original 354 FireRed move "
+    "scripts plus the exact expansion overlay selected for Gen-IV moves. "
     "Generation fails if a visual task has no renderer, if an installed sprite "
     "state callback moves but resolves to Static, if any SpriteTemplate still "
     "depends on an unaudited name heuristic, or if a non-dummy frame/affine "
@@ -3354,12 +3991,13 @@ for move_id in sorted(audit["moves"], key=lambda value: int(value)):  # type: ig
         f"{len(move['spriteTemplates'])} | {len(move['taskCallbacks'])} | "
         f"{', '.join(move['visualCoverage'])} |")
 (ROOT / "docs/BATTLE_ANIMATION_AUDIT.md").write_text(
-    "\n".join(matrix_lines) + "\n", encoding="utf-8", newline="\n")
+    "\n".join(matrix_lines) + "\n", encoding="utf-8")
 missing = sum(not move["sourceFound"] for move in audit["moves"].values())  # type: ignore[union-attr]
 untranslated = sum(len(move["untranslated"]) for move in audit["moves"].values())  # type: ignore[union-attr]
-if len(rows) != 354 or missing or untranslated:
+expected_rows = 354 + len(EXPANSION_MOVE_IDS)
+if len(rows) != expected_rows or missing or untranslated:
     raise RuntimeError(
         f"Animation coverage failed: {len(rows)} rows, {missing} missing scripts, "
         f"{untranslated} untranslated command groups")
-print(f"Generated {len(rows)} FireRed move animation descriptors from "
+print(f"Generated {len(rows)} FireRed + expansion move animation descriptors from "
       f"{len(visual_assets)} exact visual tags")

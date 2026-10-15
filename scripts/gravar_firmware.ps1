@@ -14,8 +14,8 @@ $environmentName = 'esp32-2432S028R'
 $esptool = Join-Path $projectRoot '.pio-core\packages\tool-esptoolpy\esptool.py'
 $partitionTool = Join-Path $projectRoot '.pio-core\packages\framework-arduinoespressif32\tools\gen_esp32part.py'
 $mkspiffs = Join-Path $projectRoot '.tools\mkspiffs-0.2.3\mkspiffs-0.2.3-arduino-esp32-win32\mkspiffs.exe'
-$targetSpiffsOffset = 0x360000
-$targetSpiffsSize = 0xA0000
+$targetSpiffsOffset = 0x3A0000
+$targetSpiffsSize = 0x60000
 
 function Invoke-Checked([string]$Label, [string]$Executable, [string[]]$Arguments) {
     # Several ESP32 utilities write ordinary progress messages to stderr.
@@ -103,7 +103,7 @@ function Prepare-SaveLayoutMigration([string]$SerialPort) {
     $tableBin = Join-Path $backupDir 'partition-table-current.bin'
     $tableCsv = Join-Path $backupDir 'partition-table-current.csv'
     Invoke-Checked 'Leitura da tabela de particoes' $pioPython @(
-        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '460800',
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         'read-flash', '0x8000', '0x1000', $tableBin)
     Invoke-Checked 'Leitura da tabela de particoes' $pioPython @($partitionTool, $tableBin, $tableCsv)
     $spiffsFields = $null
@@ -133,7 +133,7 @@ function Prepare-SaveLayoutMigration([string]$SerialPort) {
     $newImage = Join-Path $backupDir 'spiffs-migrated.bin'
     New-Item -ItemType Directory -Path $filesDir -Force | Out-Null
     Invoke-Checked 'Backup da particao de save' $pioPython @(
-        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '460800',
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         'read-flash', ('0x{0:X}' -f $oldOffset), ('0x{0:X}' -f $oldSize), $oldImage)
     # mkspiffs 0.2.3 on Windows prefixes extraction paths with ".\\" and
     # consequently cannot handle an absolute drive-qualified path. Run it in
@@ -175,11 +175,11 @@ function Prepare-SaveLayoutMigration([string]$SerialPort) {
 function Restore-MigratedSave($Migration, [string]$SerialPort) {
     if (-not $Migration) { return }
     Invoke-Checked 'Gravacao do save migrado' $pioPython @(
-        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '460800',
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         'write-flash', ('0x{0:X}' -f $targetSpiffsOffset), $Migration.Image)
     $verifyImage = Join-Path $Migration.Backup 'spiffs-after-readback.bin'
     Invoke-Checked 'Verificacao do save migrado' $pioPython @(
-        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '460800',
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         'read-flash', ('0x{0:X}' -f $targetSpiffsOffset), ('0x{0:X}' -f $targetSpiffsSize), $verifyImage)
     $expected = (Get-FileHash -LiteralPath $Migration.Image -Algorithm SHA256).Hash
     $actual = (Get-FileHash -LiteralPath $verifyImage -Algorithm SHA256).Hash
@@ -188,6 +188,55 @@ function Restore-MigratedSave($Migration, [string]$SerialPort) {
         Remove-Item -LiteralPath $Migration.Marker -Force
     }
     Write-Host "Save migrado, regravado e verificado. Backup: $($Migration.Backup)" -ForegroundColor Green
+}
+
+function Reset-OtaBootSelection([string]$SerialPort) {
+    # PlatformIO writes the current USB firmware to app0.  If a previous OTA
+    # left app1 selected in the two 4 KiB otadata records, the ESP32 would
+    # still boot the old app even though the flash write itself succeeded.
+    # Erasing only this metadata makes the bootloader pick app0 on the next
+    # reset. NVS and SPIFFS (the pairing/save data) are outside this region.
+    Invoke-Checked 'Selecao da nova particao de firmware' $pioPython @(
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
+        '--before', 'default-reset', '--after', 'hard-reset',
+        'erase-region', '0x19000', '0x2000')
+    Write-Host 'Metadados OTA reiniciados: o proximo boot usara a app0 gravada agora.' -ForegroundColor Green
+}
+
+function Verify-FlashedFirmware([string]$SerialPort) {
+    $firmware = Join-Path $projectRoot ".pio\build\$environmentName\firmware.bin"
+    if (-not (Test-Path -LiteralPath $firmware)) {
+        throw "Firmware compilado nao encontrado para verificacao: '$firmware'."
+    }
+    # Verify the image at the actual app0 offset. This catches a future board
+    # configuration regression before the script claims a USB update worked.
+    Invoke-Checked 'Verificacao da firmware na app0' $pioPython @(
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
+        'verify-flash', '0x20000', $firmware)
+}
+
+function Write-UsbFirmware([string]$SerialPort) {
+    $buildDir = Join-Path $projectRoot ".pio\build\$environmentName"
+    $bootloader = Join-Path $buildDir 'bootloader.bin'
+    $partitions = Join-Path $buildDir 'partitions.bin'
+    $firmware = Join-Path $buildDir 'firmware.bin'
+    $bootApp0 = Join-Path $projectRoot '.pio-core\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin'
+    foreach ($required in @($bootloader, $partitions, $bootApp0, $firmware)) {
+        if (-not (Test-Path -LiteralPath $required)) {
+            throw "Imagem necessaria para gravacao USB nao encontrada: '$required'."
+        }
+    }
+    # Do not delegate this address to PlatformIO's generic ESP32 uploader.
+    # The Pokegochi partition table reserves 0x10000..0x1FFFF for OTA data;
+    # the USB application must start exactly at app0 (0x20000).
+    Invoke-Checked 'Gravacao da firmware e da tabela OTA' $pioPython @(
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
+        '--before', 'default-reset', '--after', 'hard-reset', 'write-flash', '-z',
+        '--flash-mode', 'dio', '--flash-freq', '40m', '--flash-size', 'detect',
+        '0x1000', $bootloader,
+        '0x8000', $partitions,
+        '0xe000', $bootApp0,
+        '0x20000', $firmware)
 }
 
 function Find-Esp32Ports {
@@ -247,8 +296,7 @@ $arguments = @($platformioLauncher, 'run', '-e', $environmentName)
 $saveMigration = $null
 if (-not $BuildOnly) {
     $saveMigration = Prepare-SaveLayoutMigration $Port
-    $arguments += @('-t', 'upload', '--upload-port', $Port)
-    Write-Host "Compilando somente '$environmentName' e gravando em $Port..." -ForegroundColor Cyan
+    Write-Host "Compilando '$environmentName' e gravando a app0 em $Port..." -ForegroundColor Cyan
     Write-Host 'O save persistente nao sera apagado.' -ForegroundColor DarkGray
 } else {
     Write-Host "Compilando somente '$environmentName' (sem gravar)..." -ForegroundColor Cyan
@@ -266,7 +314,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao gerar os treinadores da Battle Tower do Emerald.' }
     & $python @arguments
     if ($LASTEXITCODE -ne 0) { throw "PlatformIO terminou com codigo $LASTEXITCODE." }
-    if (-not $BuildOnly) { Restore-MigratedSave $saveMigration $Port }
+    if (-not $BuildOnly) {
+        Write-UsbFirmware $Port
+        Restore-MigratedSave $saveMigration $Port
+        Verify-FlashedFirmware $Port
+        Reset-OtaBootSelection $Port
+    }
 } finally {
     Pop-Location
 }

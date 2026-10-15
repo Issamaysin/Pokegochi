@@ -1,6 +1,7 @@
 #include "services/WirelessUpdate.h"
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <SD.h>
+#include <SPIFFS.h>
 #include <esp_partition.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -26,6 +28,8 @@ using namespace PokegochiUpdateProtocol;
 constexpr char kJournalPath[] = "/pokegochi/update/state.bin";
 constexpr char kJournalTempPath[] = "/pokegochi/update/state.tmp";
 constexpr uint8_t kJournalVersion = 1;
+constexpr char kSaveExportPath[] = "/pokegochi_save_export.pgsav";
+constexpr char kSaveImportPath[] = "/pokegochi_save_import.tmp";
 
 struct AssetPaths {
   AssetId id;
@@ -71,10 +75,21 @@ uint32_t crc32(const void* data, size_t length) {
   return ~value;
 }
 
+uint32_t crc32Update(uint32_t value, const uint8_t* bytes, size_t length) {
+  while (length--) {
+    value ^= *bytes++;
+    for (uint8_t bit = 0; bit < 8U; ++bit)
+      value = (value >> 1U) ^ (0xEDB88320UL & (0U - (value & 1U)));
+  }
+  return value;
+}
+
 #if defined(ARDUINO_ARCH_ESP32)
 WirelessUpdate* gUpdater = nullptr;
 NimBLEServer* gUpdateServer = nullptr;
 NimBLECharacteristic* gStatusCharacteristic = nullptr;
+NimBLECharacteristic* gDataCharacteristic = nullptr;
+NimBLECharacteristic* gLiveLogCharacteristic = nullptr;
 uint16_t gConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
 
 enum class TransportEventKind : uint8_t { Connected, Disconnected, Control, Data };
@@ -129,8 +144,28 @@ class UpdateDataCallbacks final : public NimBLECharacteristicCallbacks {
 bool WirelessUpdate::busy() const {
   return state_ == DeviceState::ReceivingManifest ||
          state_ == DeviceState::ReceivingObject ||
+         state_ == DeviceState::ExportingSave ||
+         state_ == DeviceState::ImportingSave ||
          state_ == DeviceState::Committing ||
          state_ == DeviceState::Rebooting;
+}
+
+void WirelessUpdate::configureSaveManagement(
+    void* saveData, uint32_t saveBytes, uint16_t saveFormatVersion,
+    SaveCommitCallback commitCallback, SaveResetCallback resetCallback,
+    void* callbackContext) {
+  saveData_ = saveData;
+  saveBytes_ = saveBytes;
+  saveFormatVersion_ = saveFormatVersion;
+  saveCommitCallback_ = commitCallback;
+  saveResetCallback_ = resetCallback;
+  saveCallbackContext_ = callbackContext;
+}
+
+void WirelessUpdate::configureDiagnostics(DiagnosticReadCallback callback,
+                                           void* context) {
+  diagnosticReadCallback_ = callback;
+  diagnosticCallbackContext_ = context;
 }
 
 uint8_t WirelessUpdate::progressPercent() const {
@@ -146,6 +181,12 @@ bool WirelessUpdate::takeChanged() {
   return result;
 }
 
+bool WirelessUpdate::takeLiveLogStarted() {
+  const bool result = liveLogStartPending_;
+  liveLogStartPending_ = false;
+  return result;
+}
+
 void WirelessUpdate::setState(DeviceState state, const char* status, ErrorCode error) {
   state_ = state;
   error_ = error;
@@ -158,6 +199,7 @@ void WirelessUpdate::setState(DeviceState state, const char* status, ErrorCode e
 
 void WirelessUpdate::fail(ErrorCode error, const char* status) {
   closeCurrentObject(true);
+  closeSaveTransfer(true);
   setState(DeviceState::Error, status, error);
   sendStatus(StatusCode::Error);
 #if defined(ARDUINO_ARCH_ESP32)
@@ -183,6 +225,11 @@ bool WirelessUpdate::begin(uint32_t playerId, const char* firmwareVersion,
 #endif
   active_ = true;
   connected_ = authenticated_ = manifestValid_ = false;
+  liveLogEnabled_ = false;
+  liveLogStartPending_ = false;
+  liveUiDetached_ = false;
+  liveLogSequence_ = 0;
+  liveLogLastHeartbeatMs_ = 0;
   manifestExpectedBytes_ = manifestReceivedBytes_ = 0;
   packageBytesDone_ = packageBytesTotal_ = 0;
   error_ = ErrorCode::None;
@@ -204,14 +251,26 @@ bool WirelessUpdate::begin(uint32_t playerId, const char* firmwareVersion,
 void WirelessUpdate::shutdown(bool discardReceivingSession) {
   if (state_ == DeviceState::Committing || state_ == DeviceState::Rebooting) return;
   closeCurrentObject(true);
+  closeSaveTransfer(true);
   stopTransport();
   active_ = connected_ = authenticated_ = manifestValid_ = false;
+  liveLogEnabled_ = false;
+  liveLogStartPending_ = false;
+  liveUiDetached_ = false;
+  liveLogLastHeartbeatMs_ = 0;
   if (discardReceivingSession) clearTransferArtifacts();
   setState(DeviceState::Advertising, "WIRELESS UPDATE IS OFF.");
 }
 
 void WirelessUpdate::abort() {
+  // Once the atomic commit has selected the next OTA slot, cancelling would
+  // destroy the journal while the bootloader is preparing to reboot.  The UI
+  // keeps that short final phase non-cancellable; receiving sessions remain
+  // cancellable so a stalled progress screen can always be left safely.
+  if (state_ == DeviceState::Committing || state_ == DeviceState::Rebooting)
+    return;
   closeCurrentObject(true);
+  closeSaveTransfer(true);
   clearTransferArtifacts();
   authenticated_ = false;
   manifestValid_ = false;
@@ -244,10 +303,15 @@ bool WirelessUpdate::startTransport() {
   NimBLECharacteristic* control = service->createCharacteristic(
       kControlUuid, NIMBLE_PROPERTY::WRITE, 192);
   NimBLECharacteristic* data = service->createCharacteristic(
-      kDataUuid, NIMBLE_PROPERTY::WRITE, sizeof(DataHeader) + kMaximumDataBytes);
+      kDataUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY,
+      sizeof(DataHeader) + kMaximumDataBytes);
   gStatusCharacteristic = service->createCharacteristic(
       kStatusUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY, sizeof(StatusPacket));
-  if (!control || !data || !gStatusCharacteristic) return false;
+  gLiveLogCharacteristic = service->createCharacteristic(
+      kLiveLogUuid, NIMBLE_PROPERTY::NOTIFY,
+      sizeof(LiveLogPacket) + 240U);
+  if (!control || !data || !gStatusCharacteristic || !gLiveLogCharacteristic) return false;
+  gDataCharacteristic = data;
   control->setCallbacks(&gUpdateControlCallbacks);
   data->setCallbacks(&gUpdateDataCallbacks);
   // NimBLE-Arduino 2.x starts every registered service when the server is
@@ -255,7 +319,10 @@ bool WirelessUpdate::startTransport() {
   gUpdateServer->start();
 
   Advertisement advertisement{{'P', 'G', 'O', 'T'}, kVersion, kDeviceModel,
-                              playerId_, kMaximumDataBytes, kCapabilityTimeSync};
+                              playerId_, kMaximumDataBytes,
+                              static_cast<uint8_t>(kCapabilityTimeSync |
+                                                   kCapabilitySaveManagement |
+                                                   kCapabilityLiveDiagnostics)};
   NimBLEAdvertisementData advertisementData;
   if (!advertisementData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP) ||
       !advertisementData.setManufacturerData(
@@ -276,6 +343,8 @@ void WirelessUpdate::stopTransport() {
   if (gUpdateQueue) { vQueueDelete(gUpdateQueue); gUpdateQueue = nullptr; }
   gUpdateServer = nullptr;
   gStatusCharacteristic = nullptr;
+  gDataCharacteristic = nullptr;
+  gLiveLogCharacteristic = nullptr;
   gConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
   gUpdater = nullptr;
 #endif
@@ -292,6 +361,10 @@ void WirelessUpdate::transportConnected() {
 void WirelessUpdate::transportDisconnected() {
   connected_ = false;
   authenticated_ = false;
+  liveLogEnabled_ = false;
+  liveLogStartPending_ = false;
+  liveUiDetached_ = false;
+  liveLogLastHeartbeatMs_ = 0;
   if (state_ == DeviceState::ReceivingObject && objectKind_ == ObjectKind::Firmware) {
     closeCurrentObject(true);
     journal_.firmwareReady = 0;
@@ -299,6 +372,7 @@ void WirelessUpdate::transportDisconnected() {
   } else {
     closeCurrentObject(false);
   }
+  closeSaveTransfer(true);
   if (active_ && state_ != DeviceState::Committing && state_ != DeviceState::Rebooting)
     setState(DeviceState::Advertising, "CONNECTION LOST. READY TO RESUME.");
 }
@@ -327,6 +401,14 @@ void WirelessUpdate::update() {
     Serial.flush();
     delay(25);
     ESP.restart();
+  }
+  if (liveLogEnabled_ && connected_ && authenticated_ &&
+      static_cast<int32_t>(millis() - liveLogLastHeartbeatMs_) >= 1000) {
+    liveLogLastHeartbeatMs_ = millis();
+    emitLiveLog("HEARTBEAT state=%u heap=%u maxheap=%u",
+                static_cast<unsigned>(state_),
+                static_cast<unsigned>(ESP.getFreeHeap()),
+                static_cast<unsigned>(ESP.getMaxAllocHeap()));
   }
 #endif
 }
@@ -374,6 +456,90 @@ void WirelessUpdate::processControl(const uint8_t* bytes, size_t length) {
     synchronizedTime_ = request.localEpochSeconds;
     synchronizedTimePending_ = true;
     sendStatus(StatusCode::TimeSynchronized);
+    return;
+  }
+  if (command == Command::LiveLogStart) {
+    if (length != 1U) {
+      fail(ErrorCode::BadCommand, "INVALID LIVE LOG REQUEST."); return;
+    }
+    if (busy()) {
+      fail(ErrorCode::Busy, "AN UPDATE OPERATION IS ALREADY RUNNING."); return;
+    }
+    liveLogEnabled_ = true;
+    liveLogStartPending_ = true;
+    liveUiDetached_ = false;
+    liveLogSequence_ = 0;
+#if defined(ARDUINO_ARCH_ESP32)
+    liveLogLastHeartbeatMs_ = millis();
+#else
+    liveLogLastHeartbeatMs_ = 0;
+#endif
+    setState(DeviceState::AwaitingManifest, "LIVE RENDER LOG IS RUNNING.");
+    sendStatus(StatusCode::LiveLogReady);
+    emitLiveLog("LIVE_START fw=%s player=%lu", firmwareVersion_,
+                static_cast<unsigned long>(playerId_));
+    return;
+  }
+  if (command == Command::LiveLogStop) {
+    if (length != 1U) {
+      fail(ErrorCode::BadCommand, "INVALID LIVE LOG STOP REQUEST."); return;
+    }
+    liveLogEnabled_ = false;
+    liveLogStartPending_ = false;
+    liveUiDetached_ = false;
+    sendStatus(StatusCode::LiveLogStopped);
+    return;
+  }
+  if (command == Command::DiagnosticRead) {
+    if (length != sizeof(DiagnosticReadCommand)) {
+      fail(ErrorCode::BadCommand, "INVALID DIAGNOSTIC REQUEST."); return;
+    }
+    DiagnosticReadCommand request{};
+    std::memcpy(&request, bytes, sizeof(request));
+    if (!sendDiagnostic(request.section, request.selector)) return;
+    return;
+  }
+  if (command == Command::SaveExportBegin) {
+    if (length != 1U) { fail(ErrorCode::BadCommand, "INVALID SAVE EXPORT REQUEST."); return; }
+    if (!prepareSaveExport()) return;
+    sendStatus(StatusCode::SaveExportReady);
+    return;
+  }
+  if (command == Command::SaveExportChunk) {
+    if (length != sizeof(SaveExportChunkCommand)) {
+      fail(ErrorCode::BadCommand, "INVALID SAVE CHUNK REQUEST."); return;
+    }
+    SaveExportChunkCommand request{};
+    std::memcpy(&request, bytes, sizeof(request));
+    if (!sendSaveExportChunk(request)) return;
+    return;
+  }
+  if (command == Command::SaveExportFinish) {
+    if (length != 1U) { fail(ErrorCode::BadCommand, "INVALID SAVE EXPORT FINISH."); return; }
+    if (!finishSaveExport()) return;
+    sendStatus(StatusCode::SaveExportComplete);
+    return;
+  }
+  if (command == Command::SaveImportBegin) {
+    if (length != sizeof(SaveImportBeginCommand)) {
+      fail(ErrorCode::BadCommand, "INVALID SAVE IMPORT REQUEST."); return;
+    }
+    SaveImportBeginCommand request{};
+    std::memcpy(&request, bytes, sizeof(request));
+    if (!beginSaveImport(request)) return;
+    sendStatus(StatusCode::SaveImportReady);
+    return;
+  }
+  if (command == Command::SaveImportFinish) {
+    if (length != 1U) { fail(ErrorCode::BadCommand, "INVALID SAVE IMPORT FINISH."); return; }
+    if (!finishSaveImport()) return;
+    sendStatus(StatusCode::SaveImported);
+    return;
+  }
+  if (command == Command::SaveReset) {
+    if (length != 1U) { fail(ErrorCode::BadCommand, "INVALID SAVE RESET REQUEST."); return; }
+    if (!resetSave()) return;
+    sendStatus(StatusCode::SaveReset);
     return;
   }
 
@@ -444,6 +610,94 @@ void WirelessUpdate::processControl(const uint8_t* bytes, size_t length) {
   }
 }
 
+bool WirelessUpdate::sendDiagnostic(uint8_t section, uint16_t selector) {
+  if (!diagnosticReadCallback_) {
+    fail(ErrorCode::DiagnosticUnavailable,
+         "DIAGNOSTIC READBACK IS NOT AVAILABLE.");
+    return false;
+  }
+  const size_t reportBytes = diagnosticReadCallback_(
+      diagnosticCallbackContext_, section, selector, diagnosticBuffer_,
+      sizeof(diagnosticBuffer_));
+  if (reportBytes > sizeof(diagnosticBuffer_) || reportBytes > 0xFFFFU) {
+    fail(ErrorCode::DiagnosticUnavailable, "DIAGNOSTIC REPORT IS TOO LARGE.");
+    return false;
+  }
+#if defined(ARDUINO_ARCH_ESP32)
+  if (!gDataCharacteristic || !connected_) {
+    fail(ErrorCode::Busy, "DIAGNOSTIC LINK IS NOT CONNECTED.");
+    return false;
+  }
+  // Keep notifications compatible with a client that remained at the legacy
+  // 23-byte ATT MTU. A report is small enough that the extra packets are not
+  // noticeable, and this avoids silently dropping the readback on Windows.
+  constexpr size_t kDiagnosticChunkBytes = 184U;
+  size_t offset = 0;
+  if (!reportBytes) {
+    uint8_t packet[sizeof(DiagnosticPacket) + kDiagnosticChunkBytes]{};
+    const DiagnosticPacket header{{'D', 'G'}, kVersion, section, selector,
+                                  0,
+                                  static_cast<uint16_t>(reportBytes)};
+    std::memcpy(packet, &header, sizeof(header));
+    gDataCharacteristic->setValue(packet, sizeof(header));
+    gDataCharacteristic->notify();
+    delay(3);
+  } else {
+    while (offset < reportBytes) {
+      const size_t chunk = std::min(kDiagnosticChunkBytes, reportBytes - offset);
+      uint8_t packet[sizeof(DiagnosticPacket) + kDiagnosticChunkBytes]{};
+      const DiagnosticPacket header{{'D', 'G'}, kVersion, section, selector,
+                                    static_cast<uint16_t>(offset),
+                                    static_cast<uint16_t>(reportBytes)};
+      std::memcpy(packet, &header, sizeof(header));
+      std::memcpy(packet + sizeof(header), diagnosticBuffer_ + offset, chunk);
+      gDataCharacteristic->setValue(packet, sizeof(header) + chunk);
+      gDataCharacteristic->notify();
+      offset += chunk;
+      delay(3);
+    }
+  }
+#else
+  (void)section;
+  (void)selector;
+#endif
+  sendStatus(StatusCode::DiagnosticReady);
+  return true;
+}
+
+void WirelessUpdate::emitLiveLog(const char* format, ...) {
+  if (!format || !liveLogEnabled_) return;
+#if defined(ARDUINO_ARCH_ESP32)
+  if (!gLiveLogCharacteristic || !connected_ || !authenticated_ ||
+      gConnectionHandle == BLE_HS_CONN_HANDLE_NONE) return;
+  // Keep one complete event below the negotiated ATT payload even when the
+  // host stayed on the legacy 23-byte MTU. NimBLE handles the notification
+  // fragmentation; the explicit bound prevents telemetry from ever growing
+  // into a gameplay stack/heap problem.
+  constexpr size_t kLiveLogPayloadBytes = 232U;
+  char payload[kLiveLogPayloadBytes + 1U]{};
+  va_list arguments;
+  va_start(arguments, format);
+  const int written = std::vsnprintf(payload, sizeof(payload), format, arguments);
+  va_end(arguments);
+  if (written <= 0) return;
+  const size_t payloadBytes = std::min<size_t>(
+      static_cast<size_t>(written), kLiveLogPayloadBytes);
+  uint8_t packet[sizeof(LiveLogPacket) + kLiveLogPayloadBytes]{};
+  const LiveLogPacket header{{'L', 'G'}, kVersion, 1U, liveLogSequence_++,
+                             millis(), static_cast<uint16_t>(payloadBytes)};
+  std::memcpy(packet, &header, sizeof(header));
+  std::memcpy(packet + sizeof(header), payload, payloadBytes);
+  gLiveLogCharacteristic->setValue(packet, sizeof(header) + payloadBytes);
+  // Diagnostics are strictly best effort. A dropped notification must never
+  // turn a renderer failure into a second failure or alter gameplay timing.
+  if (!gLiveLogCharacteristic->notify(gConnectionHandle))
+    Serial.println("[BLE] live log notification dropped");
+#else
+  (void)format;
+#endif
+}
+
 bool WirelessUpdate::takeSynchronizedTime(uint32_t& localEpochSeconds) {
   if (!synchronizedTimePending_) return false;
   synchronizedTimePending_ = false;
@@ -452,7 +706,9 @@ bool WirelessUpdate::takeSynchronizedTime(uint32_t& localEpochSeconds) {
 }
 
 void WirelessUpdate::processData(const uint8_t* bytes, size_t length) {
-  if (state_ != DeviceState::ReceivingObject || !bytes || length <= sizeof(DataHeader)) {
+  const bool importingSave = state_ == DeviceState::ImportingSave;
+  if ((!importingSave && state_ != DeviceState::ReceivingObject) ||
+      !bytes || length <= sizeof(DataHeader)) {
     fail(ErrorCode::ObjectOrder, "UPDATE DATA ARRIVED OUT OF ORDER."); return;
   }
   DataHeader header{};
@@ -465,7 +721,10 @@ void WirelessUpdate::processData(const uint8_t* bytes, size_t length) {
   const uint8_t* payload = bytes + sizeof(header);
 #if defined(ARDUINO_ARCH_ESP32)
   bool written = false;
-  if (objectKind_ == ObjectKind::Firmware) {
+  if (importingSave) {
+    written = saveTransferFile_ &&
+        saveTransferFile_.write(payload, payloadBytes) == payloadBytes;
+  } else if (objectKind_ == ObjectKind::Firmware) {
     written = otaHandle_ && esp_ota_write(otaHandle_, payload, payloadBytes) == ESP_OK;
   } else {
     written = assetFile_ && assetFile_.write(payload, payloadBytes) == payloadBytes;
@@ -473,8 +732,238 @@ void WirelessUpdate::processData(const uint8_t* bytes, size_t length) {
   if (!written) { fail(ErrorCode::ObjectWrite, "THE UPDATE COULD NOT BE WRITTEN."); return; }
 #endif
   objectOffset_ += static_cast<uint32_t>(payloadBytes);
-  recalculatePackageProgress();
+  if (importingSave) packageBytesDone_ = objectOffset_;
+  else recalculatePackageProgress();
   sendStatus(StatusCode::DataAccepted);
+}
+
+bool WirelessUpdate::prepareSaveExport() {
+  if (!saveData_ || !saveBytes_ || !saveFormatVersion_ || !saveCommitCallback_ ||
+      !saveResetCallback_) {
+    fail(ErrorCode::SaveUnavailable, "SAVE MANAGEMENT IS NOT AVAILABLE.");
+    return false;
+  }
+  if (busy()) {
+    fail(ErrorCode::Busy, "ANOTHER OPERATION IS STILL RUNNING.");
+    return false;
+  }
+#if !defined(ARDUINO_ARCH_ESP32)
+  fail(ErrorCode::SaveUnavailable, "SAVE EXPORT NEEDS DEVICE STORAGE.");
+  return false;
+#else
+  closeSaveTransfer(true);
+  SaveBackupHeader header{{'P', 'G', 'S', '1'}, kSaveBackupVersion,
+                          saveFormatVersion_, saveBytes_, playerId_,
+                          crc32(saveData_, saveBytes_), 0U};
+  header.headerCrc32 = crc32(&header, offsetof(SaveBackupHeader, headerCrc32));
+  File output = SPIFFS.open(kSaveExportPath, "w");
+  const bool written = output &&
+      output.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header) &&
+      output.write(reinterpret_cast<const uint8_t*>(saveData_), saveBytes_) == saveBytes_;
+  if (output) { output.flush(); output.close(); }
+  if (!written) {
+    SPIFFS.remove(kSaveExportPath);
+    fail(ErrorCode::ObjectWrite, "SAVE BACKUP COULD NOT BE PREPARED.");
+    return false;
+  }
+  saveTransferFile_ = SPIFFS.open(kSaveExportPath, "r");
+  const uint32_t total = static_cast<uint32_t>(sizeof(header)) + saveBytes_;
+  if (!saveTransferFile_ || saveTransferFile_.size() != total) {
+    closeSaveTransfer(true);
+    fail(ErrorCode::ObjectWrite, "SAVE BACKUP COULD NOT BE VERIFIED.");
+    return false;
+  }
+  objectKind_ = ObjectKind::Save;
+  assetId_ = static_cast<AssetId>(0);
+  objectOffset_ = packageBytesDone_ = 0;
+  objectSize_ = packageBytesTotal_ = total;
+  setState(DeviceState::ExportingSave, "PHONE IS LOADING THE SAVE FILE...");
+  return true;
+#endif
+}
+
+bool WirelessUpdate::sendSaveExportChunk(const SaveExportChunkCommand& request) {
+  if (state_ != DeviceState::ExportingSave || request.offset != objectOffset_ ||
+      request.maximumBytes == 0U || request.maximumBytes > kMaximumDataBytes) {
+    fail(ErrorCode::ObjectRange, "SAVE EXPORT OFFSET DOES NOT MATCH.");
+    return false;
+  }
+#if !defined(ARDUINO_ARCH_ESP32)
+  fail(ErrorCode::SaveUnavailable, "SAVE EXPORT NEEDS DEVICE STORAGE.");
+  return false;
+#else
+  if (!saveTransferFile_ || !gDataCharacteristic ||
+      gConnectionHandle == BLE_HS_CONN_HANDLE_NONE) {
+    fail(ErrorCode::SaveUnavailable, "SAVE EXPORT LINK IS NOT READY.");
+    return false;
+  }
+  const uint16_t count = static_cast<uint16_t>(std::min<uint32_t>(
+      request.maximumBytes, objectSize_ - objectOffset_));
+  if (!count) {
+    fail(ErrorCode::ObjectRange, "SAVE EXPORT IS ALREADY COMPLETE.");
+    return false;
+  }
+  uint8_t packet[sizeof(DataHeader) + kMaximumDataBytes]{};
+  const DataHeader header{objectOffset_};
+  std::memcpy(packet, &header, sizeof(header));
+  if (!saveTransferFile_.seek(objectOffset_) ||
+      saveTransferFile_.read(packet + sizeof(header), count) != count) {
+    fail(ErrorCode::ObjectWrite, "SAVE BACKUP COULD NOT BE READ.");
+    return false;
+  }
+  gDataCharacteristic->setValue(packet, sizeof(header) + count);
+  if (!gDataCharacteristic->notify(gConnectionHandle)) {
+    fail(ErrorCode::ObjectWrite, "SAVE BACKUP COULD NOT BE SENT.");
+    return false;
+  }
+  objectOffset_ += count;
+  packageBytesDone_ = objectOffset_;
+  changed_ = true;
+  return true;
+#endif
+}
+
+bool WirelessUpdate::finishSaveExport() {
+  if (state_ != DeviceState::ExportingSave || objectOffset_ != objectSize_) {
+    fail(ErrorCode::ObjectOrder, "SAVE EXPORT IS NOT COMPLETE.");
+    return false;
+  }
+  closeSaveTransfer(true);
+  setState(DeviceState::AwaitingManifest, "SAVE BACKUP LOADED BY PHONE.");
+  return true;
+}
+
+bool WirelessUpdate::beginSaveImport(const SaveImportBeginCommand& request) {
+  if (!saveData_ || !saveBytes_ || !saveFormatVersion_ || !saveCommitCallback_) {
+    fail(ErrorCode::SaveUnavailable, "SAVE MANAGEMENT IS NOT AVAILABLE.");
+    return false;
+  }
+  const uint32_t expectedBytes = static_cast<uint32_t>(sizeof(SaveBackupHeader)) + saveBytes_;
+  if (request.totalBytes != expectedBytes ||
+      request.totalBytes > kMaximumSaveBackupBytes ||
+      request.saveFormatVersion != saveFormatVersion_) {
+    fail(ErrorCode::SaveFormat, "SAVE FILE SIZE OR VERSION IS INCOMPATIBLE.");
+    return false;
+  }
+  if (busy()) {
+    fail(ErrorCode::Busy, "ANOTHER OPERATION IS STILL RUNNING.");
+    return false;
+  }
+#if !defined(ARDUINO_ARCH_ESP32)
+  fail(ErrorCode::SaveUnavailable, "SAVE IMPORT NEEDS DEVICE STORAGE.");
+  return false;
+#else
+  closeSaveTransfer(true);
+  saveTransferFile_ = SPIFFS.open(kSaveImportPath, "w");
+  if (!saveTransferFile_) {
+    fail(ErrorCode::ObjectWrite, "SAVE IMPORT STORAGE IS NOT AVAILABLE.");
+    return false;
+  }
+  saveImportFileCrc32_ = request.fileCrc32;
+  objectKind_ = ObjectKind::Save;
+  assetId_ = static_cast<AssetId>(0);
+  objectOffset_ = packageBytesDone_ = 0;
+  objectSize_ = packageBytesTotal_ = request.totalBytes;
+  setState(DeviceState::ImportingSave, "RECEIVING SAVE FILE FROM PHONE...");
+  return true;
+#endif
+}
+
+bool WirelessUpdate::finishSaveImport() {
+  if (state_ != DeviceState::ImportingSave || objectOffset_ != objectSize_) {
+    fail(ErrorCode::ObjectOrder, "SAVE IMPORT IS NOT COMPLETE.");
+    return false;
+  }
+#if !defined(ARDUINO_ARCH_ESP32)
+  fail(ErrorCode::SaveUnavailable, "SAVE IMPORT NEEDS DEVICE STORAGE.");
+  return false;
+#else
+  if (saveTransferFile_) { saveTransferFile_.flush(); saveTransferFile_.close(); }
+  File input = SPIFFS.open(kSaveImportPath, "r");
+  if (!input || input.size() != objectSize_) {
+    if (input) input.close();
+    fail(ErrorCode::SaveFormat, "SAVE FILE IS TRUNCATED.");
+    return false;
+  }
+  uint8_t buffer[512]{};
+  uint32_t fileCrcState = 0xFFFFFFFFUL;
+  while (input.available()) {
+    const size_t count = input.read(buffer, sizeof(buffer));
+    if (!count) break;
+    fileCrcState = crc32Update(fileCrcState, buffer, count);
+  }
+  if (~fileCrcState != saveImportFileCrc32_ || !input.seek(0)) {
+    input.close();
+    fail(ErrorCode::SaveChecksum, "SAVE FILE CHECKSUM FAILED.");
+    return false;
+  }
+  SaveBackupHeader header{};
+  if (input.read(reinterpret_cast<uint8_t*>(&header), sizeof(header)) != sizeof(header) ||
+      std::memcmp(header.magic, "PGS1", 4) != 0 ||
+      header.backupVersion != kSaveBackupVersion ||
+      header.saveFormatVersion != saveFormatVersion_ ||
+      header.payloadBytes != saveBytes_ ||
+      header.headerCrc32 != crc32(&header, offsetof(SaveBackupHeader, headerCrc32))) {
+    input.close();
+    fail(ErrorCode::SaveFormat, "SAVE FILE VERSION IS NOT COMPATIBLE.");
+    return false;
+  }
+  uint32_t payloadCrcState = 0xFFFFFFFFUL;
+  uint32_t remaining = saveBytes_;
+  while (remaining) {
+    const size_t requested = std::min<size_t>(sizeof(buffer), remaining);
+    const size_t count = input.read(buffer, requested);
+    if (count != requested) {
+      input.close();
+      fail(ErrorCode::SaveFormat, "SAVE PAYLOAD IS TRUNCATED.");
+      return false;
+    }
+    payloadCrcState = crc32Update(payloadCrcState, buffer, count);
+    remaining -= static_cast<uint32_t>(count);
+  }
+  if (~payloadCrcState != header.payloadCrc32 || !input.seek(sizeof(header)) ||
+      input.read(reinterpret_cast<uint8_t*>(saveData_), saveBytes_) != saveBytes_) {
+    input.close();
+    fail(ErrorCode::SaveChecksum, "SAVE PAYLOAD CHECKSUM FAILED.");
+    return false;
+  }
+  input.close();
+  if (!saveCommitCallback_(saveCallbackContext_)) {
+    fail(ErrorCode::CommitFailed, "SAVE FILE COULD NOT BE COMMITTED.");
+    return false;
+  }
+  closeSaveTransfer(true);
+  setState(DeviceState::Rebooting, "SAVE RESTORED. RESTARTING...");
+  rebootScheduled_ = true;
+  rebootAtMs_ = millis() + 1500U;
+  return true;
+#endif
+}
+
+bool WirelessUpdate::resetSave() {
+  if (!saveResetCallback_ || !saveResetCallback_(saveCallbackContext_)) {
+    fail(ErrorCode::CommitFailed, "SAVE RESET COULD NOT BE COMMITTED.");
+    return false;
+  }
+  closeSaveTransfer(true);
+  setState(DeviceState::Rebooting, "SAVE RESET. RESTARTING...");
+#if defined(ARDUINO_ARCH_ESP32)
+  rebootScheduled_ = true;
+  rebootAtMs_ = millis() + 1500U;
+#endif
+  return true;
+}
+
+void WirelessUpdate::closeSaveTransfer(bool removeFiles) {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (saveTransferFile_) saveTransferFile_.close();
+  if (removeFiles) {
+    SPIFFS.remove(kSaveExportPath);
+    SPIFFS.remove(kSaveImportPath);
+  }
+#else
+  (void)removeFiles;
+#endif
 }
 
 bool WirelessUpdate::verifyManifest() {
@@ -781,12 +1270,9 @@ bool WirelessUpdate::commit() {
     fail(ErrorCode::CommitFailed, "FINAL UPDATE STATE COULD NOT BE SAVED."); return false;
   }
 #if defined(ARDUINO_ARCH_ESP32)
-  targetPartition_ = esp_partition_find_first(
-      ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.targetPartition);
-  if (!targetPartition_ ||
-      !storePendingBoot(journal_.targetPartition, journal_.previousPartition,
+  if (!storePendingBoot(journal_.targetPartition, journal_.previousPartition,
                         journal_.packageSequence, 0U) ||
-      esp_ota_set_boot_partition(targetPartition_) != ESP_OK) {
+      !selectBootPartition(journal_.targetPartition)) {
     clearPendingBoot();
     rollbackAssets(journal_);
     clearTransferArtifacts();
@@ -925,12 +1411,9 @@ bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
       removeJournal();
       return false;
     }
-    const esp_partition_t* target = esp_partition_find_first(
-        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.targetPartition);
-    if (!target ||
-        !storePendingBoot(journal_.targetPartition, journal_.previousPartition,
+    if (!storePendingBoot(journal_.targetPartition, journal_.previousPartition,
                           journal_.packageSequence, 0U) ||
-        esp_ota_set_boot_partition(target) != ESP_OK) {
+        !selectBootPartition(journal_.targetPartition)) {
       clearPendingBoot();
       rollbackAssets(journal_);
       removeJournal();
@@ -942,7 +1425,7 @@ bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
       rollbackAssets(journal_);
       const esp_partition_t* previous = esp_partition_find_first(
           ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.previousPartition);
-      if (previous) esp_ota_set_boot_partition(previous);
+      if (previous) selectBootPartition(previous->label);
       removeJournal();
       return false;
     }
@@ -974,7 +1457,7 @@ bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
             ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.previousPartition);
         removeJournal();
         clearPendingBoot();
-        if (previous) esp_ota_set_boot_partition(previous);
+        if (previous) selectBootPartition(previous->label);
         ESP.restart();
         return false;
       }
@@ -1014,7 +1497,7 @@ void WirelessUpdate::confirmBoot(bool healthy) {
       ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.previousPartition);
   removeJournal();
   clearPendingBoot();
-  if (previous) esp_ota_set_boot_partition(previous);
+  if (previous) selectBootPartition(previous->label);
   ESP.restart();
 #else
   (void)healthy;
@@ -1267,6 +1750,28 @@ void WirelessUpdate::clearPendingBoot() const {
     preferences.remove("attempts");
     preferences.end();
   }
+#endif
+}
+
+bool WirelessUpdate::selectBootPartition(const char* label) const {
+#if !defined(ARDUINO_ARCH_ESP32)
+  return label && label[0];
+#else
+  if (!label || !label[0]) return false;
+  const esp_partition_t* target = esp_partition_find_first(
+      ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, label);
+  if (!target) {
+    Serial.printf("[OTAP] requested boot target is missing: %s\n", label);
+    return false;
+  }
+  const esp_err_t result = esp_ota_set_boot_partition(target);
+  const esp_partition_t* selected = esp_ota_get_boot_partition();
+  const bool selectedCorrectly = result == ESP_OK && selected &&
+      !std::strcmp(selected->label, target->label);
+  Serial.printf("[OTAP] boot target requested=%s selected=%s result=%s\n",
+                target->label, selected ? selected->label : "(none)",
+                esp_err_to_name(result));
+  return selectedCorrectly;
 #endif
 }
 

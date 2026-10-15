@@ -34,7 +34,8 @@ powershell -ExecutionPolicy Bypass -File .\instalar_tudo.ps1 -Drive D: -Port COM
 - `firmware/`: imagem completa para primeira instalação e imagem de atualização.
 - `sd/`: pacote pronto para copiar para um cartão FAT32.
 - `ota/`: atualização assinada de firmware + SD para o aplicativo Android.
-- `app/`: aplicativo Android para atualização Bluetooth.
+- `app/`: aplicativo Android para atualização Bluetooth e o APK final da replica Android 1.0.
+- `app/Pokegochi-Android-1.0-release-r157.apk`: release Android 1.0 para instalação direta no celular.
 - `docs/`: hardware, bateria, soldagem, instalação e diagnóstico.
 - `SHA256SUMS.txt`: hashes de todos os arquivos de distribuição.
 - `verificar_release.ps1`: valida os arquivos antes da gravação.

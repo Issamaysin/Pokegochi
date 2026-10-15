@@ -8,18 +8,21 @@ silently assigned another Pokémon's learnset.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
 EMERALD = ROOT / ".downloads/pokeemerald-tree/pokeemerald-master"
+PLATINUM = ROOT / ".downloads/pokeplatinum-tree"
 TMHM_CONSTANTS = EMERALD / "include/constants/tms_hms.h"
 MOVE_CONSTANTS = EMERALD / "include/constants/moves.h"
 POKEDEX_CONSTANTS = EMERALD / "include/constants/pokedex.h"
 LEARNSETS = EMERALD / "src/data/pokemon/tmhm_learnsets.h"
 OUTPUT = ROOT / "src/game/MachineDataGenerated.inc"
 OWNER = ROOT / "src/game/Economy.cpp"
+PROJECT_MOVE_DATA = ROOT / "src/game/MoveDataGenerated.inc"
 
 
 def macro_body(source: str, name: str, next_name: str) -> str:
@@ -55,6 +58,29 @@ missing_moves = [symbol for symbol in machine_symbols if symbol not in move_ids]
 if missing_moves:
     raise RuntimeError(f"Moves missing from Emerald constants: {missing_moves}")
 
+# Platinum's JSON uses MOVE_* symbols while the firmware's generated move
+# table is already keyed by the canonical National move number. Reuse that
+# table instead of maintaining a second hand-written Gen-IV ID map.
+project_move_ids = {
+    symbol.replace(" ", "_"): int(number)
+    for number, symbol in re.findall(
+        r'^\s*\{(\d+), "([A-Z0-9 ]+)"',
+        PROJECT_MOVE_DATA.read_text(encoding="utf-8"),
+        re.M,
+    )
+}
+
+platinum_move_ids: list[int] = []
+platinum_prices: list[int] = []
+for number in range(51, 93):
+    item_path = PLATINUM / "res/items/data" / f"tm{number:02d}.json"
+    item = json.loads(item_path.read_text(encoding="utf-8"))
+    symbol = item["teachesMove"].removeprefix("MOVE_")
+    if symbol not in project_move_ids:
+        raise RuntimeError(f"Platinum TM{number:02d} move missing from project: {symbol}")
+    platinum_move_ids.append(project_move_ids[symbol])
+    platinum_prices.append(int(item["price"]))
+
 pokedex_source = POKEDEX_CONSTANTS.read_text(encoding="utf-8")
 national_symbols = re.findall(r"^\s*NATIONAL_DEX_([A-Z0-9_]+),", pokedex_source, re.M)
 if not national_symbols or national_symbols[0] != "NONE":
@@ -78,37 +104,78 @@ missing_species = [symbol for symbol in national_symbols if symbol not in specie
 if missing_species:
     raise RuntimeError(f"National species missing TM/HM learnsets: {missing_species}")
 
-masks = [0]
+platinum_species = [line.strip().removeprefix("SPECIES_")
+                    for line in (PLATINUM / "generated/species.txt").read_text(
+                        encoding="utf-8").splitlines() if line.strip()]
+if len(platinum_species) <= 493 or platinum_species[387] != "TURTWIG":
+    raise RuntimeError("Unexpected Platinum National species order")
+
+legacy_masks = [0]
+sinnoh_masks = [0]
 compatibility_count = 0
-for species_symbol in national_symbols:
-    allowed = species_learnsets[species_symbol]
-    unknown = sorted(allowed.difference(machine_symbols))
-    if unknown:
-        raise RuntimeError(f"Unknown machines for {species_symbol}: {unknown}")
+for species_id in range(1, 494):
+    platinum_data = json.loads(
+        (PLATINUM / "res/pokemon" / platinum_species[species_id].lower() / "data.json")
+        .read_text(encoding="utf-8")
+    )
+    platinum_allowed = set(platinum_data["learnset"].get("by_tm", []))
+    if species_id <= 386:
+        allowed = species_learnsets[national_symbols[species_id - 1]]
+        unknown = sorted(allowed.difference(machine_symbols))
+        if unknown:
+            raise RuntimeError(
+                f"Unknown Emerald machines for {national_symbols[species_id - 1]}: {unknown}"
+            )
+    else:
+        allowed = platinum_allowed
     mask = 0
     for machine_id, machine_symbol in enumerate(machine_symbols):
-        if machine_symbol in allowed:
+        label = (f"TM{machine_id + 1:02d}" if machine_id < 50
+                 else f"HM{machine_id - 49:02d}")
+        if ((machine_symbol in allowed) if species_id <= 386 else (label in allowed)):
             mask |= 1 << machine_id
             compatibility_count += 1
-    masks.append(mask)
+    legacy_masks.append(mask)
+
+    sinnoh_mask = 0
+    for machine_id in range(42):
+        if f"TM{machine_id + 51:02d}" in platinum_allowed:
+            sinnoh_mask |= 1 << machine_id
+            compatibility_count += 1
+    sinnoh_masks.append(sinnoh_mask)
 
 move_rows = []
-for offset in range(0, len(machine_symbols), 10):
-    move_rows.append(
-        "  " + ", ".join(str(move_ids[symbol]) for symbol in machine_symbols[offset:offset + 10]) + ","
-    )
-mask_rows = [f"  UINT64_C(0x{mask:016X}), // {index:03d}" for index, mask in enumerate(masks)]
-payload = "\n".join(move_rows + mask_rows)
+all_machine_moves = [move_ids[symbol] for symbol in machine_symbols] + platinum_move_ids
+for offset in range(0, len(all_machine_moves), 10):
+    move_rows.append("  " + ", ".join(str(value) for value in all_machine_moves[offset:offset + 10]) + ",")
+price_values = [3000] * 50 + [5000] * 8 + platinum_prices
+price_rows = []
+for offset in range(0, len(price_values), 10):
+    price_rows.append("  " + ", ".join(str(value) for value in price_values[offset:offset + 10]) + ",")
+legacy_mask_rows = [f"  UINT64_C(0x{mask:016X}), // {index:03d}" for index, mask in enumerate(legacy_masks)]
+sinnoh_mask_rows = [
+    "  {" + ", ".join(f"0x{(mask >> (8 * byte)) & 0xFF:02X}" for byte in range(6)) +
+    f"}}, // {index:03d}"
+    for index, mask in enumerate(sinnoh_masks)
+]
+payload = "\n".join(move_rows + price_rows + legacy_mask_rows + sinnoh_mask_rows)
 catalog_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 output = (
-    "// Generated from pokeemerald's tms_hms.h and tmhm_learnsets.h.\n"
+    "// Generated from pokeemerald and pokeplatinum machine data.\n"
     f'constexpr char kMachineCatalogId[] = "{catalog_hash}";\n'
     "constexpr uint16_t machineMoves[kMachineCount] = {\n"
     + "\n".join(move_rows)
     + "\n};\n"
+    "constexpr uint16_t machinePrices[kMachineCount] = {\n"
+    + "\n".join(price_rows)
+    + "\n};\n"
     "// Index is the National Pokédex number; bit is TM01..TM50, HM01..HM08.\n"
-    "constexpr uint64_t machineLearnsets[387] = {\n"
-    + "\n".join(mask_rows)
+    "constexpr uint64_t machineLearnsets[494] = {\n"
+    + "\n".join(legacy_mask_rows)
+    + "\n};\n"
+    "// New Sinnoh machines are TM51..TM92, mapped to bits 0..41.\n"
+    "constexpr uint8_t sinnohMachineLearnsets[494][6] = {\n"
+    + "\n".join(sinnoh_mask_rows)
     + "\n};\n"
     f"constexpr uint16_t machineCompatibilityCount = {compatibility_count};\n"
 )
@@ -117,13 +184,13 @@ OUTPUT.write_text(output, encoding="utf-8", newline="\n")
 # Stamp the owning translation unit because PlatformIO's Windows dependency
 # scanner has previously linked stale generated includes in this project.
 owner = OWNER.read_text(encoding="utf-8")
-stamp = f"// Emerald TM/HM catalog: {catalog_hash}"
-stamp_pattern = r"// Emerald TM/HM catalog: [0-9a-f]{16}"
+stamp = f"// Emerald/Platinum TM/HM catalog: {catalog_hash}"
+stamp_pattern = r"// (?:Emerald|Emerald/Platinum) TM/HM catalog: [0-9a-f]{16}"
 stamped = re.sub(stamp_pattern, stamp, owner) if re.search(stamp_pattern, owner) else owner.rstrip() + f"\n\n{stamp}\n"
 if stamped != owner:
     OWNER.write_text(stamped, encoding="utf-8", newline="\n")
 
 print(
-    f"Generated {len(machine_symbols)} Emerald machines and "
-    f"{compatibility_count} species-machine compatibilities ({catalog_hash})"
+    f"Generated {len(all_machine_moves)} machines ({len(platinum_move_ids)} Sinnoh TMs) and "
+    f"{compatibility_count} species-machine compatibilities through Sinnoh ({catalog_hash})"
 )

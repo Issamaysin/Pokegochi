@@ -47,16 +47,20 @@ class BattleTowerSystem {
   // Battle Tower is the repeatable epilogue. It remains locked until the
   // one-time post-Hoenn Mega Stone challenge has been defeated.
   static bool available(const GymProgress& progress);
+  // The unlocked Tower takes over the former VS Seeker Home control. This is
+  // an explicit progression rule so drawing and touch routing cannot diverge.
+  static bool replacesVsSeeker(const GymProgress& progress);
   // Once available, the Tower is a permanent Home destination. It never uses
   // a timer, invitation roll, Center charge, or VS Seeker charge.
   // Rare Candy is the fallback prize after the third opponent. Separate
   // non-overlapping 1-in-200 buckets replace it with a Master Ball or the
-  // Special Egg (when the one-egg incubator is free).
+  // Special Egg (when the dedicated Egg Bag still has room).
   // The result object makes future percentage rewards an explicit table
   // instead of scattering their rolls through the UI.
   static bool awardCompletionReward(Inventory& inventory);
   static BattleTowerRewardResult awardCompletionReward(
-      Inventory& inventory,EggState& egg,const PokedexState& pokedex,uint32_t seed);
+      Inventory& inventory,EggInventory& eggs,const PokedexState& pokedex,
+      uint32_t seed);
   static bool start(BattleState& battle, PokemonCollection& collection, uint32_t playerUid,
                     const GymProgress& progress, uint32_t seed);
   static bool advance(BattleState& battle, PokemonCollection& collection);

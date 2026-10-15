@@ -1,12 +1,14 @@
-"""Generate all 386 FireRed National Pokedex metadata rows."""
+"""Generate all 493 National Pokedex metadata rows from FireRed + Platinum."""
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 from text_normalization import fire_red_ascii
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / ".downloads/pokefirered-tree/pokefirered-master/src/data/pokemon"
+PLATINUM = ROOT / ".downloads/pokeplatinum-tree"
 OUT = ROOT / "src/game/PokedexDataGenerated.inc"
 
 
@@ -45,9 +47,30 @@ for match in blocks:
 if len(rows) != 386:
     raise RuntimeError(f"Expected 386 National Pokedex rows, found {len(rows)}")
 
+species_symbols = [line.strip().removeprefix("SPECIES_")
+                   for line in (PLATINUM / "generated/species.txt").read_text(
+                       encoding="utf-8").splitlines() if line.strip()]
+if len(species_symbols) <= 493 or species_symbols[387] != "TURTWIG":
+    raise RuntimeError("Unexpected Platinum National Dex order")
+for species_id in range(387, 494):
+    symbol = species_symbols[species_id]
+    source = json.loads(
+        (PLATINUM / "res/pokemon" / symbol.lower() / "data.json").read_text(
+            encoding="utf-8"))
+    dex = source["pokedex_data"]["en"]
+    # Platinum stores Imperial Pokedex values. The native games display the
+    # same underlying metric values rounded to decimetres/hectograms.
+    height = round(float(source["pokedex_data"]["height_inches"]) * 0.254)
+    weight = round(float(source["pokedex_data"]["weight_pounds"]) * 4.5359237)
+    description = " ".join(str(line) for line in dex["entry_text"])
+    rows.append((dex["category"], int(height), int(weight), description))
+
+if len(rows) != 493:
+    raise RuntimeError(f"Expected 493 National Pokedex rows, found {len(rows)}")
+
 lines = ["static constexpr PokedexEntryData kPokedexEntries[] = {"]
 for category, height, weight, description in rows:
     lines.append(f"  {{{c_string(category)}, {height}, {weight}, {c_string(description)}}},")
 lines.append("};")
 OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print(f"Generated {len(rows)} FireRed Pokedex entries")
+print(f"Generated {len(rows)} National Pokedex entries")

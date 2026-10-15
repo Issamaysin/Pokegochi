@@ -4,7 +4,12 @@
 #include "game/PokemonData.h"
 #include "game/HeldItems.h"
 
-constexpr uint16_t kBoxCapacity = 386;
+// V41 was shipped with one permanent Box position per Gen I--III species.
+// Sinnoh extends the National Dex to #493; keep the old capacity explicitly
+// named so PersistentSave can migrate every previously shipped record without
+// ever treating its trailing save bytes as Pokemon data.
+constexpr uint16_t kBoxCapacityV41 = 386;
+constexpr uint16_t kBoxCapacity = 493;
 constexpr uint8_t kPartyCapacity = 3;
 constexpr uint8_t kMoveSlots = 4;
 constexpr uint32_t kEmptyPokemonUid = 0;
@@ -76,10 +81,28 @@ struct OwnedPokemon {
   EffortValues evs{};
 };
 
+// Frozen V41 collection payload.  This is intentionally kept beside the
+// active collection rather than reconstructed from a byte size in the save
+// layer, making the V41 -> V42 migration reviewable and type-safe.
+struct PokemonCollectionV41 {
+  OwnedPokemon box[kBoxCapacityV41]{};
+  uint32_t party[kPartyCapacity]{};
+  uint32_t nextUid = 1;
+};
+
 struct PokemonCollection {
   OwnedPokemon box[kBoxCapacity]{};
   uint32_t party[kPartyCapacity]{};
   uint32_t nextUid = 1;
+
+  PokemonCollection& operator=(const PokemonCollectionV41& legacy) {
+    for (uint16_t index = 0; index < kBoxCapacity; ++index)
+      box[index] = index < kBoxCapacityV41 ? legacy.box[index] : OwnedPokemon{};
+    for (uint8_t index = 0; index < kPartyCapacity; ++index)
+      party[index] = legacy.party[index];
+    nextUid = legacy.nextUid;
+    return *this;
+  }
 };
 
 class CollectionLogic {
@@ -88,7 +111,8 @@ class CollectionLogic {
   static bool chooseStarter(PokemonCollection& collection, uint16_t speciesId, uint32_t shinyRoll = 1);
   static bool addRegionalStarter(PokemonCollection& collection, uint16_t speciesId, uint32_t shinyRoll = 1);
   static OwnedPokemon createPokemon(uint32_t uid, uint16_t speciesId, uint8_t level,
-                                    bool shiny = false, uint32_t personalitySeed = 0);
+                                    bool shiny = false, uint32_t personalitySeed = 0,
+                                    uint8_t unlockedGeneration = 1);
   // Older development saves may predate the move-set fields.  Repairing a
   // creature with no valid moves keeps an automatic battle replacement usable.
   static bool ensureUsableMoves(OwnedPokemon& pokemon);
@@ -128,10 +152,18 @@ class CollectionLogic {
   static uint16_t calculatedMaximumHp(const OwnedPokemon& pokemon);
   static uint16_t calculatedStat(const OwnedPokemon& pokemon, PokemonStat stat);
   static void refreshDerivedStats(OwnedPokemon& pokemon, bool preserveDamage = true);
-  static void refreshAbility(OwnedPokemon& pokemon);
+  static void refreshAbility(OwnedPokemon& pokemon, uint8_t unlockedGeneration = 3);
+  // Applies the newly unlocked Platinum ability pair to existing records.
+  // Level-up moves are intentionally not retroactively injected; they become
+  // available to future level-ups and to newly generated Sinnoh encounters.
+  static void applyGenerationContent(PokemonCollection& collection,
+                                     uint8_t unlockedGeneration);
   // Form 0 is the normal/default form. Deoxys supports explicit forms 0..3;
-  // Unown is derived from personality and therefore cannot be changed.
+  // Sinnoh adds selectable Rotom, Giratina and Shaymin forms. Arceus is
+  // derived from its held Plate (form 0 for no Plate/Pixie), and Unown
+  // remains derived from personality and therefore cannot be changed.
   static uint8_t resolvedForm(const OwnedPokemon& pokemon);
+  static uint8_t formCount(uint16_t speciesId);
   static const char* formName(uint16_t speciesId, uint8_t form);
   static bool canChangeForm(const OwnedPokemon& pokemon);
   static bool setForm(OwnedPokemon& pokemon, uint8_t form);
@@ -140,13 +172,15 @@ class CollectionLogic {
   static OwnedPokemon* find(PokemonCollection& collection, uint32_t uid);
   static const OwnedPokemon* find(const PokemonCollection& collection, uint32_t uid);
   static OwnedPokemon* active(PokemonCollection& collection, uint8_t slot);
+  static const OwnedPokemon* active(const PokemonCollection& collection, uint8_t slot);
   static uint16_t count(const PokemonCollection& collection);
   static bool add(PokemonCollection& collection, OwnedPokemon pokemon, uint32_t* assignedUid = nullptr);
   // Commits an evolution only after its cinematic has completed. Nincada's
   // paired Shedinja is created here as part of the same operation; a full Box
   // still permits Ninjask but simply leaves bonusUid empty.
   static bool evolve(PokemonCollection& collection, uint32_t uid,
-                     uint16_t newSpeciesId, uint32_t* bonusUid = nullptr);
+                     uint16_t newSpeciesId, uint32_t* bonusUid = nullptr,
+                     uint8_t unlockedGeneration = 3);
   static bool setPartySlot(PokemonCollection& collection, uint8_t slot, uint32_t uid);
   static bool removeFromParty(PokemonCollection& collection, uint32_t uid);
   // Explicitly releases one stored Pokemon after the UI has shown its YES/NO

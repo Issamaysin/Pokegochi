@@ -99,6 +99,7 @@ class AssetFile {
 };
 
 bool assetIoFailed = false;
+bool assetCacheCapacityFailed = false;
 
 // PGA1 is emitted by build_sd_asset_pack.py. Its index is sorted by the same
 // FNV-1a hash used here and every PKG payload is concatenated in that order.
@@ -227,23 +228,45 @@ bool archiveAssetRange(const char* path, uint32_t& offset, uint32_t& length) {
 // it filled before the arena did and every retained compositor pass reopened
 // the missing sprites from SD.  Keep enough descriptors for one complete
 // scene so subsequent bands are RAM-only.
-constexpr uint8_t kCacheSlots = 96;
+#if defined(POKEGOCHI_ANDROID)
+// Android has a real heap and no reason to emulate the ESP32's tiny sprite
+// arena. Keep decoded battle cels resident across moves so the first visual
+// frame never pays an archive read/decode penalty after the player taps FIGHT.
+// The native process is still bounded: four MiB of indexed pixels is small
+// beside the Java Surface buffers and avoids unbounded per-frame allocations.
+constexpr uint16_t kCacheSlots = 1024;
+constexpr size_t kCacheArenaBytes = 4U * 1024U * 1024U;
+#else
+// Ninety-two descriptors leave a small linker margin for the fast retained
+// stripe while still exceeding the largest audited resident move by 46 slots.
+constexpr uint8_t kCacheSlots = 92;
 // The cache is an arena, never a collection of `new[]` allocations.  Scene
 // changes reset it in one operation, which removes the heap fragmentation
 // that made the old renderer degrade after opening a few menus.
-// 48 KiB holds the complete manifests observed on Home, Box, Bag, Summary and
-// Battle. A 64 KiB arena prevented the separate 80 KiB Home/terrain workspace
-// from obtaining one contiguous ESP32 DRAM block once NVS was initialized.
-constexpr size_t kCacheArenaBytes = 12000;
+// The compact arena holds the common authored battle cels beside the two
+// battlers while leaving the separate scene workspace contiguous. The full
+// Gen-IV overlay has multi-cel rock, explosion and needle effects, so keep a
+// deterministic 13 KiB front cache and let the audit enforce the complete
+// resident-set contract. Assets beyond this front cache spill into the scene
+// workspace after the terrain/field plane is reserved.
+constexpr size_t kCacheArenaBytes = 13312;
+#endif
 // A Home scene keeps two 304x134 indexed layers resident: the walkable map
 // and its roof/tree/building foreground. PKG2 stores multi-palette maps at
 // 6bpp, so the worst pair consumes 61,104 bytes without losing a source
 // colour.
-// The largest audited terrain + FireRed move-BG pair occupies 62,240 bytes.
-// A 61 KiB bank holds it losslessly and returns 3 KiB to the contiguous heap.
-// Together with the 1 KiB saved by halving the retained-band hash rows, that
-// funds a twelve-scanline presenter without increasing total RAM.
-constexpr size_t kSceneWorkspaceBytes = 61U * 1024U;
+// The largest authored terrain is larger than the safe boot-time heap budget
+// once FAT, SPIFFS, GameSave and the retained TFT presenter are all resident.
+// Reserve enough contiguous space for the largest normal battle scene while
+// the retained TFT stripe is allocated separately at boot.  The old 53 KiB
+// arena left Surf/large Sinnoh planes 2.8 KiB short after the stripe was
+// detached for a retry.
+constexpr size_t kSceneWorkspaceBytes = 57U * 1024U;
+// FireRed's largest legal terrain + task/changebg pair is just under 63 KiB
+// once the indexed palettes are included. This is allocated only after boot,
+// when persistent storage already owns its record and battle can rebuild the
+// shared workspace around the exact resident scene pair.
+constexpr size_t kBattleSceneWorkspaceBytes = 64U * 1024U;
 constexpr uint16_t kRegionBufferWidth = 96;
 // Region restoration is streamed in short strips.  Keeping a complete 96x96
 // RGB565 tile consumed 18 KiB even though the retained presenter itself works
@@ -251,6 +274,7 @@ constexpr uint16_t kRegionBufferWidth = 96;
 // presenter without changing any decoded pixel.
 constexpr uint16_t kRegionBufferHeight = 32;
 constexpr uint16_t kDecodeRows = 4;
+constexpr size_t kStreamPixelCapacity = 320U * kDecodeRows;
 
 CacheEntry cache[kCacheSlots];
 // These two arenas are part of the renderer's fixed memory budget, not
@@ -282,7 +306,7 @@ LargeAssetCache largeAsset;
 // plane.  Treating the second plane as an ordinary small sprite made its
 // placement depend on cache order and allowed later sprite preloads to evict
 // or overwrite it.  Its palette and packed indices now own a deterministic
-// range immediately after the primary terrain inside the existing 61 KiB
+// range immediately after the primary terrain inside the existing scene
 // scene arena (no second framebuffer and no extra large heap allocation).
 struct BattlePlaneCache {
   char path[112]{};
@@ -314,7 +338,7 @@ union RenderScratch {
 RenderScratch scratch;
 uint16_t directPalette[256]{};
 
-bool compositionActive = false;
+volatile bool compositionActive = false;
 uint32_t assetOpenCount = 0;
 
 // TFT_eSPI normally opens and closes an SPI transaction for every pushImage.
@@ -459,9 +483,18 @@ bool convertLegacyToIndexed(AssetFile& file, const AssetInfo& info, uint8_t* des
   result.indexBytes = (pixelCount + 1U) / 2U;
   std::memset(destination, 0, result.indexBytes);
 
+  // Legacy PKG1 files are converted through the shared 320x4 RGB565 scratch.
+  // Battle changebg planes may be 512px wide, so the old fixed four-row read
+  // wrote 2048 pixels into a 1280-pixel buffer before the indexed image was
+  // even installed. Keep the conversion chunk bounded by the real scratch
+  // capacity, just like the direct streaming path.
+  const uint16_t maxRowsPerChunk = static_cast<uint16_t>(std::max<size_t>(
+      1U, kStreamPixelCapacity / info.header.width));
   size_t outputPixel = 0;
-  for (uint16_t line = 0; line < info.header.height; line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<uint16_t>(kDecodeRows, info.header.height - line));
+  for (uint16_t line = 0; line < info.header.height;) {
+    const uint16_t rows = static_cast<uint16_t>(std::min<uint16_t>(
+        std::min<uint16_t>(kDecodeRows, maxRowsPerChunk),
+        info.header.height - line));
     const size_t pixels = static_cast<size_t>(info.header.width) * rows;
     if (!readFully(file, reinterpret_cast<uint8_t*>(scratch.stream.pixels), pixels * sizeof(uint16_t))) return false;
     for (size_t input = 0; input < pixels; ++input, ++outputPixel) {
@@ -489,6 +522,7 @@ bool convertLegacyToIndexed(AssetFile& file, const AssetInfo& info, uint8_t* des
         destination[outputPixel] = static_cast<uint8_t>(color);
       }
     }
+    line = static_cast<uint16_t>(line + rows);
   }
   result.valid = true;
   return true;
@@ -513,6 +547,80 @@ bool loadIndexed(AssetFile& file, const AssetInfo& info, uint8_t* destination,
   return true;
 }
 
+// FireRed's visual-task BG1 planes are authored as 256x256 tilemaps, but the
+// retained battle camera samples only the 240x138 native viewport (scaled to
+// 320x184). Keep the full source package on the card for exact provenance,
+// while decoding only the rows the camera can ever request. This is important
+// for Scary Face/Attract/Sunny Day as well as Haze: retaining the unused lower
+// half can force an otherwise valid move into a failed 62 KiB workspace
+// promotion after a long animation sequence.
+bool isViewportTaskPlane(const char* path) {
+  return path && std::strncmp(
+      path, "/pokegochi/assets/firered/battle_anims/backgrounds/task_",
+      sizeof("/pokegochi/assets/firered/battle_anims/backgrounds/task_") - 1U) == 0;
+}
+
+size_t packedRowBytes(const AssetInfo& info) {
+  if (info.bitsPerPixel == 4U)
+    return (static_cast<size_t>(info.header.width) + 1U) / 2U;
+  if (info.bitsPerPixel == 6U)
+    return (static_cast<size_t>(info.header.width) * 6U + 7U) / 8U;
+  return static_cast<size_t>(info.header.width);
+}
+
+bool loadIndexedRows(AssetFile& file, const AssetInfo& info,
+                     uint16_t sourceTop, uint16_t height,
+                     uint8_t* destination, size_t capacity,
+                     uint16_t* palette, IndexedImage& result) {
+  if (info.bitsPerPixel == 16U || !height ||
+      sourceTop >= info.header.height ||
+      height > info.header.height - sourceTop || !destination || !palette)
+    return false;
+  const size_t paletteBytes = static_cast<size_t>(info.paletteCount) * sizeof(uint16_t);
+  const size_t rowBytes = packedRowBytes(info);
+  const size_t indexBytes = rowBytes * height;
+  if (capacity < indexBytes || !file.seek(info.paletteOffset) ||
+      !readFully(file, reinterpret_cast<uint8_t*>(palette), paletteBytes))
+    return false;
+
+  result = IndexedImage{};
+  result.header = info.header;
+  result.header.height = height;
+  result.bitsPerPixel = info.bitsPerPixel;
+  result.paletteCount = info.paletteCount;
+  result.palette = palette;
+  result.indices = destination;
+  result.indexBytes = indexBytes;
+  for (uint16_t row = 0; row < height; ++row) {
+    const uint32_t sourceOffset = info.pixelOffset +
+        static_cast<uint32_t>(sourceTop + row) * rowBytes;
+    if (!file.seek(sourceOffset) ||
+        !readFully(file, destination + static_cast<size_t>(row) * rowBytes,
+                   rowBytes))
+      return false;
+  }
+  result.valid = true;
+  return true;
+}
+
+void visibleRowRange(PixelCanvas& display, int16_t destinationY,
+                     int32_t sourceHeight, int32_t& firstRow,
+                     int32_t& lastRow) {
+  // The Android presenter keeps the full framebuffer but narrows the logical
+  // clip to the damaged rectangle.  The old calculations only considered the
+  // canvas origin, so a damage rect beginning below y=0 still decoded row 0
+  // and passed it to a viewport whose top was already lower.  That made the
+  // entire draw fail and callers switched to their procedural/default sprite.
+  const int32_t canvasTop = -display.getOriginY();
+  const int32_t canvasBottom = canvasTop + display.height();
+  const int32_t visibleTop = std::max<int32_t>(
+      canvasTop, display.logicalClipTop());
+  const int32_t visibleBottom = std::min<int32_t>(
+      canvasBottom, display.logicalClipBottom());
+  firstRow = std::max<int32_t>(0, visibleTop - destinationY);
+  lastRow = std::min<int32_t>(sourceHeight, visibleBottom - destinationY);
+}
+
 bool drawIndexed(PixelCanvas& display, const IndexedImage& image, int16_t x, int16_t y) {
   if (!image.valid || !image.indices) return false;
   // The retained presenter owns a short stripe sprite and moves its logical origin
@@ -523,11 +631,10 @@ bool drawIndexed(PixelCanvas& display, const IndexedImage& image, int16_t x, int
   // the current canvas stripe. Composition still produces byte-identical
   // pixels; it simply stops spending time on rows TFT_eSprite would clip.
   display.damage(x, y, image.header.width, image.header.height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(image.header.height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, image.header.height,
+                  firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -537,26 +644,18 @@ bool drawIndexed(PixelCanvas& display, const IndexedImage& image, int16_t x, int
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
   const bool transparent = containsTransparency(image);
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
-  for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const size_t sourceRow = static_cast<size_t>(line + row) *
-          image.header.width + firstVisibleColumn;
-      const size_t destinationRow = static_cast<size_t>(row) * visibleWidth;
-      for (uint16_t column = 0; column < visibleWidth; ++column)
-        scratch.stream.pixels[destinationRow + column] =
-            indexedPixel(image, sourceRow + column);
+  for (uint16_t row = static_cast<uint16_t>(firstVisibleRow);
+       row < static_cast<uint16_t>(lastVisibleRow); ++row) {
+    uint16_t* destination = display.writableRow565(
+        x + firstVisibleColumn, y + row, visibleWidth);
+    if (!destination) return false;
+    const size_t sourceRow = static_cast<size_t>(row) *
+        image.header.width + firstVisibleColumn;
+    for (uint16_t column = 0; column < visibleWidth; ++column) {
+      const uint16_t pixel = indexedPixel(image, sourceRow + column);
+      if (!transparent || pixel != image.header.transparent)
+        destination[column] = PixelCanvas::encoded565(pixel);
     }
-    if (transparent)
-      display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                        scratch.stream.pixels, image.header.transparent);
-    else
-      display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                        scratch.stream.pixels);
   }
   return true;
 }
@@ -636,11 +735,9 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
   opacity16 = std::min<uint8_t>(16U, opacity16);
   if (!opacity16) return true;
   display.damage(x, y, width, height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, height, firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -649,8 +746,6 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
       lastVisibleColumn <= firstVisibleColumn) return true;
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
   const uint16_t sourceWidth = std::max<uint16_t>(
       image.header.width, virtualSourceWidth);
   const uint16_t sourceHeight = std::max<uint16_t>(
@@ -677,18 +772,18 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
               sourceXUnbounded, 0, sourceWidth - 1U));
   }
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+      uint16_t* destination = display.writableRow565(
+          x + firstVisibleColumn, y + line, visibleWidth);
+      if (!destination) return false;
       // Move scale division and wrap reduction out of the inner pixel loop.
       // Most FireRed changebg planes (including Blizzard) are 1:1 images
       // scrolled by a few pixels.  The old generic path performed a signed
       // division and modulo for every one of the 58,880 arena pixels, making
       // a 60 Hz BG task take ~130 ms per physical frame on the ESP32.
       const int32_t sourceYUnbounded = identityScale
-          ? static_cast<int32_t>(line + row) + sourceOffsetY
-          : static_cast<int32_t>(line + row) * scaleDenominator /
+          ? static_cast<int32_t>(line) + sourceOffsetY
+          : static_cast<int32_t>(line) * scaleDenominator /
                 scaleNumerator + sourceOffsetY;
       const uint16_t sourceY = wrapY
           ? positiveModulo(sourceYUnbounded, sourceHeight)
@@ -708,20 +803,13 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
                 : image.header.transparent;
         if (pixel != image.header.transparent &&
             !orderedAlphaVisible(static_cast<int16_t>(x + column),
-                                 static_cast<int16_t>(y + line + row),
+                                 static_cast<int16_t>(y + line),
                                  opacity16))
           pixel = image.header.transparent;
-        scratch.stream.pixels[static_cast<size_t>(row) * visibleWidth +
-                              column - firstVisibleColumn] = pixel;
+        if (!transparent || pixel != image.header.transparent)
+          destination[column - firstVisibleColumn] =
+              PixelCanvas::encoded565(pixel);
       }
-    }
-    if (transparent)
-      display.pushImage(x + firstVisibleColumn, y + line,
-                        visibleWidth, rows, scratch.stream.pixels,
-                        image.header.transparent);
-    else
-      display.pushImage(x + firstVisibleColumn, y + line,
-                        visibleWidth, rows, scratch.stream.pixels);
   }
   return true;
 }
@@ -730,11 +818,10 @@ bool drawIndexedHorizontalMirror(PixelCanvas& display, const IndexedImage& image
                                  int16_t x, int16_t y) {
   if (!image.valid || !image.indices) return false;
   display.damage(x, y, image.header.width, image.header.height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(image.header.height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, image.header.height,
+                  firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -797,11 +884,10 @@ bool drawIndexedMetallic(PixelCanvas& display, const IndexedImage& image,
                          int16_t x, int16_t y, uint8_t phase) {
   if (!image.valid || !image.indices) return false;
   display.damage(x, y, image.header.width, image.header.height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(image.header.height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, image.header.height,
+                  firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -889,10 +975,9 @@ bool drawIndexedTransformed(PixelCanvas& display, const IndexedImage& image,
   const int16_t x = static_cast<int16_t>(centerX - static_cast<int16_t>(width / 2U));
   const int16_t y = static_cast<int16_t>(centerY - static_cast<int16_t>(height / 2U));
   display.damage(x, y, width, height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(height, logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, height, firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -902,36 +987,28 @@ bool drawIndexedTransformed(PixelCanvas& display, const IndexedImage& image,
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
   const bool transparent = containsTransparency(image);
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const uint16_t sourceY = static_cast<uint16_t>(std::min<uint32_t>(
-          image.header.height - 1U,
-          static_cast<uint32_t>(line + row) * image.header.height / height));
-      for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
-           column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
-        const uint16_t sourceX = static_cast<uint16_t>(std::min<uint32_t>(
-            image.header.width - 1U,
-            static_cast<uint32_t>(column) * image.header.width / width));
-        const uint16_t original = indexedPixel(
-            image, static_cast<size_t>(sourceY) * image.header.width + sourceX);
-        scratch.stream.pixels[static_cast<size_t>(row) * visibleWidth +
-                              column - firstVisibleColumn] =
-            original == image.header.transparent ? original :
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+    uint16_t* destination = display.writableRow565(
+        x + firstVisibleColumn, y + line, visibleWidth);
+    if (!destination) return false;
+    const uint16_t sourceY = static_cast<uint16_t>(std::min<uint32_t>(
+        image.header.height - 1U,
+        static_cast<uint32_t>(line) * image.header.height / height));
+    for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
+         column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
+      const uint16_t sourceX = static_cast<uint16_t>(std::min<uint32_t>(
+          image.header.width - 1U,
+          static_cast<uint32_t>(column) * image.header.width / width));
+      const uint16_t original = indexedPixel(
+          image, static_cast<size_t>(sourceY) * image.header.width + sourceX);
+      if (!transparent || original != image.header.transparent) {
+        const uint16_t color = original == image.header.transparent ? original :
             transformedColor(original, colorEffect, blendColor, blendAmount);
+        destination[column - firstVisibleColumn] =
+            PixelCanvas::encoded565(color);
       }
     }
-    if (transparent)
-      display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                        scratch.stream.pixels,
-                        image.header.transparent);
-    else
-      display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                        scratch.stream.pixels);
   }
   return true;
 }
@@ -974,10 +1051,9 @@ bool drawIndexedAffine(PixelCanvas& display, const IndexedImage& image,
   const int16_t x = static_cast<int16_t>(centerX - width / 2);
   const int16_t y = static_cast<int16_t>(centerY - height / 2);
   display.damage(x, y, width, height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(height, logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, height, firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -986,50 +1062,37 @@ bool drawIndexedAffine(PixelCanvas& display, const IndexedImage& image,
       lastVisibleColumn <= firstVisibleColumn) return true;
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const int32_t dy = static_cast<int32_t>(line + row) - height / 2;
-      for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
-           column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
-        const int32_t dx = static_cast<int32_t>(column) - width / 2;
-        const int32_t unrotatedX = dx * cosine + dy * sine;
-        const int32_t unrotatedY = -dx * sine + dy * cosine;
-        const int32_t sourceX = static_cast<int32_t>(image.header.width) / 2 +
-            unrotatedX * 100 / (256 * scaleXPercent);
-        const int32_t sourceY = static_cast<int32_t>(image.header.height) / 2 +
-            unrotatedY * 100 / (256 * scaleYPercent);
-        uint16_t color = image.header.transparent;
-        if (sourceX >= 0 && sourceY >= 0 &&
-            sourceX < image.header.width && sourceY < image.header.height)
-          color = indexedPixel(image, static_cast<size_t>(sourceY) *
-                                      image.header.width + sourceX);
-        if (color != image.header.transparent &&
-            colorEffect != AssetColorEffect::None)
-          color = transformedColor(color, colorEffect, blendColor, blendAmount);
-        if (color != image.header.transparent && opacity16 < 16U) {
-          static constexpr uint8_t kBayer4x4[16] = {
-               0,  8,  2, 10, 12,  4, 14,  6,
-               3, 11,  1,  9, 15,  7, 13,  5,
-          };
-          const uint8_t threshold = kBayer4x4[
-              ((static_cast<uint16_t>(y + line + row) & 3U) << 2U) |
-              (static_cast<uint16_t>(x + column) & 3U)];
-          if (threshold >= opacity16) color = image.header.transparent;
-        }
-        scratch.stream.pixels[static_cast<size_t>(row) * visibleWidth +
-                              column - firstVisibleColumn] = color;
-      }
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+    uint16_t* destination = display.writableRow565(
+        x + firstVisibleColumn, y + line, visibleWidth);
+    if (!destination) return false;
+    const int32_t dy = static_cast<int32_t>(line) - height / 2;
+    for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
+         column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
+      const int32_t dx = static_cast<int32_t>(column) - width / 2;
+      const int32_t unrotatedX = dx * cosine + dy * sine;
+      const int32_t unrotatedY = -dx * sine + dy * cosine;
+      const int32_t sourceX = static_cast<int32_t>(image.header.width) / 2 +
+          unrotatedX * 100 / (256 * scaleXPercent);
+      const int32_t sourceY = static_cast<int32_t>(image.header.height) / 2 +
+          unrotatedY * 100 / (256 * scaleYPercent);
+      uint16_t color = image.header.transparent;
+      if (sourceX >= 0 && sourceY >= 0 &&
+          sourceX < image.header.width && sourceY < image.header.height)
+        color = indexedPixel(image, static_cast<size_t>(sourceY) *
+                                    image.header.width + sourceX);
+      if (color != image.header.transparent &&
+          colorEffect != AssetColorEffect::None)
+        color = transformedColor(color, colorEffect, blendColor, blendAmount);
+      if (color != image.header.transparent && opacity16 < 16U &&
+          !orderedAlphaVisible(static_cast<int16_t>(x + column),
+                               static_cast<int16_t>(y + line), opacity16))
+        color = image.header.transparent;
+      if (color != image.header.transparent)
+        destination[column - firstVisibleColumn] =
+            PixelCanvas::encoded565(color);
     }
-    // Rotation creates transparent corners even when every source pixel is
-    // opaque, so the affine destination always uses the transparent key.
-    display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                      scratch.stream.pixels,
-                      image.header.transparent);
   }
   return true;
 }
@@ -1044,11 +1107,10 @@ bool drawIndexedPaletteCycled(PixelCanvas& display, const IndexedImage& image,
       colorCount, image.paletteCount - firstColor));
   shift = static_cast<uint8_t>(shift % colorCount);
   display.damage(x, y, image.header.width, image.header.height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(image.header.height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, image.header.height,
+                  firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -1058,36 +1120,28 @@ bool drawIndexedPaletteCycled(PixelCanvas& display, const IndexedImage& image,
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
   const bool transparent = containsTransparency(image);
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const size_t sourceRow = static_cast<size_t>(line + row) * image.header.width;
-      const size_t destinationRow = static_cast<size_t>(row) * visibleWidth;
-      for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
-           column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
-        uint8_t paletteEntry = indexedValue(image, sourceRow + column);
-        const uint16_t original = paletteEntry < image.paletteCount
-            ? image.palette[paletteEntry] : image.header.transparent;
-        if (original != image.header.transparent && paletteEntry >= firstColor &&
-            paletteEntry < static_cast<uint16_t>(firstColor + colorCount)) {
-          paletteEntry = static_cast<uint8_t>(firstColor +
-              (paletteEntry - firstColor + shift) % colorCount);
-        }
-        scratch.stream.pixels[destinationRow + column - firstVisibleColumn] =
-            paletteEntry < image.paletteCount ? image.palette[paletteEntry]
-                                              : image.header.transparent;
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+    uint16_t* destination = display.writableRow565(
+        x + firstVisibleColumn, y + line, visibleWidth);
+    if (!destination) return false;
+    const size_t sourceRow = static_cast<size_t>(line) * image.header.width;
+    for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
+         column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
+      uint8_t paletteEntry = indexedValue(image, sourceRow + column);
+      const uint16_t original = paletteEntry < image.paletteCount
+          ? image.palette[paletteEntry] : image.header.transparent;
+      if (original != image.header.transparent && paletteEntry >= firstColor &&
+          paletteEntry < static_cast<uint16_t>(firstColor + colorCount)) {
+        paletteEntry = static_cast<uint8_t>(firstColor +
+            (paletteEntry - firstColor + shift) % colorCount);
       }
+      const uint16_t color = paletteEntry < image.paletteCount
+          ? image.palette[paletteEntry] : image.header.transparent;
+      if (!transparent || color != image.header.transparent)
+        destination[column - firstVisibleColumn] =
+            PixelCanvas::encoded565(color);
     }
-    if (transparent)
-      display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                        scratch.stream.pixels, image.header.transparent);
-    else
-      display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                        scratch.stream.pixels);
   }
   return true;
 }
@@ -1108,11 +1162,10 @@ bool drawIndexedDithered(PixelCanvas& display, const IndexedImage& image,
       15,  7, 13,  5,
   };
   display.damage(x, y, image.header.width, image.header.height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(image.header.height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, image.header.height,
+                  firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -1121,29 +1174,22 @@ bool drawIndexedDithered(PixelCanvas& display, const IndexedImage& image,
       lastVisibleColumn <= firstVisibleColumn) return true;
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const uint16_t localY = static_cast<uint16_t>(line + row);
-      const size_t sourceRow = static_cast<size_t>(localY) * image.header.width;
-      const size_t destinationRow = static_cast<size_t>(row) * visibleWidth;
-      for (uint16_t localX = static_cast<uint16_t>(firstVisibleColumn);
-           localX < static_cast<uint16_t>(lastVisibleColumn); ++localX) {
-        const uint16_t original = indexedPixel(image, sourceRow + localX);
-        const uint8_t threshold = kBayer4x4[
-            ((static_cast<uint16_t>(y + localY) & 3U) << 2U) |
-            (static_cast<uint16_t>(x + localX) & 3U)];
-        scratch.stream.pixels[destinationRow + localX - firstVisibleColumn] =
-            original != image.header.transparent && threshold < opacity16
-                ? original : image.header.transparent;
-      }
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+    uint16_t* destination = display.writableRow565(
+        x + firstVisibleColumn, y + line, visibleWidth);
+    if (!destination) return false;
+    const size_t sourceRow = static_cast<size_t>(line) * image.header.width;
+    for (uint16_t localX = static_cast<uint16_t>(firstVisibleColumn);
+         localX < static_cast<uint16_t>(lastVisibleColumn); ++localX) {
+      const uint16_t original = indexedPixel(image, sourceRow + localX);
+      const uint8_t threshold = kBayer4x4[
+          ((static_cast<uint16_t>(y + line) & 3U) << 2U) |
+          (static_cast<uint16_t>(x + localX) & 3U)];
+      if (original != image.header.transparent && threshold < opacity16)
+        destination[localX - firstVisibleColumn] =
+            PixelCanvas::encoded565(original);
     }
-    display.pushImage(x + firstVisibleColumn, y + line, visibleWidth, rows,
-                      scratch.stream.pixels, image.header.transparent);
   }
   return true;
 }
@@ -1159,16 +1205,11 @@ bool drawIndexedPatternMasked(PixelCanvas& display,
       !pattern.header.width || !pattern.header.height) return false;
   opacity16 = std::min<uint8_t>(16U, opacity16);
   if (!opacity16) return true;
-  static constexpr uint8_t kBayer4x4[16] = {
-       0,  8,  2, 10, 12,  4, 14,  6,
-       3, 11,  1,  9, 15,  7, 13,  5,
-  };
   display.damage(maskX, maskY, mask.header.width, mask.header.height);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - maskY);
-  const int32_t lastVisibleRow = std::min<int32_t>(mask.header.height,
-                                                   logicalCanvasBottom - maskY);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, maskY, mask.header.height,
+                  firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - maskX);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -1183,54 +1224,69 @@ bool drawIndexedPatternMasked(PixelCanvas& display,
     if (value < 0) value += modulus;
     return static_cast<uint16_t>(value);
   };
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const uint16_t localY = static_cast<uint16_t>(line + row);
-      const size_t destinationRow = static_cast<size_t>(row) * visibleWidth;
-      for (uint16_t localX = static_cast<uint16_t>(firstVisibleColumn);
-           localX < static_cast<uint16_t>(lastVisibleColumn); ++localX) {
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+    // Refresh's scrolling cure mask samples a battler for many consecutive
+    // frames. Yield between small decode batches so a long fade cannot starve
+    // the ESP32 loop task or trip the watchdog while the canvas is composed.
+    if ((line & 15U) == 0U) yield();
+    uint16_t* destination = display.writableRow565(
+        maskX + firstVisibleColumn, maskY + line, visibleWidth);
+    if (!destination) return false;
+    const uint16_t localY = line;
+    for (uint16_t localX = static_cast<uint16_t>(firstVisibleColumn);
+         localX < static_cast<uint16_t>(lastVisibleColumn); ++localX) {
         const uint16_t maskColor = indexedPixel(
             mask, static_cast<size_t>(localY) * mask.header.width + localX);
-        const uint16_t threshold = kBayer4x4[
-            ((static_cast<uint16_t>(maskY + localY) & 3U) << 2U) |
-            (static_cast<uint16_t>(maskX + localX) & 3U)];
         uint16_t color = transparent;
-        if (maskColor != mask.header.transparent && threshold < opacity16) {
+        if (maskColor != mask.header.transparent) {
           const uint16_t patternX = wrapped(
-              static_cast<int32_t>(localX) + sourceOffsetX,
+              static_cast<int32_t>(maskX) + localX + sourceOffsetX,
               pattern.header.width);
           const uint16_t patternY = wrapped(
-              static_cast<int32_t>(localY) + sourceOffsetY,
+              static_cast<int32_t>(maskY) + localY + sourceOffsetY,
               pattern.header.height);
           const uint16_t candidate = indexedPixel(
               pattern, static_cast<size_t>(patternY) * pattern.header.width + patternX);
-          if (candidate != pattern.header.transparent) color = candidate;
+          if (candidate != pattern.header.transparent) {
+            // StartMonScrollingBgMask uses GBA BLDALPHA, not an OBJ-style
+            // binary opacity. Read the already-composed canvas pixel so the
+            // cure bubbles blend with the battler/terrain underneath instead
+            // of replacing selected pixels with a visible Bayer pattern.
+            const uint16_t background = display.readPixel565Fast(
+                maskX + static_cast<int16_t>(localX),
+                maskY + static_cast<int16_t>(localY));
+            color = alphaBlend565(candidate, background, opacity16);
+          }
         }
-        scratch.stream.pixels[destinationRow + localX - firstVisibleColumn] = color;
-      }
+      if (color != transparent)
+        destination[localX - firstVisibleColumn] =
+            PixelCanvas::encoded565(color);
     }
-    display.pushImage(maskX + firstVisibleColumn, maskY + line,
-                      visibleWidth, rows,
-                      scratch.stream.pixels, transparent);
   }
   return true;
 }
 
 bool drawDirectFile(PixelCanvas& display, AssetFile& file, const AssetInfo& info, int16_t x, int16_t y) {
+  if (!info.header.width || !info.header.height ||
+      info.header.width > kStreamPixelCapacity) return false;
+  // Direct streaming is used for cold, one-off draws.  A battle plane can be
+  // 512px wide, while the shared decode scratch is only 320px wide.  Never
+  // let the source width decide a row count that overruns that scratch area.
+  const uint16_t maxRowsPerChunk = static_cast<uint16_t>(std::max<size_t>(
+      1U, kStreamPixelCapacity / info.header.width));
   TftWriteScope write(display);
   if (info.bitsPerPixel == 16U) {
     if (!file.seek(info.pixelOffset)) return false;
     display.setSwapBytes(true);
-    for (uint16_t line = 0; line < info.header.height; line += kDecodeRows) {
-      const uint16_t rows = static_cast<uint16_t>(std::min<uint16_t>(kDecodeRows, info.header.height - line));
+    for (uint16_t line = 0; line < info.header.height;) {
+      const uint16_t rows = static_cast<uint16_t>(std::min<uint16_t>(
+          std::min<uint16_t>(kDecodeRows, maxRowsPerChunk),
+          info.header.height - line));
       const size_t count = static_cast<size_t>(info.header.width) * rows;
       if (!readFully(file, reinterpret_cast<uint8_t*>(scratch.stream.pixels), count * sizeof(uint16_t))) return false;
       display.pushImage(x, y + line, info.header.width, rows, scratch.stream.pixels, info.header.transparent);
+      line = static_cast<uint16_t>(line + rows);
     }
     return true;
   }
@@ -1243,8 +1299,10 @@ bool drawDirectFile(PixelCanvas& display, AssetFile& file, const AssetInfo& info
   const bool transparent = std::find(palette, palette + info.paletteCount, info.header.transparent) != palette + info.paletteCount;
   display.setSwapBytes(true);
   size_t pixelStart = 0;
-  for (uint16_t line = 0; line < info.header.height; line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<uint16_t>(kDecodeRows, info.header.height - line));
+  for (uint16_t line = 0; line < info.header.height;) {
+    const uint16_t rows = static_cast<uint16_t>(std::min<uint16_t>(
+        std::min<uint16_t>(kDecodeRows, maxRowsPerChunk),
+        info.header.height - line));
     const size_t pixelCount = static_cast<size_t>(info.header.width) * rows;
     const size_t byteCount = info.bitsPerPixel == 4U ? (pixelCount + 1U) / 2U
                            : info.bitsPerPixel == 6U ? (pixelCount * 6U + 7U) / 8U : pixelCount;
@@ -1264,6 +1322,7 @@ bool drawDirectFile(PixelCanvas& display, AssetFile& file, const AssetInfo& info
     if (transparent) display.pushImage(x, y + line, info.header.width, rows, scratch.stream.pixels, info.header.transparent);
     else display.pushImage(x, y + line, info.header.width, rows, scratch.stream.pixels);
     pixelStart += pixelCount;
+    line = static_cast<uint16_t>(line + rows);
   }
   return true;
 }
@@ -1301,13 +1360,32 @@ bool isBattlePlaneAsset(const char* path) {
                   std::strstr(path, "/battle_anims/muddy_water_"));
 }
 
+// ChangeBackground/FadeToBackground planes are opaque GBA backgrounds: they
+// replace the terrain for the duration of the move. They do not need to live
+// beside the terrain, which is important for 256x256 tiled planes on the
+// ESP32's boot-sized scene arena.
+bool isOpaqueBattleReplacement(const char* path) {
+  return path && (std::strstr(path, "/battle_anims/backgrounds/bg_") ||
+                  std::strstr(path, "/battle_anims/backgrounds/tiled_bg_"));
+}
+
 bool shouldBankLargeAsset(const char* path) {
   return path && (std::strstr(path, "/battle_terrain/") ||
+                  // Sinnoh's underground floor is a complete 320x160 scene,
+                  // not a small sprite. Keeping it in the scene bank avoids
+                  // streaming ~38 KiB from SD every time the expedition UI is
+                  // repainted.
+                  std::strstr(path, "/sinnoh/underground/dirt.pkg") ||
                   // Some generated Home themes use one legacy opaque scene
                   // instead of the base/foreground pair. It is far too large
                   // for the 12 KiB icon arena and belongs in the scene bank.
                   std::strstr(path, "/ui/home_background_") ||
                   std::strstr(path, "/creative/base_") ||
+                  // Route 123 is the complete 320x192 Berry Garden scene.
+                  // Treating it as a small icon overflows the 13 KiB sprite
+                  // arena after browsing Settings backgrounds and leaves the
+                  // retained repaint with only the procedural green fallback.
+                  std::strstr(path, "/berry_garden/background.pkg") ||
                   std::strstr(path, "/shop/background.pkg") ||
                   // Each Pokecenter variant is a full-width scene. Treating
                   // one as an icon exhausts the 12 KiB small-asset arena and
@@ -1325,11 +1403,34 @@ void clearHomeLayers() {
   if (sceneWorkspaceOwner == SceneWorkspaceOwner::Home) sceneWorkspaceOwner = SceneWorkspaceOwner::None;
 }
 
+void invalidateSceneWorkspaceSprites() {
+  if (!sceneWorkspace || !sceneWorkspaceCapacity) return;
+  const uintptr_t sceneBegin = reinterpret_cast<uintptr_t>(sceneWorkspace);
+  const uintptr_t sceneEnd = sceneBegin + sceneWorkspaceCapacity;
+  for (auto& entry : cache) {
+    if (!entry.valid) continue;
+    const uintptr_t indices = reinterpret_cast<uintptr_t>(entry.image.indices);
+    const uintptr_t palette = reinterpret_cast<uintptr_t>(entry.image.palette);
+    if ((indices >= sceneBegin && indices < sceneEnd) ||
+        (palette >= sceneBegin && palette < sceneEnd))
+      entry = CacheEntry{};
+  }
+}
+
 void clearLargeAsset() {
+  // Compact sprites live in their own static arena and can survive a terrain
+  // or ChangeBackground replacement. Only invalidate descriptors that point
+  // into the scene workspace which is about to be overwritten. This lets the
+  // two battlers stay resident across the end-of-move terrain restore.
+  invalidateSceneWorkspaceSprites();
   battlePlaneAsset = BattlePlaneCache{};
   battlePlaneWorkspaceEnd = 0;
   largeAsset = LargeAssetCache{};
   largeWorkspaceUsed = 0;
+  // Summary/evolution scenes share this workspace with Box icon overflow.
+  // Leaving the old offset made the next Box scene spill after a
+  // non-existent large asset, which rendered purple placeholders.
+  sceneCacheSpillUsed = 0;
   if (sceneWorkspaceOwner == SceneWorkspaceOwner::Large) sceneWorkspaceOwner = SceneWorkspaceOwner::None;
 }
 
@@ -1365,6 +1466,10 @@ CacheEntry* findCached(const char* path) {
 }
 
 void preloadFailure(const char* path, const char* reason) {
+  if (reason && (std::strcmp(reason, "scene-cache-full") == 0 ||
+                 std::strcmp(reason, "cache-slots") == 0 ||
+                 std::strcmp(reason, "battle-plane-capacity") == 0))
+    assetCacheCapacityFailed = true;
   // A missing optional visual can be requested many times while one retained
   // scene is composed. Printing each request blocks the 115200-baud serial
   // port and turns a recoverable fallback into a multi-second UI stall.
@@ -1437,22 +1542,97 @@ bool preloadLargeAsset(const char* path) {
   return true;
 }
 
+bool promoteBattleSceneWorkspace(size_t required) {
+  if (sceneWorkspace && sceneWorkspaceCapacity >= required) return true;
+
+  // The terrain currently resident in the shared arena must be restored after
+  // the arena is replaced. Keeping its path is enough; the indexed pixels
+  // themselves are deliberately discarded before the new contiguous block is
+  // allocated.
+  char retainedLargePath[112]{};
+  if (largeAsset.image.valid && largeAsset.path[0])
+    std::strncpy(retainedLargePath, largeAsset.path,
+                 sizeof(retainedLargePath) - 1U);
+  clearSpriteCache();
+  clearLargeAsset();
+  delete[] sceneWorkspace;
+  sceneWorkspace = nullptr;
+  sceneWorkspaceCapacity = 0;
+  sceneWorkspaceOwner = SceneWorkspaceOwner::None;
+
+  const size_t largest = heap_caps_get_largest_free_block(
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  // A plane knows its exact packed requirement.  Do not round every retry up
+  // to the 62 KiB worst-case audit ceiling: that turned a 58 KiB Surf scene
+  // into an impossible 62 KiB allocation on the fragmented runtime heap.
+  size_t requested = required;
+  if (largest >= requested + 128U)
+    requested = std::min(requested, (largest - 128U) & ~size_t(3U));
+  if (largest < requested) {
+    Serial.printf("[GFX] battle workspace promotion unavailable need=%u largest=%u\n",
+                  static_cast<unsigned>(required),
+                  static_cast<unsigned>(largest));
+    return false;
+  }
+  sceneWorkspace = new (std::nothrow) uint8_t[requested];
+  sceneWorkspaceCapacity = sceneWorkspace ? requested : 0;
+  if (!sceneWorkspace || sceneWorkspaceCapacity < required) {
+    Serial.printf("[GFX] battle workspace promotion failed need=%u got=%u\n",
+                  static_cast<unsigned>(required),
+                  static_cast<unsigned>(sceneWorkspaceCapacity));
+    if (sceneWorkspace) {
+      delete[] sceneWorkspace;
+      sceneWorkspace = nullptr;
+      sceneWorkspaceCapacity = 0;
+    }
+    return false;
+  }
+  Serial.printf("[GFX] battle workspace promoted size=%u need=%u heap=%u block=%u\n",
+                static_cast<unsigned>(sceneWorkspaceCapacity),
+                static_cast<unsigned>(required),
+                static_cast<unsigned>(ESP.getFreeHeap()),
+                static_cast<unsigned>(ESP.getMaxAllocHeap()));
+
+  if (retainedLargePath[0] && !preloadLargeAsset(retainedLargePath)) {
+    Serial.printf("[GFX] battle workspace terrain restore failed: %s\n",
+                  retainedLargePath);
+    return false;
+  }
+  return true;
+}
+
 bool preloadBattlePlane(const char* path) {
   if (!path || !path[0]) return false;
   if (battlePlaneAsset.image.valid &&
       std::strcmp(battlePlaneAsset.path, path) == 0)
     return true;
-  if (sceneWorkspaceOwner != SceneWorkspaceOwner::Large ||
-      !largeAsset.image.valid || !sceneWorkspace) {
+  if (largeAsset.image.valid && std::strcmp(largeAsset.path, path) == 0)
+    return true;
+  // clearCache() deliberately invalidates the previous large asset and resets
+  // its ownership. The next terrain/field load must reclaim that same shared
+  // workspace before checking the cache owner; otherwise every battle scene
+  // after a UI/radio transition reports "battle-plane-without-terrain", leaves
+  // baseResident false, and the retained presenter keeps cancelling black
+  // stripes forever.
+  if (!reserveSceneWorkspace(SceneWorkspaceOwner::Large) || !sceneWorkspace) {
     preloadFailure(path, "battle-plane-without-terrain");
     return false;
   }
 
   // Any spilled small sprite lives above the previous plane and becomes
-  // invalid when that plane changes size.  Discard those descriptors first;
-  // the caller's scene manifest reloads the two battlers and all effect cels
-  // before composition resumes.
+  // invalid when that plane changes size.  On ESP32 the compact cache is
+  // deliberately rebuilt here because the scene workspace is shared with
+  // the plane. Android has a separate multi-megabyte sprite bank: clearing it
+  // on every move erased the resident terrain/battlers and made the retained
+  // compositor alternate between the real asset and creature()'s default
+  // silhouette. Keep that bank pinned until it is genuinely full; the normal
+  // manifest then reloads the complete battle set after the one necessary
+  // recycle.
+#if defined(POKEGOCHI_ANDROID)
+  if (cacheArenaUsed >= kCacheArenaBytes) clearSpriteCache();
+#else
   clearSpriteCache();
+#endif
   battlePlaneAsset = BattlePlaneCache{};
   battlePlaneWorkspaceEnd = 0;
   sceneCacheSpillUsed = largeWorkspaceUsed;
@@ -1468,21 +1648,64 @@ bool preloadBattlePlane(const char* path) {
   const size_t pixelBytes = info.bitsPerPixel == 16U
       ? static_cast<size_t>(info.header.width) * info.header.height
       : info.pixelBytes;
-  const size_t offset = (largeWorkspaceUsed + 1U) & ~size_t(1U);
-  const size_t end = offset + paletteBytes + pixelBytes;
-  if (end > sceneWorkspaceCapacity) {
-    file.close(); preloadFailure(path, "battle-plane-capacity"); return false;
+  const bool cropToViewport = isViewportTaskPlane(path) &&
+      info.bitsPerPixel != 16U && info.header.width == 256U &&
+      info.header.height >= 138U;
+  const uint16_t residentHeight = cropToViewport ? 138U : info.header.height;
+  const size_t residentPixelBytes = cropToViewport
+      ? packedRowBytes(info) * residentHeight : pixelBytes;
+
+  // A ChangeBackground plane is the complete arena for this move. Reusing
+  // the primary large-asset slot avoids retaining an invisible terrain copy
+  // and keeps the authored tiled background available to drawScrolled().
+  const size_t replacementReserve = paletteBytes + residentPixelBytes;
+  if (isOpaqueBattleReplacement(path) &&
+      replacementReserve <= sceneWorkspaceCapacity) {
+    file.close();
+    clearLargeAsset();
+    if (!preloadLargeAsset(path)) {
+      preloadFailure(path, "battle-plane-replacement");
+      return false;
+    }
+    return true;
   }
-  uint16_t* palette = reinterpret_cast<uint16_t*>(sceneWorkspace + offset);
-  if (!loadIndexed(file, info, sceneWorkspace + offset + paletteBytes,
-                   pixelBytes, palette, battlePlaneAsset.image)) {
+
+  if (!largeAsset.image.valid) {
+    file.close(); preloadFailure(path, "battle-plane-without-terrain"); return false;
+  }
+  const size_t offset = (largeWorkspaceUsed + 1U) & ~size_t(1U);
+  size_t end = offset + paletteBytes + residentPixelBytes;
+  if (end > sceneWorkspaceCapacity) {
+    if (!promoteBattleSceneWorkspace(end)) {
+      // Keep the exact pending requirement in the existing plane-end field;
+      // the high bit is outside every valid arena offset and avoids another
+      // DRAM global on this already full ESP32 image.
+      battlePlaneWorkspaceEnd = end | (size_t(1) << (sizeof(size_t) * 8U - 1U));
+      file.close(); preloadFailure(path, "battle-plane-capacity"); return false;
+    }
+    // Promotion reloads the retained terrain at offset zero.
+    const size_t promotedOffset = (largeWorkspaceUsed + 1U) & ~size_t(1U);
+    end = promotedOffset + paletteBytes + residentPixelBytes;
+    if (end > sceneWorkspaceCapacity) {
+      file.close(); preloadFailure(path, "battle-plane-capacity"); return false;
+    }
+  }
+  const size_t planeOffset = (largeWorkspaceUsed + 1U) & ~size_t(1U);
+  uint16_t* palette = reinterpret_cast<uint16_t*>(sceneWorkspace + planeOffset);
+  const bool loaded = cropToViewport
+      ? loadIndexedRows(file, info, 0U, residentHeight,
+                        sceneWorkspace + planeOffset + paletteBytes,
+                        residentPixelBytes, palette, battlePlaneAsset.image)
+      : loadIndexed(file, info, sceneWorkspace + planeOffset + paletteBytes,
+                    residentPixelBytes, palette, battlePlaneAsset.image);
+  if (!loaded) {
     battlePlaneAsset = BattlePlaneCache{};
     file.close(); preloadFailure(path, "battle-plane-read"); return false;
   }
   file.close();
   std::strncpy(battlePlaneAsset.path, path,
                sizeof(battlePlaneAsset.path) - 1U);
-  battlePlaneWorkspaceEnd = end;
+  battlePlaneWorkspaceEnd = planeOffset + paletteBytes + pixelBytes;
   sceneCacheSpillUsed = end;
   return true;
 }
@@ -1632,11 +1855,27 @@ void AssetRenderer::releaseSceneWorkspaceForRadio() {
 }
 
 bool AssetRenderer::restoreSceneWorkspace(bool radioActive) {
-  if (sceneWorkspace) return true;
+  // Battle planes may promote this shared arena to an exact, smaller
+  // requirement.  A non-null pointer is therefore not enough to claim that
+  // the normal Home bank is available: keeping it here makes the Home
+  // background preload fail and leaves only its green fallback after battle.
+  const bool undersizedNormalBank = !radioActive && sceneWorkspace &&
+                                    sceneWorkspaceCapacity < kSceneWorkspaceBytes;
+  if (sceneWorkspace && !undersizedNormalBank) return true;
+  if (undersizedNormalBank) {
+    // Cache descriptors point into this arena, so invalidate them before
+    // replacing the backing allocation.
+    clearCache();
+    delete[] sceneWorkspace;
+    sceneWorkspace = nullptr;
+    sceneWorkspaceCapacity = 0;
+    sceneWorkspaceOwner = SceneWorkspaceOwner::None;
+    Serial.printf("[GFX] scene workspace growing from battle bank to normal bank\n");
+  }
   size_t requested = kSceneWorkspaceBytes;
   if (radioActive) {
     // Leave enough headroom for a connection, scan results and packet
-    // assembly. The compact 12 KiB icon arena remains available regardless;
+    // assembly. The compact 13 KiB icon arena remains available regardless;
     // this smaller bank is primarily for Box/Party and battle assets while a
     // peer connection stays alive.
     constexpr size_t kRadioHeadroom = 12U * 1024U;
@@ -1647,8 +1886,7 @@ bool AssetRenderer::restoreSceneWorkspace(bool radioActive) {
   } else {
     // NimBLE releases its memory in several adjacent blocks rather than
     // recreating the exact 64 KiB block reserved at boot. Keep only a tiny
-    // allocator margin and reclaim the largest possible scene bank. 61,104
-    // bytes is enough for the largest two-layer Home theme.
+    // allocator margin and reclaim the largest possible scene bank.
     const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (largest <= requested && largest > 256U) requested = (largest - 128U) & ~size_t(3U);
   }
@@ -1686,7 +1924,17 @@ void AssetRenderer::clearCache() {
   clearLargeAsset();
 }
 
-void AssetRenderer::clearSmallCache() { clearSpriteCache(); }
+void AssetRenderer::clearSmallCache() {
+#if defined(POKEGOCHI_ANDROID)
+  // The mobile renderer keeps decoded cels hot between moves. Rebuilding the
+  // same archive entries at every FIGHT press was the avoidable source of the
+  // late first frame. If the bounded Android arena ever fills, recycle it as
+  // a safe fallback instead of spilling into the scene workspace.
+  if (cacheArenaUsed >= kCacheArenaBytes) clearSpriteCache();
+#else
+  clearSpriteCache();
+#endif
+}
 
 void AssetRenderer::invalidateHomeSceneCache() { clearHomeLayers(); }
 
@@ -1696,12 +1944,33 @@ bool AssetRenderer::takeIoFailure() {
   return failed;
 }
 
-void AssetRenderer::setCompositionActive(bool active) { compositionActive = active; }
+bool AssetRenderer::takeCacheCapacityFailure() {
+  const bool failed = assetCacheCapacityFailed;
+  assetCacheCapacityFailed = false;
+  return failed;
+}
+
+bool AssetRenderer::promoteBattleAnimationWorkspace() {
+  constexpr size_t kPendingBit = size_t(1) << (sizeof(size_t) * 8U - 1U);
+  const size_t required = (battlePlaneWorkspaceEnd & kPendingBit)
+      ? (battlePlaneWorkspaceEnd & ~kPendingBit)
+      : kBattleSceneWorkspaceBytes;
+  const bool promoted = promoteBattleSceneWorkspace(required);
+  return promoted;
+}
+
+void AssetRenderer::setCompositionActive(bool active) {
+  compositionActive = active;
+}
 
 uint32_t AssetRenderer::sdOpenCount() { return assetOpenCount; }
 
 bool AssetRenderer::preload(const char* path) {
   if (!path || !path[0]) return false;
+  if (compositionActive) {
+    Serial.printf("[GFX] BLOCKED preload during composition: %s\n", path);
+    return false;
+  }
   // UI screens historically called preload() without opening an archive
   // batch. openAsset() consequently found their old loose PKG mirrors first,
   // even after OTAP had installed a newer canonical pokegochi.pak. Give every
@@ -1725,9 +1994,14 @@ bool AssetRenderer::prepareBattlePlane(const char* path) {
   if (path && path[0] && battlePlaneAsset.image.valid &&
       std::strcmp(battlePlaneAsset.path, path) == 0)
     return true;
-  // A new move gets a deterministic small-asset arena.  Descriptors which
-  // spilled above the old plane cannot survive a plane resize.
+  // A new move gets a deterministic small-asset arena on ESP32. Android's
+  // cache is a separate multi-megabyte resident bank, so retaining its
+  // decoded cels avoids disk/decode work on the first animation frame.
+#if !defined(POKEGOCHI_ANDROID)
   clearSpriteCache();
+#else
+  if (cacheArenaUsed >= kCacheArenaBytes) clearSpriteCache();
+#endif
   battlePlaneAsset = BattlePlaneCache{};
   battlePlaneWorkspaceEnd = 0;
   sceneCacheSpillUsed = sceneWorkspaceOwner == SceneWorkspaceOwner::Large
@@ -1741,8 +2015,9 @@ bool AssetRenderer::isPreloaded(const char* path) {
   if (home >= 0)
     return homeLayers[home].image.valid && std::strcmp(homeLayers[home].path, path) == 0;
   if (isBattlePlaneAsset(path))
-    return battlePlaneAsset.image.valid &&
-        std::strcmp(battlePlaneAsset.path, path) == 0;
+    return (battlePlaneAsset.image.valid &&
+            std::strcmp(battlePlaneAsset.path, path) == 0) ||
+        (largeAsset.image.valid && std::strcmp(largeAsset.path, path) == 0);
   if (shouldBankLargeAsset(path))
     return largeAsset.image.valid && std::strcmp(largeAsset.path, path) == 0;
   return findCached(path) != nullptr;
@@ -1760,25 +2035,50 @@ bool AssetRenderer::dimensions(const char* path, uint16_t& width, uint16_t& heig
 
 bool AssetRenderer::draw(PixelCanvas& display, const char* path, int16_t x, int16_t y, bool useCache) {
   if (!path || !path[0]) return false;
+  // Apply the no-I/O contract before any specialized cache branch. A battle
+  // layer may be routed through a plane/large-asset path or through a caller
+  // that disables the ordinary cache flag; neither case is allowed to reopen
+  // FAT while the retained presenter is inside the loop task.
+  if (compositionActive) {
+    const IndexedImage* resident = residentImage(path);
+    if (!resident || !resident->valid) {
+      static uint32_t lastRetainedMissHash = 0U;
+      uint32_t missHash = 2166136261UL;
+      for (const char* cursor = path; *cursor; ++cursor)
+        missHash = (missHash ^ static_cast<uint8_t>(*cursor)) * 16777619UL;
+      if (lastRetainedMissHash != missHash) {
+        lastRetainedMissHash = missHash;
+        Serial.printf("[GFX] retained cache miss: %s\n", path);
+      }
+      return false;
+    }
+  }
   if (useCache && homeLayerIndex(path) >= 0) {
     if (drawHomeLayer(display, path, x, y)) return true;
     if (compositionActive) return false;
-    if (preloadHomeLayer(path)) return drawHomeLayer(display, path, x, y);
+    // Go through the public preload path so a cold draw opens the canonical
+    // versioned archive. OTAP replaces pokegochi.pak atomically and does not
+    // install loose PKG mirrors for newly introduced assets.
+    if (preload(path)) return drawHomeLayer(display, path, x, y);
     return false;
   }
   if (useCache && isBattlePlaneAsset(path)) {
     if (battlePlaneAsset.image.valid &&
         std::strcmp(battlePlaneAsset.path, path) == 0)
       return drawIndexed(display, battlePlaneAsset.image, x, y);
+    if (largeAsset.image.valid && std::strcmp(largeAsset.path, path) == 0)
+      return drawIndexed(display, largeAsset.image, x, y);
     if (compositionActive) return false;
-    if (preloadBattlePlane(path))
-      return drawIndexed(display, battlePlaneAsset.image, x, y);
+    if (preload(path)) {
+      const IndexedImage* image = residentImage(path);
+      if (image) return drawIndexed(display, *image, x, y);
+    }
     return false;
   }
   if (useCache && shouldBankLargeAsset(path)) {
     if (drawLargeAsset(display, path, x, y)) return true;
     if (compositionActive) return false;
-    if (preloadLargeAsset(path)) return drawLargeAsset(display, path, x, y);
+    if (preload(path)) return drawLargeAsset(display, path, x, y);
     return false;
   }
   // Even a caller that permits one-off streaming should always consume a
@@ -1788,8 +2088,11 @@ bool AssetRenderer::draw(PixelCanvas& display, const char* path, int16_t x, int1
     cached->stamp = ++cacheStamp;
     return drawIndexed(display, cached->image, x, y);
   }
-  // Compositing a retained band is a hard no-I/O phase. Missing optional art
-  // uses the caller's fallback and is prepared on the next scene transition.
+  // Compositing a retained band is a hard no-I/O phase. Re-entering FAT/SD
+  // from this point is unsafe: the caller is already several frames deep in
+  // the loop task and a cold preload can trip its stack canary. Keep the
+  // caller's fallback, but leave an unmistakable breadcrumb so a manifest
+  // omission is fixed at preload time instead of becoming a purple cel.
   if (compositionActive) return false;
   if (useCache) {
     if (preload(path)) {
@@ -1918,6 +2221,7 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
   const IndexedImage* overlayImage = residentImage(overlayPlane.path);
   if (!baseImage || !overlayImage || !baseImage->valid ||
       !overlayImage->valid) return false;
+  display.damage(x, y, width, height);
 
   const auto sourceCoordinate = [](int32_t screen, int16_t destination,
                                    int16_t offset, uint16_t sourceExtent,
@@ -1942,11 +2246,9 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
       overlayImage->header.width, overlayPlane.virtualSourceWidth);
   const uint16_t overlaySourceHeight = std::max<uint16_t>(
       overlayImage->header.height, overlayPlane.virtualSourceHeight);
-  const int32_t logicalCanvasTop = -display.getOriginY();
-  const int32_t logicalCanvasBottom = logicalCanvasTop + display.height();
-  const int32_t firstVisibleRow = std::max<int32_t>(0, logicalCanvasTop - y);
-  const int32_t lastVisibleRow = std::min<int32_t>(height,
-                                                   logicalCanvasBottom - y);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, height, firstVisibleRow, lastVisibleRow);
   const int32_t firstVisibleColumn = std::max<int32_t>(
       0, display.logicalClipLeft() - x);
   const int32_t lastVisibleColumn = std::min<int32_t>(
@@ -1955,28 +2257,46 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
       lastVisibleColumn <= firstVisibleColumn) return true;
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
-
-  TftWriteScope write(display);
-  display.setSwapBytes(true);
+  // X mappings are invariant for all rows in this retained stripe.  The old
+  // composite evaluated four signed division/modulo chains per pixel, which
+  // dominated Sandstorm/Haze and every other full-arena field on the 240 MHz
+  // ESP32.  Reuse the shared decode-index scratch for two 320-entry maps.
+  static_assert(sizeof(scratch.stream.indices) >=
+                640U * sizeof(uint16_t), "plane x-map scratch too small");
+  uint16_t* baseXMap = reinterpret_cast<uint16_t*>(scratch.stream.indices);
+  uint16_t* overlayXMap = baseXMap + 320U;
+  for (uint16_t local = 0; local < visibleWidth; ++local) {
+    const int32_t screenX = x + firstVisibleColumn + local;
+    baseXMap[local] = sourceCoordinate(
+        screenX, basePlane.x, basePlane.sourceOffsetX,
+        baseSourceWidth, basePlane.scaleNumerator,
+        basePlane.scaleDenominator,
+        basePlane.wrap ? basePlane.wrapX : false);
+    overlayXMap[local] = sourceCoordinate(
+        screenX, overlayPlane.x, overlayPlane.sourceOffsetX,
+        overlaySourceWidth, overlayPlane.scaleNumerator,
+        overlayPlane.scaleDenominator,
+        overlayPlane.wrap ? overlayPlane.wrapX : false);
+  }
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
-       line < static_cast<uint16_t>(lastVisibleRow); line += kDecodeRows) {
-    const uint16_t rows = static_cast<uint16_t>(std::min<int32_t>(
-        kDecodeRows, lastVisibleRow - line));
-    for (uint16_t row = 0; row < rows; ++row) {
-      const int32_t screenY = y + line + row;
-      for (uint16_t column = static_cast<uint16_t>(firstVisibleColumn);
-           column < static_cast<uint16_t>(lastVisibleColumn); ++column) {
-        const int32_t screenX = x + column;
-        const uint16_t baseX = sourceCoordinate(
-            screenX, basePlane.x, basePlane.sourceOffsetX,
-            baseSourceWidth, basePlane.scaleNumerator,
-            basePlane.scaleDenominator,
-            basePlane.wrap ? basePlane.wrapX : false);
-        const uint16_t baseY = sourceCoordinate(
-            screenY, basePlane.y, basePlane.sourceOffsetY,
-            baseSourceHeight, basePlane.scaleNumerator,
-            basePlane.scaleDenominator,
-            basePlane.wrap ? basePlane.wrapY : false);
+       line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+      const int32_t screenY = y + line;
+      const uint16_t baseY = sourceCoordinate(
+          screenY, basePlane.y, basePlane.sourceOffsetY,
+          baseSourceHeight, basePlane.scaleNumerator,
+          basePlane.scaleDenominator,
+          basePlane.wrap ? basePlane.wrapY : false);
+      const uint16_t overlayY = sourceCoordinate(
+          screenY, overlayPlane.y, overlayPlane.sourceOffsetY,
+          overlaySourceHeight, overlayPlane.scaleNumerator,
+          overlayPlane.scaleDenominator,
+          overlayPlane.wrap ? overlayPlane.wrapY : false);
+      uint16_t* destination = display.writableRow565(
+          x + firstVisibleColumn, screenY, visibleWidth);
+      if (!destination) return false;
+      for (uint16_t local = 0; local < visibleWidth; ++local) {
+        const int32_t screenX = x + firstVisibleColumn + local;
+        const uint16_t baseX = baseXMap[local];
         uint16_t pixel = (baseX < baseImage->header.width &&
                           baseY < baseImage->header.height)
             ? indexedPalettePixel(*baseImage, baseX, baseY,
@@ -1992,16 +2312,7 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
             screenX < static_cast<int32_t>(overlayPlane.x) + overlayWidth &&
             screenY < static_cast<int32_t>(overlayPlane.y) + overlayHeight;
         if (insideOverlay && overlayPlane.opacity16) {
-          const uint16_t overlayX = sourceCoordinate(
-              screenX, overlayPlane.x, overlayPlane.sourceOffsetX,
-              overlaySourceWidth, overlayPlane.scaleNumerator,
-              overlayPlane.scaleDenominator,
-              overlayPlane.wrap ? overlayPlane.wrapX : false);
-          const uint16_t overlayY = sourceCoordinate(
-              screenY, overlayPlane.y, overlayPlane.sourceOffsetY,
-              overlaySourceHeight, overlayPlane.scaleNumerator,
-              overlayPlane.scaleDenominator,
-              overlayPlane.wrap ? overlayPlane.wrapY : false);
+          const uint16_t overlayX = overlayXMap[local];
           const uint16_t foreground =
               (overlayX < overlayImage->header.width &&
                overlayY < overlayImage->header.height)
@@ -2017,12 +2328,8 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
             pixel = alphaBlend565(foreground, pixel,
                                   overlayPlane.opacity16);
         }
-        scratch.stream.pixels[static_cast<size_t>(row) * visibleWidth +
-                              column - firstVisibleColumn] = pixel;
+        destination[local] = PixelCanvas::encoded565(pixel);
       }
-    }
-    display.pushImage(x + firstVisibleColumn, y + line,
-                      visibleWidth, rows, scratch.stream.pixels);
   }
   return true;
 }

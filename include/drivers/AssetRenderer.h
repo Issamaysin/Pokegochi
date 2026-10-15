@@ -166,6 +166,11 @@ class AssetRenderer {
   // only small sprites which are reloaded by the battle manifest before the
   // next retained frame. Pass nullptr to release the plane.
   static bool prepareBattlePlane(const char* path);
+  // Expand the shared battle workspace only after a normal animation preload
+  // reports a real cache-capacity failure. This keeps ordinary moves on the
+  // compact path while allowing large authored effects such as Refresh to
+  // retry with the complete scene resident.
+  static bool promoteBattleAnimationWorkspace();
   // Keep the generated read-only asset archive open for one bounded preload
   // transaction. Every preload() inside the pair is resolved from that one
   // file descriptor, so a multi-frame move does not repeatedly traverse FAT
@@ -219,6 +224,10 @@ class AssetRenderer {
   // owns SD remounting, so rendering never keeps retrying a dead card while
   // the user is waiting on a frozen screen.
   static bool takeIoFailure();
+  // Returns and clears a cache-capacity failure latched by preload(). It is
+  // intentionally separate from SD I/O failures so callers can retry once
+  // with the expanded battle workspace without masking a missing asset.
+  static bool takeCacheCapacityFailure();
   // Retained composition is strictly RAM-only. While active, draw() may use
   // resident assets or return false, but it must never open the SD card.
   static void setCompositionActive(bool active);

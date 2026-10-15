@@ -7,6 +7,7 @@
 #include "game/LeagueSystem.h"
 #include "game/MegaChallengeSystem.h"
 #include "game/BattleTowerSystem.h"
+#include "game/BossSystem.h"
 #include "game/Economy.h"
 #include "game/EggSystem.h"
 #include "game/TrainerData.h"
@@ -31,7 +32,7 @@ void visitDefaultAnimationPath(uint16_t move, Visitor&& visitor) {
     const BattleAnimationCommand* command=battleAnimationProgramCommand(*program,pc);
     assert(command);
     const int16_t* values=battleAnimationCommandArguments(*command);
-    const auto opcode=static_cast<BattleAnimationOpcode>(command->opcode);
+    const auto opcode=static_cast<BattleAnimationOpcode>(command->opcode());
     const auto value=[&](uint8_t index,int16_t fallback=0){
       return values&&index<command->argumentCount?values[index]:fallback;
     };
@@ -42,17 +43,17 @@ void visitDefaultAnimationPath(uint16_t move, Visitor&& visitor) {
       // clear weather/plain query result zero. Runtime-query behavior is
       // covered independently by the generated branch matrix.
       uint8_t destination=7;
-      if(command->resourceId==static_cast<uint16_t>(BattleAnimationQuery::IsMovePowerOver99))destination=15;
-      else if(command->resourceId==static_cast<uint16_t>(BattleAnimationQuery::BattleTerrain))destination=0;
-      else if(command->resourceId==static_cast<uint16_t>(BattleAnimationQuery::RolloutCounter))destination=static_cast<uint8_t>(value(0));
+      if(command->resourceId()==static_cast<uint16_t>(BattleAnimationQuery::IsMovePowerOver99))destination=15;
+      else if(command->resourceId()==static_cast<uint16_t>(BattleAnimationQuery::BattleTerrain))destination=0;
+      else if(command->resourceId()==static_cast<uint16_t>(BattleAnimationQuery::RolloutCounter))destination=static_cast<uint8_t>(value(0));
       if(destination<16)arguments[destination]=0;++pc;
-    }else if(opcode==BattleAnimationOpcode::Jump)pc=command->resourceId;
-    else if(opcode==BattleAnimationOpcode::Call){assert(depth<12);returns[depth++]=pc+1U;pc=command->resourceId;}
+    }else if(opcode==BattleAnimationOpcode::Jump)pc=command->resourceId();
+    else if(opcode==BattleAnimationOpcode::Call){assert(depth<12);returns[depth++]=pc+1U;pc=command->resourceId();}
     else if(opcode==BattleAnimationOpcode::Return){if(!depth)return;pc=returns[--depth];}
     else if(opcode==BattleAnimationOpcode::JumpIfArgumentEquals){
-      const int16_t index=value(0,-1);pc=index>=0&&index<16&&arguments[index]==value(1)?command->resourceId:pc+1U;
+      const int16_t index=value(0,-1);pc=index>=0&&index<16&&arguments[index]==value(1)?command->resourceId():pc+1U;
     }else if(opcode==BattleAnimationOpcode::JumpIfMoveTurnEquals){
-      pc=value(0)==0?command->resourceId:pc+1U;
+      pc=value(0)==0?command->resourceId():pc+1U;
     }else if(opcode==BattleAnimationOpcode::End)return;
     else{visitor(*command);++pc;}
   }
@@ -62,7 +63,7 @@ void visitDefaultAnimationPath(uint16_t move, Visitor&& visitor) {
 uint16_t countDefaultAnimationOpcode(uint16_t move,BattleAnimationOpcode wanted){
   uint16_t count=0;
   visitDefaultAnimationPath(move,[&](const BattleAnimationCommand& command){
-    if(static_cast<BattleAnimationOpcode>(command.opcode)==wanted)++count;
+    if(static_cast<BattleAnimationOpcode>(command.opcode())==wanted)++count;
   });
   return count;
 }
@@ -128,20 +129,22 @@ int main() {
   assert(!BattleEnvironment::applyHomeWeather(ambientBattle,HomeWeatherKind::Hail));
   assert(ambientBattle.weather==BattleWeather::Clear);
 
-  // TM01..TM50 and HM01..HM08, as well as every species compatibility bit,
-  // are generated from pokeemerald. These anchors catch shifted machine IDs,
-  // accidental FireRed tables and the internal-vs-National Hoenn ID trap.
+  // TM01..TM50 and HM01..HM08 retain their original IDs. Platinum's TM51..
+  // TM92 are appended after them and use the separate Sinnoh ownership word.
   assert(Economy::machineMove(0) == static_cast<MoveId>(264));   // Focus Punch
   assert(Economy::machineMove(49) == static_cast<MoveId>(315)); // Overheat
   assert(Economy::machineMove(50) == static_cast<MoveId>(15));  // Cut
   assert(Economy::machineMove(57) == static_cast<MoveId>(291)); // Dive
-  assert(Economy::machineMove(58) == MoveId::None);
+  assert(Economy::machineMove(58) == static_cast<MoveId>(355)); // TM51 Roost
+  assert(Economy::machineMove(99) == static_cast<MoveId>(433)); // TM92 Trick Room
   assert(!Economy::canLearnMachine(1, 0));   // Bulbasaur / Focus Punch
   assert(Economy::canLearnMachine(1, 5));    // Bulbasaur / Toxic
   assert(Economy::canLearnMachine(1, 50));   // Bulbasaur / Cut
   assert(!Economy::canLearnMachine(1, 52));  // Bulbasaur / Surf
   assert(Economy::canLearnMachine(4, 0));    // Charmander / Focus Punch
   assert(Economy::canLearnMachine(252, 8));  // Treecko / Bullet Seed
+  assert(Economy::canLearnMachine(445, 1));  // Garchomp / Dragon Claw
+  assert(Economy::canLearnMachine(448, 0));  // Lucario / Focus Punch
   for (uint8_t machine = 0; machine < kMachineCount; ++machine)
     assert(Economy::canLearnMachine(151, machine)); // Mew learns every machine.
   for (uint8_t machine = 0; machine < kMachineCount; ++machine) {
@@ -150,10 +153,20 @@ int main() {
   }
   uint16_t emeraldCompatibilityCount = 0;
   for (uint16_t species = 1; species <= 386; ++species)
-    for (uint8_t machine = 0; machine < kMachineCount; ++machine)
+    for (uint8_t machine = 0; machine < kLegacyMachineCount; ++machine)
       emeraldCompatibilityCount += Economy::canLearnMachine(species, machine) ? 1U : 0U;
   assert(emeraldCompatibilityCount == 8927U);
-  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(387, 0) &&
+  uint16_t sinnohCompatibilityCount = 0;
+  for (uint16_t species = 387; species <= 493; ++species)
+    for (uint8_t machine = 0; machine < kLegacyMachineCount; ++machine)
+      sinnohCompatibilityCount += Economy::canLearnMachine(species, machine) ? 1U : 0U;
+  assert(sinnohCompatibilityCount == 2577U);
+  uint16_t platinumNewTmCompatibilityCount = 0;
+  for (uint16_t species = 1; species <= 493; ++species)
+    for (uint8_t machine = kLegacyMachineCount; machine < kMachineCount; ++machine)
+      platinumNewTmCompatibilityCount += Economy::canLearnMachine(species, machine) ? 1U : 0U;
+  assert(platinumNewTmCompatibilityCount == 6074U);
+  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(494, 0) &&
          !Economy::canLearnMachine(1, kMachineCount));
 
   // The Summary move editor exposes the complete level-up pool inherited
@@ -172,8 +185,8 @@ int main() {
 
   static_assert(sizeof(CombatVolatile)==34,
       "stockpileCount must use existing tail padding and keep saves compatible");
-  assert(battleAnimationCount()==354);
-  assert(battleAnimationProgramCount()==354);
+  assert(battleAnimationCount()==467);
+  assert(battleAnimationProgramCount()==467);
   assert(battleAnimationSpriteResourceCount()>=250);
   // Every generated SpriteTemplate variant must remain drawable for its full
   // retained lifetime.  This is deliberately exhaustive rather than a list
@@ -228,7 +241,7 @@ int main() {
     assert(battleAnimationPlaybackKind(move)==BattleAnimationPlaybackKind::Generated);
     assert(findBattleAnimationProgram(move));
   }
-  assert(battleAnimationProgramCount()==354);
+  assert(battleAnimationProgramCount()==467);
   uint16_t userTargetMoveCount = 0;
   for(uint16_t move=1;move<=354;++move){
     const FullMoveData* moveData=findFullMove(static_cast<MoveId>(move));
@@ -249,11 +262,11 @@ int main() {
       const BattleAnimationCommand* command=battleAnimationProgramCommand(*program,commandIndex);
       assert(command);
       if(command->argumentCount)assert(battleAnimationCommandArguments(*command));
-      if(static_cast<BattleAnimationOpcode>(command->opcode)==BattleAnimationOpcode::SpawnSprite)
-        assert(battleAnimationSpriteResource(command->resourceId));
-      if(static_cast<BattleAnimationOpcode>(command->opcode)==BattleAnimationOpcode::VisualTask)
-        assert(battleAnimationTaskResource(command->resourceId));
-      if(static_cast<BattleAnimationOpcode>(command->opcode)==BattleAnimationOpcode::End)ended=true;
+      if(static_cast<BattleAnimationOpcode>(command->opcode())==BattleAnimationOpcode::SpawnSprite)
+        assert(battleAnimationSpriteResource(command->resourceId()));
+      if(static_cast<BattleAnimationOpcode>(command->opcode())==BattleAnimationOpcode::VisualTask)
+        assert(battleAnimationTaskResource(command->resourceId()));
+      if(static_cast<BattleAnimationOpcode>(command->opcode())==BattleAnimationOpcode::End)ended=true;
     }
     assert(ended);
     const char* description=moveDescription(static_cast<MoveId>(move));
@@ -276,17 +289,17 @@ int main() {
   bool focusEnergyShakesUser=false;
   visitDefaultAnimationPath(116,[&](const BattleAnimationCommand& value){
     const BattleAnimationCommand* command=&value;
-    const auto opcode=static_cast<BattleAnimationOpcode>(command->opcode);
+    const auto opcode=static_cast<BattleAnimationOpcode>(command->opcode());
     if(opcode==BattleAnimationOpcode::SpawnSprite){
       const BattleAnimationSpriteResource* resource=
-          battleAnimationSpriteResource(command->resourceId);
+          battleAnimationSpriteResource(command->resourceId());
       const int16_t* arguments=battleAnimationCommandArguments(*command);
       if(resource&&resource->origin==BattleAnimationOrigin::Argument0&&
          arguments&&command->argumentCount>=1&&arguments[0]==0)
         ++focusEnergyUserParticles;
-    }else if(opcode==BattleAnimationOpcode::VisualTask&&command->anchor==0){
+    }else if(opcode==BattleAnimationOpcode::VisualTask&&command->anchor()==0){
       const BattleAnimationTaskResource* resource=
-          battleAnimationTaskResource(command->resourceId);
+          battleAnimationTaskResource(command->resourceId());
       if(resource&&resource->kind==BattleAnimationTaskKind::Shake)
         focusEnergyShakesUser=true;
     }
@@ -299,10 +312,10 @@ int main() {
   assert(agilityData&&agilityData->target==MoveTarget::User);
   bool agilityTraceFollowsUser=false;
   visitDefaultAnimationPath(97,[&](const BattleAnimationCommand& command){
-    if(static_cast<BattleAnimationOpcode>(command.opcode)!=
-       BattleAnimationOpcode::VisualTask||command.anchor!=0)return;
+    if(static_cast<BattleAnimationOpcode>(command.opcode())!=
+       BattleAnimationOpcode::VisualTask||command.anchor()!=0)return;
     const BattleAnimationTaskResource* resource=
-        battleAnimationTaskResource(command.resourceId);
+        battleAnimationTaskResource(command.resourceId());
     if(resource&&resource->motion==
         BattleAnimationTaskMotion::TraceMonBlendedExact){
       assert(resource->target==BattleAnimationTaskTarget::ScriptAnchor);
@@ -328,6 +341,78 @@ int main() {
   assert(countDefaultAnimationOpcode(126,BattleAnimationOpcode::SpawnSprite)>=20); // Fire Blast helpers repeat
   assert(countDefaultAnimationOpcode(311,BattleAnimationOpcode::SpawnSprite)>=3); // neutral Weather path; runtime selects weather branch
   assert(countDefaultAnimationOpcode(94,BattleAnimationOpcode::VisualTask)>=3); // task-only Psychic stays visible
+  // ROAR OF TIME surrounds its impact with two distinct palette phases in
+  // Platinum: black while Dialga gathers power, then opaque white while the
+  // six explosions land. RGB_WHITEALPHA used to resolve to zero and therefore
+  // generated a second black fade even though the rest of move 459 was exact.
+  uint8_t roarOfTimePaletteFade=0;
+  uint8_t roarOfTimeShortImpacts=0;
+  visitDefaultAnimationPath(459,[&](const BattleAnimationCommand& command){
+    const auto opcode=static_cast<BattleAnimationOpcode>(command.opcode());
+    if(opcode==BattleAnimationOpcode::SpawnSprite){
+      const BattleAnimationSpriteResource* sprite=
+          battleAnimationSpriteResource(command.resourceId());
+      assert(sprite);
+      if(sprite->motion==BattleAnimationMotion::OrientedStatic&&
+         sprite->lifetimeFrames<=24U&&sprite->asset&&sprite->asset[0])
+        ++roarOfTimeShortImpacts;
+      return;
+    }
+    if(opcode!=BattleAnimationOpcode::VisualTask)return;
+    const BattleAnimationTaskResource* resource=
+        battleAnimationTaskResource(command.resourceId());
+    if(!resource||resource->motion!=
+       BattleAnimationTaskMotion::BlendBattleAnimPalExact)return;
+    const int16_t* arguments=battleAnimationCommandArguments(command);
+    assert(arguments&&command.argumentCount==5);
+    assert(arguments[0]==1&&arguments[1]==1); // F_PAL_BG, one frame per step.
+    if(roarOfTimePaletteFade==0U){
+      assert(arguments[2]==0&&arguments[3]==16&&arguments[4]==0);
+    }else if(roarOfTimePaletteFade==1U){
+      assert(arguments[2]==16&&arguments[3]==0&&arguments[4]==0);
+    }else if(roarOfTimePaletteFade==2U){
+      assert(arguments[2]==0&&arguments[3]==16&&arguments[4]==-1);
+    }else if(roarOfTimePaletteFade==3U){
+      assert(arguments[2]==16&&arguments[3]==0&&arguments[4]==-1);
+    }else{
+      assert(false&&"Roar of Time gained an unexpected palette fade");
+    }
+    ++roarOfTimePaletteFade;
+  });
+  assert(roarOfTimePaletteFade==4U);
+  // The seven charge orbs travel for 64 ticks and remain cadence-sampled;
+  // all six fixed explosions are short authored impacts and must survive the
+  // faster physical-panel scheduler.
+  assert(roarOfTimeShortImpacts==6U);
+  // FLATTER is the regression reported from a Sinnoh Toxicroak.  Its exact
+  // program owns the spotlight/palette window and the confetti subroutine;
+  // keep both the object-window mask and the ballistic confetti in the
+  // generated path so a catalog regeneration cannot silently turn it into a
+  // null/invalid resource sequence.
+  const BattleAnimationData* flatterAnimation=findBattleAnimation(260);
+  assert(flatterAnimation&&flatterAnimation->assetCount==2&&
+         std::strcmp(flatterAnimation->assets[0],"spotlight")==0&&
+         std::strcmp(flatterAnimation->assets[1],"confetti")==0);
+  uint8_t flatterSpotlight=0;
+  uint8_t flatterConfetti=0;
+  uint8_t flatterPaletteTasks=0;
+  visitDefaultAnimationPath(260,[&](const BattleAnimationCommand& command){
+    const auto opcode=static_cast<BattleAnimationOpcode>(command.opcode());
+    if(opcode==BattleAnimationOpcode::SpawnSprite){
+      const BattleAnimationSpriteResource* resource=
+          battleAnimationSpriteResource(command.resourceId());
+      assert(resource);
+      if(resource->motion==BattleAnimationMotion::FlatterSpotlightMask)++flatterSpotlight;
+      if(resource->motion==BattleAnimationMotion::ConfettiBallistic)++flatterConfetti;
+    }else if(opcode==BattleAnimationOpcode::VisualTask){
+      const BattleAnimationTaskResource* resource=
+          battleAnimationTaskResource(command.resourceId());
+      assert(resource);
+      if(resource->motion==BattleAnimationTaskMotion::HardwarePaletteFadeExact)
+        ++flatterPaletteTasks;
+    }
+  });
+  assert(flatterSpotlight==1U&&flatterConfetti==38U&&flatterPaletteTasks==2U);
   const BattleAnimationData* psychicAnimation=findBattleAnimation(94);
   assert(psychicAnimation&&psychicAnimation->assetCount==0&&
          (psychicAnimation->flags&AnimBlend)&&
@@ -346,10 +431,10 @@ int main() {
   // projectile that mistakes 16,16 for pixel offsets.
   bool shadowBallMotionFound=false;
   visitDefaultAnimationPath(247,[&](const BattleAnimationCommand& command){
-    if(static_cast<BattleAnimationOpcode>(command.opcode)!=
+    if(static_cast<BattleAnimationOpcode>(command.opcode())!=
        BattleAnimationOpcode::SpawnSprite)return;
     const BattleAnimationSpriteResource* resource=
-        battleAnimationSpriteResource(command.resourceId);
+        battleAnimationSpriteResource(command.resourceId());
     if(!resource||std::strcmp(resource->asset,"tpl_bd0d98e07a81")!=0)return;
     const int16_t* arguments=battleAnimationCommandArguments(command);
     assert(resource->motion==BattleAnimationMotion::ShadowBall);
@@ -367,10 +452,10 @@ int main() {
                                        BattleAnimationMotion expected) {
     bool found = false;
     visitDefaultAnimationPath(moveId, [&](const BattleAnimationCommand& command) {
-      if (static_cast<BattleAnimationOpcode>(command.opcode) !=
+      if (static_cast<BattleAnimationOpcode>(command.opcode()) !=
           BattleAnimationOpcode::SpawnSprite) return;
       const BattleAnimationSpriteResource* resource =
-          battleAnimationSpriteResource(command.resourceId);
+          battleAnimationSpriteResource(command.resourceId());
       if (resource && resource->motion == expected) found = true;
     });
     assert(found);
@@ -412,10 +497,10 @@ int main() {
   bool painSplitHasBothOwners = false;
   uint8_t painSplitAttacker = 0, painSplitTarget = 0;
   visitDefaultAnimationPath(220, [&](const BattleAnimationCommand& command) {
-    if (static_cast<BattleAnimationOpcode>(command.opcode) !=
+    if (static_cast<BattleAnimationOpcode>(command.opcode()) !=
         BattleAnimationOpcode::SpawnSprite) return;
     const BattleAnimationSpriteResource* resource =
-        battleAnimationSpriteResource(command.resourceId);
+        battleAnimationSpriteResource(command.resourceId());
     if (!resource || resource->motion != BattleAnimationMotion::PainSplitBounce) return;
     assert(resource->origin == BattleAnimationOrigin::Argument2);
     const int16_t* arguments = battleAnimationCommandArguments(command);
@@ -440,10 +525,10 @@ int main() {
   uint8_t triAttackTriangleCount=0,triAttackFlameCount=0;
   uint8_t triAttackLightningCount=0,triAttackIceCount=0;
   visitDefaultAnimationPath(161,[&](const BattleAnimationCommand& command){
-    if(static_cast<BattleAnimationOpcode>(command.opcode)!=
+    if(static_cast<BattleAnimationOpcode>(command.opcode())!=
        BattleAnimationOpcode::SpawnSprite)return;
     const BattleAnimationSpriteResource* resource=
-        battleAnimationSpriteResource(command.resourceId);
+        battleAnimationSpriteResource(command.resourceId());
     assert(resource);
     if(std::strcmp(resource->asset,"tpl_8e57dde4739f")==0)++triAttackTriangleCount;
     else if(std::strcmp(resource->asset,"tpl_548b4df0c67a")==0)++triAttackFlameCount;
@@ -467,7 +552,7 @@ int main() {
     assert(profile->speciesCount >= 1 && profile->speciesCount <= 3);
     for (uint8_t member = 0; member < profile->speciesCount; ++member) assert(findSpecies(profile->species[member]));
   }
-  for (uint16_t speciesId = 1; speciesId <= 386; ++speciesId) assert(findSpecies(speciesId));
+  for (uint16_t speciesId = 1; speciesId <= kPokedexSpeciesCount; ++speciesId) assert(findSpecies(speciesId));
   // Wild rarity has a meaningful gap between legendary (1), rare ordinary
   // Pokemon (3+) and Eevee, whose branching family needs repeated captures.
   assert(encounterWeight(133)==10); // Eevee
@@ -485,7 +570,7 @@ int main() {
     const uint8_t weight=encounterWeight(speciesId);
     if(weight&&weight!=1)assert(weight>=3);
   }
-  for (uint16_t speciesId = 1; speciesId <= 386; ++speciesId) {
+  for (uint16_t speciesId = 1; speciesId <= kPokedexSpeciesCount; ++speciesId) {
     const PokedexEntryData* entry = pokedexEntry(speciesId);
     assert(entry && entry->category[0] && entry->description[0] && entry->heightDecimeters && entry->weightHectograms);
   }
@@ -505,6 +590,12 @@ int main() {
   assert(choiceCount==2&&hasEvolutionChoice(choices,choiceCount,62)&&hasEvolutionChoice(choices,choiceCount,186));
   choiceCount=evolutionChoices(79,37,1,1,2,choices,kEvolutionChoiceCapacity);
   assert(choiceCount==2&&hasEvolutionChoice(choices,choiceCount,80)&&hasEvolutionChoice(choices,choiceCount,199));
+  // Gen-IV evolutions remain locked until the Sinnoh content gate opens;
+  // reaching Hoenn alone must not expose the Platinum branch.
+  choiceCount=evolutionChoices(233,40,1,1,3,choices,kEvolutionChoiceCapacity);
+  assert(choiceCount==0);
+  choiceCount=evolutionChoices(233,40,1,1,4,choices,kEvolutionChoiceCapacity);
+  assert(choiceCount==1&&choices[0]==474);
   choiceCount=evolutionChoices(236,20,15,10,3,choices,kEvolutionChoiceCapacity);assert(choiceCount==1&&choices[0]==106);
   choiceCount=evolutionChoices(236,20,10,15,3,choices,kEvolutionChoiceCapacity);assert(choiceCount==1&&choices[0]==107);
   choiceCount=evolutionChoices(236,20,10,10,3,choices,kEvolutionChoiceCapacity);assert(choiceCount==1&&choices[0]==237);
@@ -546,6 +637,58 @@ int main() {
   assert(CollectionLogic::setForm(deoxys, 3));
   assert(CollectionLogic::calculatedStat(deoxys, PokemonStat::Speed) > attackFormSpeed);
   assert(!CollectionLogic::setForm(deoxys, 4));
+
+  // Platinum forms are not cosmetic-only. Rotom's appliance forms resolve
+  // the real stat/type data, expose their exclusive move in the Summary pool,
+  // and intentionally keep the species TM table unchanged just like the ROM.
+  OwnedPokemon rotom = CollectionLogic::createPokemon(901, 479, 100, false, 4321, 4);
+  const uint16_t rotomNormalAttack = CollectionLogic::calculatedStat(rotom, PokemonStat::Attack);
+  const uint16_t rotomNormalSpeed = CollectionLogic::calculatedStat(rotom, PokemonStat::Speed);
+  assert(CollectionLogic::setForm(rotom, 1)); // Heat
+  assert(CollectionLogic::calculatedStat(rotom, PokemonStat::Attack) > rotomNormalAttack);
+  assert(CollectionLogic::calculatedStat(rotom, PokemonStat::Speed) < rotomNormalSpeed);
+  assert(MegaEvolution::type1(rotom, PokemonType::Normal) == PokemonType::Electric);
+  assert(MegaEvolution::type2(rotom, PokemonType::Normal) == PokemonType::Fire);
+  MoveId rotomPool[64]{};
+  const uint8_t rotomPoolCount = relearnableMovesForForm(
+      rotom.speciesId, rotom.form, rotom.level, rotomPool, 64, 4);
+  auto rotomCanRelearn = [&](MoveId move) {
+    for (uint8_t index = 0; index < rotomPoolCount; ++index)
+      if (rotomPool[index] == move) return true;
+    return false;
+  };
+  assert(rotomCanRelearn(static_cast<MoveId>(315))); // Overheat
+  assert(Economy::canLearnMachine(rotom, 49) == Economy::canLearnMachine(479, 49));
+  assert(rotom.abilityId == 26); // Levitate remains active in every appliance.
+
+  // The form-specific Platinum level-up replacements are real data, not a
+  // renderer special case. Shaymin-Sky also switches to Serene Grace.
+  OwnedPokemon shaymin = CollectionLogic::createPokemon(902, 492, 100, false, 9876, 4);
+  const uint16_t shayminLandSpeed = CollectionLogic::calculatedStat(shaymin, PokemonStat::Speed);
+  assert(CollectionLogic::setForm(shaymin, 1));
+  assert(CollectionLogic::calculatedStat(shaymin, PokemonStat::Speed) > shayminLandSpeed);
+  assert(MegaEvolution::type1(shaymin, PokemonType::Normal) == PokemonType::Grass);
+  assert(MegaEvolution::type2(shaymin, PokemonType::Normal) == PokemonType::Flying);
+  assert(shaymin.abilityId == 32); // Serene Grace
+  MoveId shayminPool[64]{};
+  const uint8_t shayminPoolCount = relearnableMovesForForm(
+      shaymin.speciesId, shaymin.form, shaymin.level, shayminPool, 64, 4);
+  auto shayminHas = [&](MoveId move) {
+    for (uint8_t index = 0; index < shayminPoolCount; ++index)
+      if (shayminPool[index] == move) return true;
+    return false;
+  };
+  assert(shayminHas(static_cast<MoveId>(98)));  // Quick Attack
+  assert(shayminHas(static_cast<MoveId>(403))); // Air Slash
+  assert(shayminHas(static_cast<MoveId>(437))); // Leaf Storm
+  assert(!shayminHas(static_cast<MoveId>(235))); // Synthesis is Land-only.
+
+  OwnedPokemon formGiratina = CollectionLogic::createPokemon(904, 487, 100, false, 6789, 4);
+  const uint16_t giratinaNormalAttack = CollectionLogic::calculatedStat(formGiratina, PokemonStat::Attack);
+  assert(CollectionLogic::setForm(formGiratina, 1));
+  assert(CollectionLogic::calculatedStat(formGiratina, PokemonStat::Attack) > giratinaNormalAttack);
+  assert(formGiratina.abilityId == 26); // Origin's Levitate.
+  assert(Economy::canLearnMachine(formGiratina, 0) == Economy::canLearnMachine(487, 0));
 
   // Each Pokemon receives one permanent Gen-III identity. IVs are always
   // 0..31, Nature follows the original 25-entry matrix, and Ability uses the
@@ -640,6 +783,20 @@ int main() {
   assert(EggSystem::hatch(egg,eggBox,eggGyms));
   assert(CollectionLogic::count(eggBox)==1&&!egg.active);
   assert(eggBox.box[0].level==24);
+  EggInventory storedEggs{};PokedexState storedEggDex{};
+  assert(EggSystem::storeBattleTowerSpecial(storedEggs,storedEggDex,0xE661U));
+  assert(storedEggs.count==1U&&storedEggs.slots[0].speciesId&&
+         storedEggs.slots[0].rarity==EggRarity::Special);
+  EggState occupiedIncubator{};occupiedIncubator.active=true;
+  assert(!EggSystem::incubateStored(storedEggs,0U,occupiedIncubator)&&
+         storedEggs.count==1U);
+  occupiedIncubator=EggState{};occupiedIncubator.giftResolvedBits=5U;
+  const uint16_t storedSpecies=storedEggs.slots[0].speciesId;
+  assert(EggSystem::incubateStored(storedEggs,0U,occupiedIncubator));
+  assert(storedEggs.count==0U&&occupiedIncubator.active&&
+         occupiedIncubator.speciesId==storedSpecies&&
+         occupiedIncubator.remainingSeconds==EggSystem::kRareSeconds&&
+         occupiedIncubator.giftResolvedBits==5U);
   for (uint32_t roll=0;roll<5000;++roll) {
     const uint16_t kanto=chooseEncounterSpecies(100,1,roll);
     const uint16_t johto=chooseEncounterSpecies(100,2,roll);
@@ -737,6 +894,233 @@ int main() {
   assert(battle.rewardMoney == 0);
   assert(BattleEngine::currentOpponent(battle)->level >= 2 &&
          BattleEngine::currentOpponent(battle)->level <= 4);
+
+  // The exact on-device regression: Dialga's Dragon Claw damage must be
+  // journaled immediately after its move and before the foe's reply. The UI
+  // presenter uses this boundary to animate the opposing HP meter instead of
+  // revealing only the final value when the complete turn is redrawn.
+  PokemonCollection dragonClawCollection;
+  CollectionLogic::initialize(dragonClawCollection);
+  uint32_t dialgaUid = 0;
+  assert(CollectionLogic::add(
+      dragonClawCollection,
+      CollectionLogic::createPokemon(0, 483, 93, false, 0xD1A1A001U, 4),
+      &dialgaUid));
+  assert(CollectionLogic::setPartySlot(
+      dragonClawCollection, 0, dialgaUid));
+  OwnedPokemon* dialga = CollectionLogic::active(dragonClawCollection, 0);
+  assert(dialga);
+  dialga->moves[0] = static_cast<MoveId>(337);
+  dialga->movePp[0] = 15U;
+  BattleState dragonClawBattle;
+  assert(BattleEngine::startWild(
+      dragonClawBattle, dragonClawCollection, dialgaUid,
+      0xD1A1A002U, 4U, false));
+  OwnedPokemon* dragonClawTarget =
+      BattleEngine::currentOpponent(dragonClawBattle);
+  assert(dragonClawTarget);
+  const uint32_t dragonClawTargetUid = dragonClawTarget->uid;
+  *dragonClawTarget = CollectionLogic::createPokemon(
+      dragonClawTargetUid, 213, 95, false, 0xD1A1A003U, 4);
+  dragonClawTarget->currentHp = dragonClawTarget->maximumHp = 900U;
+  for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
+    dragonClawTarget->moves[slot] = static_cast<MoveId>(150);  // SPLASH
+    dragonClawTarget->movePp[slot] = 40U;
+  }
+  BattleActionResult dragonClawResult{};
+  BattleEngine::fightInto(
+      dragonClawBattle, dragonClawCollection, 0U, dragonClawResult);
+  assert(dragonClawResult.accepted);
+  int16_t dragonClawMoveEvent = -1;
+  int16_t dragonClawHpEvent = -1;
+  int16_t dragonClawFoeReply = -1;
+  for (uint8_t eventIndex = 0;
+       eventIndex < dragonClawResult.eventCount; ++eventIndex) {
+    const BattleEvent& event = dragonClawResult.events[eventIndex];
+    if (dragonClawMoveEvent < 0 &&
+        event.type == BattleEventType::MoveUsed &&
+        event.side == BattleSide::Player &&
+        event.move == static_cast<MoveId>(337))
+      dragonClawMoveEvent = eventIndex;
+    if (dragonClawHpEvent < 0 &&
+        event.type == BattleEventType::HpChanged &&
+        event.side == BattleSide::Opponent &&
+        event.pokemonUid == dragonClawTargetUid) {
+      dragonClawHpEvent = eventIndex;
+      assert(event.before > event.after);
+    }
+    if (dragonClawFoeReply < 0 &&
+        event.type == BattleEventType::MoveUsed &&
+        event.side == BattleSide::Opponent)
+      dragonClawFoeReply = eventIndex;
+  }
+  assert(dragonClawMoveEvent >= 0 && dragonClawHpEvent > dragonClawMoveEvent);
+  assert(dragonClawFoeReply < 0 || dragonClawHpEvent < dragonClawFoeReply);
+
+  // The isolated turn above is intentionally not enough: the reported panel
+  // failure appeared only after two faints/opponent switches and a heavy
+  // Flash Cannon program. Recreate the complete resolver sequence used by the
+  // COM7 fixture so a future journal change cannot postpone Dragon Claw's HP
+  // event until after the enemy move.
+  PokemonCollection dialgaSequenceCollection;
+  CollectionLogic::initialize(dialgaSequenceCollection);
+  uint32_t sequenceDialgaUid = 0U;
+  assert(CollectionLogic::add(
+      dialgaSequenceCollection,
+      CollectionLogic::createPokemon(
+          0U, 483U, 93U, false, 0x149DCA70U, 4U),
+      &sequenceDialgaUid));
+  assert(CollectionLogic::setPartySlot(
+      dialgaSequenceCollection, 0U, sequenceDialgaUid));
+  OwnedPokemon* sequenceDialga = CollectionLogic::active(
+      dialgaSequenceCollection, 0U);
+  assert(sequenceDialga);
+  const MoveId sequenceMoves[kMoveSlots] = {
+    static_cast<MoveId>(459), static_cast<MoveId>(225),
+    static_cast<MoveId>(430), static_cast<MoveId>(337),
+  };
+  const uint8_t sequencePp[kMoveSlots] = {5U, 20U, 10U, 15U};
+  for (uint8_t slot = 0U; slot < kMoveSlots; ++slot) {
+    sequenceDialga->moves[slot] = sequenceMoves[slot];
+    sequenceDialga->movePp[slot] = sequencePp[slot];
+  }
+
+  BattleState dialgaSequenceBattle{};
+  dialgaSequenceBattle.active = true;
+  dialgaSequenceBattle.kind = BattleKind::Trainer;
+  dialgaSequenceBattle.outcome = BattleOutcome::Ongoing;
+  dialgaSequenceBattle.playerUid = sequenceDialgaUid;
+  dialgaSequenceBattle.opponentCount = kOpponentTeamCapacity;
+  dialgaSequenceBattle.unlockedGeneration = 4U;
+  dialgaSequenceBattle.rngState = 0x149DCA7AU;
+  dialgaSequenceBattle.playerVolatile.accuracyStage =
+      kMaximumBattleStatStage;
+  const uint16_t sequenceSpecies[kOpponentTeamCapacity] = {227U, 22U, 213U};
+  for (uint8_t index = 0U; index < kOpponentTeamCapacity; ++index) {
+    const uint32_t opponentUid = 0xE1490001UL + index;
+    dialgaSequenceBattle.opponents[index] = CollectionLogic::createPokemon(
+        opponentUid, sequenceSpecies[index], index < 2U ? 1U : 100U,
+        false, 0x149DCA80U + index, 4U);
+    OwnedPokemon& sequenceFoe = dialgaSequenceBattle.opponents[index];
+    sequenceFoe.currentHp = index < 2U ? 1U : 999U;
+    if (index == 2U) sequenceFoe.maximumHp = 999U;
+    sequenceFoe.abilityId = 0U;
+    sequenceFoe.heldItem = HeldItem::None;
+    for (uint8_t slot = 0U; slot < kMoveSlots; ++slot) {
+      sequenceFoe.moves[slot] = MoveId::None;
+      sequenceFoe.movePp[slot] = 0U;
+    }
+    sequenceFoe.moves[0] = static_cast<MoveId>(150);  // SPLASH
+    sequenceFoe.movePp[0] = 40U;
+    dialgaSequenceBattle.opponentVolatiles[index].evasionStage =
+        kMinimumBattleStatStage;
+    dialgaSequenceBattle.opponentVolatiles[index].speedStage =
+        kMinimumBattleStatStage;
+  }
+
+  const auto assertSequenceDamageBeforeReply = [](
+      const BattleActionResult& result, MoveId move, uint32_t targetUid) {
+    int16_t playerMove = -1;
+    int16_t targetHp = -1;
+    int16_t foeReply = -1;
+    for (uint8_t index = 0U; index < result.eventCount; ++index) {
+      const BattleEvent& event = result.events[index];
+      if (playerMove < 0 && event.type == BattleEventType::MoveUsed &&
+          event.side == BattleSide::Player && event.move == move)
+        playerMove = index;
+      if (targetHp < 0 && event.type == BattleEventType::HpChanged &&
+          event.side == BattleSide::Opponent &&
+          event.pokemonUid == targetUid && event.before > event.after)
+        targetHp = index;
+      if (foeReply < 0 && event.type == BattleEventType::MoveUsed &&
+          event.side == BattleSide::Opponent)
+        foeReply = index;
+    }
+    assert(playerMove >= 0);
+    assert(targetHp > playerMove);
+    assert(foeReply < 0 || targetHp < foeReply);
+  };
+
+  const uint32_t firstSequenceFoeUid =
+      dialgaSequenceBattle.opponents[0].uid;
+  BattleActionResult sequenceTurn{};
+  BattleEngine::fightInto(
+      dialgaSequenceBattle, dialgaSequenceCollection, 0U, sequenceTurn);
+  assert(sequenceTurn.accepted && dialgaSequenceBattle.opponentIndex == 1U);
+  assertSequenceDamageBeforeReply(
+      sequenceTurn, static_cast<MoveId>(459), firstSequenceFoeUid);
+  // Preserve Roar of Time's production recharge rule while allowing the
+  // requested visual stress sequence to continue on the next opponent.
+  assert(dialgaSequenceBattle.playerVolatile.recharging);
+  dialgaSequenceBattle.playerVolatile.recharging = false;
+
+  const uint32_t secondSequenceFoeUid =
+      dialgaSequenceBattle.opponents[1].uid;
+  sequenceTurn = BattleActionResult{};
+  BattleEngine::fightInto(
+      dialgaSequenceBattle, dialgaSequenceCollection, 1U, sequenceTurn);
+  assert(sequenceTurn.accepted && dialgaSequenceBattle.opponentIndex == 2U);
+  assertSequenceDamageBeforeReply(
+      sequenceTurn, static_cast<MoveId>(225), secondSequenceFoeUid);
+
+  const uint32_t thirdSequenceFoeUid =
+      dialgaSequenceBattle.opponents[2].uid;
+  sequenceTurn = BattleActionResult{};
+  BattleEngine::fightInto(
+      dialgaSequenceBattle, dialgaSequenceCollection, 2U, sequenceTurn);
+  assert(sequenceTurn.accepted && dialgaSequenceBattle.opponentIndex == 2U);
+  assert(dialgaSequenceBattle.opponents[2].currentHp > 0U &&
+         dialgaSequenceBattle.opponents[2].currentHp < 999U);
+  assertSequenceDamageBeforeReply(
+      sequenceTurn, static_cast<MoveId>(430), thirdSequenceFoeUid);
+
+  const uint16_t hpBeforeSequenceDragonClaw =
+      dialgaSequenceBattle.opponents[2].currentHp;
+  sequenceTurn = BattleActionResult{};
+  BattleEngine::fightInto(
+      dialgaSequenceBattle, dialgaSequenceCollection, 3U, sequenceTurn);
+  assert(sequenceTurn.accepted && dialgaSequenceBattle.opponentIndex == 2U);
+  assert(dialgaSequenceBattle.opponents[2].currentHp > 0U &&
+         dialgaSequenceBattle.opponents[2].currentHp <
+             hpBeforeSequenceDragonClaw);
+  assertSequenceDamageBeforeReply(
+      sequenceTurn, static_cast<MoveId>(337), thirdSequenceFoeUid);
+
+  // Consecutive Wild encounters are independent battles. Persistent party
+  // resources keep their post-battle values, while every battle-local stage,
+  // volatile effect and field duration is rebuilt for the next encounter.
+  PokemonCollection consecutiveWildCollection;
+  CollectionLogic::initialize(consecutiveWildCollection);
+  assert(CollectionLogic::chooseStarter(consecutiveWildCollection, 1, 0xE500U));
+  OwnedPokemon* consecutiveLead = CollectionLogic::active(
+      consecutiveWildCollection, 0);
+  assert(consecutiveLead && consecutiveLead->maximumHp > 1U &&
+         consecutiveLead->movePp[0] > 0U);
+  BattleState consecutiveWild;
+  BattleEngine::clear(consecutiveWild);
+  assert(BattleEngine::startWild(consecutiveWild, consecutiveWildCollection,
+                                 consecutiveLead->uid, 0xE501U));
+  consecutiveWild.playerVolatile.attackStage = 6;
+  consecutiveWild.playerVolatile.confusionTurns = 4;
+  consecutiveWild.playerVolatile.seeded = true;
+  consecutiveWild.weather = BattleWeather::Rain;
+  consecutiveWild.weatherTurns = 77;
+  consecutiveLead->currentHp = static_cast<uint16_t>(consecutiveLead->maximumHp - 1U);
+  consecutiveLead->status = StatusCondition::Poison;
+  --consecutiveLead->movePp[0];
+  const uint16_t keptHp = consecutiveLead->currentHp;
+  const uint8_t keptPp = consecutiveLead->movePp[0];
+  consecutiveWild.active = false;
+  assert(BattleEngine::startWild(consecutiveWild, consecutiveWildCollection,
+                                 consecutiveLead->uid, 0xE502U));
+  assert(consecutiveWild.playerVolatile.attackStage == 0 &&
+         consecutiveWild.playerVolatile.confusionTurns == 0U &&
+         !consecutiveWild.playerVolatile.seeded &&
+         consecutiveWild.weatherTurns != 77U);
+  assert(consecutiveLead->currentHp == keptHp &&
+         consecutiveLead->status == StatusCondition::Poison &&
+         consecutiveLead->movePp[0] == keptPp);
+
   bool sawBeginnerLow = false, sawBeginnerHigh = false;
   for (uint32_t seed = 1; seed <= 128; ++seed) {
     BattleState beginnerWild;
@@ -1144,30 +1528,38 @@ int main() {
   PokemonCollection healCollection; CollectionLogic::initialize(healCollection);
   assert(CollectionLogic::chooseStarter(healCollection,1));
   OwnedPokemon* healer=CollectionLogic::active(healCollection,0);
+  healer->level=30;CollectionLogic::refreshDerivedStats(*healer,false);
   healer->moves[0]=static_cast<MoveId>(135);healer->movePp[0]=10;
   healer->currentHp=static_cast<uint16_t>(healer->maximumHp/4U);
   const uint16_t healHpBefore=healer->currentHp;
   BattleState healBattle;healBattle.active=true;healBattle.kind=BattleKind::Trainer;
   healBattle.outcome=BattleOutcome::Ongoing;healBattle.playerUid=healer->uid;healBattle.opponentCount=1;
   healBattle.opponents[0]=CollectionLogic::createPokemon(0,19,5,false,0x135U);
-  for(uint8_t slot=0;slot<kMoveSlots;++slot){
-    healBattle.opponents[0].moves[slot]=MoveId::None;
-    healBattle.opponents[0].movePp[slot]=0;
-  }
+  for(uint8_t slot=0;slot<kMoveSlots;++slot){healBattle.opponents[0].moves[slot]=MoveId::None;healBattle.opponents[0].movePp[slot]=0;}
+  healBattle.opponents[0].moves[0]=static_cast<MoveId>(111); // DEFENSE CURL: harmless, but succeeds.
+  healBattle.opponents[0].movePp[0]=40;
   const BattleActionResult healResult=BattleEngine::fight(healBattle,healCollection,0);
   healer=CollectionLogic::active(healCollection,0);
   assert(healResult.accepted&&healer->movePp[0]==9);
   assert(healer->currentHp==std::min<uint16_t>(healer->maximumHp,
       static_cast<uint16_t>(healHpBefore+healer->maximumHp/2U)));
   bool sawSelfHeal=false;
+  int selfHealMoveIndex=-1,selfHealHpIndex=-1,replyMoveIndex=-1;
   for(uint8_t eventIndex=0;eventIndex<healResult.eventCount;++eventIndex){
     const BattleEvent& event=healResult.events[eventIndex];
+    if(event.type==BattleEventType::MoveUsed&&event.side==BattleSide::Player&&
+       event.move==static_cast<MoveId>(135))selfHealMoveIndex=eventIndex;
     if(event.type==BattleEventType::HpChanged&&event.side==BattleSide::Player&&
-       event.before==healHpBefore&&event.after==healer->currentHp)sawSelfHeal=true;
+       event.before==healHpBefore&&event.after>event.before){
+      sawSelfHeal=true;selfHealHpIndex=eventIndex;
+    }
+    if(event.type==BattleEventType::MoveUsed&&event.side==BattleSide::Opponent&&
+       replyMoveIndex<0)replyMoveIndex=eventIndex;
     assert(event.type!=BattleEventType::MoveEffect||
            event.value!=static_cast<uint16_t>(BattleMoveEffect::Failed));
   }
-  assert(sawSelfHeal);
+  assert(sawSelfHeal&&selfHealMoveIndex>=0&&selfHealHpIndex>selfHealMoveIndex&&
+         replyMoveIndex>selfHealHpIndex);
 
   // The same effect has a separate, explicit field command. It transfers
   // exactly one fifth of the donor's max HP, never revives, and does not use
@@ -1217,14 +1609,19 @@ int main() {
   assert(dreamer->currentHp==std::min<uint16_t>(dreamer->maximumHp,
       static_cast<uint16_t>(dreamHpBefore+std::max<uint16_t>(1,dreamResult.damageDealt/2U))));
   bool sawDreamHeal=false;
+  int dreamDamageIndex=-1,dreamHealIndex=-1;
   for(uint8_t eventIndex=0;eventIndex<dreamResult.eventCount;++eventIndex){
     const BattleEvent& event=dreamResult.events[eventIndex];
+    if(event.type==BattleEventType::HpChanged&&event.side==BattleSide::Opponent&&
+       dreamDamageIndex<0)dreamDamageIndex=eventIndex;
     if(event.type==BattleEventType::HpChanged&&event.side==BattleSide::Player&&
-       event.before==dreamHpBefore&&event.after==dreamer->currentHp)sawDreamHeal=true;
+       event.before==dreamHpBefore&&event.after==dreamer->currentHp){
+      sawDreamHeal=true;dreamHealIndex=eventIndex;
+    }
     assert(event.type!=BattleEventType::MoveEffect||
            event.value!=static_cast<uint16_t>(BattleMoveEffect::Failed));
   }
-  assert(sawDreamHeal);
+  assert(sawDreamHeal&&dreamDamageIndex>=0&&dreamHealIndex>dreamDamageIndex);
 
   PokemonCollection failedDreamCollection;CollectionLogic::initialize(failedDreamCollection);
   assert(CollectionLogic::chooseStarter(failedDreamCollection,1));
@@ -1255,6 +1652,52 @@ int main() {
     sawDreamMiss|=event.type==BattleEventType::MoveMissed;
   }
   assert(sawDreamFailure&&!sawDreamMiss);
+
+  // Trainer AI must treat DREAM EATER as a conditioned two-step set.  It
+  // opens with the most accurate available sleep move, never lets the random
+  // branch choose DREAM EATER against an awake target, and switches to DREAM
+  // EATER once sleep is active.  A Substitute keeps both setup and drain out.
+  auto runDreamEaterAiTurn=[](uint32_t seed,StatusCondition targetStatus,
+                              uint16_t substituteHp,bool includeSleepMove){
+    PokemonCollection collection;CollectionLogic::initialize(collection);
+    assert(CollectionLogic::chooseStarter(collection,1,seed));
+    OwnedPokemon* target=CollectionLogic::active(collection,0);
+    target->level=50;CollectionLogic::refreshDerivedStats(*target,false);
+    target->maximumHp=target->currentHp=5000;
+    target->status=targetStatus;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      target->moves[slot]=MoveId::None;target->movePp[slot]=0;
+    }
+    target->moves[0]=static_cast<MoveId>(150);target->movePp[0]=40; // SPLASH
+    BattleState battle;BattleEngine::clear(battle);battle.active=true;
+    battle.kind=BattleKind::Trainer;battle.outcome=BattleOutcome::Ongoing;
+    battle.playerUid=target->uid;battle.opponentCount=1;battle.rngState=seed;
+    battle.playerVolatile.substituteHp=substituteHp;
+    if(targetStatus==StatusCondition::Sleep)battle.playerVolatile.sleepTurns=4;
+    battle.opponents[0]=CollectionLogic::createPokemon(0,94,50,false,seed^0xD138U);
+    OwnedPokemon& foe=battle.opponents[0];
+    foe.maximumHp=foe.currentHp=5000;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      foe.moves[slot]=MoveId::None;foe.movePp[slot]=0;
+    }
+    foe.moves[0]=static_cast<MoveId>(138);foe.movePp[0]=15; // DREAM EATER
+    if(includeSleepMove){
+      foe.moves[1]=static_cast<MoveId>(95);foe.movePp[1]=20; // HYPNOSIS
+    }
+    foe.moves[2]=MoveId::Tackle;foe.movePp[2]=35;
+    return BattleEngine::fight(battle,collection,0).enemyMoveUsed;
+  };
+  for(uint32_t seed=1;seed<=32;++seed)
+    assert(runDreamEaterAiTurn(0xD000U+seed,StatusCondition::None,0,true)==
+           static_cast<MoveId>(95));
+  for(uint32_t seed=1;seed<=32;++seed)
+    assert(runDreamEaterAiTurn(0xD100U+seed,StatusCondition::Sleep,0,true)==
+           static_cast<MoveId>(138));
+  for(uint32_t seed=1;seed<=32;++seed)
+    assert(runDreamEaterAiTurn(0xD200U+seed,StatusCondition::None,0,false)==
+           MoveId::Tackle);
+  assert(runDreamEaterAiTurn(0xD102U,StatusCondition::Poison,0,true)==MoveId::Tackle);
+  assert(runDreamEaterAiTurn(0xD103U,StatusCondition::Sleep,20,true)==MoveId::Tackle);
 
   // NIGHTMARE is a persistent volatile condition, not an ordinary accuracy
   // attack. It only starts on a sleeping target, removes one quarter of max HP
@@ -1351,6 +1794,50 @@ int main() {
       battle, collection, inventory, PokeBallType::MasterBall);
   assert(capture.caught && capture.outcome == BattleOutcome::Captured);
   assert(CollectionLogic::count(collection) == before + 1);
+
+  // Capturing a wild Ditto after Transform must persist Ditto's original
+  // identity, not the temporary target species displayed during battle.
+  PokemonCollection transformedDittoCollection;
+  CollectionLogic::initialize(transformedDittoCollection);
+  assert(CollectionLogic::chooseStarter(transformedDittoCollection, 1));
+  const uint32_t transformedDittoPlayerUid = transformedDittoCollection.party[0];
+  BattleState transformedDittoBattle;
+  transformedDittoBattle.active = true;
+  transformedDittoBattle.kind = BattleKind::Wild;
+  transformedDittoBattle.outcome = BattleOutcome::Ongoing;
+  transformedDittoBattle.playerUid = transformedDittoPlayerUid;
+  transformedDittoBattle.opponentCount = 1;
+  const OwnedPokemon dittoBeforeTransform =
+      CollectionLogic::createPokemon(0, 132, 12, false, 0xD1770U);
+  OwnedPokemon transformedDitto = dittoBeforeTransform;
+  transformedDitto.speciesId = 6;  // Charizard: temporary Transform display.
+  transformedDittoBattle.opponents[0] = transformedDitto;
+  transformedDittoBattle.opponentTransformSnapshot.active = true;
+  transformedDittoBattle.opponentTransformSnapshot.originalSpeciesId = 132;
+  transformedDittoBattle.opponentTransformSnapshot.originalForm = dittoBeforeTransform.form;
+  transformedDittoBattle.opponentTransformSnapshot.originalAbilityId = dittoBeforeTransform.abilityId;
+  std::memcpy(transformedDittoBattle.opponentTransformSnapshot.originalMoves,
+              dittoBeforeTransform.moves, sizeof(dittoBeforeTransform.moves));
+  std::memcpy(transformedDittoBattle.opponentTransformSnapshot.originalMovePp,
+              dittoBeforeTransform.movePp, sizeof(dittoBeforeTransform.movePp));
+  transformedDittoBattle.opponentMoveEffects[0].transformed = true;
+  Inventory transformedDittoInventory;
+  transformedDittoInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)] = 1;
+  const BattleActionResult transformedDittoCapture = BattleEngine::throwBall(
+      transformedDittoBattle, transformedDittoCollection, transformedDittoInventory,
+      PokeBallType::MasterBall);
+  assert(transformedDittoCapture.caught &&
+         transformedDittoCapture.outcome == BattleOutcome::Captured);
+  bool foundDitto = false;
+  bool foundCopiedCharizard = false;
+  for (const OwnedPokemon& capturedPokemon : transformedDittoCollection.box) {
+    if (!capturedPokemon.uid) continue;
+    foundDitto |= capturedPokemon.speciesId == 132;
+    foundCopiedCharizard |= capturedPokemon.speciesId == 6;
+  }
+  assert(foundDitto && !foundCopiedCharizard);
+  assert(transformedDittoBattle.opponents[0].speciesId == 132 &&
+         !transformedDittoBattle.opponentTransformSnapshot.active);
 
   const OwnedPokemon extra = CollectionLogic::createPokemon(0, 16, 4);
   uint32_t extraUid = 0;
@@ -1530,12 +2017,24 @@ int main() {
       assert(legacyOpponentIds.opponents[index].uid != legacyOpponentIds.opponents[previous].uid);
   }
 
+  // An interrupted Android save must clamp a torn team-count byte before any
+  // renderer or battle walk touches the fixed opponent array.
+  BattleState malformedCheckpoint{};
+  malformedCheckpoint.opponentCount = 0xFF;
+  malformedCheckpoint.opponentIndex = 0xFF;
+  assert(BattleEngine::ensureOpponentUids(malformedCheckpoint));
+  assert(malformedCheckpoint.opponentCount == kOpponentTeamCapacity);
+  assert(malformedCheckpoint.opponentIndex == 0);
+  assert(BattleEngine::currentOpponent(malformedCheckpoint) ==
+         &malformedCheckpoint.opponents[0]);
+
   // Mart inventory has four guaranteed families plus sixteen rotating
   // products. Selection is random, but presentation is grouped and spans
   // exactly four five-row pages.
   MartState mart;
   uint64_t ownedMachines=0;
-  Economy::rotate(mart,0,ownedMachines);
+  uint64_t ownedSinnohMachines=0;
+  Economy::rotate(mart,0,ownedMachines,ownedSinnohMachines);
   assert(kMartOfferCount==20U);
   uint8_t pokeBallOffer=0xFF,potionOffer=0xFF,statusOffer=0xFF,machineOffer=0xFF;
   for(uint8_t i=0;i<kMartOfferCount;++i){
@@ -1552,30 +2051,41 @@ int main() {
              mart.offers[previous].heldItem!=offer.heldItem);
   }
   assert(pokeBallOffer!=0xFF&&potionOffer!=0xFF&&statusOffer!=0xFF&&machineOffer!=0xFF);
+  // Sinnoh machines are catalogued in the firmware but cannot leak into a
+  // pre-unlock rotation. A stale offer from an older build is also replaced
+  // before the Market can display it.
+  for (const MartOffer& offer : mart.offers)
+    if (offer.isMachine()) assert(offer.machineId() < kLegacyMachineCount);
+  MartState staleSinnohMart{};
+  staleSinnohMart.elapsedSeconds = 0;
+  staleSinnohMart.offers[0] = MartOffer::machine(kLegacyMachineCount, 1000);
+  assert(Economy::refreshIfDue(staleSinnohMart, 0, 0, 0, false));
+  for (const MartOffer& offer : staleSinnohMart.offers)
+    if (offer.isMachine()) assert(offer.machineId() < kLegacyMachineCount);
 
   // Reopening the Mart after buying all guaranteed Poke Balls must preserve
   // the sold-out rotation. Stock is not an initialization sentinel: only the
   // six-hour timer may generate another set of rare offers.
   MartState reopenedMart=mart;
-  Inventory reopenedInventory{};uint64_t reopenedMachines=0;uint32_t reopenedMoney=10000;
+  Inventory reopenedInventory{};uint64_t reopenedMachines=0,reopenedSinnohMachines=0;uint32_t reopenedMoney=10000;
   const uint8_t pokeBallStock=reopenedMart.offers[pokeBallOffer].remaining;
   assert(pokeBallStock>0U);
   assert(Economy::buyQuantity(reopenedMart,pokeBallOffer,pokeBallStock,reopenedMoney,
                               reopenedInventory,reopenedMachines));
   assert(reopenedMart.offers[pokeBallOffer].remaining==0U);
   const MartState soldOutMart=reopenedMart;
-  assert(!Economy::refreshIfDue(reopenedMart,0,reopenedMachines));
+  assert(!Economy::refreshIfDue(reopenedMart,0,reopenedMachines,reopenedSinnohMachines));
   assert(std::memcmp(&reopenedMart,&soldOutMart,sizeof(MartState))==0);
   reopenedMart.elapsedSeconds=Economy::kRotationSeconds;
-  assert(Economy::refreshIfDue(reopenedMart,0,reopenedMachines));
+  assert(Economy::refreshIfDue(reopenedMart,0,reopenedMachines,reopenedSinnohMachines));
   assert(reopenedMart.day==soldOutMart.day+1U&&reopenedMart.offers[0].remaining>0U);
 
-  assert(!Economy::ownsMachine(ownedMachines,mart.offers[machineOffer].machineId()));
+  assert(!Economy::ownsMachine(ownedMachines,ownedSinnohMachines,mart.offers[machineOffer].machineId()));
   const uint8_t offeredMachine=mart.offers[machineOffer].machineId();
   uint32_t machineMoney=10000;
-  assert(Economy::buy(mart,machineOffer,machineMoney,inventory,ownedMachines));
-  assert(Economy::ownsMachine(ownedMachines,offeredMachine));
-  assert(!Economy::buy(mart,machineOffer,machineMoney,inventory,ownedMachines));
+  assert(Economy::buy(mart,machineOffer,machineMoney,inventory,ownedMachines,ownedSinnohMachines));
+  assert(Economy::ownsMachine(ownedMachines,ownedSinnohMachines,offeredMachine));
+  assert(!Economy::buy(mart,machineOffer,machineMoney,inventory,ownedMachines,ownedSinnohMachines));
   uint32_t money = 1000;
   const uint16_t potionsBefore = inventory.medicine[static_cast<uint8_t>(BattleItem::Potion)];
   assert(Economy::buy(mart,potionOffer,money,inventory,ownedMachines));
@@ -1638,8 +2148,10 @@ int main() {
 
   uint16_t ppRecoveryOffers=0,ppUpOffers=0;
   MartState frequencyMart{};frequencyMart.rng=0x50505245U;
+  const uint64_t everyLegacyMachine=(uint64_t{1}<<kLegacyMachineCount)-1U;
+  const uint64_t everySinnohMachine=(uint64_t{1}<<kSinnohMachineCount)-1U;
   for(uint16_t rotation=0;rotation<300;++rotation){
-    Economy::rotate(frequencyMart,0,(uint64_t{1}<<kMachineCount)-1U);
+    Economy::rotate(frequencyMart,0,everyLegacyMachine,everySinnohMachine);
     for(uint8_t offer=0;offer<kMartOfferCount;++offer){
       const MartItem item=frequencyMart.offers[offer].item;
       if(item>=MartItem::Ether&&item<=MartItem::MaxElixir)++ppRecoveryOffers;
@@ -1664,12 +2176,11 @@ int main() {
   assert(heldRotationOffers>300U&&extraMachineOffers>0U);
   MartState testCadence{};testCadence.elapsedSeconds=0;testCadence.day=0;
   assert(Economy::kRotationSeconds == 6U * 60U * 60U);
-  Economy::advance(testCadence,Economy::kRotationSeconds-1U,0,(uint64_t{1}<<kMachineCount)-1U);
+  Economy::advance(testCadence,Economy::kRotationSeconds-1U,0,everyLegacyMachine,everySinnohMachine);
   assert(testCadence.day==0);
-  Economy::advance(testCadence,1U,0,(uint64_t{1}<<kMachineCount)-1U);
+  Economy::advance(testCadence,1U,0,everyLegacyMachine,everySinnohMachine);
   assert(testCadence.day==1);
-  const uint64_t everyMachine=(uint64_t{1}<<kMachineCount)-1U;
-  Economy::rotate(mart,0,everyMachine);
+  Economy::rotate(mart,0,everyLegacyMachine,everySinnohMachine);
   for(const MartOffer& offer:mart.offers)assert(!offer.isMachine());
 
   // Every held item is catalogued, Mart-locked by Badge count and can be
@@ -1679,7 +2190,7 @@ int main() {
     if(raw<kHeldItemInventorySlots)assert(data->price&&data->martWeight);
     else assert(data->unlockBadges==255U&&!data->martWeight);
   }
-  assert(MegaEvolution::officialFormCount()==54);
+  assert(MegaEvolution::officialFormCount()==59);
   assert(heldItemIsTransferLocked(HeldItem::MegaStone));
   OwnedPokemon megaCharizard=CollectionLogic::createPokemon(7000,6,50,false,1);
   megaCharizard.heldItem=HeldItem::MegaStone;
@@ -1695,6 +2206,15 @@ int main() {
   CollectionLogic::refreshAbility(megaCharizard);
   assert(MegaEvolution::variantFor(megaCharizard)==MegaVariant::MegaY);
   assert(findAbility(megaCharizard.abilityId)&&std::strcmp(findAbility(megaCharizard.abilityId)->name,"DROUGHT")==0);
+  for(uint16_t sinnohMega:{428U,445U,448U,460U,475U}){
+    OwnedPokemon mega=CollectionLogic::createPokemon(7000U+sinnohMega,sinnohMega,50U,false,sinnohMega);
+    mega.heldItem=HeldItem::MegaStone;
+    assert(MegaEvolution::canTransform(sinnohMega));
+    assert(MegaEvolution::variantChoiceCount(sinnohMega)==1U);
+    assert(MegaEvolution::variantFor(mega)==MegaVariant::Mega);
+    CollectionLogic::refreshAbility(mega);
+    assert(MegaEvolution::abilityId(mega,0U)==mega.abilityId);
+  }
   bool foundHeldOffer=false;
   for(uint16_t day=0;day<100;++day){Economy::rotate(mart,0,ownedMachines);for(uint8_t i=0;i<kMartOfferCount;++i)if(mart.offers[i].isHeldItem()){foundHeldOffer=true;assert(heldItemData(mart.offers[i].heldItem)->unlockBadges==0);}}
   assert(foundHeldOffer);
@@ -1767,13 +2287,89 @@ int main() {
   assert(specialHeldItemQuantity(rewards,HeldItem::LightBall)==1U);
   assert(SpeciesHeldItems::reconcile(rewardCollection,rewards)==HeldItem::None);
 
+  // Sinnoh's signature held items are awarded once from the captured species.
+  PokemonCollection gen4RewardsCollection{}; CollectionLogic::initialize(gen4RewardsCollection);
+  for (const uint16_t species : {483U,484U,487U,493U})
+    assert(CollectionLogic::add(gen4RewardsCollection,
+        CollectionLogic::createPokemon(9100U+species,species,70,false,91,
+                                       4U)));
+  Gen4UniqueItemInventory gen4Rewards{}; uint8_t gen4Granted=0;
+  assert(Gen4SpeciesItems::reconcile(gen4RewardsCollection,gen4Rewards,&gen4Granted)==
+         HeldItem::FistPlate);
+  assert(gen4Granted==kGen4UniqueItemCount);
+  for(uint8_t raw=static_cast<uint8_t>(kFirstGen4UniqueItem);
+      raw<=static_cast<uint8_t>(kLastGen4UniqueItem);++raw)
+    assert(gen4UniqueItemQuantity(gen4Rewards,static_cast<HeldItem>(raw))==1U);
+  assert(Gen4SpeciesItems::reconcile(gen4RewardsCollection,gen4Rewards)==HeldItem::None);
+  assert(heldItemBoostPercent(HeldItem::FistPlate,PokemonType::Fighting)==20U);
+  assert(heldItemBoostPercent(HeldItem::AdamantOrb,PokemonType::Dragon)==20U);
+  assert(heldItemBoostPercent(HeldItem::GriseousOrb,PokemonType::Ghost)==20U);
+  OwnedPokemon arceus=CollectionLogic::createPokemon(9200,493,70,false,123,4);
+  uint16_t gen4Held[kHeldItemInventorySlots]{}; SpecialHeldItemInventory gen4Old{};
+  uint64_t gen4OwnedMachines=0;
+  assert(equipHeldItem(arceus,HeldItem::FistPlate,gen4Held,gen4Old,
+                       gen4Rewards,gen4OwnedMachines));
+  assert(arceus.heldItem==HeldItem::FistPlate&&
+         MegaEvolution::type1(arceus,PokemonType::Normal)==PokemonType::Fighting&&
+         MegaEvolution::type2(arceus,PokemonType::Normal)==PokemonType::Fighting&&
+         gen4UniqueItemQuantity(gen4Rewards,HeldItem::FistPlate)==0U);
+  assert(equipHeldItem(arceus,HeldItem::None,gen4Held,gen4Old,
+                       gen4Rewards,gen4OwnedMachines));
+  assert(gen4UniqueItemQuantity(gen4Rewards,HeldItem::FistPlate)==1U);
+  // Arceus uses the held Plate as its permanent visual identity. The form
+  // indices mirror the Platinum asset export; Pixie Plate keeps the Normal
+  // art because the original Sinnoh game has no Fairy sprite.
+  struct ArceusPlateCase { HeldItem item; uint8_t form; PokemonType type; const char* name; };
+  static constexpr ArceusPlateCase arceusPlates[] = {
+      {HeldItem::None, 0U, PokemonType::Normal, "NORMAL"},
+      {HeldItem::FistPlate, 1U, PokemonType::Fighting, "FIGHTING"},
+      {HeldItem::SkyPlate, 2U, PokemonType::Flying, "FLYING"},
+      {HeldItem::ToxicPlate, 3U, PokemonType::Poison, "POISON"},
+      {HeldItem::StonePlate, 4U, PokemonType::Rock, "ROCK"},
+      {HeldItem::InsectPlate, 5U, PokemonType::Bug, "BUG"},
+      {HeldItem::SpookyPlate, 6U, PokemonType::Ghost, "GHOST"},
+      {HeldItem::DracoPlate, 7U, PokemonType::Dragon, "DRAGON"},
+      {HeldItem::IronPlate, 8U, PokemonType::Steel, "STEEL"},
+      {HeldItem::FlamePlate, 9U, PokemonType::Fire, "FIRE"},
+      {HeldItem::SplashPlate, 10U, PokemonType::Water, "WATER"},
+      {HeldItem::MeadowPlate, 11U, PokemonType::Grass, "GRASS"},
+      {HeldItem::ZapPlate, 12U, PokemonType::Electric, "ELECTRIC"},
+      {HeldItem::MindPlate, 13U, PokemonType::Psychic, "PSYCHIC"},
+      {HeldItem::IciclePlate, 14U, PokemonType::Ice, "ICE"},
+      {HeldItem::EarthPlate, 15U, PokemonType::Ground, "GROUND"},
+      {HeldItem::PixiePlate, 0U, PokemonType::Fairy, "NORMAL"},
+      {HeldItem::DreadPlate, 16U, PokemonType::Dark, "DARK"},
+  };
+  assert(CollectionLogic::formCount(493U) == 17U && !CollectionLogic::canChangeForm(arceus));
+  for (const ArceusPlateCase& plate : arceusPlates) {
+    arceus.heldItem = plate.item;
+    assert(CollectionLogic::resolvedForm(arceus) == plate.form &&
+           std::strcmp(CollectionLogic::formName(493U, plate.form), plate.name) == 0 &&
+           MegaEvolution::type1(arceus, PokemonType::Normal) == plate.type &&
+           MegaEvolution::type2(arceus, PokemonType::Normal) == plate.type);
+  }
+  arceus.heldItem = HeldItem::DreadPlate;
+  arceus.form = 0U;
+  assert(CollectionLogic::normalizeForm(arceus) && arceus.form == 16U);
+  arceus.heldItem = HeldItem::None;
+  assert(CollectionLogic::normalizeForm(arceus) && arceus.form == 0U);
+  OwnedPokemon giratina=CollectionLogic::createPokemon(9201,487,70,false,124,4);
+  assert(equipHeldItem(giratina,HeldItem::GriseousOrb,gen4Held,gen4Old,
+                       gen4Rewards,gen4OwnedMachines));
+  assert(CollectionLogic::resolvedForm(giratina)==1U&&
+         !CollectionLogic::canChangeForm(giratina));
+  assert(unequipHeldItem(giratina,gen4Held,gen4Old,gen4Rewards,gen4OwnedMachines));
+  assert(CollectionLogic::resolvedForm(giratina)==0U&&
+         gen4UniqueItemQuantity(gen4Rewards,HeldItem::GriseousOrb)==1U);
+
   // Medicine and X-items are usable in any active battle, consume a turn and
   // mutate only temporary combat stages where appropriate.
   BattleEngine::clear(battle);
   battle.active = true; battle.outcome = BattleOutcome::Ongoing; battle.kind = BattleKind::Trainer;
   battle.playerUid = starterUid; battle.opponentCount = 1;
   battle.opponents[0] = CollectionLogic::createPokemon(0, 10, 2);
-  battle.opponents[0].moves[0] = MoveId::None;
+  battle.opponents[0].moves[0] = static_cast<MoveId>(111); // DEFENSE CURL: harmless, but succeeds.
+  battle.opponents[0].movePp[0] = 40;
   OwnedPokemon* itemTarget = CollectionLogic::find(collection, starterUid);
   itemTarget->currentHp = static_cast<uint16_t>(itemTarget->maximumHp - 1);
   inventory.medicine[static_cast<uint8_t>(BattleItem::Potion)] = 1;
@@ -1782,6 +2378,20 @@ int main() {
   assert(itemResult.accepted && itemResult.eventCount >= 2);
   assert(itemTarget->currentHp == itemTarget->maximumHp);
   assert(inventory.medicine[static_cast<uint8_t>(BattleItem::Potion)] == 0);
+  int potionItemIndex=-1,potionHealIndex=-1,potionReplyIndex=-1;
+  for(uint8_t eventIndex=0;eventIndex<itemResult.eventCount;++eventIndex){
+    const BattleEvent& event=itemResult.events[eventIndex];
+    if(event.type==BattleEventType::ItemUsed&&event.side==BattleSide::Player)
+      potionItemIndex=eventIndex;
+    else if(event.type==BattleEventType::HpChanged&&
+            event.side==BattleSide::Player&&event.after>event.before&&
+            potionHealIndex<0)potionHealIndex=eventIndex;
+    else if(event.type==BattleEventType::MoveUsed&&
+            event.side==BattleSide::Opponent&&potionReplyIndex<0)
+      potionReplyIndex=eventIndex;
+  }
+  assert(potionItemIndex>=0&&potionHealIndex>potionItemIndex&&
+         potionReplyIndex>potionHealIndex);
   inventory.medicine[static_cast<uint8_t>(BattleItem::XAttack)] = 1;
   BattleEngine::useItemInto(battle, collection, inventory, BattleItem::XAttack, itemResult);
   assert(itemResult.accepted && itemResult.eventCount >= 1);
@@ -2355,10 +2965,33 @@ int main() {
   BattleState heldBattle;heldBattle.active=true;heldBattle.kind=BattleKind::Trainer;heldBattle.outcome=BattleOutcome::Ongoing;heldBattle.playerUid=heldUser->uid;heldBattle.opponentCount=1;
   heldBattle.opponents[0]=CollectionLogic::createPokemon(0,150,100,false,321);for(uint8_t i=0;i<kMoveSlots;++i)heldBattle.opponents[0].moves[i]=MoveId::None;
   heldUser->currentHp=heldUser->maximumHp/2U;heldUser->heldItem=HeldItem::OranBerry;
-  const uint16_t berryHp=heldUser->currentHp;assert(BattleEngine::fight(heldBattle,heldCollection,0).accepted);
+  const uint16_t berryHp=heldUser->currentHp;
+  const BattleActionResult berryHealResult=BattleEngine::fight(heldBattle,heldCollection,0);
+  assert(berryHealResult.accepted);
   assert(heldUser->currentHp>berryHp&&heldUser->heldItem==HeldItem::None);
+  int berryActivationIndex=-1,berryHealIndex=-1;
+  for(uint8_t eventIndex=0;eventIndex<berryHealResult.eventCount;++eventIndex){
+    const BattleEvent& event=berryHealResult.events[eventIndex];
+    if(event.type==BattleEventType::HeldItemActivated&&
+       event.side==BattleSide::Player)berryActivationIndex=eventIndex;
+    if(event.type==BattleEventType::HpChanged&&event.side==BattleSide::Player&&
+       event.after>event.before)berryHealIndex=eventIndex;
+  }
+  assert(berryActivationIndex>=0&&berryHealIndex>berryActivationIndex);
   heldUser->currentHp=static_cast<uint16_t>(heldUser->maximumHp-10U);heldUser->heldItem=HeldItem::Leftovers;
-  const uint16_t leftoversHp=heldUser->currentHp;assert(BattleEngine::fight(heldBattle,heldCollection,0).accepted);assert(heldUser->currentHp>leftoversHp&&heldUser->heldItem==HeldItem::Leftovers);
+  const uint16_t leftoversHp=heldUser->currentHp;
+  const BattleActionResult leftoversHealResult=BattleEngine::fight(heldBattle,heldCollection,0);
+  assert(leftoversHealResult.accepted);
+  assert(heldUser->currentHp>leftoversHp&&heldUser->heldItem==HeldItem::Leftovers);
+  int leftoversActivationIndex=-1,leftoversHealIndex=-1;
+  for(uint8_t eventIndex=0;eventIndex<leftoversHealResult.eventCount;++eventIndex){
+    const BattleEvent& event=leftoversHealResult.events[eventIndex];
+    if(event.type==BattleEventType::HeldItemActivated&&
+       event.side==BattleSide::Player)leftoversActivationIndex=eventIndex;
+    if(event.type==BattleEventType::HpChanged&&event.side==BattleSide::Player&&
+       event.after>event.before)leftoversHealIndex=eventIndex;
+  }
+  assert(leftoversActivationIndex>=0&&leftoversHealIndex>leftoversActivationIndex);
   heldUser->moves[1]=MoveId::Ember;heldUser->movePp[1]=25;heldUser->heldItem=HeldItem::ChoiceBand;heldBattle.playerVolatile.choiceMove=MoveId::None;
   assert(BattleEngine::fight(heldBattle,heldCollection,0).accepted);assert(!BattleEngine::fight(heldBattle,heldCollection,1).accepted);
 
@@ -2457,6 +3090,10 @@ int main() {
   assert(PokedexLogic::hasCaught(pokedex, 16));
   assert(PokedexLogic::seenCount(pokedex) == 1);
   assert(PokedexLogic::caughtCount(pokedex) == 1);
+  assert(!PokedexLogic::isLegendaryOrMythical(479));
+  assert(PokedexLogic::isLegendaryOrMythical(480));
+  assert(PokedexLogic::isLegendaryOrMythical(493));
+  assert(!PokedexLogic::isLegendaryOrMythical(494));
 
   // Each regional block is completed independently. Reconciliation grants
   // one persistent Master Ball, queues a visible acknowledgement and never
@@ -2466,6 +3103,7 @@ int main() {
   assert(PokedexLogic::generationSpeciesCount(1) == 151);
   assert(PokedexLogic::generationSpeciesCount(2) == 251);
   assert(PokedexLogic::generationSpeciesCount(3) == 386);
+  assert(PokedexLogic::generationSpeciesCount(4) == 493);
   assert(PokedexLogic::generationCaughtCount(completedDex, 1) == 151);
   assert(PokedexLogic::isGenerationComplete(completedDex, 1));
   assert(!PokedexLogic::isGenerationComplete(completedDex, 2));
@@ -2561,6 +3199,25 @@ int main() {
   assert(wildClock.available == 0 && wildClock.elapsedSeconds == 0);
   assert(wildClock.targetSeconds >= WildEncounterClock::kMinimumSeconds);
   assert(wildClock.targetSeconds <= WildEncounterClock::kMinimumSeconds + WildEncounterClock::kWindowSeconds);
+  // Wild battles advance a persisted stream and bind it to the stable player
+  // ID. Equal timers and equal legacy save state must still diverge between
+  // two devices, while restoring the same persisted state remains deterministic.
+  WildEncounterClock playerASeedClock;
+  WildEncounterClock playerBSeedClock = playerASeedClock;
+  const uint32_t playerASeed = EncounterLogic::nextWildBattleSeed(
+      playerASeedClock, 12345U, 0x10203040U);
+  const uint32_t playerBSeed = EncounterLogic::nextWildBattleSeed(
+      playerBSeedClock, 54321U, 0x10203040U);
+  assert(playerASeed && playerBSeed && playerASeed != playerBSeed);
+  assert(playerASeedClock.rngState != playerBSeedClock.rngState);
+  WildEncounterClock restoredPlayerASeedClock = playerASeedClock;
+  const uint32_t playerANextSeed = EncounterLogic::nextWildBattleSeed(
+      playerASeedClock, 12345U, 0x10203040U);
+  const uint32_t restoredPlayerANextSeed = EncounterLogic::nextWildBattleSeed(
+      restoredPlayerASeedClock, 12345U, 0x10203040U);
+  assert(playerANextSeed && playerANextSeed != playerASeed);
+  assert(restoredPlayerANextSeed == playerANextSeed);
+  assert(restoredPlayerASeedClock.rngState == playerASeedClock.rngState);
   // Center recovery runs whenever the stock is below five, not only after it
   // reaches zero. Two complete periods must refill a 3/5 stock to 5/5.
   wildClock.available = 3;
@@ -2733,6 +3390,7 @@ int main() {
   BattleState evolutionBattle; evolutionBattle.active=true; evolutionBattle.kind=BattleKind::Trainer;
   evolutionBattle.outcome=BattleOutcome::Ongoing; evolutionBattle.playerUid=evolvingUid;
   evolutionBattle.opponentCount=1; evolutionBattle.opponents[0]=CollectionLogic::createPokemon(0,10,2,false,88);
+  const uint32_t evolutionOpponentUid=evolutionBattle.opponents[0].uid;
   evolutionBattle.opponents[0].currentHp=1;
   for(uint8_t i=0;i<kMoveSlots;++i)evolutionBattle.opponents[0].moves[i]=MoveId::None;
   const BattleActionResult evolutionResult=BattleEngine::fight(evolutionBattle,evolutionCollection,0);
@@ -2747,12 +3405,22 @@ int main() {
   assert(levelSummary.pokemonUid==evolvingUid&&levelSummary.speciesId==1&&levelSummary.newLevel==16);
   assert(levelSummary.gains[0]>0&&levelSummary.stats[0]>levelSummary.gains[0]);
   for(uint8_t stat=0;stat<6;++stat)assert(levelSummary.stats[stat]>0);
-  int levelXpEvent=-1,levelEvent=-1;
+  int lethalHpEvent=-1,faintBeforeLevelEvent=-1,levelXpEvent=-1,levelEvent=-1;
   for(uint8_t eventIndex=0;eventIndex<evolutionResult.eventCount;++eventIndex){
+    if(evolutionResult.events[eventIndex].type==BattleEventType::HpChanged&&
+       evolutionResult.events[eventIndex].side==BattleSide::Opponent&&
+       evolutionResult.events[eventIndex].pokemonUid==evolutionOpponentUid&&
+       evolutionResult.events[eventIndex].after==0&&lethalHpEvent<0)
+      lethalHpEvent=eventIndex;
+    if(evolutionResult.events[eventIndex].type==BattleEventType::Fainted&&
+       evolutionResult.events[eventIndex].side==BattleSide::Opponent&&
+       evolutionResult.events[eventIndex].pokemonUid==evolutionOpponentUid&&
+       faintBeforeLevelEvent<0)faintBeforeLevelEvent=eventIndex;
     if(evolutionResult.events[eventIndex].type==BattleEventType::ExperienceGained&&levelXpEvent<0)levelXpEvent=eventIndex;
     if(evolutionResult.events[eventIndex].type==BattleEventType::LevelUp&&levelEvent<0)levelEvent=eventIndex;
   }
-  assert(levelXpEvent>=0&&levelEvent>levelXpEvent);
+  assert(lethalHpEvent>=0&&faintBeforeLevelEvent>lethalHpEvent&&
+         levelXpEvent>faintBeforeLevelEvent&&levelEvent>levelXpEvent);
   // Leaving the queued evolution unresolved models a canceled cinematic.
   // The unchanged species must become eligible again on the next level-up.
   evolving->experience=experienceForLevel(findSpecies(1)->growthRate,17)-1U;
@@ -3286,6 +3954,7 @@ int main() {
   assert(MegaChallengeSystem::available(megaProgress));
   assert(!MegaChallengeSystem::completed(megaProgress));
   assert(!BattleTowerSystem::available(megaProgress));
+  assert(!BattleTowerSystem::replacesVsSeeker(megaProgress));
   PokemonCollection megaCollection;CollectionLogic::initialize(megaCollection);
   assert(CollectionLogic::chooseStarter(megaCollection,1,924));
   OwnedPokemon* megaLead=CollectionLogic::active(megaCollection,0);
@@ -3325,6 +3994,274 @@ int main() {
          (megaOwnership&kMegaStoneOwnershipBit));
   assert(!MegaChallengeSystem::awardVictory(megaProgress,megaOwnership));
   assert(BattleTowerSystem::available(megaProgress));
+  assert(BattleTowerSystem::replacesVsSeeker(megaProgress));
+
+  // The freed Gym/special slot becomes a repeatable raid-style Boss after
+  // the Mega Stone trial. Every roll is a Gen I-III legendary/mythical or an
+  // authored Mega, with legal trained stats and exactly 10,000 HP.
+  assert(BossSystem::available(megaProgress));
+  GymProgress preBossProgress=megaProgress;
+  preBossProgress.starterClaimedBits&=
+      static_cast<uint8_t>(~MegaChallengeSystem::kCompletionBit);
+  assert(!BossSystem::available(preBossProgress));
+  uint32_t bossCooldown=0U;
+  assert(BossSystem::ready(megaProgress,bossCooldown));
+  BossSystem::beginCooldown(bossCooldown);
+  assert(bossCooldown==BossSystem::kCooldownSeconds&&
+         !BossSystem::ready(megaProgress,bossCooldown));
+  BattleState cooldownBlockedBoss;
+  BossEncounterState cooldownEncounter{};
+  assert(!BossSystem::start(cooldownBlockedBoss,megaCollection,megaLead->uid,
+                            megaProgress,bossCooldown,cooldownEncounter,
+                            0xB055C001U));
+  BossSystem::advanceCooldown(bossCooldown,BossSystem::kCooldownSeconds-1U);
+  assert(bossCooldown==1U&&!BossSystem::ready(megaProgress,bossCooldown));
+  BossSystem::advanceCooldown(bossCooldown,1U);
+  assert(bossCooldown==0U&&BossSystem::ready(megaProgress,bossCooldown));
+  bool sawLegendaryBoss=false,sawMegaBoss=false;
+  for(uint32_t seed=1;seed<=512U;++seed){
+    BattleState rolledBoss;
+    BossEncounterState rolledEncounter{};
+    assert(BossSystem::start(rolledBoss,megaCollection,megaLead->uid,
+                             megaProgress,0U,rolledEncounter,seed));
+    assert(rolledBoss.kind==BattleKind::Boss&&rolledBoss.opponentCount==1U&&
+           rolledBoss.opponentItemUses==0U&&rolledBoss.rewardMoney==0U);
+    const OwnedPokemon& boss=rolledBoss.opponents[0];
+    const MegaVariant megaVariant=MegaEvolution::variantFor(boss);
+    sawLegendaryBoss|=BossSystem::isLegendaryOrMythical(boss.speciesId)&&
+        megaVariant==MegaVariant::None;
+    sawMegaBoss|=megaVariant!=MegaVariant::None;
+    assert(BossSystem::isLegendaryOrMythical(boss.speciesId)||
+           megaVariant!=MegaVariant::None);
+    assert(megaVariant!=MegaVariant::Primal&&boss.level==100U&&
+           boss.maximumHp==BossSystem::kBattleHpLayer&&
+           boss.currentHp==BossSystem::kBattleHpLayer&&
+           BossSystem::battleCurrentHp(rolledBoss)==BossSystem::kMaximumHp);
+    assert(boss.ivs.hp==31U&&boss.ivs.attack==31U&&boss.ivs.defense==31U&&
+           boss.ivs.spAttack==31U&&boss.ivs.spDefense==31U&&boss.ivs.speed==31U);
+    assert(CollectionLogic::totalEffortValues(boss)==508U&&
+           boss.evs.hp<=252U&&boss.evs.attack<=252U&&boss.evs.defense<=252U&&
+           boss.evs.spAttack<=252U&&boss.evs.spDefense<=252U&&boss.evs.speed<=252U);
+    for(uint8_t slot=0;slot<kMoveSlots;++slot)
+      assert(boss.moves[slot]!=MoveId::None&&BossSystem::moveAllowed(boss.moves[slot]));
+  }
+  assert(sawLegendaryBoss&&sawMegaBoss);
+
+  // One selected identity and its HP pool survive every attempt. A new battle
+  // reconstructs the same species/form/personality at the recorded HP; only a
+  // real defeat clears it so the next post-cooldown encounter can be rolled.
+  BossEncounterState persistentEncounter{};
+  BossSystem::ensureEncounter(persistentEncounter,0xB0551234U);
+  assert(BossSystem::hasEncounter(persistentEncounter)&&
+         persistentEncounter.currentHp==BossSystem::kMaximumHp);
+  const OwnedPokemon persistentPreview=BossSystem::encounterPokemon(
+      persistentEncounter);
+  persistentEncounter.currentHp=143210U;
+  BattleState persistentBossBattle;
+  assert(BossSystem::start(persistentBossBattle,megaCollection,megaLead->uid,
+                           megaProgress,0U,persistentEncounter,0xA7710001U));
+  assert(persistentBossBattle.opponents[0].speciesId==persistentPreview.speciesId&&
+         persistentBossBattle.opponents[0].personality==persistentPreview.personality&&
+         MegaEvolution::variantFor(persistentBossBattle.opponents[0])==
+             MegaEvolution::variantFor(persistentPreview)&&
+         persistentBossBattle.opponents[0].currentHp==BossSystem::kBattleHpLayer&&
+         BossSystem::battleCurrentHp(persistentBossBattle)==143210U);
+  persistentBossBattle.payDayMoney=123450U;
+  BossSystem::recordAttempt(persistentEncounter,persistentBossBattle,false);
+  assert(persistentEncounter.currentHp==123450U);
+  BattleEngine::clear(persistentBossBattle);
+  assert(BossSystem::start(persistentBossBattle,megaCollection,megaLead->uid,
+                           megaProgress,0U,persistentEncounter,0xA7710002U)&&
+         persistentBossBattle.opponents[0].speciesId==persistentPreview.speciesId&&
+         persistentBossBattle.opponents[0].currentHp==BossSystem::kBattleHpLayer&&
+         BossSystem::battleCurrentHp(persistentBossBattle)==123450U);
+  BossSystem::recordAttempt(persistentEncounter,persistentBossBattle,true);
+  assert(!BossSystem::hasEncounter(persistentEncounter));
+
+  // Boss victory has a single ten-bucket reward table: nine buckets use the
+  // exact Battle Tower Special Egg path and one awards a Master Ball.
+  assert(BossSystem::kRewardBucketCount==10U&&
+         BossSystem::kSpecialEggRewardBuckets==9U&&
+         BossSystem::kMasterBallRewardBuckets==1U);
+  uint32_t bossMasterSeed=0U,bossEggSeed=0U;
+  uint16_t bossMasterHits=0U,bossEggHits=0U;
+  for(uint32_t seed=1U;seed<=20000U;++seed){
+    Inventory rewardInventory{};EggInventory rewardEggs{};PokedexState rewardDex{};
+    const BossRewardResult reward=BossSystem::awardVictoryReward(
+        rewardInventory,rewardEggs,rewardDex,seed);
+    if(reward.kind==BossRewardKind::MasterBall){
+      ++bossMasterHits;
+      if(!bossMasterSeed)bossMasterSeed=seed;
+      assert(rewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==1U&&
+             rewardEggs.count==0U);
+    }else{
+      assert(reward.kind==BossRewardKind::SpecialEgg&&rewardEggs.count==1U&&
+             rewardEggs.slots[0].rarity==EggRarity::Special);
+      ++bossEggHits;
+      if(!bossEggSeed)bossEggSeed=seed;
+    }
+  }
+  assert(bossMasterSeed&&bossEggSeed&&bossMasterHits>=1800U&&bossMasterHits<=2200U&&
+         bossEggHits>=17800U&&bossEggHits<=18200U);
+
+  // Once every regional starter is caught, this existing Special Egg path
+  // uses the Gen I-III legendary/mythical pool.
+  constexpr uint16_t bossStarters[]={1,4,7,152,155,158,252,255,258};
+  PokedexState bossLegendaryDex{};
+  for(uint16_t species:bossStarters)PokedexLogic::markCaught(bossLegendaryDex,species);
+  Inventory bossLegendaryInventory{};EggInventory bossLegendaryEggs{};
+  const BossRewardResult bossLegendaryReward=BossSystem::awardVictoryReward(
+      bossLegendaryInventory,bossLegendaryEggs,bossLegendaryDex,bossEggSeed);
+  assert(bossLegendaryReward.kind==BossRewardKind::SpecialEgg&&
+         BossSystem::isLegendaryOrMythical(bossLegendaryReward.eggSpeciesId));
+
+  // The active incubator is irrelevant to rewards: availability belongs to
+  // the Egg Bag. A full destination falls back without overwriting anything.
+  Inventory fullBossInventory{};
+  fullBossInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]=
+      kInventoryStackLimit;
+  EggInventory fallbackBossEggs{};
+  const BossRewardResult fallbackBossReward=BossSystem::awardVictoryReward(
+      fullBossInventory,fallbackBossEggs,bossLegendaryDex,bossMasterSeed);
+  assert(fallbackBossReward.kind==BossRewardKind::SpecialEgg&&
+         fallbackBossEggs.count==1U);
+  EggInventory fullBossEggs{};fullBossEggs.count=EggInventory::kCapacity;
+  const BossRewardResult fullBossReward=BossSystem::awardVictoryReward(
+      fullBossInventory,fullBossEggs,bossLegendaryDex,bossEggSeed);
+  assert(fullBossReward.kind==BossRewardKind::StorageFull&&
+         fullBossInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==
+             kInventoryStackLimit&&fullBossEggs.count==EggInventory::kCapacity);
+
+  auto prepareBossRuleBattle=[&](BattleState& battle,MoveId playerMove,
+                                 MoveId bossMove=static_cast<MoveId>(150)){
+    megaLead->status=StatusCondition::None;
+    megaLead->recoverySecondsRemaining=0;
+    megaLead->currentHp=megaLead->maximumHp;
+    megaLead->moves[0]=playerMove;
+    megaLead->movePp[0]=findFullMove(playerMove)->pp;
+    for(uint8_t slot=1;slot<kMoveSlots;++slot){
+      megaLead->moves[slot]=MoveId::None;megaLead->movePp[slot]=0;
+    }
+    BattleEngine::clear(battle);
+    BossEncounterState ruleEncounter{};
+    assert(BossSystem::start(battle,megaCollection,megaLead->uid,
+                             megaProgress,0U,ruleEncounter,
+                             0xB0550000U+static_cast<uint16_t>(playerMove)));
+    battle.opponents[0]=CollectionLogic::createPokemon(
+        0xB0550001U,150,100,false,0xB0550001U);
+    battle.payDayMoney=BossSystem::kMaximumHp;
+    battle.opponents[0].maximumHp=BossSystem::kBattleHpLayer;
+    battle.opponents[0].currentHp=BossSystem::kBattleHpLayer;
+    battle.opponents[0].heldItem=HeldItem::None;
+    battle.opponents[0].moves[0]=bossMove;
+    battle.opponents[0].movePp[0]=findFullMove(bossMove)->pp;
+    for(uint8_t slot=1;slot<kMoveSlots;++slot){
+      battle.opponents[0].moves[slot]=MoveId::None;
+      battle.opponents[0].movePp[slot]=0;
+    }
+  };
+  auto hasBossImmuneEvent=[](const BattleActionResult& result){
+    for(uint8_t index=0;index<result.eventCount;++index)
+      if(result.events[index].type==BattleEventType::MoveEffect&&
+         result.events[index].value==static_cast<uint16_t>(BattleMoveEffect::BossImmune))
+        return true;
+    return false;
+  };
+
+  // Boss commands neither consume PP nor become unavailable at zero. This is
+  // scoped to the Boss battle kind; ordinary and PvP opponents retain their
+  // finite PP behavior tested above.
+  BattleState infinitePpBoss;
+  prepareBossRuleBattle(infinitePpBoss,static_cast<MoveId>(150),
+                        static_cast<MoveId>(150)); // SPLASH
+  infinitePpBoss.opponents[0].movePp[0]=1U;
+  const BattleActionResult firstInfinitePpTurn=BattleEngine::fight(
+      infinitePpBoss,megaCollection,0U);
+  assert(firstInfinitePpTurn.accepted&&firstInfinitePpTurn.enemyActed&&
+         infinitePpBoss.opponents[0].movePp[0]==1U);
+  infinitePpBoss.opponents[0].movePp[0]=0U;
+  const BattleActionResult zeroStoredPpTurn=BattleEngine::fight(
+      infinitePpBoss,megaCollection,0U);
+  assert(zeroStoredPpTurn.accepted&&zeroStoredPpTurn.enemyActed&&
+         zeroStoredPpTurn.enemyMoveUsed==static_cast<MoveId>(150)&&
+         infinitePpBoss.opponents[0].movePp[0]==0U);
+
+  // PP-reduction effects cannot bypass the infinite pool either.
+  BattleState spiteBoss;
+  prepareBossRuleBattle(spiteBoss,static_cast<MoveId>(180),MoveId::Tackle);
+  spiteBoss.opponentVolatiles[0].lastMoveUsed=MoveId::Tackle;
+  const uint8_t bossPpBeforeSpite=spiteBoss.opponents[0].movePp[0];
+  const BattleActionResult spiteBossResult=BattleEngine::fight(
+      spiteBoss,megaCollection,0U);
+  assert(spiteBossResult.accepted&&hasBossImmuneEvent(spiteBossResult)&&
+         spiteBoss.opponents[0].movePp[0]==bossPpBeforeSpite);
+
+  // A Master Ball is rejected before inventory consumption because Boss is
+  // a distinct battle kind, never a disguised Wild encounter.
+  BattleState bossRuleBattle;
+  prepareBossRuleBattle(bossRuleBattle,MoveId::Tackle);
+  Inventory bossCaptureInventory{};
+  bossCaptureInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]=1U;
+  const BattleActionResult bossCapture=BattleEngine::throwBall(
+      bossRuleBattle,megaCollection,bossCaptureInventory,PokeBallType::MasterBall);
+  assert(!bossCapture.accepted&&!bossCapture.caught&&
+         bossCaptureInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==1U&&
+         BossSystem::battleCurrentHp(bossRuleBattle)==BossSystem::kMaximumHp);
+
+  // OHKO, current-HP fractions and HP equalization all consume the command
+  // but leave the Boss untouched and journal the dedicated immunity message.
+  static constexpr MoveId blockedBossMoves[]={
+      static_cast<MoveId>(90),   // FISSURE / OHKO
+      static_cast<MoveId>(162),  // SUPER FANG
+      static_cast<MoveId>(283),  // ENDEAVOR
+      static_cast<MoveId>(220),  // PAIN SPLIT
+  };
+  for(MoveId move:blockedBossMoves){
+    prepareBossRuleBattle(bossRuleBattle,move);
+    if(move==static_cast<MoveId>(283))megaLead->currentHp=1U;
+    const BattleActionResult blocked=BattleEngine::fight(
+        bossRuleBattle,megaCollection,0);
+    assert(blocked.accepted&&hasBossImmuneEvent(blocked)&&
+           BossSystem::battleCurrentHp(bossRuleBattle)==BossSystem::kMaximumHp);
+  }
+
+  // Fixed damage remains legal: the immunity is specific to damage derived
+  // from the Boss HP pool, not a blanket shield against unusual attacks.
+  prepareBossRuleBattle(bossRuleBattle,static_cast<MoveId>(82)); // DRAGON RAGE
+  const BattleActionResult fixedBossDamage=BattleEngine::fight(
+      bossRuleBattle,megaCollection,0);
+  assert(fixedBossDamage.accepted&&fixedBossDamage.damageDealt==40U&&
+         BossSystem::battleCurrentHp(bossRuleBattle)==BossSystem::kMaximumHp-40U&&
+         bossRuleBattle.opponents[0].currentHp==BossSystem::kBattleHpLayer);
+
+  // Poison and weather are normally percentage-based end-turn damage. The
+  // Boss can retain a status for interactions, but its 200,000-HP pool is not
+  // reduced by either tick.
+  prepareBossRuleBattle(bossRuleBattle,static_cast<MoveId>(150)); // SPLASH
+  bossRuleBattle.opponents[0].status=StatusCondition::Poison;
+  bossRuleBattle.weather=BattleWeather::Sandstorm;
+  bossRuleBattle.weatherTurns=5U;
+  const BattleActionResult residualBossDamage=BattleEngine::fight(
+      bossRuleBattle,megaCollection,0);
+  assert(residualBossDamage.accepted&&
+         BossSystem::battleCurrentHp(bossRuleBattle)==BossSystem::kMaximumHp);
+
+  // Perish Song and Destiny Bond are instant-faint paths too, so both route
+  // through the same explicit Boss immunity rather than bypassing OHKO.
+  prepareBossRuleBattle(bossRuleBattle,static_cast<MoveId>(195)); // PERISH SONG
+  const BattleActionResult perishBoss=BattleEngine::fight(
+      bossRuleBattle,megaCollection,0);
+  assert(perishBoss.accepted&&hasBossImmuneEvent(perishBoss)&&
+         bossRuleBattle.opponentMoveEffects[0].perishTurns==0U&&
+         BossSystem::battleCurrentHp(bossRuleBattle)==BossSystem::kMaximumHp);
+
+  prepareBossRuleBattle(bossRuleBattle,static_cast<MoveId>(194),MoveId::Tackle);
+  megaLead->currentHp=1U;
+  bossRuleBattle.playerVolatile.speedStage=kMaximumBattleStatStage;
+  const BattleActionResult destinyBoss=BattleEngine::fight(
+      bossRuleBattle,megaCollection,0);
+  assert(destinyBoss.accepted&&hasBossImmuneEvent(destinyBoss)&&
+         BossSystem::battleCurrentHp(bossRuleBattle)==BossSystem::kMaximumHp);
 
   // Pre-challenge beta stones are removed from the Bag/Pokemon, while a
   // completed reward is repaired if neither representation owns it.
@@ -3351,6 +4288,7 @@ int main() {
   GymProgress oneBadgeShort=towerProgress;
   oneBadgeShort.badgeBits&=~(uint32_t{1}<<(static_cast<uint8_t>(GymId::Count)-1U));
   assert(!BattleTowerSystem::available(oneBadgeShort));
+  assert(!BattleTowerSystem::replacesVsSeeker(oneBadgeShort));
   Inventory towerRewardInventory{};
   assert(BattleTowerSystem::awardCompletionReward(towerRewardInventory));
   assert(towerRewardInventory.heldItems[kRareCandyInventorySlot]==1U);
@@ -3364,37 +4302,36 @@ int main() {
   uint32_t masterRewardSeed=0,specialRewardSeed=0;
   uint16_t masterRewardHits=0,specialRewardHits=0;
   for(uint32_t seed=1;seed<=20000U;++seed){
-    Inventory rewardInventory{};EggState rewardEgg{};PokedexState rewardDex{};
+    Inventory rewardInventory{};EggInventory rewardEggs{};PokedexState rewardDex{};
     const BattleTowerRewardResult reward=BattleTowerSystem::awardCompletionReward(
-        rewardInventory,rewardEgg,rewardDex,seed);
+        rewardInventory,rewardEggs,rewardDex,seed);
     if(reward.kind==BattleTowerRewardKind::MasterBall){
       ++masterRewardHits;
       if(!masterRewardSeed)masterRewardSeed=seed;
       assert(rewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==1U&&
-             rewardInventory.heldItems[kRareCandyInventorySlot]==0U&&!rewardEgg.active);
+             rewardInventory.heldItems[kRareCandyInventorySlot]==0U&&rewardEggs.count==0U);
     }else if(reward.kind==BattleTowerRewardKind::SpecialEgg){
       ++specialRewardHits;
       if(!specialRewardSeed)specialRewardSeed=seed;
-      assert(rewardEgg.active&&rewardEgg.rarity==EggRarity::Special&&
-             rewardEgg.remainingSeconds==EggSystem::kRareSeconds&&
+      assert(rewardEggs.count==1U&&rewardEggs.slots[0].rarity==EggRarity::Special&&
              rewardInventory.heldItems[kRareCandyInventorySlot]==0U);
     }else{
       assert(reward.kind==BattleTowerRewardKind::RareCandy&&
-             rewardInventory.heldItems[kRareCandyInventorySlot]==1U&&!rewardEgg.active);
+             rewardInventory.heldItems[kRareCandyInventorySlot]==1U&&rewardEggs.count==0U);
     }
   }
   assert(masterRewardSeed&&masterRewardHits>=70U&&masterRewardHits<=130U);
   assert(specialRewardSeed&&specialRewardHits>=70U&&specialRewardHits<=130U);
-  Inventory masterRewardInventory{};EggState masterRewardEgg{};PokedexState masterRewardDex{};
+  Inventory masterRewardInventory{};EggInventory masterRewardEggs{};PokedexState masterRewardDex{};
   const BattleTowerRewardResult masterReward=BattleTowerSystem::awardCompletionReward(
-      masterRewardInventory,masterRewardEgg,masterRewardDex,masterRewardSeed);
+      masterRewardInventory,masterRewardEggs,masterRewardDex,masterRewardSeed);
   assert(masterReward.kind==BattleTowerRewardKind::MasterBall&&
          masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==1U);
   masterRewardInventory={};
   masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]=
       kInventoryStackLimit;
   const BattleTowerRewardResult fullMasterReward=BattleTowerSystem::awardCompletionReward(
-      masterRewardInventory,masterRewardEgg,masterRewardDex,masterRewardSeed);
+      masterRewardInventory,masterRewardEggs,masterRewardDex,masterRewardSeed);
   assert(fullMasterReward.kind==BattleTowerRewardKind::RareCandy&&
          masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==
              kInventoryStackLimit&&
@@ -3404,15 +4341,16 @@ int main() {
   for(uint16_t starterSpecies:towerStarters)
     if(starterSpecies!=258U)PokedexLogic::markCaught(oneStarterMissing,starterSpecies);
   PokedexLogic::markSeen(oneStarterMissing,258U);
-  Inventory specialInventory{};EggState specialEgg{};
+  Inventory specialInventory{};EggInventory specialEggs{};
   const BattleTowerRewardResult starterReward=BattleTowerSystem::awardCompletionReward(
-      specialInventory,specialEgg,oneStarterMissing,specialRewardSeed);
+      specialInventory,specialEggs,oneStarterMissing,specialRewardSeed);
   assert(starterReward.kind==BattleTowerRewardKind::SpecialEgg&&
-         starterReward.eggSpeciesId==258U&&specialEgg.speciesId==258U);
+         starterReward.eggSpeciesId==258U&&specialEggs.count==1U&&
+         specialEggs.slots[0].speciesId==258U);
   PokedexLogic::markCaught(oneStarterMissing,258U);
-  specialEgg=EggState{};
+  specialEggs=EggInventory{};
   const BattleTowerRewardResult legendaryReward=BattleTowerSystem::awardCompletionReward(
-      specialInventory,specialEgg,oneStarterMissing,specialRewardSeed);
+      specialInventory,specialEggs,oneStarterMissing,specialRewardSeed);
   const uint16_t legendarySpecies=legendaryReward.eggSpeciesId;
   assert(legendaryReward.kind==BattleTowerRewardKind::SpecialEgg&&
       (legendarySpecies==144U||legendarySpecies==145U||legendarySpecies==146U||
@@ -3422,13 +4360,13 @@ int main() {
        legendarySpecies==378U||legendarySpecies==379U||legendarySpecies==380U||
        legendarySpecies==381U||legendarySpecies==382U||legendarySpecies==383U||
        legendarySpecies==384U||legendarySpecies==385U||legendarySpecies==386U));
-  EggState occupiedEgg{};occupiedEgg.active=true;occupiedEgg.speciesId=16U;
-  Inventory occupiedRewardInventory{};
-  const BattleTowerRewardResult occupiedReward=BattleTowerSystem::awardCompletionReward(
-      occupiedRewardInventory,occupiedEgg,oneStarterMissing,specialRewardSeed);
-  assert(occupiedReward.kind==BattleTowerRewardKind::RareCandy&&
-         occupiedRewardInventory.heldItems[kRareCandyInventorySlot]==1U&&
-         occupiedEgg.speciesId==16U);
+  EggInventory fullRewardEggs{};fullRewardEggs.count=EggInventory::kCapacity;
+  Inventory fullEggRewardInventory{};
+  const BattleTowerRewardResult fullEggReward=BattleTowerSystem::awardCompletionReward(
+      fullEggRewardInventory,fullRewardEggs,oneStarterMissing,specialRewardSeed);
+  assert(fullEggReward.kind==BattleTowerRewardKind::RareCandy&&
+         fullEggRewardInventory.heldItems[kRareCandyInventorySlot]==1U&&
+         fullRewardEggs.count==EggInventory::kCapacity);
   assert(BattleTowerSystem::trainer(0)&&BattleTowerSystem::trainer(299));
   assert(BattleTowerSystem::monTemplate(0)&&BattleTowerSystem::monTemplate(881));
   PokemonCollection towerCollection;CollectionLogic::initialize(towerCollection);

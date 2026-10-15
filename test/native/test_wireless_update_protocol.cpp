@@ -11,11 +11,19 @@ int main() {
   static_assert(sizeof(Advertisement) == 13);
   static_assert(sizeof(TimeSyncCommand) == 5);
   static_assert(kCapabilityTimeSync == 1);
+  static_assert(kCapabilitySaveManagement == 2);
+  static_assert(kCapabilityLiveDiagnostics == 4);
   static_assert(kMaximumDataBytes == 508);
+  static_assert(sizeof(SaveExportChunkCommand) == 7);
+  static_assert(sizeof(SaveImportBeginCommand) == 11);
+  static_assert(sizeof(SaveBackupHeader) == 24);
   static_assert(sizeof(AssetRecord) == 40);
   static_assert(sizeof(Manifest) == 276);
   static_assert(offsetof(Manifest, signature) == 212);
   static_assert(sizeof(StatusPacket) == 24);
+  static_assert(sizeof(DiagnosticReadCommand) == 4);
+  static_assert(sizeof(DiagnosticPacket) == 10);
+  static_assert(sizeof(LiveLogPacket) == 14);
 
   Manifest manifest{};
   std::memcpy(manifest.magic, "PGU1", 4);

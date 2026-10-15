@@ -3,7 +3,9 @@
 #include "game/BattleEngine.h"
 
 enum class MartItem : uint8_t { PokeBall, GreatBall, UltraBall, Potion, SuperPotion, HyperPotion, FullHeal, Antidote, ParalyzeHeal, Awakening, BurnHeal, IceHeal, XAttack, XDefense, XSpeed, XAccuracy, DireHit, Revive, MaxRevive, Ether, MaxEther, Elixir, MaxElixir, PpUp, MasterBall, Count };
-constexpr uint8_t kMachineCount = 58;
+constexpr uint8_t kLegacyMachineCount = 58;
+constexpr uint8_t kSinnohMachineCount = 42;
+constexpr uint8_t kMachineCount = kLegacyMachineCount + kSinnohMachineCount;
 constexpr uint8_t kMartOfferCount = 20;
 constexpr uint16_t kInventoryStackLimit = 999;
 struct MartOffer {
@@ -31,17 +33,34 @@ class Economy {
   // Opening the Mart may initialize/refresh offers only when the six-hour
   // timer is due. Sold-out stock is valid state and must not rotate early.
   static bool refreshIfDue(MartState& mart, uint8_t badgeCount = 0,
-                           uint64_t ownedMachines = 0);
+                           uint64_t ownedMachines = 0,
+                           uint64_t ownedSinnohMachines = 0,
+                           bool sinnohUnlocked = false);
   static void advance(MartState& mart, uint32_t seconds, uint8_t badgeCount = 0,
-                      uint64_t ownedMachines = 0);
-  static void rotate(MartState& mart, uint8_t badgeCount = 0, uint64_t ownedMachines = 0);
+                      uint64_t ownedMachines = 0,
+                      uint64_t ownedSinnohMachines = 0,
+                      bool sinnohUnlocked = false);
+  static void rotate(MartState& mart, uint8_t badgeCount = 0, uint64_t ownedMachines = 0,
+                     uint64_t ownedSinnohMachines = 0,
+                     bool sinnohUnlocked = false);
   static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
                   uint64_t& ownedMachines, PpItemInventory* ppItems = nullptr);
+  static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
+                  uint64_t& ownedMachines, uint64_t& ownedSinnohMachines,
+                  PpItemInventory* ppItems = nullptr);
   static uint8_t maximumPurchasable(const MartState& mart, uint8_t offer, uint32_t money,
                                     const Inventory& inventory, uint64_t ownedMachines,
                                     const PpItemInventory* ppItems = nullptr);
+  static uint8_t maximumPurchasable(const MartState& mart, uint8_t offer, uint32_t money,
+                                    const Inventory& inventory, uint64_t ownedMachines,
+                                    uint64_t ownedSinnohMachines,
+                                    const PpItemInventory* ppItems = nullptr);
   static bool buyQuantity(MartState& mart, uint8_t offer, uint8_t quantity, uint32_t& money,
                           Inventory& inventory, uint64_t& ownedMachines,
+                          PpItemInventory* ppItems = nullptr);
+  static bool buyQuantity(MartState& mart, uint8_t offer, uint8_t quantity, uint32_t& money,
+                          Inventory& inventory, uint64_t& ownedMachines,
+                          uint64_t& ownedSinnohMachines,
                           PpItemInventory* ppItems = nullptr);
   static const char* name(MartItem item);
   static const char* name(const MartOffer& offer);
@@ -49,5 +68,13 @@ class Economy {
   static MartOfferCategory category(const MartOffer& offer);
   static MoveId machineMove(uint8_t machineId);
   static bool canLearnMachine(uint16_t speciesId, uint8_t machineId);
+  // Form-aware entry point. Platinum's supported forms inherit the species
+  // TM/HM table unchanged; keeping the Pokemon overload prevents callers
+  // from accidentally dropping form rules as new form data is added.
+  static bool canLearnMachine(const OwnedPokemon& pokemon, uint8_t machineId);
   static bool ownsMachine(uint64_t ownedMachines, uint8_t machineId);
+  static bool ownsMachine(uint64_t ownedMachines, uint64_t ownedSinnohMachines,
+                          uint8_t machineId);
+  static bool isHiddenMachine(uint8_t machineId);
+  static uint8_t machineNumber(uint8_t machineId);
 };

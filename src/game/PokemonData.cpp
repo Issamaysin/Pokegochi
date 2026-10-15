@@ -1,5 +1,6 @@
 #include "game/PokemonData.h"
 #include "game/MegaEvolution.h"
+#include "game/Pokedex.h"
 #include <algorithm>
 
 namespace {
@@ -58,11 +59,23 @@ uint8_t evolutionChoices(uint16_t speciesId,uint8_t level,uint16_t attack,uint16
   // seeing Espeon/Umbreon). The family now has one trigger: the earliest level
   // among destinations visible in the currently unlocked National Dex. Once
   // that trigger is reached, every visible destination is offered together.
+  // Sinnoh is unlocked only after the Mega challenge, which itself follows
+  // the Hoenn campaign.  The battle state deliberately remains capped at
+  // Gen III so it cannot alter Gym, Tower or Boss progression; once that
+  // cap has been reached, evolution families are nevertheless allowed to
+  // continue into their authentic Gen-IV members.
+  // Gen-IV branches are Sinnoh content. Reaching Hoenn must not silently
+  // expose them; the expedition raises the content generation to 4 only
+  // after the player has opened Sinnoh.
+  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(4U,unlockedGeneration);
+  const auto generationFor=[](uint16_t id){
+    return id<=151U?1U:id<=251U?2U:id<=386U?3U:4U;
+  };
   uint8_t familyLevel=255;
   for(const auto& evolution:kEvolutions){
     if(evolution.fromSpeciesId!=speciesId)continue;
-    const uint8_t targetGeneration=evolution.toSpeciesId<=151?1:evolution.toSpeciesId<=251?2:3;
-    if(targetGeneration<=unlockedGeneration)familyLevel=std::min(familyLevel,evolution.level);
+    const uint8_t targetGeneration=generationFor(evolution.toSpeciesId);
+    if(targetGeneration<=evolutionGenerationLimit)familyLevel=std::min(familyLevel,evolution.level);
   }
   if(familyLevel==255||level<familyLevel)return 0;
   // Nincada is not a branch choice: it becomes Ninjask and may create a
@@ -72,8 +85,8 @@ uint8_t evolutionChoices(uint16_t speciesId,uint8_t level,uint16_t attack,uint16
   uint8_t count=0;
   for(const auto& evolution:kEvolutions){
     if(evolution.fromSpeciesId!=speciesId)continue;
-    const uint8_t targetGeneration=evolution.toSpeciesId<=151?1:evolution.toSpeciesId<=251?2:3;
-    if(targetGeneration>unlockedGeneration)continue;
+    const uint8_t targetGeneration=generationFor(evolution.toSpeciesId);
+    if(targetGeneration>evolutionGenerationLimit)continue;
     bool duplicate=false;for(uint8_t i=0;i<count;++i)if(output[i]==evolution.toSpeciesId)duplicate=true;
     if(!duplicate&&count<maximum)output[count++]=evolution.toSpeciesId;
   }
@@ -140,10 +153,15 @@ bool isMoveAvailableInSingleBattle(MoveId id) {
          id != static_cast<MoveId>(270);
 }
 
-uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4]) {
+uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
+                      uint8_t unlockedGeneration) {
   uint8_t count = 0;
+  // A #387-493 species is intrinsically Platinum content. Older species keep
+  // their FireRed learnset until the Sinnoh unlock is explicitly supplied.
+  const uint8_t availableGeneration = std::min<uint8_t>(4U, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
-    if (entry.speciesId != speciesId || entry.level > level) continue;
+    if (entry.speciesId != speciesId || entry.level > level ||
+        entry.generation > availableGeneration) continue;
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (!isMoveAvailableInSingleBattle(move)) continue;
     bool duplicate = false; for (uint8_t i = 0; i < count; ++i) if (output[i] == move) duplicate = true;
@@ -155,19 +173,80 @@ uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4]) {
 }
 
 namespace {
+struct FormLevelMoveOverride {
+  uint16_t speciesId;
+  uint8_t form;
+  uint8_t level;
+  MoveId normalMove;
+  MoveId formMove;
+};
+
+// Directly mirrored from Platinum's res/pokemon/shaymin/forms/sky/data.json.
+// The form files for Giratina and all Rotom appliances keep the same level-up
+// table as their base species; Rotom's appliance move is handled separately by
+// formSignatureMove(), exactly like Pokemon_SetRotomForm in the reference ROM.
+constexpr FormLevelMoveOverride kFormLevelMoveOverrides[] = {
+    {492, 1, 28, static_cast<MoveId>(235), static_cast<MoveId>(98)},  // Synthesis -> Quick Attack
+    {492, 1, 64, static_cast<MoveId>(312), static_cast<MoveId>(403)},  // Aromatherapy -> Air Slash
+    {492, 1, 91, static_cast<MoveId>(361), static_cast<MoveId>(437)},  // Healing Wish -> Leaf Storm
+};
+}
+
+MoveId formSignatureMove(uint16_t speciesId, uint8_t form) {
+  if (speciesId != 479U || form == 0U || form > 5U) return MoveId::None;
+  // Platinum appliance order: Heat, Wash, Frost, Fan, Mow.
+  static constexpr uint16_t kRotomMoves[] = {0, 315, 56, 59, 403, 437};
+  return static_cast<MoveId>(kRotomMoves[form]);
+}
+
+namespace {
+template <typename Replacer>
+void applyFormLevelMoves(MoveId output[], uint8_t count, uint8_t form,
+                         uint16_t speciesId, Replacer&& replacer) {
+  for (const auto& override : kFormLevelMoveOverrides) {
+    if (override.speciesId != speciesId || override.form != form) continue;
+    for (uint8_t index = 0; index < count; ++index) {
+      if (output[index] == override.normalMove) {
+        output[index] = override.formMove;
+        break;
+      }
+    }
+    replacer(override);
+  }
+}
+
+bool hasMove(const MoveId output[], uint8_t count, MoveId move) {
+  for (uint8_t index = 0; index < count; ++index)
+    if (output[index] == move) return true;
+  return false;
+}
+}
+
+uint8_t movesForForm(uint16_t speciesId, uint8_t form, uint8_t level,
+                     MoveId output[4], uint8_t unlockedGeneration) {
+  if (!output) return 0;
+  const uint8_t count = movesForLevel(speciesId, level, output, unlockedGeneration);
+  applyFormLevelMoves(output, count, form, speciesId, [](const auto&) {});
+  return count;
+}
+
+namespace {
 void collectRelearnableMoves(uint16_t speciesId, uint8_t level, MoveId output[],
                              uint8_t maximum, uint8_t& count,
-                             bool visitedSpecies[387]) {
-  if (!speciesId || speciesId > 386 || visitedSpecies[speciesId]) return;
+                             bool visitedSpecies[kPokedexSpeciesCount + 1],
+                             uint8_t unlockedGeneration) {
+  if (!speciesId || speciesId > kPokedexSpeciesCount || visitedSpecies[speciesId]) return;
   visitedSpecies[speciesId] = true;
   // Visit parents first so the pool follows the evolutionary line before
   // listing moves exclusive to the current form.
   for (const auto& evolution : kEvolutions)
     if (evolution.toSpeciesId == speciesId)
       collectRelearnableMoves(evolution.fromSpeciesId, level, output, maximum,
-                              count, visitedSpecies);
+                              count, visitedSpecies, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
-    if (entry.speciesId != speciesId || entry.level > level) continue;
+    const uint8_t availableGeneration = std::min<uint8_t>(4U, unlockedGeneration);
+    if (entry.speciesId != speciesId || entry.level > level ||
+        entry.generation > availableGeneration) continue;
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (!isMoveAvailableInSingleBattle(move)) continue;
     bool duplicate = false;
@@ -179,19 +258,42 @@ void collectRelearnableMoves(uint16_t speciesId, uint8_t level, MoveId output[],
 }
 
 uint8_t relearnableMovesForLine(uint16_t speciesId, uint8_t level,
-                               MoveId output[], uint8_t maximum) {
+                               MoveId output[], uint8_t maximum,
+                               uint8_t unlockedGeneration) {
   if (!output || !maximum) return 0;
-  bool visitedSpecies[387]{};
+  bool visitedSpecies[kPokedexSpeciesCount + 1]{};
   uint8_t count = 0;
-  collectRelearnableMoves(speciesId, level, output, maximum, count, visitedSpecies);
+  collectRelearnableMoves(speciesId, level, output, maximum, count,
+                          visitedSpecies, unlockedGeneration);
   return count;
 }
 
-MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level) {
+uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
+                                uint8_t level, MoveId output[], uint8_t maximum,
+                                uint8_t unlockedGeneration) {
+  if (!output || !maximum) return 0;
+  uint8_t count = relearnableMovesForLine(speciesId, level, output, maximum,
+                                          unlockedGeneration);
+  applyFormLevelMoves(output, count, form, speciesId, [&](const auto& override) {
+    if (override.level > level) return;
+    if (hasMove(output, count, override.formMove)) return;
+    if (!hasMove(output, count, override.normalMove) && count < maximum)
+      output[count++] = override.formMove;
+  });
+  const MoveId signature = formSignatureMove(speciesId, form);
+  if (signature != MoveId::None && !hasMove(output, count, signature) && count < maximum)
+    output[count++] = signature;
+  return count;
+}
+
+MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
+                          uint8_t unlockedGeneration) {
   MoveId learned = MoveId::None;
+  const uint8_t availableGeneration = std::min<uint8_t>(4U, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (entry.speciesId == speciesId && entry.level == level &&
+        entry.generation <= availableGeneration &&
         isMoveAvailableInSingleBattle(move)) learned = move;
   }
   return learned;

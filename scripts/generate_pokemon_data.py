@@ -1,4 +1,4 @@
-"""Generate compact Generation-I gameplay tables from the local pokefirered decomp."""
+"""Generate the Gen-I--IV gameplay tables from local FireRed/Platinum data."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DECOMP = ROOT / ".downloads" / "pokefirered-tree" / "pokefirered-master"
+PLATINUM = ROOT / ".downloads" / "pokeplatinum-tree"
 OUT = ROOT / "src" / "game" / "PokemonDataGenerated.inc"
 
 constants = (DECOMP / "include/constants/species.h").read_text(encoding="utf-8")
@@ -22,6 +23,56 @@ national_symbols = re.findall(r"^\s*NATIONAL_DEX_([A-Z0-9_]+),", pokedex_constan
 species = [(number, symbol) for number, symbol in enumerate(national_symbols)
            if 1 <= number <= 386 and symbol in internal_ids]
 symbol_to_id = {symbol: number for number, symbol in species}
+ability_ids = {s: int(n) for s, n in re.findall(
+    r"#define ABILITY_([A-Z0-9_]+)\s+(\d+)", ability_constants)}
+
+# Platinum follows the canonical DS order where Cacophony is absent and Air
+# Lock is #76. Pokegochi's existing save ABI intentionally retains FireRed's
+# Cacophony=#76 / Air Lock=#77. Keep those shipped IDs untouched and append
+# every new Sinnoh ability directly after them.
+gen4_ability_symbols = [
+    "TANGLED_FEET", "MOTOR_DRIVE", "RIVALRY", "STEADFAST", "SNOW_CLOAK",
+    "GLUTTONY", "ANGER_POINT", "UNBURDEN", "HEATPROOF", "SIMPLE",
+    "DRY_SKIN", "DOWNLOAD", "IRON_FIST", "POISON_HEAL", "ADAPTABILITY",
+    "SKILL_LINK", "HYDRATION", "SOLAR_POWER", "QUICK_FEET", "NORMALIZE",
+    "SNIPER", "MAGIC_GUARD", "NO_GUARD", "STALL", "TECHNICIAN",
+    "LEAF_GUARD", "KLUTZ", "MOLD_BREAKER", "SUPER_LUCK", "AFTERMATH",
+    "ANTICIPATION", "FOREWARN", "UNAWARE", "TINTED_LENS", "FILTER",
+    "SLOW_START", "SCRAPPY", "STORM_DRAIN", "ICE_BODY", "SOLID_ROCK",
+    "SNOW_WARNING", "HONEY_GATHER", "FRISK", "RECKLESS", "MULTITYPE",
+    "FLOWER_GIFT", "BAD_DREAMS",
+]
+gen4_ability_ids = {symbol: 78 + index
+                     for index, symbol in enumerate(gen4_ability_symbols)}
+all_ability_ids = {**ability_ids, **gen4_ability_ids, "NONE": 0}
+
+platinum_species_symbols = [line.strip().removeprefix("SPECIES_")
+                            for line in (PLATINUM / "generated/species.txt").read_text(
+                                encoding="utf-8").splitlines()
+                            if line.strip()]
+platinum_symbol_to_id = {symbol: index for index, symbol
+                          in enumerate(platinum_species_symbols)}
+if any(platinum_symbol_to_id.get(symbol) != species_id
+       for symbol, species_id in symbol_to_id.items()):
+    raise RuntimeError("Platinum National Dex order no longer matches FireRed")
+gen4_species = [(species_id, symbol) for symbol, species_id in
+                platinum_symbol_to_id.items() if 387 <= species_id <= 493]
+
+# Keep the FireRed ability pair as the pre-Sinnoh identity, but also retain
+# Platinum's pair for every existing species.  Several old species gained a
+# real second ability in Gen IV (Piloswine/Snow Cloak, Eevee/Adaptability,
+# Snorunt/Ice Body, and others).  The firmware selects this second pair only
+# after Sinnoh is unlocked, so those abilities do not leak into the opening
+# generations.
+sinnoh_ability_by_id = {}
+for species_id, symbol in species:
+    source = json.loads((PLATINUM / "res/pokemon" / symbol.lower() / "data.json").read_text(
+        encoding="utf-8"))
+    ability_one, ability_two = source["abilities"]
+    sinnoh_ability_by_id[species_id] = (
+        all_ability_ids[ability_one.removeprefix("ABILITY_")],
+        all_ability_ids[ability_two.removeprefix("ABILITY_")],
+    )
 
 type_map = {
     "NORMAL": "Normal", "FIGHTING": "Fighting", "FLYING": "Flying",
@@ -73,16 +124,56 @@ for number, symbol in species:
     name = display_names.get(symbol, symbol.replace("_", " "))
     abilities = re.search(r"\.abilities\s*=\s*\{ABILITY_([A-Z0-9_]+),\s*ABILITY_([A-Z0-9_]+)\}", block)
     if not abilities: raise ValueError(f"Missing abilities {symbol}")
-    ability_ids = {s: int(n) for s, n in re.findall(r"#define ABILITY_([A-Z0-9_]+)\s+(\d+)", ability_constants)}
     rows.append(
         f'    {{{number}, "{name}", PokemonType::{type_map[types.group(1)]}, '
         f'PokemonType::{type_map[types.group(2)]}, {field(block,"baseHP")}, '
         f'{field(block,"baseAttack")}, {field(block,"baseDefense")}, {field(block,"baseSpAttack")}, {field(block,"baseSpDefense")}, {field(block,"baseSpeed")}, '
         f'{field(block,"catchRate")}, {field(block,"expYield")}, GrowthRate::{growth_map[field(block,"growthRate").removeprefix("GROWTH_")]}, {ability_ids[abilities.group(1)]}, {ability_ids[abilities.group(2)]}, '
+        f'{sinnoh_ability_by_id[number][0]}, {sinnoh_ability_by_id[number][1]}, '
         f'{field(block,"evYield_HP")}, {field(block,"evYield_Attack")}, {field(block,"evYield_Defense")}, '
         f'{field(block,"evYield_SpAttack")}, {field(block,"evYield_SpDefense")}, {field(block,"evYield_Speed")}, '
         f'{gender_ratio(block)}}},'
     )
+
+gen4_display_names = {
+    "MIME_JR": "MIME JR.", "PORYGON_Z": "PORYGON-Z",
+    "MR_MIME": "MR. MIME",
+}
+gender_ratio_map = {
+    "GENDER_RATIO_MALE_ONLY": 0,
+    "GENDER_RATIO_FEMALE_12_5": 31,
+    "GENDER_RATIO_FEMALE_25": 63,
+    "GENDER_RATIO_FEMALE_50": 127,
+    "GENDER_RATIO_FEMALE_75": 191,
+    "GENDER_RATIO_FEMALE_ONLY": 254,
+    "GENDER_RATIO_NO_GENDER": 255,
+}
+for number, symbol in gen4_species:
+    source = json.loads((PLATINUM / "res/pokemon" / symbol.lower() / "data.json").read_text(
+        encoding="utf-8"))
+    stats = source["base_stats"]
+    types = source["types"]
+    ability_one, ability_two = source["abilities"]
+    yields = source["ev_yields"]
+    growth = source["exp_rate"].removeprefix("EXP_RATE_")
+    if growth not in growth_map:
+        raise ValueError(f"Unknown Platinum growth rate {growth} for {symbol}")
+    if source["gender_ratio"] not in gender_ratio_map:
+        raise ValueError(f"Unknown Platinum gender ratio {source['gender_ratio']} for {symbol}")
+    name = gen4_display_names.get(symbol, source["pokedex_data"]["en"]["name"])
+    rows.append(
+        f'    {{{number}, "{name}", PokemonType::{type_map[types[0].removeprefix("TYPE_")]}, '
+        f'PokemonType::{type_map[types[1].removeprefix("TYPE_")]}, {stats["hp"]}, '
+        f'{stats["attack"]}, {stats["defense"]}, {stats["special_attack"]}, '
+        f'{stats["special_defense"]}, {stats["speed"]}, {source["catch_rate"]}, '
+        f'{source["base_exp_reward"]}, GrowthRate::{growth_map[growth]}, '
+        f'{all_ability_ids[ability_one.removeprefix("ABILITY_")]}, '
+        f'{all_ability_ids[ability_two.removeprefix("ABILITY_")]}, '
+        f'{all_ability_ids[ability_one.removeprefix("ABILITY_")]}, '
+        f'{all_ability_ids[ability_two.removeprefix("ABILITY_")]}, '
+        f'{yields["hp"]}, {yields["attack"]}, {yields["defense"]}, '
+        f'{yields["special_attack"]}, {yields["special_defense"]}, {yields["speed"]}, '
+        f'{gender_ratio_map[source["gender_ratio"]]}}},')
 
 # Keep original level evolutions. Convert stones/trades/friendship to deterministic
 # levels across the National Dex. Every branch is retained for the in-game chooser.
@@ -129,6 +220,54 @@ for source_symbol, entries in evolution_blocks:
             level = 36
         evolutions.append((source_id, target_id, level))
 
+# Sinnoh evolution methods are deliberately adapted to the same deterministic
+# level-choice flow used by the existing game: no real-clock evolution and no
+# trade-only dead ends on a handheld. The Underground/research UI controls
+# access to Sinnoh itself; this table only resolves the concrete evolution
+# once its species are available.
+def sinnoh_evolution_level(method: str, parameter: object) -> int:
+    if method == "EVO_LEVEL":
+        return int(parameter)
+    if method.startswith("EVO_LEVEL_"):
+        numeric = str(parameter)
+        return int(numeric) if numeric.isdigit() else 36
+    if method.startswith("EVO_FRIENDSHIP"):
+        return 30
+    if method.startswith("EVO_TRADE"):
+        return 40
+    if method.startswith("EVO_ITEM"):
+        return 36
+    if method.startswith("EVO_BEAUTY"):
+        return 30
+    return 36
+
+for source_symbol, source_id in platinum_symbol_to_id.items():
+    if source_id > 493 or source_id <= 0:
+        continue
+    source_path = PLATINUM / "res/pokemon" / source_symbol.lower() / "data.json"
+    if not source_path.exists():
+        continue
+    for evolution in json.loads(source_path.read_text(encoding="utf-8")).get("evolutions", []):
+        # Platinum uses a compact two-field tuple for parameterless methods
+        # such as Moss Rock, Ice Rock and time-of-day friendship.  The old
+        # parser accepted only item/trade tuples, silently dropping Eevee's
+        # Leafeon/Glaceon branches (and other Gen-IV evolutions).
+        if len(evolution) == 2:
+            method, target = evolution
+            parameter = None
+        elif len(evolution) == 3:
+            method, parameter, target = evolution
+        else:
+            continue
+        target_id = platinum_symbol_to_id.get(str(target).removeprefix("SPECIES_"))
+        # The original FireRed table remains authoritative for the existing
+        # 386 species. Add only a branch that enters or originates in Sinnoh.
+        if target_id is None or (source_id <= 386 and target_id <= 386):
+            continue
+        entry = (source_id, target_id, sinnoh_evolution_level(str(method), parameter))
+        if entry not in evolutions:
+            evolutions.append(entry)
+
 content = "// Generated by scripts/generate_pokemon_data.py from local pokefirered data.\n"
 content += "constexpr SpeciesData kSpecies[] = {\n" + "\n".join(rows) + "\n};\n\n"
 content += "constexpr EvolutionData kEvolutions[] = {\n"
@@ -152,6 +291,57 @@ for symbol, number in sorted(ability_ids.items(), key=lambda item: item[1]):
     description = description_values.get(description_symbols.get(symbol, ""), "No special ability.")
     description = description.replace('\\', '\\\\').replace('"', '\\"')
     content += f'    {{{number}, "{symbol.replace("_", " ")}", "{description.upper()}"}},\n'
+gen4_ability_descriptions = {
+    "TANGLED_FEET": "RAISES EVASION WHILE CONFUSED.",
+    "MOTOR_DRIVE": "RAISES SPEED IF HIT BY ELECTRIC MOVES.",
+    "RIVALRY": "CHANGES POWER AGAINST THE SAME OR OPPOSITE GENDER.",
+    "STEADFAST": "RAISES SPEED AFTER FLINCHING.",
+    "SNOW_CLOAK": "RAISES EVASION DURING HAIL.",
+    "GLUTTONY": "USES A BERRY EARLIER THAN USUAL.",
+    "ANGER_POINT": "MAXIMIZES ATTACK AFTER A CRITICAL HIT.",
+    "UNBURDEN": "RAISES SPEED AFTER LOSING ITS HELD ITEM.",
+    "HEATPROOF": "WEAKENS FIRE DAMAGE AND BURN DAMAGE.",
+    "SIMPLE": "DOUBLES STAT STAGE CHANGES.",
+    "DRY_SKIN": "RECOVERS IN RAIN; WEAK TO FIRE.",
+    "DOWNLOAD": "RAISES A STAT ON ENTERING BATTLE.",
+    "IRON_FIST": "BOOSTS PUNCHING MOVES.",
+    "POISON_HEAL": "RECOVERS HP WHILE POISONED.",
+    "ADAPTABILITY": "INCREASES SAME-TYPE ATTACK BONUS.",
+    "SKILL_LINK": "MULTI-HIT MOVES ALWAYS STRIKE FIVE TIMES.",
+    "HYDRATION": "CURES STATUS IN RAIN.",
+    "SOLAR_POWER": "BOOSTS SP. ATK IN SUNLIGHT AT AN HP COST.",
+    "QUICK_FEET": "RAISES SPEED WHILE STATUSSED.",
+    "NORMALIZE": "MAKES ALL MOVES NORMAL TYPE.",
+    "SNIPER": "STRENGTHENS CRITICAL HITS.",
+    "MAGIC_GUARD": "PREVENTS INDIRECT DAMAGE.",
+    "NO_GUARD": "ALL MOVES USED BY OR AGAINST IT HIT.",
+    "STALL": "ALWAYS MOVES LAST.",
+    "TECHNICIAN": "BOOSTS WEAKER MOVES.",
+    "LEAF_GUARD": "PREVENTS STATUS IN SUNLIGHT.",
+    "KLUTZ": "CANNOT USE ITS HELD ITEM.",
+    "MOLD_BREAKER": "IGNORES TARGET ABILITIES WHEN ATTACKING.",
+    "SUPER_LUCK": "RAISES CRITICAL-HIT RATE.",
+    "AFTERMATH": "DAMAGES A FOE THAT KNOCKS IT OUT WITH CONTACT.",
+    "ANTICIPATION": "SENSES DANGEROUS FOE MOVES.",
+    "FOREWARN": "REVEALS A FOE'S STRONG MOVE.",
+    "UNAWARE": "IGNORES THE FOE'S STAT CHANGES.",
+    "TINTED_LENS": "BOOSTS NOT-VERY-EFFECTIVE MOVES.",
+    "FILTER": "REDUCES SUPER-EFFECTIVE DAMAGE.",
+    "SLOW_START": "HALVES ATTACK AND SPEED FOR FIVE TURNS.",
+    "SCRAPPY": "NORMAL AND FIGHTING MOVES HIT GHOSTS.",
+    "STORM_DRAIN": "DRAWS WATER MOVES AND RAISES SP. ATK.",
+    "ICE_BODY": "RECOVERS HP DURING HAIL.",
+    "SOLID_ROCK": "REDUCES SUPER-EFFECTIVE DAMAGE.",
+    "SNOW_WARNING": "SUMMONS HAIL ON ENTERING BATTLE.",
+    "HONEY_GATHER": "MAY FIND HONEY AFTER BATTLE.",
+    "FRISK": "REVEALS THE FOE'S HELD ITEM.",
+    "RECKLESS": "BOOSTS RECOIL-DAMAGE MOVES.",
+    "MULTITYPE": "CHANGES TYPE WITH A HELD PLATE.",
+    "FLOWER_GIFT": "BOOSTS ALLIES IN SUNLIGHT.",
+    "BAD_DREAMS": "DAMAGES SLEEPING FOES EACH TURN.",
+}
+for symbol in gen4_ability_symbols:
+    content += f'    {{{gen4_ability_ids[symbol]}, "{symbol.replace("_", " ")}", "{gen4_ability_descriptions[symbol]}"}},\n'
 content += "};\n"
 
 wild_data = json.loads((DECOMP / "src/data/wild_encounters.json").read_text(encoding="utf-8"))

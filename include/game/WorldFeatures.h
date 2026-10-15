@@ -89,3 +89,12 @@ namespace SpeciesHeldItems {
 HeldItem reconcile(const PokemonCollection& collection,
                    SpecialHeldItemInventory& inventory);
 }
+
+namespace Gen4SpeciesItems {
+// Capturing one of the Sinnoh signature species grants its canonical held
+// item once. Arceus grants the complete current plate set so every form can be
+// selected without inventing a second hidden quest chain.
+HeldItem reconcile(const PokemonCollection& collection,
+                   Gen4UniqueItemInventory& inventory,
+                   uint8_t* grantedCount = nullptr);
+}

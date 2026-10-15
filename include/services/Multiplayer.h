@@ -111,6 +111,9 @@ class Multiplayer {
   };
 
   bool begin();
+  // Android uses the same session state machine with a stable app-owned ID;
+  // the ESP32 identity path remains unchanged.
+  bool beginWithPlayerId(uint32_t playerId);
   void update();
   void shutdown();
 
@@ -171,6 +174,8 @@ class Multiplayer {
   void transportConnected(bool outbound);
   void transportDisconnected();
   void transportPacket(const uint8_t* bytes, size_t length);
+  bool takeOutgoingPacket(uint8_t* bytes, uint16_t& length);
+  bool requestPeer(uint32_t playerId);
 
  private:
   static constexpr uint8_t kMaximumPeers = 6;
@@ -233,4 +238,17 @@ class Multiplayer {
   bool incomingBattleCore_ = false;
   bool battleStateAckPending_ = false;
   uint16_t battleStateAckTurn_ = 0;
+#if !defined(ARDUINO_ARCH_ESP32)
+#if defined(POKEGOCHI_APP_BUILD)
+  static constexpr uint8_t kOutgoingPacketCapacity = 32;
+#else
+  static constexpr uint8_t kOutgoingPacketCapacity = 8;
+#endif
+  struct OutgoingPacket {
+    uint16_t length = 0;
+    uint8_t bytes[14 + 160]{};
+  };
+  OutgoingPacket outgoingPackets_[kOutgoingPacketCapacity]{};
+  uint8_t outgoingPacketCount_ = 0;
+#endif
 };

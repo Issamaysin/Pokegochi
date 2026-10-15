@@ -25,8 +25,21 @@ DECOMP = ROOT / ".downloads/pokefirered-tree/pokefirered-master"
 EMERALD = ROOT / ".downloads/pokeemerald-tree/pokeemerald-master"
 CRYSTAL = ROOT / ".downloads/pokecrystal-tree/pokecrystal-master"
 EXPANSION = ROOT / ".downloads/pokeemerald-expansion"
+PLATINUM = ROOT / ".downloads/pokeplatinum-tree"
 OUTPUT = ROOT / ".generated/sdcard/pokegochi/assets"
 ARCHIVE = ROOT / ".generated/sdcard/pokegochi/pokegochi.pak"
+
+
+def flattened_data(image: Image.Image):
+    """Return raw pixels across Pillow versions without colour conversion.
+
+    Pillow 11 removed the short-lived ``get_flattened_data`` helper used by
+    the original exporter.  ``getdata`` is the equivalent for the indexed and
+    RGBA images used here, so keep the compatibility in one place rather than
+    letting audits fail before they reach the actual asset checks.
+    """
+    getter = getattr(image, "get_flattened_data", None)
+    return getter() if getter is not None else image.getdata()
 _ASSET_VERSION_HEADER = (ROOT / "include/config/AssetPackVersion.h").read_text(
     encoding="ascii")
 _ASSET_VERSION_MATCH = re.search(
@@ -83,6 +96,12 @@ BATTLE_ANIMATION_BACKGROUNDS = (
     ("impact", "impact_player", "solarbeam"),
     ("impact", "impact_contests", "solarbeam"),
 )
+# The expansion's Aura Sphere script references BG_AURA_SPHERE (77).  The
+# local firmware catalog keeps that source background at the first extension
+# slot after FireRed's 27 ids, without renumbering any original background.
+EXPANSION_BATTLE_ANIMATION_BACKGROUNDS = (
+    ("focus_blast", "focus_blast", "aura_sphere"),
+)
 
 # Whole BG1 planes created by visual tasks rather than changebg. These are
 # real 32x32 FireRed tilemaps, not procedural substitutes. Keep index zero
@@ -132,6 +151,25 @@ MEGA_FORMS = (
     (373,"salamence","mega"),(376,"metagross","mega"),(380,"latias","mega"),
     (381,"latios","mega"),(382,"kyogre","primal"),(383,"groudon","primal"),
     (384,"rayquaza","mega"),
+    # Official Mega Evolutions of Sinnoh species. Their base species are
+    # exported from Platinum directly below; Mega art is GBA-native from the
+    # expansion decomp, matching the existing Mega Stone renderer.
+    (428,"lopunny","mega"),(445,"garchomp","mega"),(448,"lucario","mega"),
+    (460,"abomasnow","mega"),(475,"gallade","mega"),
+)
+
+# Stable, player-selectable Platinum forms. Battle-weather forms such as
+# Cherrim and Castform remain runtime-driven; these families have a persistent
+# form choice or held-item-driven form in Pokegochi. Arceus follows the exact
+# Plate order used by CollectionLogic::resolvedForm(). Platinum has no Fairy
+# sprite, so Pixie Plate deliberately resolves to exported form 0 (Normal).
+PLATINUM_SELECTABLE_FORMS = (
+    (479, "rotom", ("base", "heat", "wash", "frost", "fan", "mow")),
+    (487, "giratina", ("base", "origin")),
+    (492, "shaymin", ("base", "sky")),
+    (493, "arceus", ("base", "fighting", "flying", "poison", "rock", "bug",
+                     "ghost", "dragon", "steel", "fire", "water", "grass",
+                     "electric", "psychic", "ice", "ground", "dark")),
 )
 
 # Ten authored healing-room views. Most Pokemon Centers in one region share
@@ -178,7 +216,7 @@ def jasc_palette(path: Path) -> list[tuple[int, int, int]]:
 def shiny_icon(image: Image.Image, normal: list[tuple[int,int,int]], shiny: list[tuple[int,int,int]]) -> Image.Image:
     image=image.convert("RGBA");out=Image.new("RGBA",image.size)
     converted=[]
-    for red,green,blue,alpha in image.get_flattened_data():
+    for red,green,blue,alpha in flattened_data(image):
         if alpha<128:converted.append((red,green,blue,0));continue
         nearest=min(range(1,16),key=lambda i:(red-normal[i][0])**2+(green-normal[i][1])**2+(blue-normal[i][2])**2)
         converted.append((*shiny[nearest],alpha))
@@ -188,13 +226,51 @@ def shiny_icon(image: Image.Image, normal: list[tuple[int,int,int]], shiny: list
 def source_png(path: Path) -> Image.Image:
     source = Image.open(path)
     if source.mode == "P":
-        indices = list(source.get_flattened_data())
+        indices = list(flattened_data(source))
         rgba = source.convert("RGBA")
         alpha = Image.new("L", source.size)
         alpha.putdata([0 if value == 0 else 255 for value in indices])
         rgba.putalpha(alpha)
         return rgba
     return source.convert("RGBA")
+
+
+def recolor_icon_to_palette(image: Image.Image,
+                            target_palette: list[tuple[int, int, int]]) -> Image.Image:
+    """Apply a form's authored battle palette to its shared mini-icon.
+
+    Platinum stores Arceus' form-specific 80x80 sprites and palettes, but
+    reuses one 32x64 icon sheet at the species root.  Falling back to that
+    sheet verbatim makes every Plate look like Normal in Box/Home.  Keep the
+    authored icon silhouette and map each opaque icon colour to the nearest
+    colour in the form palette; this preserves the icon's shading while
+    carrying the same type colour used by the corresponding battle sprite.
+    Palette entry zero is the transparent index in the source assets and is
+    deliberately excluded from the target candidates.
+    """
+    source = image.convert("RGBA")
+    candidates = target_palette[1:]
+    if not candidates:
+        return source
+    mapped: dict[tuple[int, int, int], tuple[int, int, int]] = {}
+    pixels = []
+    for red, green, blue, alpha in source.getdata():
+        if alpha < 128:
+            pixels.append((0, 0, 0, 0))
+            continue
+        key = (red, green, blue)
+        colour = mapped.get(key)
+        if colour is None:
+            colour = min(candidates,
+                         key=lambda candidate:
+                         (red - candidate[0]) ** 2 +
+                         (green - candidate[1]) ** 2 +
+                         (blue - candidate[2]) ** 2)
+            mapped[key] = colour
+        pixels.append((*colour, alpha))
+    output = Image.new("RGBA", source.size)
+    output.putdata(pixels)
+    return output
 
 
 def indexed_source_png(path: Path, palette: list[tuple[int, int, int]]) -> Image.Image:
@@ -209,7 +285,7 @@ def indexed_source_png(path: Path, palette: list[tuple[int, int, int]]) -> Image
     source = Image.open(path)
     if source.mode != "P":
         raise RuntimeError(f"Expected indexed Pokemon source: {path}")
-    indices = list(source.get_flattened_data())
+    indices = list(flattened_data(source))
     invalid = next((value for value in indices if value >= len(palette)), None)
     if invalid is not None:
         raise RuntimeError(
@@ -222,8 +298,9 @@ def indexed_source_png(path: Path, palette: list[tuple[int, int, int]]) -> Image
     return output
 
 
-def animation_palettes(name: str) -> list[list[tuple[int, int, int]]]:
-    folder = DECOMP / "graphics/battle_anims/sprites"
+def animation_palettes(name: str, source_name: str = "firered") -> list[list[tuple[int, int, int]]]:
+    root = DECOMP if source_name == "firered" else EXPANSION
+    folder = root / "graphics/battle_anims/sprites"
     palette_path = folder / f"{name}.pal"
     if palette_path.exists():
         return jasc_palettes(palette_path)
@@ -231,10 +308,18 @@ def animation_palettes(name: str) -> list[list[tuple[int, int, int]]]:
     if png_path.exists():
         source = Image.open(png_path)
         raw = source.getpalette()
-        if source.mode == "P" and raw and len(raw) >= 48:
-            return [[tuple(raw[index * 3:index * 3 + 3])
-                     for index in range(16)]]
-    raise RuntimeError(f"Missing FireRed animation palette source: {name}")
+        if source.mode == "P" and raw:
+            # Expansion keeps the original GBA palette indices in the PNG,
+            # but Pillow may serialize only the colours actually used by a
+            # cel (for example Trump Card has four entries). The renderer
+            # still consumes a 16-colour OBJ bank, so preserve those entries
+            # and pad the unused tail instead of rejecting the asset.
+            color_count = min(16, len(raw) // 3)
+            palette = [tuple(raw[index * 3:index * 3 + 3])
+                       for index in range(color_count)]
+            palette.extend([(0, 0, 0)] * (16 - len(palette)))
+            return [palette]
+    raise RuntimeError(f"Missing {source_name} animation palette source: {name}")
 
 
 def animation_source_png(path: Path, palette: list[tuple[int, int, int]]) -> Image.Image:
@@ -249,7 +334,7 @@ def animation_source_png(path: Path, palette: list[tuple[int, int, int]]) -> Ima
         return source_png(path)
     output = Image.new("RGBA", source.size)
     output.putdata([(*palette[value], 0 if value == 0 else 255)
-                    for value in source.get_flattened_data()])
+                    for value in flattened_data(source)])
     return output
 
 
@@ -266,7 +351,7 @@ def palette_index_plane(image: Image.Image) -> Image.Image:
     if image.mode != "P":
         raise RuntimeError(f"Expected indexed P/L image, got {image.mode}")
     output = Image.new("L", image.size, 0)
-    output.putdata(list(image.get_flattened_data()))
+    output.putdata(list(flattened_data(image)))
     return output
 
 
@@ -279,10 +364,11 @@ def export_exact_battle_animation_assets(animation_audit: dict, manifest: dict) 
     oversized_frames: list[str] = []
     empty_frames: list[str] = []
     for key, spec in sorted(animation_audit["visualAssets"].items()):
-        palettes = animation_palettes(spec["palette"])
+        source_root = DECOMP if spec.get("source", "firered") == "firered" else EXPANSION
+        palettes = animation_palettes(spec["palette"], spec.get("paletteSource", "firered"))
         sources: dict[str, Image.Image] = {}
         for source_name in spec["sources"]:
-            source_path = DECOMP / "graphics/battle_anims/sprites" / f"{source_name}.png"
+            source_path = source_root / "graphics/battle_anims/sprites" / f"{source_name}.png"
             source = Image.open(source_path)
             if source.mode != "P":
                 raise RuntimeError(
@@ -470,15 +556,16 @@ def indexed_rgba(indices: Image.Image,
     output = Image.new("RGBA", indices.size)
     output.putdata([
         (*palette[value], 0 if value == transparent_index else 255)
-        for value in indices.get_flattened_data()
+        for value in flattened_data(indices)
     ])
     return output
 
 
 def battle_animation_indexed_plane(
         gfx_name: str, map_name: str,
-        palette_name: str | None) -> tuple[Image.Image, list[tuple[int, int, int]]]:
-    folder = DECOMP / "graphics/battle_anims/backgrounds"
+        palette_name: str | None,
+        source_root: Path = DECOMP) -> tuple[Image.Image, list[tuple[int, int, int]]]:
+    folder = source_root / "graphics/battle_anims/backgrounds"
     source = Image.open(folder / f"{gfx_name}.png")
     if source.mode != "P":
         raise RuntimeError(f"Move background is not indexed: {gfx_name}")
@@ -640,7 +727,7 @@ def compose_battle_terrain(tiles_path: Path, map_path: Path,
     source = Image.open(tiles_path)
     if source.mode != "P":
         raise RuntimeError(f"Expected indexed battle terrain: {tiles_path}")
-    source_indices = list(source.get_flattened_data())
+    source_indices = list(flattened_data(source))
     palettes = jasc_palettes(palette_path)
     tile_sheets: list[Image.Image] = []
     for palette in palettes:
@@ -700,7 +787,7 @@ def battle_terrain_viewport(terrain: Image.Image) -> Image.Image:
     # cropped, moved or resized. Rows below the GBA tilemap are transparent,
     # so continue the nearest backdrop scanline there and then overlay any
     # remaining native platform pixels.
-    native_pixels = list(native.get_flattened_data())
+    native_pixels = list(flattened_data(native))
     rows = [native_pixels[y * native.width:(y + 1) * native.width]
             for y in range(native.height)]
     # The GBA camera contains only the upper, clipped edge of the player's
@@ -785,8 +872,8 @@ def top_down_tall_grass_icon() -> Image.Image:
     # outside silhouette. Do *not* erase matching pixels inside that contour:
     # FireRed reuses those colours as highlights between the leaves, and doing
     # so created conspicuous transparent/white holes on the Home button.
-    ground_colors = set(flat_ground.get_flattened_data())
-    source_pixels = list(tuft.get_flattened_data())
+    ground_colors = set(flattened_data(flat_ground))
+    source_pixels = list(flattened_data(tuft))
     masked_pixels: list[tuple[int, int, int, int]] = []
     for y in range(tuft.height):
         plant_x = [x for x in range(tuft.width)
@@ -870,7 +957,7 @@ def write_indexed_asset(relative: str, image: Image.Image,
     """
     if image.mode not in ("L", "P"):
         raise RuntimeError(f"Indexed asset is not L/P mode: {relative}")
-    indices = list(palette_index_plane(image).get_flattened_data())
+    indices = list(flattened_data(palette_index_plane(image)))
     if not palette_rgb or len(palette_rgb) > 255:
         raise RuntimeError(f"Invalid indexed palette size for {relative}")
     invalid = next((value for value in indices if value >= len(palette_rgb)), None)
@@ -1105,7 +1192,7 @@ def _object_event_frame(root: Path, graphics_id: str,
     if frame.mode == "P":
         alpha = Image.new("L", frame.size)
         alpha.putdata([0 if index == 0 else 255
-                       for index in frame.get_flattened_data()])
+                       for index in flattened_data(frame)])
         rgba.putalpha(alpha)
     return rgba
 
@@ -1322,7 +1409,7 @@ def remove_connected_light_background(source: Image.Image) -> Image.Image:
     mask.putdata([
         255 if min(red, green, blue) >= 215 and
                max(red, green, blue) - min(red, green, blue) <= 28 else 0
-        for red, green, blue, _ in image.get_flattened_data()
+        for red, green, blue, _ in flattened_data(image)
     ])
     draw = ImageDraw.Draw(mask)
     border = (
@@ -1336,7 +1423,7 @@ def remove_connected_light_background(source: Image.Image) -> Image.Image:
             ImageDraw.floodfill(mask, point, 128, thresh=0)
     alpha = Image.new("L", image.size, 255)
     alpha.putdata([0 if value == 128 else 255
-                   for value in mask.get_flattened_data()])
+                   for value in flattened_data(mask)])
     image.putalpha(alpha)
     return image
 
@@ -1424,6 +1511,16 @@ def battle_tower_home_icon() -> Image.Image:
     return home_canvas
 
 
+def boss_home_icon() -> Image.Image:
+    """Return Emerald's original golden Regi field sprite for the Boss slot."""
+    source = EMERALD / "graphics/object_events/pics/pokemon/regi.png"
+    if not source.exists():
+        raise RuntimeError("Missing original Emerald golden Regi sprite")
+    # Keep the authored sprite intact, but centre its visible pixels in the
+    # same 32x32 footprint previously occupied by a Pokemon menu icon.
+    return normalized_home_icon(source_png(source), 32, 30)
+
+
 def battle_tower_assets() -> tuple[Image.Image, Image.Image]:
     """Return the official Tower symbol and invitation facade from Emerald.
 
@@ -1478,14 +1575,14 @@ def hall_of_fame_victory_background(root: Path, map_name: str) -> Image.Image:
     from the corresponding game's map and palette.
     """
     room = render_map_layers(root, map_name).composite.convert("RGBA")
-    opaque = [pixel for pixel in room.get_flattened_data() if pixel[3] >= 128]
+    opaque = [pixel for pixel in flattened_data(room) if pixel[3] >= 128]
     if not opaque:
         raise RuntimeError(f"Hall of Fame map rendered empty: {map_name}")
     # The most frequent opaque colour is the room's native floor.  It makes
     # the landscape gutters blend into the open central arena without adding
     # a foreign colour or the old black void.
     floor = max(set(opaque), key=opaque.count)
-    room_pixels = list(room.get_flattened_data())
+    room_pixels = list(flattened_data(room))
     lower_edge = room.height * 7 // 8
     room.putdata([
         floor if y >= lower_edge and pixel[3] >= 128 and
@@ -1543,6 +1640,104 @@ def main() -> None:
             silhouette = Image.new("RGBA", front_image.size, color)
             silhouette.putalpha(alpha)
             write_asset(f"pokemon/evolution/{tone}/{species:03}.pkg", silhouette, manifest)
+
+    # Platinum stores authentic DS battle sprites as two 80x80 frames next
+    # to each other. Export their first idle cel intact (rather than a
+    # placeholder or a recoloured Gen-III mon); the renderer accepts that
+    # native size just as it does the existing 64x64 FireRed sprites.
+    platinum_symbols = [line.strip().removeprefix("SPECIES_")
+                        for line in (PLATINUM / "generated/species.txt").read_text(
+                            encoding="utf-8").splitlines() if line.strip()]
+    if len(platinum_symbols) <= 493 or platinum_symbols[387] != "TURTWIG":
+        raise RuntimeError("Unexpected Platinum National Dex order")
+    for species in range(387, 494):
+        folder = PLATINUM / "res/pokemon" / platinum_symbols[species].lower()
+        normal_palette = jasc_palette(folder / "normal.pal")
+        shiny_palette = jasc_palette(folder / "shiny.pal")
+        # Most Gen-IV folders carry the male/default sheets. Species that are
+        # intrinsically female (for example Wormadam) deliberately only have
+        # female sheets in the Platinum decomp, so use their real sprite
+        # rather than failing or substituting generic artwork.
+        sprite_prefix = "male" if (folder / "male_front.png").is_file() else "female"
+        front_path = folder / f"{sprite_prefix}_front.png"
+        back_path = folder / f"{sprite_prefix}_back.png"
+        if not front_path.is_file() or not back_path.is_file():
+            raise RuntimeError(f"Missing Platinum battle sprites: {folder}")
+        front_sheet = indexed_source_png(front_path, normal_palette)
+        back_sheet = indexed_source_png(back_path, normal_palette)
+        shiny_front_sheet = indexed_source_png(front_path, shiny_palette)
+        shiny_back_sheet = indexed_source_png(back_path, shiny_palette)
+        if front_sheet.size != (160, 80) or back_sheet.size != (160, 80):
+            raise RuntimeError(f"Invalid Platinum battle sheet: {folder}")
+        front_image = front_sheet.crop((0, 0, 80, 80))
+        back_image = back_sheet.crop((0, 0, 80, 80))
+        shiny_front = shiny_front_sheet.crop((0, 0, 80, 80))
+        shiny_back = shiny_back_sheet.crop((0, 0, 80, 80))
+        # Platinum icons are already authored against the shared icon palette
+        # embedded in `icon.png`.  `normal.pal`/`shiny.pal` belong to the
+        # 80x80 battle sprites and use a different index space; applying either
+        # palette here turns valid icon indices into magenta transparency or
+        # unrelated dark colours (Shieldon and Rotom exposed this immediately).
+        # Platinum does not ship a second shiny icon sheet, so keep the
+        # canonical icon art for both views just like the original icon NARC.
+        icon_sheet = source_png(folder / "icon.png")
+        shiny_icon_sheet = icon_sheet.copy()
+        write_asset(f"pokemon/front/{species:03}.pkg", front_image, manifest)
+        write_asset(f"pokemon/back/{species:03}.pkg", back_image, manifest)
+        write_asset(f"pokemon/shiny/front/{species:03}.pkg", shiny_front, manifest)
+        write_asset(f"pokemon/shiny/back/{species:03}.pkg", shiny_back, manifest)
+        for frame in range(2):
+            top = frame * 32
+            write_asset(f"pokemon/icons/{species:03}_{frame}.pkg",
+                        icon_sheet.crop((0, top, 32, top + 32)), manifest)
+            write_asset(f"pokemon/shiny/icons/{species:03}_{frame}.pkg",
+                        shiny_icon_sheet.crop((0, top, 32, top + 32)), manifest)
+        alpha = front_image.getchannel("A")
+        for tone, color in (("dark", (24, 32, 72, 255)), ("light", (248, 248, 248, 255))):
+            silhouette = Image.new("RGBA", front_image.size, color)
+            silhouette.putalpha(alpha)
+            write_asset(f"pokemon/evolution/{tone}/{species:03}.pkg", silhouette, manifest)
+
+    # Persistent Platinum forms use the same native 80x80 battle sheets and
+    # shared 32x64 icon sheets as their base species. Keep every form in its
+    # own namespace so the runtime can switch without synthesising graphics.
+    for species, species_name, form_names in PLATINUM_SELECTABLE_FORMS:
+        species_root = PLATINUM / "res/pokemon" / species_name
+        for form_index, form_name in enumerate(form_names):
+            folder = species_root / "forms" / form_name
+            normal_palette = jasc_palette(folder / "normal.pal")
+            shiny_palette = jasc_palette(folder / "shiny.pal")
+            # Platinum form folders use compact front/back names, including
+            # the base form. Only the species root uses male_front/female_front.
+            front_path = folder / "front.png"
+            back_path = folder / "back.png"
+            if not front_path.is_file() or not back_path.is_file():
+                raise RuntimeError(f"Missing Platinum form battle sprites: {folder}")
+            front = indexed_source_png(front_path, normal_palette).crop((0, 0, 80, 80))
+            back = indexed_source_png(back_path, normal_palette).crop((0, 0, 80, 80))
+            shiny_front = indexed_source_png(front_path, shiny_palette).crop((0, 0, 80, 80))
+            shiny_back = indexed_source_png(back_path, shiny_palette).crop((0, 0, 80, 80))
+            # Most form folders carry their own authored icon (Rotom's
+            # appliance silhouettes are the important example). Fall back to
+            # the species icon only for the base/legacy folders that really
+            # do not have one, preserving the form palette in either case.
+            form_icon_path = folder / "icon.png"
+            icon_sheet = (source_png(form_icon_path)
+                          if form_icon_path.is_file() else
+                          recolor_icon_to_palette(
+                              source_png(species_root / "icon.png"), normal_palette))
+            prefix = f"pokemon/forms/{species_name}/{form_index}"
+            write_asset(f"{prefix}/front.pkg", front, manifest)
+            write_asset(f"{prefix}/back.pkg", back, manifest)
+            write_asset(f"{prefix}/shiny/front.pkg", shiny_front, manifest)
+            write_asset(f"{prefix}/shiny/back.pkg", shiny_back, manifest)
+            for frame in range(2):
+                top = frame * 32 if icon_sheet.height >= 64 else 0
+                icon = icon_sheet.crop((0, top, 32, top + 32))
+                write_asset(f"{prefix}/icons/{frame}.pkg", icon, manifest)
+                # Platinum's icon NARC has one canonical palette; do not
+                # recolour it with the battle palette (Shieldon/Rotom bug).
+                write_asset(f"{prefix}/shiny/icons/{frame}.pkg", icon.copy(), manifest)
 
     # Unown's 28 letters are separate graphics in FireRed, not separate
     # species table entries. Export every authentic front/back/icon form so
@@ -1713,6 +1908,14 @@ def main() -> None:
         path = DECOMP / "graphics/items/icons" / f"{source_name}.png"
         if not path.exists(): raise RuntimeError(f"Missing held item icon: {source_name}")
         write_asset(f"firered/items/held_{index:02}.pkg", source_png(path), manifest)
+    # Gen 4 signature items are appended after the frozen HeldItem enum
+    # values. Expansion has one authored plate silhouette shared by the
+    # elemental plates, plus the three exact legendary-orb icons.
+    gen4_unique_icons = ("plate",) * 17 + ("adamant_orb", "lustrous_orb", "griseous_orb")
+    for index, source_name in enumerate(gen4_unique_icons, start=68):
+        path = EXPANSION / "graphics/items/icons" / f"{source_name}.png"
+        if not path.exists(): raise RuntimeError(f"Missing Gen 4 held item icon: {source_name}")
+        write_asset(f"firered/items/held_{index:02}.pkg", source_png(path), manifest)
 
     # Berry Garden is a real Route 123 berry patch, not a firmware-drawn set
     # of generic cards.  The six authored soil beds are already part of this
@@ -1752,6 +1955,26 @@ def main() -> None:
                 write_asset(
                     f"emerald/berry_garden/tree_{berry_index:02}_stage_{stage}_{frame}.pkg",
                     tree.resize((32, 64), Image.Resampling.NEAREST), manifest)
+    # Sinnoh's expedition screen uses Platinum's actual Underground mining
+    # dirt and fossil objects. The dirt strip is deliberately tiled without
+    # recolouring or drawing substitute geometry, so the handheld gets a
+    # clean original-game excavation surface rather than generic cards.
+    mining_root = PLATINUM / "res/graphics/mining/objects"
+    dirt_strip = Image.open(mining_root / "dirt_tiles.png").convert("RGBA")
+    underground = Image.new("RGBA", (320, 160))
+    for y in range(0, underground.height, dirt_strip.height):
+        offset = ((y // dirt_strip.height) * 23) % dirt_strip.width
+        for x in range(-offset, underground.width, dirt_strip.width):
+            underground.alpha_composite(dirt_strip, (x, y))
+    write_asset("sinnoh/underground/dirt.pkg", underground, manifest)
+    for output_name, source_name in (("skull_fossil", "skull_fossil"),
+                                     ("armor_fossil", "armor_fossil"),
+                                     ("plate", "plate"),
+                                     ("sphere", "small_prism_sphere")):
+        source = mining_root / f"{source_name}.png"
+        if not source.exists():
+            raise RuntimeError(f"Missing Platinum Underground object: {source_name}")
+        write_asset(f"sinnoh/underground/{output_name}.pkg", source_png(source), manifest)
     mega_stone_icon = EXPANSION / "graphics/items/icons/key_stone.png"
     if not mega_stone_icon.exists(): raise RuntimeError("Missing official Key Stone icon")
     write_asset("firered/items/held_38.pkg", source_png(mega_stone_icon), manifest)
@@ -1784,6 +2007,7 @@ def main() -> None:
     tower_home,tower_facade=battle_tower_assets()
     write_asset("emerald/battle_tower/home_icon.pkg",tower_home,manifest)
     write_asset("emerald/battle_tower/facade.pkg",tower_facade,manifest)
+    write_asset("emerald/boss/home_icon.pkg",boss_home_icon(),manifest)
     indigo_home,indigo_facade,hoenn_league_home,hoenn_league_facade=pokemon_league_assets()
     write_asset("firered/pokemon_league/home_icon.pkg",indigo_home,manifest)
     write_asset("firered/pokemon_league/facade.pkg",indigo_facade,manifest)
@@ -1923,6 +2147,26 @@ def main() -> None:
         if runtime_zero_offset.tobytes() != background.tobytes():
             raise RuntimeError(
                 f"Static/tiled camera mismatch: bg_{background_id:02}")
+    # Aura Sphere's expansion script uses the real Focus Blast tiles/map with
+    # a different source palette. Its authored plane is 256x112 (the GBA
+    # source does not contain FireRed's 240x138 camera crop), so preserve the
+    # full indexed plane for scrolling and derive the static preview by the
+    # same nearest-neighbour screen adaptation used by the FireRed catalog.
+    expansion_background_id = len(BATTLE_ANIMATION_BACKGROUNDS)
+    for gfx_name, map_name, palette_name in EXPANSION_BATTLE_ANIMATION_BACKGROUNDS:
+        tiled_indices, animation_palette = battle_animation_indexed_plane(
+            gfx_name, map_name, palette_name, EXPANSION)
+        static_indices = tiled_indices.resize((320, 184), Image.Resampling.NEAREST)
+        background = indexed_rgba(static_indices, animation_palette)
+        battle_move_bg_audit_images.append((f"bg_{expansion_background_id:02}",
+                                            background.copy()))
+        write_indexed_asset(
+            f"firered/battle_anims/backgrounds/bg_{expansion_background_id:02}.pkg",
+            static_indices, animation_palette, manifest)
+        write_indexed_asset(
+            f"firered/battle_anims/backgrounds/tiled_bg_{expansion_background_id:02}.pkg",
+            tiled_indices, animation_palette, manifest)
+        expansion_background_id += 1
     for name, gfx_relative, map_relative in BATTLE_ANIMATION_TASK_BACKGROUNDS:
         task_indices, task_palette, transparent = \
             battle_animation_task_indexed_plane(gfx_relative, map_relative)
@@ -2082,7 +2326,7 @@ def main() -> None:
         badge.putdata([(248,224,112,0) if value>=250 else
                        (248,224,112,255) if value>=160 else
                        (120,152,184,255) if value>=80 else (48,56,64,255)
-                       for value in gray.get_flattened_data()])
+                       for value in flattened_data(gray)])
         write_asset(f"firered/trainer_card/badge_{8+index}.pkg",badge,manifest)
         write_asset(f"firered/ui/home_badge_{8+index}.pkg",
                     normalized_home_icon(badge),manifest)
@@ -2142,20 +2386,22 @@ def main() -> None:
             write_asset("firered/item_menu/bag_icon.pkg",
                         normalized_home_icon(pocket), manifest)
 
-    required=[*(f"pokemon/front/{i:03}.pkg" for i in range(1,387)),*(f"pokemon/back/{i:03}.pkg" for i in range(1,387)),
-      *(f"pokemon/icons/{i:03}_{frame}.pkg" for i in range(1,387) for frame in range(2)),"firered/item_menu/bag_icon.pkg",
-      *(f"pokemon/shiny/front/{i:03}.pkg" for i in range(1,387)),*(f"pokemon/shiny/back/{i:03}.pkg" for i in range(1,387)),
-      *(f"pokemon/shiny/icons/{i:03}_{frame}.pkg" for i in range(1,387) for frame in range(2)),
-      *(f"pokemon/evolution/{tone}/{i:03}.pkg" for tone in ("dark", "light") for i in range(1,387)),
+    required=[*(f"pokemon/front/{i:03}.pkg" for i in range(1,494)),*(f"pokemon/back/{i:03}.pkg" for i in range(1,494)),
+      *(f"pokemon/icons/{i:03}_{frame}.pkg" for i in range(1,494) for frame in range(2)),"firered/item_menu/bag_icon.pkg",
+      *(f"pokemon/shiny/front/{i:03}.pkg" for i in range(1,494)),*(f"pokemon/shiny/back/{i:03}.pkg" for i in range(1,494)),
+      *(f"pokemon/shiny/icons/{i:03}_{frame}.pkg" for i in range(1,494) for frame in range(2)),
+      *(f"pokemon/evolution/{tone}/{i:03}.pkg" for tone in ("dark", "light") for i in range(1,494)),
       "firered/evolution_scene/scene.pkg","firered/evolution_scene/sparkle.pkg",
       "firered/ui/pokedex_icon.pkg","firered/ui/box_icon.pkg",
       *(f"firered/battle_terrain/{terrain}.pkg" for terrain in BATTLE_TERRAINS),
       *(f"firered/battle_terrain/{asset_name}.pkg"
         for asset_name, *_ in BATTLE_TERRAIN_VARIANTS),
       *(f"firered/battle_anims/backgrounds/bg_{background_id:02}.pkg"
-        for background_id in range(len(BATTLE_ANIMATION_BACKGROUNDS))),
+        for background_id in range(len(BATTLE_ANIMATION_BACKGROUNDS) +
+                                   len(EXPANSION_BATTLE_ANIMATION_BACKGROUNDS))),
       *(f"firered/battle_anims/backgrounds/tiled_bg_{background_id:02}.pkg"
-        for background_id in range(len(BATTLE_ANIMATION_BACKGROUNDS))),
+        for background_id in range(len(BATTLE_ANIMATION_BACKGROUNDS) +
+                                   len(EXPANSION_BATTLE_ANIMATION_BACKGROUNDS))),
       *(f"firered/battle_anims/backgrounds/task_{name}.pkg"
         for name, *_ in BATTLE_ANIMATION_TASK_BACKGROUNDS),
       "firered/battle_anims/sprites/substitute_front.pkg",
@@ -2171,6 +2417,7 @@ def main() -> None:
         for type_index in range(18)),
       "firered/ui/wild_transition.pkg",
       "emerald/battle_tower/home_icon.pkg","emerald/battle_tower/facade.pkg",
+      "emerald/boss/home_icon.pkg",
       "firered/pokemon_league/home_icon.pkg","firered/pokemon_league/facade.pkg",
       "emerald/pokemon_league/home_icon.pkg","emerald/pokemon_league/facade.pkg",
       "firered/pokemon_league/victory_bg.pkg","emerald/pokemon_league/victory_bg.pkg",
@@ -2204,12 +2451,23 @@ def main() -> None:
       *(f"emerald/berry_garden/sprout_{frame}.pkg" for frame in range(2)),
       *(f"emerald/berry_garden/tree_{berry:02}_stage_{stage}_{frame}.pkg"
         for berry in range(1,10) for stage in range(2,5) for frame in range(2)),
+      "sinnoh/underground/dirt.pkg","sinnoh/underground/skull_fossil.pkg",
+      "sinnoh/underground/armor_fossil.pkg","sinnoh/underground/plate.pkg",
+      "sinnoh/underground/sphere.pkg",
       *(f"pokemon/forms/mega/{species:03}/{variant}/{shiny}{view}.pkg"
         for species, _folder, variant in MEGA_FORMS for shiny in ("","shiny/")
         for view in ("front","back")),
       *(f"pokemon/forms/mega/{species:03}/{variant}/{shiny}icons/{frame}.pkg"
         for species, _folder, variant in MEGA_FORMS for shiny in ("","shiny/")
         for frame in range(2)),
+      *(f"pokemon/forms/{species_name}/{form_index}/{shiny}{view}.pkg"
+        for _species, species_name, form_names in PLATINUM_SELECTABLE_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for view in ("front", "back")),
+      *(f"pokemon/forms/{species_name}/{form_index}/{shiny}icons/{frame}.pkg"
+        for _species, species_name, form_names in PLATINUM_SELECTABLE_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for frame in range(2)),
       *(f"pokemon/forms/castform/{form}/{shiny}{view}.pkg"
         for form in range(4) for shiny in ("", "shiny/")
         for view in ("front", "back")),

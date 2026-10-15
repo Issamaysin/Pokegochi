@@ -56,6 +56,14 @@ uint16_t moveEventValue(const BattleActionResult& result,MoveId move,BattleSide 
   return 0U;
 }
 
+int8_t moveEventAnimationTurn(const BattleActionResult& result,MoveId move,
+                              BattleSide side){
+  for(uint8_t i=0;i<result.eventCount;++i)
+    if(result.events[i].type==BattleEventType::MoveUsed&&result.events[i].side==side&&
+       result.events[i].move==move)return result.events[i].stageBefore;
+  return -1;
+}
+
 uint8_t countEvents(const BattleActionResult& result,BattleEventType type,
                      BattleSide side){
   uint8_t count=0;
@@ -85,6 +93,29 @@ void symmetricFlag(MoveId move,bool DedicatedMoveEffectState::*member,
 }
 
 int main(){
+  // Curse selects two unrelated FireRed scripts through gAnimMoveTurn. A
+  // non-Ghost user must select the stat animation (1), while a Ghost user
+  // selects the HP-sacrifice/nail animation (0), on both battle sides.
+  for(bool enemy:{false,true}){
+    const MoveId curse=static_cast<MoveId>(174),splash=static_cast<MoveId>(150);
+    Fixture ordinary(enemy?splash:curse,enemy?curse:splash);
+    const BattleActionResult ordinaryResult=
+        enemy?ordinary.opponentUses():ordinary.playerUses();
+    assert(ordinaryResult.accepted&&moveEventAnimationTurn(
+        ordinaryResult,curse,enemy?BattleSide::Opponent:BattleSide::Player)==1);
+
+    Fixture ghost(enemy?splash:curse,enemy?curse:splash);
+    OwnedPokemon& ghostUser=enemy?ghost.opponent():ghost.player();
+    const uint32_t ghostUid=ghostUser.uid;
+    ghostUser=CollectionLogic::createPokemon(ghostUid,92,50,false,0xC075E001U);
+    ghostUser.moves[0]=curse;
+    ghostUser.movePp[0]=findFullMove(curse)->pp;
+    const BattleActionResult ghostResult=
+        enemy?ghost.opponentUses():ghost.playerUses();
+    assert(ghostResult.accepted&&moveEventAnimationTurn(
+        ghostResult,curse,enemy?BattleSide::Opponent:BattleSide::Player)==0);
+  }
+
   // Every ABSORB-family move owns exactly one recovery transition. The
   // resolver used to append the explicit drain event and then repeat the
   // same before/after pair in its generic self-HP snapshot. On hardware that
@@ -2088,7 +2119,12 @@ int main(){
   rainBallFixture.battle.weather=BattleWeather::Rain;
   const uint16_t clearBall=clearBallFixture.playerUses().damageDealt;
   const uint16_t rainBall=rainBallFixture.playerUses().damageDealt;
-  assert(rainBall>clearBall*2U);
+  // Weather Ball becomes Water, doubles its base power and receives rain's
+  // Water modifier.  With the Gen-IV split it is Special in both states, so
+  // Porygon's equal matchup can resolve to exactly 2x after Normal STAB on
+  // the clear-weather hit. Integer floors happen at several damage stages,
+  // hence the 68-versus-35 deterministic fixture is just below 2x.
+  assert(rainBall*10U>clearBall*19U);
 
   // Stat-changing move scripts are intentionally not collapsed into one
   // generic approximation.  Lock the Gen-III composite behavior from the
@@ -2164,6 +2200,25 @@ int main(){
            !Target(flatter).confusionTurns);
   }
 
+  // Sinnoh's Toxicroak is a real wild opponent, not a special-case battle
+  // actor.  Keep the exact field fixture that caused the reported crash:
+  // enemy FLATTER must resolve the same Sp. Atk/confusion journal as every
+  // other species, including a Gen-IV species at the Sinnoh encounter cap.
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    const MoveId flatter=static_cast<MoveId>(260);
+    Fixture sinnoh(splash,flatter,BattleKind::Wild);
+    sinnoh.battle.opponents[0]=CollectionLogic::createPokemon(
+        0xF4540001U,454,90,false,0xD454U);
+    sinnoh.battle.opponents[0].moves[0]=flatter;
+    sinnoh.battle.opponents[0].movePp[0]=findFullMove(flatter)->pp;
+    sinnoh.battle.playerVolatile.sureHitTurns=2U;
+    const BattleActionResult result=sinnoh.opponentUses();
+    assert(result.accepted&&sinnoh.battle.playerVolatile.spAttackStage==1&&
+           sinnoh.battle.playerVolatile.confusionTurns>=2U&&
+           saw(result,BattleMoveEffect::Confused,BattleSide::Player));
+  }
+
   // Foresight/Odor Sleuth simply set the identification bit and succeed on
   // repeat use. Skill Swap permits one side to have ABILITY_NONE; only two
   // empty slots (or Wonder Guard) make the retail command fail.
@@ -2226,6 +2281,32 @@ int main(){
   const BattleActionResult mirrorResult=mirror.playerUses();
   assert(mirrorResult.accepted&&mirrorResult.damageDealt&&
          sawMove(mirrorResult,MoveId::Tackle,BattleSide::Player));
+
+  // ME FIRST copies the opponent's command for this turn (not its previous
+  // lastMoveUsed), executes at +1 priority and still deals damage through the
+  // normal resolver. Verify both directions of the link battle path.
+  {
+    const MoveId meFirst=static_cast<MoveId>(382);
+    assert(findFullMove(meFirst)&&findFullMove(meFirst)->priority==1);
+    Fixture player(meFirst,MoveId::Tackle);
+    player.player().maximumHp=player.player().currentHp=5000;
+    player.opponent().maximumHp=player.opponent().currentHp=5000;
+    const BattleActionResult playerResult=BattleEngine::fightPvp(
+        player.battle,player.collection,0,0);
+    assert(playerResult.accepted&&playerResult.damageDealt&&
+           sawMove(playerResult,meFirst,BattleSide::Player)&&
+           sawMove(playerResult,MoveId::Tackle,BattleSide::Player)&&
+           !saw(playerResult,BattleMoveEffect::Failed,BattleSide::Player));
+
+    Fixture opponent(MoveId::Tackle,meFirst);
+    opponent.player().maximumHp=opponent.player().currentHp=5000;
+    opponent.opponent().maximumHp=opponent.opponent().currentHp=5000;
+    const BattleActionResult opponentResult=opponent.opponentUses();
+    assert(opponentResult.accepted&&opponentResult.damageTaken&&
+           sawMove(opponentResult,meFirst,BattleSide::Opponent)&&
+           sawMove(opponentResult,MoveId::Tackle,BattleSide::Opponent)&&
+           !saw(opponentResult,BattleMoveEffect::Failed,BattleSide::Opponent));
+  }
 
   // NATURE POWER uses all ten FireRed terrain rows, not a reduced type-based
   // approximation. Execute every row from both sides and inspect the called

@@ -29,7 +29,25 @@ const BattleAnimationCommand* battleAnimationProgramCommand(
 }
 
 const int16_t* battleAnimationCommandArguments(const BattleAnimationCommand& command) {
-  return command.argumentCount ? &kBattleAnimationArguments[command.argumentOffset] : nullptr;
+  if (!command.argumentCount) return nullptr;
+  constexpr size_t kArgumentCount =
+      sizeof(kBattleAnimationArguments) / sizeof(kBattleAnimationArguments[0]);
+  const size_t offset = command.argumentOffset;
+  if (offset >= kArgumentCount || command.argumentCount > kArgumentCount - offset)
+    return nullptr;
+  const int16_t* arguments = &kBattleAnimationArguments[offset];
+  return battleAnimationArgumentsValid(arguments, command.argumentCount)
+      ? arguments : nullptr;
+}
+
+bool battleAnimationArgumentsValid(const int16_t* arguments, uint8_t count) {
+  if (!count) return true;
+  if (!arguments) return false;
+  const uintptr_t begin = reinterpret_cast<uintptr_t>(kBattleAnimationArguments);
+  const uintptr_t end = begin + sizeof(kBattleAnimationArguments);
+  const uintptr_t address = reinterpret_cast<uintptr_t>(arguments);
+  if (address < begin || address >= end) return false;
+  return count <= (end - address) / sizeof(kBattleAnimationArguments[0]);
 }
 
 const BattleAnimationSpriteResource* battleAnimationSpriteResource(uint16_t resourceId) {
@@ -267,4 +285,4 @@ BattleAnimationPlaybackKind battleAnimationPlaybackKind(uint16_t moveId) {
   return BattleAnimationPlaybackKind::Generated;
 }
 
-// Battle animation data: 2f014e73a55d7991
+// Battle animation data: 9c20c4d39fa9ecb3

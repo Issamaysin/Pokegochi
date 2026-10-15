@@ -70,6 +70,28 @@ constexpr HeldItemData kItems[] = {
   {HeldItem::GanlonBerry,"GANLON BERRY",0,255,0,true,false,PokemonType::Normal},
   {HeldItem::LuckyEgg,"LUCKY EGG",0,255,0,false,false,PokemonType::Normal},
   {HeldItem::QuickPowder,"QUICK POWDER",0,255,0,false,false,PokemonType::Normal},
+  {HeldItem::FistPlate,"FIST PLATE",0,255,0,false,true,PokemonType::Fighting},
+  {HeldItem::SkyPlate,"SKY PLATE",0,255,0,false,true,PokemonType::Flying},
+  {HeldItem::ToxicPlate,"TOXIC PLATE",0,255,0,false,true,PokemonType::Poison},
+  {HeldItem::StonePlate,"STONE PLATE",0,255,0,false,true,PokemonType::Rock},
+  {HeldItem::InsectPlate,"INSECT PLATE",0,255,0,false,true,PokemonType::Bug},
+  {HeldItem::SpookyPlate,"SPOOKY PLATE",0,255,0,false,true,PokemonType::Ghost},
+  {HeldItem::DracoPlate,"DRACO PLATE",0,255,0,false,true,PokemonType::Dragon},
+  {HeldItem::IronPlate,"IRON PLATE",0,255,0,false,true,PokemonType::Steel},
+  {HeldItem::FlamePlate,"FLAME PLATE",0,255,0,false,true,PokemonType::Fire},
+  {HeldItem::SplashPlate,"SPLASH PLATE",0,255,0,false,true,PokemonType::Water},
+  {HeldItem::MeadowPlate,"MEADOW PLATE",0,255,0,false,true,PokemonType::Grass},
+  {HeldItem::ZapPlate,"ZAP PLATE",0,255,0,false,true,PokemonType::Electric},
+  {HeldItem::MindPlate,"MIND PLATE",0,255,0,false,true,PokemonType::Psychic},
+  {HeldItem::IciclePlate,"ICICLE PLATE",0,255,0,false,true,PokemonType::Ice},
+  {HeldItem::EarthPlate,"EARTH PLATE",0,255,0,false,true,PokemonType::Ground},
+  // Pixie Plate is the project's Fairy-compatible extension of the Gen-IV
+  // plate set; the battle engine already exposes Fairy as a legal type.
+  {HeldItem::PixiePlate,"PIXIE PLATE",0,255,0,false,true,PokemonType::Fairy},
+  {HeldItem::DreadPlate,"DREAD PLATE",0,255,0,false,true,PokemonType::Dark},
+  {HeldItem::AdamantOrb,"ADAMANT ORB",0,255,0,false,false,PokemonType::Dragon},
+  {HeldItem::LustrousOrb,"LUSTROUS ORB",0,255,0,false,false,PokemonType::Water},
+  {HeldItem::GriseousOrb,"GRISEOUS ORB",0,255,0,false,false,PokemonType::Ghost},
 };
 static_assert(sizeof(kItems)/sizeof(kItems[0]) == static_cast<uint8_t>(HeldItem::Count)-1U,
               "Held item catalog must cover every item");
@@ -147,6 +169,26 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::GanlonBerry: return "RAISES DEFENSE IN A PINCH.";
     case HeldItem::LuckyEgg: return "A PERMANENT ACCOUNT REWARD THAT DOUBLES PARTY EXP.";
     case HeldItem::QuickPowder: return "DOUBLES DITTO'S SPEED BEFORE IT TRANSFORMS.";
+    case HeldItem::FistPlate: return "BOOSTS FIGHTING-TYPE MOVES BY 20%; ARCEUS BECOMES FIGHTING-TYPE.";
+    case HeldItem::SkyPlate: return "BOOSTS FLYING-TYPE MOVES BY 20%; ARCEUS BECOMES FLYING-TYPE.";
+    case HeldItem::ToxicPlate: return "BOOSTS POISON-TYPE MOVES BY 20%; ARCEUS BECOMES POISON-TYPE.";
+    case HeldItem::StonePlate: return "BOOSTS ROCK-TYPE MOVES BY 20%; ARCEUS BECOMES ROCK-TYPE.";
+    case HeldItem::InsectPlate: return "BOOSTS BUG-TYPE MOVES BY 20%; ARCEUS BECOMES BUG-TYPE.";
+    case HeldItem::SpookyPlate: return "BOOSTS GHOST-TYPE MOVES BY 20%; ARCEUS BECOMES GHOST-TYPE.";
+    case HeldItem::DracoPlate: return "BOOSTS DRAGON-TYPE MOVES BY 20%; ARCEUS BECOMES DRAGON-TYPE.";
+    case HeldItem::IronPlate: return "BOOSTS STEEL-TYPE MOVES BY 20%; ARCEUS BECOMES STEEL-TYPE.";
+    case HeldItem::FlamePlate: return "BOOSTS FIRE-TYPE MOVES BY 20%; ARCEUS BECOMES FIRE-TYPE.";
+    case HeldItem::SplashPlate: return "BOOSTS WATER-TYPE MOVES BY 20%; ARCEUS BECOMES WATER-TYPE.";
+    case HeldItem::MeadowPlate: return "BOOSTS GRASS-TYPE MOVES BY 20%; ARCEUS BECOMES GRASS-TYPE.";
+    case HeldItem::ZapPlate: return "BOOSTS ELECTRIC-TYPE MOVES BY 20%; ARCEUS BECOMES ELECTRIC-TYPE.";
+    case HeldItem::MindPlate: return "BOOSTS PSYCHIC-TYPE MOVES BY 20%; ARCEUS BECOMES PSYCHIC-TYPE.";
+    case HeldItem::IciclePlate: return "BOOSTS ICE-TYPE MOVES BY 20%; ARCEUS BECOMES ICE-TYPE.";
+    case HeldItem::EarthPlate: return "BOOSTS GROUND-TYPE MOVES BY 20%; ARCEUS BECOMES GROUND-TYPE.";
+    case HeldItem::PixiePlate: return "BOOSTS FAIRY-TYPE MOVES BY 20%; ARCEUS BECOMES FAIRY-TYPE.";
+    case HeldItem::DreadPlate: return "BOOSTS DARK-TYPE MOVES BY 20%; ARCEUS BECOMES DARK-TYPE.";
+    case HeldItem::AdamantOrb: return "BOOSTS DIALGA'S STEEL- AND DRAGON-TYPE MOVES BY 20%.";
+    case HeldItem::LustrousOrb: return "BOOSTS PALKIA'S WATER- AND DRAGON-TYPE MOVES BY 20%.";
+    case HeldItem::GriseousOrb: return "BOOSTS GIRATINA'S GHOST- AND DRAGON-TYPE MOVES BY 20%.";
     default: return "NO BATTLE EFFECT.";
   }
 }
@@ -164,8 +206,48 @@ bool heldItemIsBerry(HeldItem item) {
     default:return false;
   }
 }
-bool heldItemBoostsType(HeldItem item,PokemonType type) { const HeldItemData* data=heldItemData(item);return data&&data->boostsType&&data->boostedType==type; }
-bool heldItemIsTransferLocked(HeldItem item) { return uniqueHeldItemOwnershipBit(item)!=0U; }
+bool heldItemIsArceusPlate(HeldItem item) {
+  return item >= kFirstGen4UniqueItem && item <= HeldItem::DreadPlate;
+}
+PokemonType arceusPlateType(HeldItem item) {
+  switch (item) {
+    case HeldItem::FistPlate:return PokemonType::Fighting;
+    case HeldItem::SkyPlate:return PokemonType::Flying;
+    case HeldItem::ToxicPlate:return PokemonType::Poison;
+    case HeldItem::StonePlate:return PokemonType::Rock;
+    case HeldItem::InsectPlate:return PokemonType::Bug;
+    case HeldItem::SpookyPlate:return PokemonType::Ghost;
+    case HeldItem::DracoPlate:return PokemonType::Dragon;
+    case HeldItem::IronPlate:return PokemonType::Steel;
+    case HeldItem::FlamePlate:return PokemonType::Fire;
+    case HeldItem::SplashPlate:return PokemonType::Water;
+    case HeldItem::MeadowPlate:return PokemonType::Grass;
+    case HeldItem::ZapPlate:return PokemonType::Electric;
+    case HeldItem::MindPlate:return PokemonType::Psychic;
+    case HeldItem::IciclePlate:return PokemonType::Ice;
+    case HeldItem::EarthPlate:return PokemonType::Ground;
+    case HeldItem::PixiePlate:return PokemonType::Fairy;
+    case HeldItem::DreadPlate:return PokemonType::Dark;
+    default:return PokemonType::Normal;
+  }
+}
+uint8_t heldItemBoostPercent(HeldItem item,PokemonType type) {
+  if (heldItemIsArceusPlate(item))
+    return arceusPlateType(item)==type ? 20U : 0U;
+  if ((item==HeldItem::AdamantOrb&&type!=PokemonType::Steel&&type!=PokemonType::Dragon) ||
+      (item==HeldItem::LustrousOrb&&type!=PokemonType::Water&&type!=PokemonType::Dragon) ||
+      (item==HeldItem::GriseousOrb&&type!=PokemonType::Ghost&&type!=PokemonType::Dragon))
+    return 0U;
+  if (item==HeldItem::AdamantOrb||item==HeldItem::LustrousOrb||item==HeldItem::GriseousOrb)
+    return 20U;
+  const HeldItemData* data=heldItemData(item);
+  return data&&data->boostsType&&data->boostedType==type ? 10U : 0U;
+}
+bool heldItemBoostsType(HeldItem item,PokemonType type) { return heldItemBoostPercent(item,type)!=0U; }
+bool heldItemIsTransferLocked(HeldItem item) {
+  return uniqueHeldItemOwnershipBit(item)!=0U ||
+      (item>=kFirstGen4UniqueItem && item<=kLastGen4UniqueItem);
+}
 uint8_t heldItemCount(){return kHeldItemInventorySlots-1U;}
 
 namespace {
@@ -181,6 +263,13 @@ uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
   const int8_t specialIndex=specialHeldItemIndex(item);
   return specialIndex>=0?&special.quantities[static_cast<uint8_t>(specialIndex)]:nullptr;
 }
+uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
+                          SpecialHeldItemInventory& special,
+                          Gen4UniqueItemInventory& gen4){
+  if (uint16_t* quantity=countedQuantity(item,inventory,special)) return quantity;
+  const int8_t index=gen4UniqueItemIndex(item);
+  return index>=0?&gen4.quantities[static_cast<uint8_t>(index)]:nullptr;
+}
 }
 
 int8_t specialHeldItemIndex(HeldItem item){
@@ -190,6 +279,16 @@ int8_t specialHeldItemIndex(HeldItem item){
 }
 uint16_t specialHeldItemQuantity(const SpecialHeldItemInventory& inventory,HeldItem item){
   const int8_t index=specialHeldItemIndex(item);
+  return index>=0?inventory.quantities[static_cast<uint8_t>(index)]:0U;
+}
+
+int8_t gen4UniqueItemIndex(HeldItem item) {
+  if (item < kFirstGen4UniqueItem || item > kLastGen4UniqueItem) return -1;
+  return static_cast<int8_t>(static_cast<uint8_t>(item) -
+                             static_cast<uint8_t>(kFirstGen4UniqueItem));
+}
+uint16_t gen4UniqueItemQuantity(const Gen4UniqueItemInventory& inventory,HeldItem item) {
+  const int8_t index=gen4UniqueItemIndex(item);
   return index>=0?inventory.quantities[static_cast<uint8_t>(index)]:0U;
 }
 
@@ -239,6 +338,63 @@ bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
   if(!bagQuantity||UINT16_MAX-*bagQuantity<quantity)return false;
   *bagQuantity=static_cast<uint16_t>(*bagQuantity+quantity);
   return CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+}
+
+bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
+                   SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                   uint64_t& ownedMachines){
+  if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
+  uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:
+      countedQuantity(selected,inventory,special,gen4);
+  uint16_t* equippedBagQuantity=equipped==HeldItem::None?nullptr:
+      countedQuantity(equipped,inventory,special,gen4);
+  if(selected==equipped){
+    if(!heldItemIsBerry(selected)||!selectedQuantity||!*selectedQuantity||
+       equippedQuantity>=CollectionLogic::kMaximumHeldBerryQuantity)return false;
+    --*selectedQuantity;
+    return CollectionLogic::setHeldItemQuantity(
+        pokemon,selected,static_cast<uint8_t>(equippedQuantity+1U));
+  }
+  const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
+  const uint64_t equippedBit=uniqueHeldItemOwnershipBit(equipped);
+  if(selected!=HeldItem::None){
+    if(selectedBit){if(!(ownedMachines&selectedBit))return false;}
+    else if(!selectedQuantity||!*selectedQuantity)return false;
+  }
+  if(equipped!=HeldItem::None&&!equippedBit&&
+     (!equippedBagQuantity||UINT16_MAX-*equippedBagQuantity<equippedQuantity))return false;
+  if(equippedBit)ownedMachines|=equippedBit;
+  else if(equippedBagQuantity)*equippedBagQuantity=static_cast<uint16_t>(
+      *equippedBagQuantity+equippedQuantity);
+  if(selectedBit)ownedMachines&=~selectedBit;
+  else if(selectedQuantity)--*selectedQuantity;
+  const bool changed=CollectionLogic::setHeldItemQuantity(
+      pokemon,selected,selected==HeldItem::None?0U:1U);
+  if(changed&&pokemon.speciesId==487U){
+    if(selected==HeldItem::GriseousOrb) pokemon.form=1U;
+    else if(equipped==HeldItem::GriseousOrb) pokemon.form=0U;
+  }
+  return changed;
+}
+
+bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
+                     SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                     uint64_t& ownedMachines){
+  if(pokemon.heldItem==HeldItem::None)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const uint8_t quantity=CollectionLogic::heldItemQuantity(pokemon);
+  const uint64_t ownershipBit=uniqueHeldItemOwnershipBit(equipped);
+  if(ownershipBit){ownedMachines|=ownershipBit;return CollectionLogic::setHeldItemQuantity(
+      pokemon,HeldItem::None,0U);}
+  uint16_t* bagQuantity=countedQuantity(equipped,inventory,special,gen4);
+  if(!bagQuantity||UINT16_MAX-*bagQuantity<quantity)return false;
+  *bagQuantity=static_cast<uint16_t>(*bagQuantity+quantity);
+  const bool changed=CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+  if(changed&&pokemon.speciesId==487U&&equipped==HeldItem::GriseousOrb)
+    pokemon.form=0U;
+  return changed;
 }
 
 bool equipHeldItem(HeldItem& equipped,HeldItem selected,uint16_t inventory[],

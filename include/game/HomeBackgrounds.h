@@ -4,7 +4,7 @@
 
 namespace HomeBackgrounds {
 
-constexpr uint8_t kCount = 39;
+constexpr uint8_t kCount = 47;
 constexpr uint8_t kGridWidth = 19;
 constexpr uint8_t kGridHeight = 8;
 

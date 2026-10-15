@@ -41,8 +41,20 @@ only when the engine state is `Wild`; hiding the Ball button is not the rule.
 
 - Started from Home whenever the player wants; it has no charge or cooldown.
 - Contains wild Pokemon only and never grants additional loot.
+- Its random stream advances persistently and is mixed with the board's stable
+  player ID, so equal boot timing on different devices cannot mirror encounters.
 - The player chooses any healthy selected-team member before it starts.
 - The Pokemon can be captured and grants experience when defeated.
+- After the one-time Mega Stone challenge, the Home action first offers a
+  sequence of 1 to 50 independent Wild encounters. Victory or capture advances
+  to the next encounter; escape, defeat, or having no usable active battler
+  ends the sequence.
+- Sequence encounters retain the party's persistent HP, PP, and major status
+  exactly like returning to Home and starting another Wild battle. Battle-local
+  stat stages, confusion, traps, volatile effects, and field state are rebuilt
+  for every opponent. Each battle opens with the actual encountered species and
+  identifies the current `(X/Y)` position; an inherited Home-weather notice is
+  acknowledged separately so it cannot replace the Pokemon's name.
 - Through team Lv.20, the Wild level ceiling is one below the strongest
   selected partner. From Lv.21 onward it may match that partner's level.
 - The full low-to-high range remains available, but its distribution gradually
@@ -109,20 +121,74 @@ Gym content and level gating remain separate from the generic battle engine.
 ## Battle Tower
 
 - The repeatable Battle Tower unlocks after the Hoenn endgame. From then on its
-  Home icon is permanently available: there is no invitation roll, cooldown,
-  timer, Center dependency, or VS Seeker charge. `Later` merely closes its
-  entrance screen and completing or abandoning a run never removes the icon.
+  Home icon permanently replaces VS Seeker in the same top-toolbar slot. The
+  former Gym/special slot becomes free after the Mega Stone boss. There is no
+  invitation roll, cooldown, timer, Center dependency, or VS Seeker charge.
+  `Later` merely closes its entrance screen and completing or abandoning a run
+  never removes the icon.
 - Each run has three consecutive Emerald Battle Tower trainers, with three
   Pokemon per trainer and their authored moves, held items, Natures, IV tiers,
   and EV spreads adapted to Pokegochi's level scaling.
 - The entrance screen and Home icon use the actual Emerald Battle Tower map art.
 - Completing the third trainer rolls one prize. Rare Candy is the fallback;
-  there is a 0.5% chance for a Special Egg when the incubator is free.
+  there is a 0.5% chance for a Special Egg when the Egg Bag has room.
 - A Special Egg chooses uniformly from the nine regional starters the player
   has never obtained. `seen` is insufficient: only the Pokedex `caught` record
   removes a starter from this pool. Once all nine have been obtained, the Egg
   chooses a random Legendary or Mythical Pokemon from Generations I-III.
-- Special Eggs begin incubating immediately and use the rare 96-hour timer.
+- Special Eggs enter the dedicated Egg pocket in the Bag. Their rare 96-hour
+  timer begins only when the player selects one while the incubator is empty.
+
+## Endgame Boss
+
+- Defeating the one-time Mega Stone challenge permanently unlocks a repeatable
+  Boss battle in the former Gym/special Home slot. Battle Tower simultaneously
+  occupies the old VS Seeker slot, so the two endgame activities remain separate.
+- Entering the Boss panel selects one exact species/form and saves that identity.
+  The panel uses its real front sprite and name rather than a fixed Mewtwo
+  placeholder. The same Boss remains selected across every attempt and reboot.
+- Damage is cumulative between attempts: defeat or surrender stores the Boss's
+  exact remaining HP, and the next battle resumes from that value out of 200,000.
+  Only reducing it to zero clears the encounter and allows a different Boss to
+  be selected after the cooldown.
+- A victory starts a persistent twelve-hour cooldown. Losing or abandoning an
+  attempt does not start it. The Home slot remains visible, shows the rounded-up
+  time left, and reports the hour/minute countdown when touched; a new Boss can
+  start only after the counter reaches zero.
+- Every victory also gives exactly one Boss prize: 90% for the same stored
+  Special Egg used by the Battle Tower's 0.5% reward and 10% for a
+  Master Ball. With every regional starter already caught, that Special Egg uses
+  the Generation I-III Legendary/Mythical pool. If the selected destination is
+  full, delivery falls back to the other prize without overwriting an Egg or
+  overflowing an inventory stack; if both destinations are full, the result screen warns
+  the player.
+- Each attempt selects either a Legendary/Mythical Pokemon from Generations I-III
+  or one of the authored Mega forms whose base species is in that National Dex.
+  Primal forms are not part of this catalog.
+- A Boss is Lv.100, has six perfect 31 IVs, a legal 508-point EV spread and a
+  matching physical or special Nature. Its normal Attack, Defense, Sp. Attack,
+  Sp. Defense and Speed formulas remain unchanged; maximum and current HP are
+  explicitly replaced with 200,000. Internally, the frozen 16-bit combatant
+  format processes safe HP layers while a 32-bit raid total remains authoritative.
+- Boss moves come from that species' inherited level-up pool and are limited to
+  legal one-on-one damaging moves. Recovery, draining, target-healing, OHKO,
+  percentage-HP and self-destruct moves are excluded. Boss trainers/items do not
+  supply healing either. Every selected Boss move has infinite PP: ordinary use,
+  Pressure, Spite and Grudge cannot exhaust or reduce its move pool, while every
+  non-Boss opponent keeps the normal finite-PP rules.
+- A Boss is never capturable, including by Master Ball. Capture is rejected before
+  a Ball is consumed.
+- OHKO moves, Perish Song and Destiny Bond cannot instantly faint a Boss. Their
+  battle journal reports `THE BOSS IS IMMUNE!` so the failure is explicit.
+- Super Fang, Endeavor and Pain Split cannot derive damage from the 200,000-HP
+  pool. Percentage-based residual damage is also suppressed, including poison,
+  Toxic, burn, Leech Seed, trapping, Curse, Nightmare, damaging weather,
+  Solar Power, Spikes and Rough Skin recoil. Ordinary formula damage and fixed
+  values such as Dragon Rage remain valid.
+- The Boss's battle status box replaces the normal HP meter with the exact
+  numeric value `current/200000`, including staged damage animation values.
+- The battle engine grants its normal shared XP/EV result, then commits the Boss
+  prize and persistent cooldown in the same victory save transaction.
 
 ## Regional source policy
 
@@ -300,6 +366,9 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
   Legendary and Mythical Pokemon are excluded; baby Pokemon receive extra weight.
 - Battle Tower Special Eggs are the sole exception to that normal pool: their
   starter/Legendary contents are selected by the completion reward rules above.
+- The Bag has a dedicated Egg pocket with 32 stored-Egg slots. Stored rewards
+  are never discarded because another Egg is incubating; `USE` moves the chosen
+  Egg into the incubator only when that active slot is empty.
 - A hatchling begins at the ace level of the strongest completed Gym, or Lv.5 before
   the first Badge, capped at Lv.89. It uses its normal FireRed ability and learnset,
   may be Shiny at 1/8192, goes to the Box, and marks the species as caught.
@@ -308,17 +377,41 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
 
 ## Home backgrounds
 
-The Home scenery is user-selectable from Settings. Thirty-nine native-map
-backgrounds are included: fourteen exact 304x134 crops decoded from FireRed maps
-and twenty-five from Emerald. The catalogue deliberately avoids near-duplicate
+The Home scenery is user-selectable from Settings. Forty-seven native-map
+backgrounds are included: seventeen exact 304x134 crops decoded from FireRed maps
+and thirty from Emerald. The catalogue deliberately avoids near-duplicate
 forest and generic-route views: Viridian Forest and Southern Island are the two
 forest-style scenes retained, while Pokemon Mansion, Power Plant, Pacifidlog
 Town, Shoal Ice Cave, Meteor Falls, Pokemon Tower, and the unique ash-covered
-Route 113 provide distinct environments. The Battle Frontier selection includes
-its plazas, only two facility lobbies, the Battle Dome arena, Battle Pyramid
-plaza, Battle Pike, Battle Arena, and Battle Palace garden. The selected background is persisted in the single game save
+Route 113 provide distinct environments. The selection also includes Pallet
+Town, Cerulean Cave, Navel Rock Summit, Abandoned Ship, the Battle Factory
+arena, Battle Pike's three-path room, the Battle Arena ring, and Artisan Cave.
+Battle Frontier scenery covers plazas, facility lobbies and battle interiors.
+The selected background is persisted in the single game save
 and restored after reboot; the backgrounds are never AI-generated, repainted,
 or resampled.
+
+## Kids Games: Poke Defense
+
+- Poke Defense is a self-contained, touch-first tower-defense campaign in the
+  Kids Games menu. It never changes Adventure HP, PP, status, money, items,
+  encounters, or Party order.
+- The current Party supplies up to three defenders. The player may arm or bench
+  each one before a run; their level, Attack, Special Attack, Speed, species
+  sprite, and primary type determine the defender's damage, cadence, range,
+  appearance, and projectile colour.
+- Six authored arenas use native FireRed/Emerald map crops already shipped by
+  the game: Viridian Forest, Mt. Moon, Cerulean City, Battle Tower Plaza,
+  Battle Pike, and Battle Factory. Each has five visible defender pads,
+  its own route, enemy group, health curve, and wave count.
+- A run has three base lives. The player positions armed Party members during
+  setup, starts the wave, and may retreat without touching the Adventure save.
+  Clears award up to three stars, a per-arena best score, a total score and
+  defeated counter, then unlock the next arena. Only campaign progress is
+  persistent; a wave in progress intentionally resets after restart.
+- The interface uses large 40 px+ hand-sized controls, real Pokemon front
+  sprites, native maps, compact GBA-style panels, dotted routes, and a capped
+  animation update rate so the ESP32 remains responsive.
 
 Each crop also carries three patrol routes generated from the original map's
 collision and metatile-behavior data. Water, currents, lava, walls, trees and
@@ -331,8 +424,13 @@ animation.
 
 - Home, Box, Pokedex, Bag, Mart and battle screens use the approved FireRed-style
   compositions adapted to the 320x240 landscape touchscreen.
-- The VS Seeker is reserved for player-initiated trainer encounters; battle commands
-  use the original text labels.
+- Before the Mega Stone boss, VS Seeker is reserved for player-initiated trainer
+  encounters. After victory, Battle Tower replaces that control permanently;
+  the newly freed Gym/special control becomes the repeatable Boss battle.
+  Its Home and invitation-header symbol is Emerald's original golden Regi
+  field sprite; the larger invitation illustration remains separate from the
+  random species selected only when the battle begins.
+  Battle commands continue using the original text labels.
 - Trainer and Gym Leader introductions use their original FireRed front sprites and
   encounter dialogue. Trainer identity, sprite, dialogue, and team template are one
   catalog entry and must not be randomized independently.

@@ -27,6 +27,12 @@ VIEWPORT = (304, 134)
 FIRMWARE_DATA = ROOT / "src/game/HomeBackgroundDataGenerated.inc"
 
 
+def flattened_data(image: Image.Image):
+    """Read indexed pixels across Pillow 10/11 without version branching."""
+    getter = getattr(image, "get_flattened_data", None)
+    return getter() if getter is not None else image.getdata()
+
+
 @dataclass(frozen=True)
 class Background:
     key: str
@@ -115,6 +121,24 @@ BACKGROUNDS = (
                "BattleFrontier_RankingHall", 272, 48),
     Background("em_frontier_tower_lobby", "BATTLE TOWER LOBBY", "emerald",
                "BattleFrontier_BattleTowerLobby", 48, 0),
+    # Approved scenery is always appended. Background ids are persisted in
+    # saves, so ids 0..38 must remain bound to their original maps.
+    Background("fr_pallet_town", "PALLET TOWN", "firered",
+               "PalletTown", 32, 96),
+    Background("fr_cerulean_cave", "CERULEAN CAVE", "firered",
+               "CeruleanCave_B1F", 128, 144),
+    Background("fr_navel_rock_summit", "NAVEL ROCK SUMMIT", "firered",
+               "NavelRock_Summit", 0, 192),
+    Background("em_abandoned_ship", "ABANDONED SHIP", "emerald",
+               "AbandonedShip_Deck", 32, 160),
+    Background("em_frontier_factory_arena", "BATTLE FACTORY ARENA", "emerald",
+               "BattleFrontier_BattleFactoryBattleRoom", -48, 32),
+    Background("em_frontier_pike_paths", "BATTLE PIKE PATHS", "emerald",
+               "BattleFrontier_BattlePyramidLobby", -32, 32),
+    Background("em_frontier_arena_ring", "BATTLE ARENA RING", "emerald",
+               "BattleFrontier_BattleArenaBattleRoom", -16, 16),
+    Background("em_artisan_cave", "ARTISAN CAVE", "emerald",
+               "ArtisanCave_B1F", 368, 384),
 )
 
 
@@ -187,7 +211,7 @@ def render_map_layers(root: Path, folder: str) -> MapLayers:
         rgba = Image.new("RGBA", (8, 8))
         colors = palettes[palette_number]
         rgba.putdata([(*colors[index], 0 if transparent_zero and index == 0 else 255)
-                      for index in tile.get_flattened_data()])
+                      for index in flattened_data(tile)])
         if reference & 0x0400:
             rgba = rgba.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         if reference & 0x0800:
@@ -264,8 +288,17 @@ def collision_grid(root: Path, background: Background) -> list[list[bool]]:
         return ((entry >> 10) & 0x03) == 0 and not water_or_current
 
     origin_x, origin_y = background.crop_x // 16, background.crop_y // 16
-    grid = [[is_land(blocks[(origin_y + y) * width + origin_x + x])
-             for x in range(19)] for y in range(8)]
+
+    def visible_cell_is_land(x: int, y: int) -> bool:
+        map_x, map_y = origin_x + x, origin_y + y
+        if not (0 <= map_x < width and 0 <= map_y < height):
+            return False
+        return is_land(blocks[map_y * width + map_x])
+
+    # Some authentic indoor rooms are narrower than the Home viewport. Their
+    # centered black margins are deliberately non-walkable instead of wrapping
+    # around Python's negative indexes into unrelated metatiles.
+    grid = [[visible_cell_is_land(x, y) for x in range(19)] for y in range(8)]
 
     # The Pyramid Top's orange sky is a decorative metatile backdrop with
     # collision 0 in Emerald because the player can never reach it.  In the
@@ -361,9 +394,18 @@ def build_background_layers() -> dict[str, MapLayers]:
         source = rendered_maps[cache_key]
         x, y = background.crop_x, background.crop_y
         box = (x, y, x + VIEWPORT[0], y + VIEWPORT[1])
-        base = source.base.crop(box)
+        def opaque_crop(image: Image.Image) -> Image.Image:
+            cropped = image.crop(box)
+            result = Image.new("RGBA", VIEWPORT, (0, 0, 0, 255))
+            result.alpha_composite(cropped)
+            return result
+
+        # Opaque black is the native void around rooms narrower than 304 px.
+        # The upper layer remains transparent so partners can still be drawn
+        # between the map's lower and upper metatile layers at runtime.
+        base = opaque_crop(source.base)
         foreground = source.foreground.crop(box)
-        composite = source.composite.crop(box)
+        composite = opaque_crop(source.composite)
         if background.key == "em_frontier_pyramid_top":
             # Pyramid steps are encoded as upper map layers for the player
             # climbing animation.  Home partners instead walk across the
@@ -440,12 +482,14 @@ def write_previews() -> None:
     _contact_sheet(list(BACKGROUNDS[:10]), images, PREVIEW_DIR / "fire-red-contact-sheet.png")
     _contact_sheet(list(BACKGROUNDS[10:20]), images, PREVIEW_DIR / "emerald-contact-sheet.png")
     _contact_sheet(list(BACKGROUNDS[20:30]), images, PREVIEW_DIR / "frontier-contact-sheet.png")
-    _contact_sheet(list(BACKGROUNDS[30:]), images, PREVIEW_DIR / "additional-contact-sheet.png")
+    _contact_sheet(list(BACKGROUNDS[30:39]), images, PREVIEW_DIR / "additional-contact-sheet.png")
+    _contact_sheet(list(BACKGROUNDS[39:]), images, PREVIEW_DIR / "approved-contact-sheet.png")
     pokemon_previews = _pokemon_previews(layers)
     _contact_sheet(list(BACKGROUNDS[:10]), pokemon_previews, PREVIEW_DIR / "fire-red-with-pokemon.png")
     _contact_sheet(list(BACKGROUNDS[10:20]), pokemon_previews, PREVIEW_DIR / "emerald-with-pokemon.png")
     _contact_sheet(list(BACKGROUNDS[20:30]), pokemon_previews, PREVIEW_DIR / "frontier-with-pokemon.png")
-    _contact_sheet(list(BACKGROUNDS[30:]), pokemon_previews, PREVIEW_DIR / "additional-with-pokemon.png")
+    _contact_sheet(list(BACKGROUNDS[30:39]), pokemon_previews, PREVIEW_DIR / "additional-with-pokemon.png")
+    _contact_sheet(list(BACKGROUNDS[39:]), pokemon_previews, PREVIEW_DIR / "approved-with-pokemon.png")
     metadata = [{"id": index, "key": item.key, "name": item.label, "game": item.game,
                  "layout": item.layout, "crop": [item.crop_x, item.crop_y]}
                 for index, item in enumerate(BACKGROUNDS)]

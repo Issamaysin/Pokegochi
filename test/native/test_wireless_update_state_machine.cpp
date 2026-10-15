@@ -1,12 +1,22 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
 #include "services/WirelessUpdate.h"
 
 using namespace PokegochiUpdateProtocol;
+
+static size_t diagnosticReport(void*, uint8_t section, uint16_t selector,
+                               char* output, size_t capacity) {
+  const int written = std::snprintf(output, capacity,
+                                    "SECTION=%u MOVE=%u\n",
+                                    static_cast<unsigned>(section),
+                                    static_cast<unsigned>(selector));
+  return written > 0 ? static_cast<size_t>(written) : 0U;
+}
 
 static void sendManifest(WirelessUpdate& update, const Manifest& manifest) {
   ManifestBeginCommand begin{static_cast<uint8_t>(Command::ManifestBegin), sizeof(Manifest)};
@@ -65,6 +75,12 @@ int main() {
   uint32_t synchronized=0;
   assert(update.takeSynchronizedTime(synchronized)&&synchronized==1735749000UL);
   assert(!update.takeSynchronizedTime(synchronized));
+  update.configureDiagnostics(diagnosticReport, nullptr);
+  DiagnosticReadCommand diagnostic{
+      static_cast<uint8_t>(Command::DiagnosticRead), 1U, 370U};
+  update.transportControl(reinterpret_cast<const uint8_t*>(&diagnostic),
+                          sizeof(diagnostic));
+  assert(update.state() == DeviceState::AwaitingManifest);
 
   Manifest manifest{};
   std::memcpy(manifest.magic, "PGU1", 4);
@@ -94,6 +110,41 @@ int main() {
   update.transportControl(&commit, 1);
   assert(update.state() == DeviceState::Rebooting);
   assert(update.busy());
+
+  // A receiving session must be cancellable from the physical UI, but the
+  // final commit/reboot phase must remain protected from an abort tap.
+  WirelessUpdate cancellable;
+  assert(cancellable.begin(22222, "TEST", 18, true));
+  cancellable.transportConnected();
+  AuthenticateCommand cancellableAuth{
+      static_cast<uint8_t>(Command::Authenticate), kVersion,
+      cancellable.pairingCode()};
+  cancellable.transportControl(reinterpret_cast<const uint8_t*>(&cancellableAuth),
+                               sizeof(cancellableAuth));
+  ObjectBeginCommand cancellableObject{
+      static_cast<uint8_t>(Command::ObjectBegin),
+      static_cast<uint8_t>(ObjectKind::Asset),
+      static_cast<uint8_t>(AssetId::Archive)};
+  Manifest cancellableManifest{};
+  std::memcpy(cancellableManifest.magic, "PGU1", 4);
+  cancellableManifest.protocolVersion = kVersion;
+  cancellableManifest.deviceModel = kDeviceModel;
+  cancellableManifest.structureSize = sizeof(Manifest);
+  cancellableManifest.packageSequence = 43;
+  cancellableManifest.firmwareSize = 8;
+  cancellableManifest.assetPackVersion = 19;
+  cancellableManifest.assetCount = kMaximumAssets;
+  for (uint8_t index = 0; index < kMaximumAssets; ++index) {
+    cancellableManifest.assets[index].id = index + 1U;
+    cancellableManifest.assets[index].size = 8U;
+  }
+  sendManifest(cancellable, cancellableManifest);
+  cancellable.transportControl(reinterpret_cast<const uint8_t*>(&cancellableObject),
+                               sizeof(cancellableObject));
+  assert(cancellable.busy());
+  cancellable.abort();
+  assert(!cancellable.busy());
+  assert(cancellable.bytesDone() == 0U && cancellable.bytesTotal() == 0U);
 
   WirelessUpdate unauthenticated;
   assert(unauthenticated.begin(54321, "TEST", 18, true));

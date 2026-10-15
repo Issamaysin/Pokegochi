@@ -25,6 +25,12 @@ ROM = ROOT / "rom" / "extracted" / "Pokemon - FireRed Version (USA, Europe).gba"
 NEAREST = Image.Resampling.NEAREST
 
 
+def flattened_data(image: Image.Image):
+    """Read indexed pixels across Pillow 10/11."""
+    getter = getattr(image, "get_flattened_data", None)
+    return getter() if getter is not None else image.getdata()
+
+
 def asset(name: str) -> Path:
     return ASSETS / name.replace("/", "__")
 
@@ -33,7 +39,7 @@ def transparent_palette_image(path: Path, transparent_index: int = 0) -> Image.I
     source = Image.open(path)
     rgba = source.convert("RGBA")
     alpha = Image.new("L", source.size, 255)
-    alpha.putdata([0 if value == transparent_index else 255 for value in source.get_flattened_data()])
+    alpha.putdata([0 if value == transparent_index else 255 for value in flattened_data(source)])
     rgba.putalpha(alpha)
     return rgba
 
@@ -187,7 +193,7 @@ def render_overworld_map(layout_name: str, secondary_name: str,
                            (local_number % 16 + 1) * 8, (local_number // 16 + 1) * 8))
         rgba = Image.new("RGBA", (8, 8))
         colors = palettes[palette_number]
-        rgba.putdata([(*colors[index], 0 if index == 0 else 255) for index in tile.get_flattened_data()])
+        rgba.putdata([(*colors[index], 0 if index == 0 else 255) for index in flattened_data(tile)])
         if reference & 0x0400:
             rgba = rgba.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         if reference & 0x0800:

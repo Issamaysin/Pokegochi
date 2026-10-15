@@ -13,6 +13,8 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -39,6 +41,7 @@ final class UpdatePackage implements AutoCloseable {
     final byte[] manifest;
     final long packageSequence;
     final int assetPackVersion;
+    final String gameVersion;
     final List<Payload> payloads;
     final long totalBytes;
     final String displayName;
@@ -46,15 +49,17 @@ final class UpdatePackage implements AutoCloseable {
     private final ZipFile zip;
 
     private UpdatePackage(File localFile, ZipFile zip, byte[] manifest, long sequence,
-                          int assetPackVersion, List<Payload> payloads, long totalBytes) {
+                          int assetPackVersion, String gameVersion, List<Payload> payloads,
+                          long totalBytes) {
         this.localFile = localFile;
         this.zip = zip;
         this.manifest = manifest;
         this.packageSequence = sequence;
         this.assetPackVersion = assetPackVersion;
+        this.gameVersion = gameVersion;
         this.payloads = payloads;
         this.totalBytes = totalBytes;
-        this.displayName = "Update " + sequence + " / assets " + assetPackVersion;
+        this.displayName = "FW " + gameVersion + " / assets " + assetPackVersion;
     }
 
     static UpdatePackage load(Context context, Uri source, Progress progress) throws Exception {
@@ -69,6 +74,7 @@ final class UpdatePackage implements AutoCloseable {
         ZipFile zip = new ZipFile(local);
         try {
             byte[] manifest = readExact(zip, "manifest.bin", MANIFEST_SIZE);
+            String gameVersion = readGameVersion(zip);
             ByteBuffer value = ByteBuffer.wrap(manifest).order(ByteOrder.LITTLE_ENDIAN);
             byte[] magic = new byte[4];
             value.get(magic);
@@ -114,7 +120,8 @@ final class UpdatePackage implements AutoCloseable {
                 verifyEntry(zip, payload);
                 progress.value(++verified, payloads.size());
             }
-            return new UpdatePackage(local, zip, manifest, sequence, packVersion, payloads, total);
+            return new UpdatePackage(local, zip, manifest, sequence, packVersion, gameVersion,
+                    payloads, total);
         } catch (Exception error) {
             zip.close();
             local.delete();
@@ -154,6 +161,25 @@ final class UpdatePackage implements AutoCloseable {
             }
         }
         return bytes;
+    }
+
+    private static String readGameVersion(ZipFile zip) throws IOException {
+        ZipEntry entry = zip.getEntry("package.json");
+        if (entry == null || entry.getSize() > 32 * 1024)
+            throw new IOException("Missing or invalid package metadata");
+        byte[] bytes = new byte[(int) entry.getSize()];
+        try (InputStream input = zip.getInputStream(entry)) {
+            int offset = 0;
+            while (offset < bytes.length) {
+                int count = input.read(bytes, offset, bytes.length - offset);
+                if (count < 0) throw new IOException("Truncated package metadata");
+                offset += count;
+            }
+        }
+        Matcher match = Pattern.compile("\\\"gameVersion\\\"\\s*:\\s*\\\"([^\\\"]{1,23})\\\"")
+                .matcher(new String(bytes, java.nio.charset.StandardCharsets.UTF_8));
+        if (!match.find()) throw new IOException("Package firmware version is missing");
+        return match.group(1);
     }
 
     private static void verifyEntry(ZipFile zip, Payload payload) throws Exception {

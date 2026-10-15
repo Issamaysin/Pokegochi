@@ -59,8 +59,9 @@ struct EncounterCharges {
 
 struct WildEncounterClock {
   // Persistent layout retained from the former Wild-charge system. Wild
-  // encounters are now unlimited; this record stores Pokemon Center energy.
-  // One Pokemon Center charge is restored every hour, up to five.
+  // encounters are now unlimited; this record stores Pokemon Center energy
+  // and the persistent per-player Wild RNG stream. One Pokemon Center charge
+  // is restored every hour, up to five.
   static constexpr uint32_t kMinimumSeconds = 60U * 60U;
   static constexpr uint32_t kWindowSeconds = 0U;
   static constexpr uint8_t kMaximum = 5;
@@ -77,7 +78,9 @@ enum class BattleOutcome : uint8_t { None, Ongoing, Victory, Defeat, Escaped, Ca
 enum class BattleKind : uint8_t {
   None, Wild, Trainer, Gym, League, Pvp, Tower,
   // Appended so every existing serialized BattleKind keeps its numeric value.
-  MegaChallenge
+  MegaChallenge,
+  // Repeatable post-game encounter. Keep appended for save compatibility.
+  Boss
 };
 enum class BattleWeather : uint8_t { Clear, Rain, Sun, Sandstorm, Hail, HeavyRain, HarshSun, StrongWinds };
 // The first ten values intentionally match FireRed's gBattleTerrain indices.
@@ -369,7 +372,10 @@ enum class BattleMoveEffect : uint8_t {
   // field-wide continuation message/animation, followed by an individual
   // message and HP change for every susceptible battler.  Keep both events
   // explicit so residual damage cannot silently jump the HUD.
-  WeatherContinues, WeatherHurt
+  WeatherContinues, WeatherHurt,
+  // The endgame Boss rejects OHKO and HP-proportional effects in the engine.
+  // Appended so existing serialized action journals keep their values.
+  BossImmune
 };
 
 enum class BattleSide : uint8_t { Player, Opponent };
@@ -475,6 +481,11 @@ class EncounterLogic {
   static void advanceWild(WildEncounterClock& clock, uint32_t elapsedSeconds);
   static bool consumeWildCharge(WildEncounterClock& clock);
   static uint32_t secondsUntilNextWild(const WildEncounterClock& clock);
+  // Advances the persistent Wild random stream and binds the returned battle
+  // seed to the board's stable multiplayer/player identity.
+  static uint32_t nextWildBattleSeed(WildEncounterClock& clock,
+                                     uint32_t playerId,
+                                     uint32_t transientEntropy);
   // Names used by current gameplay; the Wild-named methods remain as binary
   // and migration-compatible aliases for older tests/saves.
   static void advanceCenter(WildEncounterClock& charges, uint32_t elapsedSeconds) { advanceWild(charges, elapsedSeconds); }
@@ -583,7 +594,8 @@ class BattleEngine {
                                   const CombatVolatile& attackerVolatile,
                                   const CombatVolatile& defenderVolatile,
                                   uint16_t* effectivenessOut=nullptr,bool* criticalOut=nullptr,
-                                  bool allowCritical=true,uint16_t powerOverride=0);
+                                  bool allowCritical=true,uint16_t powerOverride=0,
+                                  uint8_t powerMultiplierPercent=100);
   static uint8_t chooseDamageHitCount(BattleState& battle,
                                   const OwnedPokemon& attacker, MoveId move);
   static uint16_t calculateDelayedBaseDamage(const BattleState& battle,
@@ -597,7 +609,8 @@ class BattleEngine {
   static void advanceEndTurnEffects(BattleState& battle, PokemonCollection& collection,
                                     BattleActionResult& result);
   static void enemyTurn(BattleState& battle, PokemonCollection& collection,
-                        OwnedPokemon& player, BattleActionResult& result, uint8_t moveSlot = 0xFF);
+                        OwnedPokemon& player, BattleActionResult& result, uint8_t moveSlot = 0xFF,
+                        MoveId playerPlannedMove = MoveId::None);
   static uint8_t chooseEnemyMove(BattleState& battle, const OwnedPokemon& player);
   static void awardExperience(BattleState& battle, PokemonCollection& collection, BattleActionResult& result);
 };

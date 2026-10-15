@@ -145,6 +145,10 @@ bool BattleTowerSystem::available(const GymProgress& progress) {
          MegaChallengeSystem::completed(progress);
 }
 
+bool BattleTowerSystem::replacesVsSeeker(const GymProgress& progress) {
+  return available(progress);
+}
+
 bool BattleTowerSystem::awardCompletionReward(Inventory& inventory) {
   uint16_t& rareCandies=inventory.heldItems[kRareCandyInventorySlot];
   if(rareCandies>=kInventoryStackLimit)return false;
@@ -152,7 +156,8 @@ bool BattleTowerSystem::awardCompletionReward(Inventory& inventory) {
 }
 
 BattleTowerRewardResult BattleTowerSystem::awardCompletionReward(
-    Inventory& inventory,EggState& egg,const PokedexState& pokedex,uint32_t seed) {
+    Inventory& inventory,EggInventory& eggs,const PokedexState& pokedex,
+    uint32_t seed) {
   BattleTowerRewardResult reward;
   // Hash the battle RNG once before applying the exact 1/200 threshold. The
   // player cannot reroll the result by reopening a screen because completion
@@ -172,11 +177,9 @@ BattleTowerRewardResult BattleTowerSystem::awardCompletionReward(
       ++masterBalls;reward.kind=BattleTowerRewardKind::MasterBall;return reward;
     }
   }
-  if(!egg.active&&!egg.offerPending&&
-     rewardBucket==1U&&
-     EggSystem::grantBattleTowerSpecial(egg,pokedex,roll^0x45474721UL)){
+  if(rewardBucket==1U&&EggSystem::storeBattleTowerSpecial(
+        eggs,pokedex,roll^0x45474721UL,&reward.eggSpeciesId)){
     reward.kind=BattleTowerRewardKind::SpecialEgg;
-    reward.eggSpeciesId=egg.speciesId;
     return reward;
   }
   if(awardCompletionReward(inventory))reward.kind=BattleTowerRewardKind::RareCandy;

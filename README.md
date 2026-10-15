@@ -69,6 +69,8 @@ gameplay, interface, updater, and reliability changes in this release.
 - The Day Care offers regional Eggs after the third Badge. Incubation uses real
   elapsed time, is accelerated by Flame Body or Magma Armor, and hatch level is
   based on the strongest completed Gym, capped at Lv.89.
+- Reward Eggs wait in a dedicated 32-slot Bag pocket and can be placed in the
+  incubator when its single active slot is empty.
 - The Bag supports battle and field use, Party or Box targets, held items,
   TMs/HMs, Trainer Card, Badge Case, and Bluetooth multiplayer.
 - The Mart has twenty stocked offers across four pages, guaranteed essentials,
@@ -77,7 +79,7 @@ gameplay, interface, updater, and reliability changes in this release.
 
 ### Interface and connectivity
 
-- Home uses 39 collision-aware FireRed/Emerald map backgrounds. Party Pokemon
+- Home uses 47 collision-aware FireRed/Emerald map backgrounds. Party Pokemon
   patrol valid terrain and may play type-based ambient effects.
 - Sapphire, Ruby, and Emerald color themes apply throughout the interface.
 - Brightness, automatic screen timeout, battle-text advance, background,
@@ -163,6 +165,7 @@ powershell -ExecutionPolicy Bypass -File .\POKEGOCHI_V2\verificar_release.ps1
 - [Current gameplay specification](docs/GAME_DESIGN.md)
 - [Hardware and power system](docs/POWER_SYSTEM.md)
 - [Bluetooth wireless update](docs/WIRELESS_UPDATE.md)
+- [PokegochiApp Android implementation](android/PokegochiApp/README.md)
 - [Implementation status](docs/IMPLEMENTATION_PLAN.md)
 - [Battle animation audit](docs/BATTLE_ANIMATION_AUDIT.md)
 - [Move-effect compatibility](docs/EFFECT_COMPATIBILITY.md)

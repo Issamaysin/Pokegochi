@@ -154,3 +154,50 @@ HeldItem reconcile(const PokemonCollection& collection,SpecialHeldItemInventory&
   return first;
 }
 }
+
+namespace Gen4SpeciesItems {
+namespace {
+bool collectionHasSpecies(const PokemonCollection& collection, uint16_t speciesId) {
+  for (const OwnedPokemon& pokemon : collection.box)
+    if (pokemon.uid != kEmptyPokemonUid && pokemon.speciesId == speciesId) return true;
+  return false;
+}
+}
+
+HeldItem reconcile(const PokemonCollection& collection,
+                   Gen4UniqueItemInventory& inventory,
+                   uint8_t* grantedCount) {
+  const HeldItem kArceusPlates[] = {
+    HeldItem::FistPlate, HeldItem::SkyPlate, HeldItem::ToxicPlate,
+    HeldItem::StonePlate, HeldItem::InsectPlate, HeldItem::SpookyPlate,
+    HeldItem::DracoPlate, HeldItem::IronPlate, HeldItem::FlamePlate,
+    HeldItem::SplashPlate, HeldItem::MeadowPlate, HeldItem::ZapPlate,
+    HeldItem::MindPlate, HeldItem::IciclePlate, HeldItem::EarthPlate,
+    HeldItem::PixiePlate, HeldItem::DreadPlate,
+  };
+  struct Reward { uint16_t speciesId; HeldItem item; };
+  static constexpr Reward kRewards[] = {
+    {483U, HeldItem::AdamantOrb}, {484U, HeldItem::LustrousOrb},
+    {487U, HeldItem::GriseousOrb},
+  };
+  HeldItem first = HeldItem::None;
+  uint8_t granted = 0;
+  const auto grant = [&](HeldItem item, uint8_t& count, HeldItem& firstItem) {
+    const int8_t index = gen4UniqueItemIndex(item);
+    if (index < 0) return;
+    const uint32_t bit = uint32_t{1} << static_cast<uint8_t>(index);
+    if (inventory.claimedMask & bit) return;
+    inventory.claimedMask |= bit;
+    inventory.quantities[static_cast<uint8_t>(index)] = 1;
+    ++count;
+    if (firstItem == HeldItem::None) firstItem = item;
+  };
+  if (collectionHasSpecies(collection, 493U))
+    for (HeldItem plate : kArceusPlates) grant(plate, granted, first);
+  for (const Reward& reward : kRewards)
+    if (collectionHasSpecies(collection, reward.speciesId))
+      grant(reward.item, granted, first);
+  if (grantedCount) *grantedCount = granted;
+  return first;
+}
+}

@@ -23,6 +23,7 @@ import android.os.Looper;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.LinkedHashMap;
@@ -32,15 +33,25 @@ final class BleUpdateClient implements AutoCloseable {
     interface Listener {
         void onDevice(BluetoothDevice device, long playerId, int rssi);
         void onConnection(boolean connected, String message);
+        void onAuthenticated(long playerId, boolean supportsTimeSync, boolean supportsSaveManagement);
         void onTransfer(long done, long total, String message);
         void onClockSynchronized();
-        void onComplete();
+        void onSaveExported(byte[] backup);
+        void onSaveImported();
+        void onSaveReset();
+        // COMMIT means the console accepted the candidate. Its reboot and
+        // rollback self-test happen afterwards, so this is deliberately not
+        // reported as an installed/validated firmware yet.
+        void onComplete(String expectedFirmwareVersion);
+        void onOperationCancelled();
         void onError(String message);
     }
 
     private enum Step {
         IDLE, AUTH, TIME_SYNC, MANIFEST_BEGIN, MANIFEST_CHUNK, MANIFEST_FINISH,
-        OBJECT_BEGIN, DATA, OBJECT_FINISH, COMMIT, COMPLETE
+        OBJECT_BEGIN, DATA, OBJECT_FINISH, COMMIT, SAVE_EXPORT_BEGIN,
+        SAVE_EXPORT_CHUNK, SAVE_EXPORT_FINISH, SAVE_IMPORT_BEGIN,
+        SAVE_IMPORT_DATA, SAVE_IMPORT_FINISH, SAVE_RESET, COMPLETE
     }
 
     private final Context context;
@@ -58,6 +69,10 @@ final class BleUpdateClient implements AutoCloseable {
     private int mtu = 23;
     private int maximumDataBytes = UpdateProtocol.LEGACY_MAXIMUM_DATA_BYTES;
     private boolean supportsTimeSync;
+    private boolean supportsSaveManagement;
+    private boolean authenticated;
+    private long connectedPlayerId;
+    private int notificationStage;
     private volatile Step step = Step.IDLE;
     private volatile int expectedStatus = 0;
     private final Runnable operationTimeout = () -> {
@@ -66,11 +81,20 @@ final class BleUpdateClient implements AutoCloseable {
     };
     private UpdatePackage updatePackage;
     private boolean clockOnly;
+    private SaveBackup saveImport;
+    private ByteArrayOutputStream saveExport;
+    private long saveTransferOffset;
+    private long saveTransferTotal;
     private int manifestOffset;
     private int payloadIndex;
     private long payloadOffset;
     private InputStream payloadStream;
     private volatile boolean closed;
+    // A user cancellation closes the GATT link deliberately. Android may
+    // deliver its delayed disconnect callback afterwards; suppress that
+    // callback so a cancelled transfer cannot reopen the connect screen or
+    // show a misleading "resume" error.
+    private volatile boolean suppressDisconnectNotification;
     // Android may deliver the ESP32 notification before it delivers the
     // onCharacteristicWrite callback for the packet that triggered it.  The
     // protocol legitimately wants to send the next acknowledged block at
@@ -130,40 +154,95 @@ final class BleUpdateClient implements AutoCloseable {
                 device.getAddress(), UpdateProtocol.LEGACY_MAXIMUM_DATA_BYTES);
         supportsTimeSync = (advertisedCapabilities.getOrDefault(device.getAddress(), 0) &
                 UpdateProtocol.CAPABILITY_TIME_SYNC) != 0;
+        supportsSaveManagement = (advertisedCapabilities.getOrDefault(device.getAddress(), 0) &
+                UpdateProtocol.CAPABILITY_SAVE_MANAGEMENT) != 0;
+        connectedPlayerId = playerIds.getOrDefault(device.getAddress(), 0L);
+        authenticated = false;
         listener.onConnection(false, "Connecting...");
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
     }
 
-    void start(UpdatePackage updatePackage, int pairingCode) {
-        if (control == null || data == null || status == null || gatt == null) {
+    void authenticate(int pairingCode) {
+        if (control == null || status == null || gatt == null) {
             listener.onError("Connect to the Pokegochi first"); return;
         }
         if (pairingCode < 100000 || pairingCode > 999999) {
             listener.onError("Enter the six-digit code shown on the Pokegochi"); return;
         }
+        updatePackage = null;
+        clockOnly = false;
+        step = Step.AUTH;
+        sendControl(UpdateProtocol.authenticate(pairingCode), UpdateProtocol.STATUS_AUTHENTICATED);
+    }
+
+    void start(UpdatePackage updatePackage) {
+        if (control == null || data == null || status == null || gatt == null) {
+            listener.onError("Connect to the Pokegochi first"); return;
+        }
+        if (!authenticated) { listener.onError("Authenticate with the console first"); return; }
         this.updatePackage = updatePackage;
         clockOnly = false;
         manifestOffset = payloadIndex = 0;
         payloadOffset = 0;
         closePayloadStream();
-        step = Step.AUTH;
-        sendControl(UpdateProtocol.authenticate(pairingCode), UpdateProtocol.STATUS_AUTHENTICATED);
+        if (supportsTimeSync) {
+            step = Step.TIME_SYNC;
+            sendControl(UpdateProtocol.synchronizeTime(), UpdateProtocol.STATUS_TIME_SYNCHRONIZED);
+        } else beginManifestTransfer();
     }
 
-    void synchronizeClock(int pairingCode) {
+    void synchronizeClock() {
         if (control == null || status == null || gatt == null) {
             listener.onError("Connect to the Pokegochi first"); return;
         }
         if (!supportsTimeSync) {
             listener.onError("Install firmware v24 before synchronizing the clock"); return;
         }
-        if (pairingCode < 100000 || pairingCode > 999999) {
-            listener.onError("Enter the six-digit code shown on the Pokegochi"); return;
-        }
+        if (!authenticated) { listener.onError("Authenticate with the console first"); return; }
         updatePackage = null;
         clockOnly = true;
-        step = Step.AUTH;
-        sendControl(UpdateProtocol.authenticate(pairingCode), UpdateProtocol.STATUS_AUTHENTICATED);
+        step = Step.TIME_SYNC;
+        sendControl(UpdateProtocol.synchronizeTime(), UpdateProtocol.STATUS_TIME_SYNCHRONIZED);
+    }
+
+    void exportSave() {
+        if (!readyForSaveOperation()) return;
+        saveImport = null;
+        saveExport = null;
+        saveTransferOffset = saveTransferTotal = 0;
+        step = Step.SAVE_EXPORT_BEGIN;
+        sendControl(UpdateProtocol.command(UpdateProtocol.SAVE_EXPORT_BEGIN),
+                UpdateProtocol.STATUS_SAVE_EXPORT_READY);
+    }
+
+    void importSave(SaveBackup backup) {
+        if (!readyForSaveOperation()) return;
+        if (backup == null) { listener.onError("Select a valid .pgsav file first"); return; }
+        saveImport = backup;
+        saveExport = null;
+        saveTransferOffset = 0;
+        saveTransferTotal = backup.bytes.length;
+        step = Step.SAVE_IMPORT_BEGIN;
+        sendControl(UpdateProtocol.saveImportBegin(backup.bytes.length, (int) backup.fileCrc32,
+                        backup.saveFormatVersion),
+                UpdateProtocol.STATUS_SAVE_IMPORT_READY);
+    }
+
+    void resetSave() {
+        if (!readyForSaveOperation()) return;
+        step = Step.SAVE_RESET;
+        sendControl(UpdateProtocol.command(UpdateProtocol.SAVE_RESET),
+                UpdateProtocol.STATUS_SAVE_RESET);
+    }
+
+    private boolean readyForSaveOperation() {
+        if (!authenticated || control == null || data == null || gatt == null) {
+            listener.onError("Authenticate with the console first"); return false;
+        }
+        if (!supportsSaveManagement) {
+            listener.onError("Install a firmware with save management support first"); return false;
+        }
+        return true;
     }
 
     @SuppressLint("MissingPermission")
@@ -175,6 +254,57 @@ final class BleUpdateClient implements AutoCloseable {
             write(control, UpdateProtocol.command(UpdateProtocol.ABORT));
         }
         closePayloadStream();
+        authenticated = false;
+    }
+
+    @SuppressLint("MissingPermission")
+    void disconnect() {
+        main.removeCallbacks(operationTimeout);
+        step = Step.IDLE;
+        expectedStatus = 0;
+        authenticated = false;
+        saveImport = null;
+        saveExport = null;
+        closePayloadStream();
+        if (gatt != null && hasPermissions()) gatt.disconnect();
+    }
+
+    @SuppressLint("MissingPermission")
+    void cancelOperation() {
+        if (step == Step.IDLE || step == Step.COMPLETE) {
+            listener.onOperationCancelled();
+            return;
+        }
+
+        main.removeCallbacks(operationTimeout);
+        // Best effort: if the current GATT write is healthy, ask the console
+        // to remove its staged receiving session before closing the link. If
+        // Android is already wedged at the write layer, closing GATT is still
+        // safe: the firmware treats a disconnect as an interrupted/resumable
+        // transfer and never installs a partial image.
+        if (control != null && gatt != null && authenticated)
+            write(control, UpdateProtocol.command(UpdateProtocol.ABORT));
+
+        step = Step.IDLE;
+        expectedStatus = 0;
+        authenticated = false;
+        saveImport = null;
+        saveExport = null;
+        closePayloadStream();
+        synchronized (writeLock) {
+            characteristicWriteInFlight = false;
+            pendingWrite = null;
+        }
+
+        suppressDisconnectNotification = true;
+        BluetoothGatt current = gatt;
+        gatt = null;
+        control = data = status = null;
+        if (current != null) {
+            if (hasPermissions()) current.disconnect();
+            current.close();
+        }
+        listener.onOperationCancelled();
     }
 
     private final ScanCallback scanCallback = new ScanCallback() {
@@ -197,8 +327,11 @@ final class BleUpdateClient implements AutoCloseable {
         @SuppressLint("MissingPermission")
         @Override public void onConnectionStateChange(BluetoothGatt bluetoothGatt, int statusCode, int newState) {
             if (statusCode != BluetoothGatt.GATT_SUCCESS || newState == BluetoothProfile.STATE_DISCONNECTED) {
+                boolean suppressNotification = suppressDisconnectNotification;
+                suppressDisconnectNotification = false;
                 boolean transferInterrupted = step != Step.IDLE && step != Step.COMPLETE;
                 step = Step.IDLE;
+                authenticated = false;
                 expectedStatus = 0;
                 synchronized (writeLock) {
                     characteristicWriteInFlight = false;
@@ -207,6 +340,7 @@ final class BleUpdateClient implements AutoCloseable {
                 main.removeCallbacks(operationTimeout);
                 control = data = status = null;
                 closePayloadStream();
+                if (suppressNotification) return;
                 listener.onConnection(false, statusCode == BluetoothGatt.GATT_SUCCESS ? "Disconnected" :
                         "Connection failed (" + statusCode + ")");
                 if (transferInterrupted)
@@ -249,6 +383,7 @@ final class BleUpdateClient implements AutoCloseable {
                 cccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
                 bluetoothGatt.writeDescriptor(cccd);
             }
+            notificationStage = 1;
         }
 
         @Override public void onDescriptorWrite(BluetoothGatt bluetoothGatt,
@@ -256,7 +391,24 @@ final class BleUpdateClient implements AutoCloseable {
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 listener.onError("Could not enable update acknowledgements"); return;
             }
+            if (notificationStage == 1 && supportsSaveManagement) {
+                BluetoothGattDescriptor dataCccd = data == null ? null :
+                        data.getDescriptor(UpdateProtocol.CCCD);
+                if (dataCccd == null || !bluetoothGatt.setCharacteristicNotification(data, true)) {
+                    listener.onError("The save-transfer channel is incomplete"); return;
+                }
+                notificationStage = 2;
+                if (Build.VERSION.SDK_INT >= 33)
+                    bluetoothGatt.writeDescriptor(dataCccd,
+                            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                else {
+                    dataCccd.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                    bluetoothGatt.writeDescriptor(dataCccd);
+                }
+                return;
+            }
             step = Step.IDLE;
+            notificationStage = 0;
             listener.onConnection(true, "Connected. Enter the code shown on the device.");
             sendUntrackedControl(UpdateProtocol.command(UpdateProtocol.QUERY_STATUS));
         }
@@ -286,14 +438,20 @@ final class BleUpdateClient implements AutoCloseable {
 
         @Override public void onCharacteristicChanged(BluetoothGatt bluetoothGatt,
                                                        BluetoothGattCharacteristic characteristic) {
-            handleStatus(characteristic.getValue());
+            handleIncoming(characteristic, characteristic.getValue());
         }
 
         @Override public void onCharacteristicChanged(BluetoothGatt bluetoothGatt,
                 BluetoothGattCharacteristic characteristic, byte[] value) {
-            handleStatus(value);
+            handleIncoming(characteristic, value);
         }
     };
+
+    private void handleIncoming(BluetoothGattCharacteristic characteristic, byte[] value) {
+        if (characteristic != null && UpdateProtocol.DATA.equals(characteristic.getUuid()))
+            handleSaveExportData(value);
+        else handleStatus(value);
+    }
 
     @SuppressLint("MissingPermission")
     private void handleStatus(byte[] bytes) {
@@ -301,7 +459,7 @@ final class BleUpdateClient implements AutoCloseable {
         UpdateProtocol.Status reply = UpdateProtocol.parseStatus(bytes);
         if (reply == null || reply.version != UpdateProtocol.VERSION) return;
         if (reply.code == UpdateProtocol.STATUS_ERROR) {
-            fail("Device rejected the update (error " + reply.error + ")"); return;
+            fail("Pokegochi rejected the operation (error " + reply.error + ")"); return;
         }
         long done = reply.packageDone;
         long total = reply.packageTotal > 0 ? reply.packageTotal :
@@ -313,11 +471,10 @@ final class BleUpdateClient implements AutoCloseable {
         try {
             switch (step) {
                 case AUTH:
-                    if (supportsTimeSync) {
-                        step = Step.TIME_SYNC;
-                        sendControl(UpdateProtocol.synchronizeTime(),
-                                UpdateProtocol.STATUS_TIME_SYNCHRONIZED);
-                    } else beginManifestTransfer();
+                    authenticated = true;
+                    step = Step.IDLE;
+                    listener.onAuthenticated(connectedPlayerId, supportsTimeSync,
+                            supportsSaveManagement);
                     break;
                 case TIME_SYNC:
                     if (clockOnly) {
@@ -325,6 +482,45 @@ final class BleUpdateClient implements AutoCloseable {
                         step = Step.COMPLETE;
                         listener.onClockSynchronized();
                     } else beginManifestTransfer();
+                    break;
+                case SAVE_EXPORT_BEGIN:
+                    if (reply.objectSize < UpdateProtocol.SAVE_HEADER_BYTES ||
+                            reply.objectSize > UpdateProtocol.MAXIMUM_SAVE_BACKUP_BYTES)
+                        throw new IOException("Console reported an invalid save size");
+                    saveTransferTotal = reply.objectSize;
+                    saveTransferOffset = 0;
+                    saveExport = new ByteArrayOutputStream((int) saveTransferTotal);
+                    requestNextSaveExportChunk();
+                    break;
+                case SAVE_EXPORT_FINISH:
+                    SaveBackup exported = SaveBackup.parse(saveExport.toByteArray());
+                    saveExport = null;
+                    step = Step.IDLE;
+                    listener.onTransfer(saveTransferTotal, saveTransferTotal,
+                            "Save backup verified.");
+                    listener.onSaveExported(exported.bytes);
+                    break;
+                case SAVE_IMPORT_BEGIN:
+                    if (saveImport == null || reply.objectSize != saveImport.bytes.length ||
+                            reply.nextOffset != 0)
+                        throw new IOException("Console rejected the save size");
+                    sendNextSaveImportChunk();
+                    break;
+                case SAVE_IMPORT_DATA:
+                    if (reply.nextOffset != saveTransferOffset)
+                        throw new IOException("Save transfer offsets no longer match");
+                    sendNextSaveImportChunk();
+                    break;
+                case SAVE_IMPORT_FINISH:
+                    saveImport = null;
+                    step = Step.COMPLETE;
+                    listener.onTransfer(saveTransferTotal, saveTransferTotal,
+                            "Save restored. Pokegochi is restarting...");
+                    listener.onSaveImported();
+                    break;
+                case SAVE_RESET:
+                    step = Step.COMPLETE;
+                    listener.onSaveReset();
                     break;
                 case MANIFEST_BEGIN:
                 case MANIFEST_CHUNK:
@@ -366,8 +562,11 @@ final class BleUpdateClient implements AutoCloseable {
                     step = Step.COMPLETE;
                     if (gatt != null && hasPermissions())
                         gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED);
-                    listener.onTransfer(total, total, "Installed. Pokegochi is restarting...");
-                    listener.onComplete();
+                    // COMMIT only means that the device selected a verified
+                    // candidate. The first boot can still reject it and roll
+                    // back, so never report an installed version here.
+                    listener.onTransfer(total, total, "Candidate accepted. Pokegochi is restarting...");
+                    listener.onComplete(updatePackage == null ? "UNKNOWN" : updatePackage.gameVersion);
                     break;
                 default:
                     break;
@@ -428,7 +627,62 @@ final class BleUpdateClient implements AutoCloseable {
         sendData(packet, UpdateProtocol.STATUS_DATA_ACCEPTED);
     }
 
+    private void requestNextSaveExportChunk() {
+        if (saveTransferOffset >= saveTransferTotal) {
+            step = Step.SAVE_EXPORT_FINISH;
+            sendControl(UpdateProtocol.command(UpdateProtocol.SAVE_EXPORT_FINISH),
+                    UpdateProtocol.STATUS_SAVE_EXPORT_COMPLETE);
+            return;
+        }
+        int maximum = Math.max(1, Math.min(maximumDataBytes, mtu - 7));
+        step = Step.SAVE_EXPORT_CHUNK;
+        expectedStatus = -1; // This request is answered on the DATA characteristic.
+        if (!write(control, UpdateProtocol.saveExportChunk((int) saveTransferOffset, maximum)))
+            fail("Could not request the next save block");
+        else armOperationTimeout();
+    }
+
+    private void handleSaveExportData(byte[] bytes) {
+        if (closed || step != Step.SAVE_EXPORT_CHUNK || bytes == null || bytes.length <= 4 ||
+                saveExport == null) return;
+        ByteBuffer packet = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        long offset = Integer.toUnsignedLong(packet.getInt());
+        int count = bytes.length - 4;
+        if (offset != saveTransferOffset || saveTransferOffset + count > saveTransferTotal) {
+            fail("Save backup arrived out of order"); return;
+        }
+        saveExport.write(bytes, 4, count);
+        saveTransferOffset += count;
+        main.removeCallbacks(operationTimeout);
+        expectedStatus = 0;
+        listener.onTransfer(saveTransferOffset, saveTransferTotal,
+                "Loading save from Pokegochi...");
+        requestNextSaveExportChunk();
+    }
+
+    private void sendNextSaveImportChunk() {
+        if (saveImport == null) { fail("Save file is no longer available"); return; }
+        if (saveTransferOffset >= saveTransferTotal) {
+            step = Step.SAVE_IMPORT_FINISH;
+            sendControl(UpdateProtocol.command(UpdateProtocol.SAVE_IMPORT_FINISH),
+                    UpdateProtocol.STATUS_SAVE_IMPORTED);
+            return;
+        }
+        int maximum = Math.max(1, Math.min(maximumDataBytes, mtu - 7));
+        int count = (int) Math.min(maximum, saveTransferTotal - saveTransferOffset);
+        byte[] chunk = new byte[count];
+        System.arraycopy(saveImport.bytes, (int) saveTransferOffset, chunk, 0, count);
+        byte[] packet = UpdateProtocol.data((int) saveTransferOffset, chunk, count);
+        saveTransferOffset += count;
+        step = Step.SAVE_IMPORT_DATA;
+        sendData(packet, UpdateProtocol.STATUS_DATA_ACCEPTED);
+    }
+
     private String transferLabel() {
+        if (step == Step.SAVE_EXPORT_BEGIN || step == Step.SAVE_EXPORT_CHUNK ||
+                step == Step.SAVE_EXPORT_FINISH) return "Loading save from Pokegochi...";
+        if (step == Step.SAVE_IMPORT_BEGIN || step == Step.SAVE_IMPORT_DATA ||
+                step == Step.SAVE_IMPORT_FINISH) return "Saving file to Pokegochi...";
         if (updatePackage == null || payloadIndex >= updatePackage.payloads.size()) return "Preparing...";
         UpdatePackage.Payload payload = updatePackage.payloads.get(payloadIndex);
         return payload.kind == UpdateProtocol.OBJECT_FIRMWARE ? "Updating firmware..." : "Updating microSD...";
@@ -500,6 +754,8 @@ final class BleUpdateClient implements AutoCloseable {
         expectedStatus = 0;
         synchronized (writeLock) { pendingWrite = null; }
         closePayloadStream();
+        saveImport = null;
+        saveExport = null;
         listener.onError(message == null ? "Update failed" : message);
     }
 

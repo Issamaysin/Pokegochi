@@ -11,6 +11,10 @@ final class UpdateProtocol {
     static final int LEGACY_MAXIMUM_DATA_BYTES = 184;
     static final int MAXIMUM_DATA_BYTES = 508;
     static final int CAPABILITY_TIME_SYNC = 1;
+    static final int CAPABILITY_SAVE_MANAGEMENT = 2;
+    static final int SAVE_BACKUP_VERSION = 1;
+    static final int SAVE_HEADER_BYTES = 24;
+    static final int MAXIMUM_SAVE_BACKUP_BYTES = 64 * 1024;
     static final UUID SERVICE = UUID.fromString("70564743-4849-5550-8000-504f4b45474f");
     static final UUID CONTROL = UUID.fromString("70564743-4849-5550-8001-504f4b45474f");
     static final UUID DATA = UUID.fromString("70564743-4849-5550-8002-504f4b45474f");
@@ -27,6 +31,12 @@ final class UpdateProtocol {
     static final int ABORT = 8;
     static final int QUERY_STATUS = 9;
     static final int SYNCHRONIZE_TIME = 10;
+    static final int SAVE_EXPORT_BEGIN = 11;
+    static final int SAVE_EXPORT_CHUNK = 12;
+    static final int SAVE_EXPORT_FINISH = 13;
+    static final int SAVE_IMPORT_BEGIN = 14;
+    static final int SAVE_IMPORT_FINISH = 15;
+    static final int SAVE_RESET = 16;
 
     static final int STATUS_HELLO = 1;
     static final int STATUS_AUTHENTICATED = 2;
@@ -39,6 +49,11 @@ final class UpdateProtocol {
     static final int STATUS_ABORTED = 9;
     static final int STATUS_ERROR = 10;
     static final int STATUS_TIME_SYNCHRONIZED = 11;
+    static final int STATUS_SAVE_EXPORT_READY = 12;
+    static final int STATUS_SAVE_EXPORT_COMPLETE = 13;
+    static final int STATUS_SAVE_IMPORT_READY = 14;
+    static final int STATUS_SAVE_IMPORTED = 15;
+    static final int STATUS_SAVE_RESET = 16;
 
     static final int OBJECT_FIRMWARE = 0;
     static final int OBJECT_ASSET = 1;
@@ -54,6 +69,16 @@ final class UpdateProtocol {
         long localSeconds = nowMillis / 1000L +
                 TimeZone.getDefault().getOffset(nowMillis) / 1000L;
         return little(5).put((byte) SYNCHRONIZE_TIME).putInt((int) localSeconds).array();
+    }
+
+    static byte[] saveExportChunk(int offset, int maximumBytes) {
+        return little(7).put((byte) SAVE_EXPORT_CHUNK).putInt(offset)
+                .putShort((short) maximumBytes).array();
+    }
+
+    static byte[] saveImportBegin(int size, int crc32, int saveFormatVersion) {
+        return little(11).put((byte) SAVE_IMPORT_BEGIN).putInt(size).putInt(crc32)
+                .putShort((short) saveFormatVersion).array();
     }
 
     static byte[] manifestBegin(int size) {

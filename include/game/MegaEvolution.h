@@ -33,4 +33,7 @@ uint8_t abilityId(const OwnedPokemon& pokemon, uint8_t fallback);
 const AbilityData* customAbility(uint8_t id);
 const char* variantName(const OwnedPokemon& pokemon);
 uint8_t officialFormCount();
+// Stable read-only enumeration used by systems that may select any authored
+// Mega form. The returned pointer refers to the static form catalog.
+const MegaFormData* officialForm(uint8_t index);
 }

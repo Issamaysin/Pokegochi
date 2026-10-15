@@ -29,6 +29,12 @@ enum class HeldItem : uint8_t {
   LuckyEgg,
   // Kept after every shipped value so old serialized enums remain stable.
   QuickPowder,
+  // Generation-IV signature items. These are appended so every previously
+  // serialized held-item value keeps its meaning in old Pokemon records.
+  FistPlate, SkyPlate, ToxicPlate, StonePlate, InsectPlate, SpookyPlate,
+  DracoPlate, IronPlate, FlamePlate, SplashPlate, MeadowPlate, ZapPlate,
+  MindPlate, IciclePlate, EarthPlate, PixiePlate, DreadPlate,
+  AdamantOrb, LustrousOrb, GriseousOrb,
   Count,
 };
 
@@ -36,6 +42,9 @@ constexpr uint8_t kHeldItemInventorySlots = static_cast<uint8_t>(HeldItem::MegaS
 constexpr uint64_t kMegaStoneOwnershipBit = uint64_t{1} << 63U;
 constexpr uint64_t kLuckyEggOwnershipBit = uint64_t{1} << 62U;
 constexpr uint8_t kSpecialHeldItemCount = 9;
+constexpr uint8_t kGen4UniqueItemCount = 20;
+constexpr HeldItem kFirstGen4UniqueItem = HeldItem::FistPlate;
+constexpr HeldItem kLastGen4UniqueItem = HeldItem::GriseousOrb;
 
 struct SpecialHeldItemInventory {
   uint16_t quantities[kSpecialHeldItemCount]{};
@@ -43,6 +52,16 @@ struct SpecialHeldItemInventory {
   // producing unlimited copies when the collection is reconciled again.
   uint16_t claimedMask = 0;
 };
+
+// Gen 4 species rewards are kept in a new sidecar so the frozen V38--V43
+// save records retain their exact SpecialHeldItemInventory ABI. Each entry is
+// normally one copy, but quantities make equip/take-item swaps lossless.
+struct Gen4UniqueItemInventory {
+  uint16_t quantities[kGen4UniqueItemCount]{};
+  uint32_t claimedMask = 0;
+};
+static_assert(sizeof(Gen4UniqueItemInventory) == 44,
+              "Gen 4 unique-item inventory layout changed");
 
 constexpr uint64_t uniqueHeldItemOwnershipBit(HeldItem item) {
   return item == HeldItem::MegaStone ? kMegaStoneOwnershipBit
@@ -66,11 +85,17 @@ const char* heldItemDescription(HeldItem item);
 bool heldItemIsConsumable(HeldItem item);
 bool heldItemIsBerry(HeldItem item);
 bool heldItemBoostsType(HeldItem item, PokemonType type);
+uint8_t heldItemBoostPercent(HeldItem item, PokemonType type);
+bool heldItemIsArceusPlate(HeldItem item);
+PokemonType arceusPlateType(HeldItem item);
 bool heldItemIsTransferLocked(HeldItem item);
 uint8_t heldItemCount();
 int8_t specialHeldItemIndex(HeldItem item);
 uint16_t specialHeldItemQuantity(const SpecialHeldItemInventory& inventory,
                                  HeldItem item);
+int8_t gen4UniqueItemIndex(HeldItem item);
+uint16_t gen4UniqueItemQuantity(const Gen4UniqueItemInventory& inventory,
+                                HeldItem item);
 
 struct OwnedPokemon;
 bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
@@ -79,6 +104,12 @@ bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
 bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
                      SpecialHeldItemInventory& special,
                      uint64_t& ownedMachines);
+bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
+                   uint16_t inventory[], SpecialHeldItemInventory& special,
+                   Gen4UniqueItemInventory& gen4, uint64_t& ownedMachines);
+bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
+                     SpecialHeldItemInventory& special,
+                     Gen4UniqueItemInventory& gen4, uint64_t& ownedMachines);
 
 // Swaps an item from the Bag with the Pokemon's current item. Selecting None
 // takes the current item back. A consumed Berry never returns to the Bag.
