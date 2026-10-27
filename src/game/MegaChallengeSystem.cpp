@@ -26,7 +26,7 @@ void finishAuthoredPokemon(OwnedPokemon& pokemon, PokemonNature nature,
   pokemon.evs = evs;
   pokemon.nature = nature;
   pokemon.heldItem = item;
-  CollectionLogic::refreshAbility(pokemon);
+  CollectionLogic::refreshAbility(pokemon, 3U);
   CollectionLogic::refreshDerivedStats(pokemon, false);
 }
 
@@ -58,7 +58,7 @@ OwnedPokemon authoredMegaCharizardX() {
   finishAuthoredPokemon(pokemon, PokemonNature::Jolly, HeldItem::MegaStone,
                         {0, 252, 0, 0, 4, 252});
   MegaEvolution::setVariantChoice(pokemon, MegaVariant::MegaX);
-  CollectionLogic::refreshAbility(pokemon);
+  CollectionLogic::refreshAbility(pokemon, 3U);
   CollectionLogic::refreshDerivedStats(pokemon, false);
   return pokemon;
 }
@@ -128,7 +128,7 @@ bool MegaChallengeSystem::reconcileStoneGate(const GymProgress& progress,
       continue;
     }
     pokemon.heldItem = HeldItem::None;
-    CollectionLogic::refreshAbility(pokemon);
+    CollectionLogic::refreshAbility(pokemon, 3U);
     CollectionLogic::refreshDerivedStats(pokemon, true);
     changed = true;
   }

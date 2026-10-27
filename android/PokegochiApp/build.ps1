@@ -13,7 +13,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $javaHome 'bin\java.exe'))) {
 }
 $env:JAVA_HOME = $javaHome
 $env:PATH = (Join-Path $javaHome 'bin') + ';' + $env:PATH
-$sdk = Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+$sdk = if ($env:POKEGOCHI_ANDROID_SDK) {
+    $env:POKEGOCHI_ANDROID_SDK
+} else {
+    Join-Path $env:LOCALAPPDATA 'Android\Sdk'
+}
 if (-not (Test-Path -LiteralPath $sdk)) { throw 'Android SDK nao encontrado.' }
 $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk

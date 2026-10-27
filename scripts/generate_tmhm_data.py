@@ -12,6 +12,8 @@ import json
 import re
 from pathlib import Path
 
+from unova_rom_data import personal_record
+
 
 ROOT = Path(__file__).resolve().parent.parent
 EMERALD = ROOT / ".downloads/pokeemerald-tree/pokeemerald-master"
@@ -23,6 +25,35 @@ LEARNSETS = EMERALD / "src/data/pokemon/tmhm_learnsets.h"
 OUTPUT = ROOT / "src/game/MachineDataGenerated.inc"
 OWNER = ROOT / "src/game/Economy.cpp"
 PROJECT_MOVE_DATA = ROOT / "src/game/MoveDataGenerated.inc"
+
+# Pokemon White's canonical TM01..TM95 move order. Existing Emerald and
+# Platinum machines remain stable; only moves that debuted as TMs in Unova are
+# appended to the persistent catalog.
+BW_TM_MOVES = [
+    468,337,473,347,46,92,258,339,474,237,241,269,58,59,63,113,182,240,
+    477,219,218,76,479,85,87,89,216,91,94,247,280,104,115,482,53,188,
+    201,126,317,332,259,263,488,156,213,168,490,496,497,315,502,411,
+    412,206,503,374,451,507,510,511,261,512,373,153,421,371,514,416,
+    397,148,444,521,86,360,14,522,244,523,524,157,404,525,526,398,
+    138,447,207,365,369,164,430,433,528,249,555,
+]
+BW_HM_MOVES = [15,19,57,70,127,291]
+UNOVA_TM_NUMBERS = [1,3,9,19,23,34,43,47,48,49,51,55,58,59,60,62,67,72,76,78,79,82,83,93,95]
+UNOVA_TM_MOVES = [BW_TM_MOVES[number - 1] for number in UNOVA_TM_NUMBERS]
+UNOVA_TM_PRICES = [3000,3000,2500,3000,3000,3000,3000,3000,2500,2500,
+                   4000,5000,4000,3000,3000,4000,4000,5500,4000,4000,
+                   4000,4000,3000,5500,5000]
+assert len(BW_TM_MOVES) == 95 and len(UNOVA_TM_MOVES) == 25
+
+
+def white_can_learn(species_id: int, move_id: int) -> bool:
+    record = personal_record(species_id)
+    bit_indices = [index for index, candidate in enumerate(BW_TM_MOVES)
+                   if candidate == move_id]
+    bit_indices += [95 + index for index, candidate in enumerate(BW_HM_MOVES)
+                    if candidate == move_id]
+    return any((record[40 + index // 8] >> (index % 8)) & 1
+               for index in bit_indices)
 
 
 def macro_body(source: str, name: str, next_name: str) -> str:
@@ -112,13 +143,16 @@ if len(platinum_species) <= 493 or platinum_species[387] != "TURTWIG":
 
 legacy_masks = [0]
 sinnoh_masks = [0]
+unova_masks = [0]
 compatibility_count = 0
-for species_id in range(1, 494):
-    platinum_data = json.loads(
-        (PLATINUM / "res/pokemon" / platinum_species[species_id].lower() / "data.json")
-        .read_text(encoding="utf-8")
-    )
-    platinum_allowed = set(platinum_data["learnset"].get("by_tm", []))
+for species_id in range(1, 650):
+    platinum_allowed: set[str] = set()
+    if species_id <= 493:
+        platinum_data = json.loads(
+            (PLATINUM / "res/pokemon" / platinum_species[species_id].lower() / "data.json")
+            .read_text(encoding="utf-8")
+        )
+        platinum_allowed = set(platinum_data["learnset"].get("by_tm", []))
     if species_id <= 386:
         allowed = species_learnsets[national_symbols[species_id - 1]]
         unknown = sorted(allowed.difference(machine_symbols))
@@ -126,29 +160,43 @@ for species_id in range(1, 494):
             raise RuntimeError(
                 f"Unknown Emerald machines for {national_symbols[species_id - 1]}: {unknown}"
             )
-    else:
+    elif species_id <= 493:
         allowed = platinum_allowed
     mask = 0
     for machine_id, machine_symbol in enumerate(machine_symbols):
         label = (f"TM{machine_id + 1:02d}" if machine_id < 50
                  else f"HM{machine_id - 49:02d}")
-        if ((machine_symbol in allowed) if species_id <= 386 else (label in allowed)):
+        compatible = ((machine_symbol in allowed) if species_id <= 386 else
+                      ((label in allowed) if species_id <= 493 else
+                       white_can_learn(species_id, move_ids[machine_symbol])))
+        if compatible:
             mask |= 1 << machine_id
             compatibility_count += 1
     legacy_masks.append(mask)
 
     sinnoh_mask = 0
     for machine_id in range(42):
-        if f"TM{machine_id + 51:02d}" in platinum_allowed:
+        compatible = (f"TM{machine_id + 51:02d}" in platinum_allowed
+                      if species_id <= 493 else
+                      white_can_learn(species_id, platinum_move_ids[machine_id]))
+        if compatible:
             sinnoh_mask |= 1 << machine_id
             compatibility_count += 1
     sinnoh_masks.append(sinnoh_mask)
 
+    unova_mask = 0
+    for machine_id, move_id in enumerate(UNOVA_TM_MOVES):
+        if white_can_learn(species_id, move_id):
+            unova_mask |= 1 << machine_id
+            compatibility_count += 1
+    unova_masks.append(unova_mask)
+
 move_rows = []
-all_machine_moves = [move_ids[symbol] for symbol in machine_symbols] + platinum_move_ids
+all_machine_moves = ([move_ids[symbol] for symbol in machine_symbols] +
+                     platinum_move_ids + UNOVA_TM_MOVES)
 for offset in range(0, len(all_machine_moves), 10):
     move_rows.append("  " + ", ".join(str(value) for value in all_machine_moves[offset:offset + 10]) + ",")
-price_values = [3000] * 50 + [5000] * 8 + platinum_prices
+price_values = [3000] * 50 + [5000] * 8 + platinum_prices + UNOVA_TM_PRICES
 price_rows = []
 for offset in range(0, len(price_values), 10):
     price_rows.append("  " + ", ".join(str(value) for value in price_values[offset:offset + 10]) + ",")
@@ -158,7 +206,12 @@ sinnoh_mask_rows = [
     f"}}, // {index:03d}"
     for index, mask in enumerate(sinnoh_masks)
 ]
-payload = "\n".join(move_rows + price_rows + legacy_mask_rows + sinnoh_mask_rows)
+unova_mask_rows = [
+    "  {" + ", ".join(f"0x{(mask >> (8 * byte)) & 0xFF:02X}" for byte in range(4)) +
+    f"}}, // {index:03d}"
+    for index, mask in enumerate(unova_masks)
+]
+payload = "\n".join(move_rows + price_rows + legacy_mask_rows + sinnoh_mask_rows + unova_mask_rows)
 catalog_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 output = (
     "// Generated from pokeemerald and pokeplatinum machine data.\n"
@@ -170,12 +223,19 @@ output = (
     + "\n".join(price_rows)
     + "\n};\n"
     "// Index is the National Pokédex number; bit is TM01..TM50, HM01..HM08.\n"
-    "constexpr uint64_t machineLearnsets[494] = {\n"
+    "constexpr uint64_t machineLearnsets[650] = {\n"
     + "\n".join(legacy_mask_rows)
     + "\n};\n"
     "// New Sinnoh machines are TM51..TM92, mapped to bits 0..41.\n"
-    "constexpr uint8_t sinnohMachineLearnsets[494][6] = {\n"
+    "constexpr uint8_t sinnohMachineLearnsets[650][6] = {\n"
     + "\n".join(sinnoh_mask_rows)
+    + "\n};\n"
+    "// Unova-only additions retain their canonical TM numbers.\n"
+    "constexpr uint8_t unovaMachineNumbers[kUnovaMachineCount] = {\n  "
+    + ", ".join(str(number) for number in UNOVA_TM_NUMBERS)
+    + ",\n};\n"
+    "constexpr uint8_t unovaMachineLearnsets[650][4] = {\n"
+    + "\n".join(unova_mask_rows)
     + "\n};\n"
     f"constexpr uint16_t machineCompatibilityCount = {compatibility_count};\n"
 )
@@ -191,6 +251,7 @@ if stamped != owner:
     OWNER.write_text(stamped, encoding="utf-8", newline="\n")
 
 print(
-    f"Generated {len(all_machine_moves)} machines ({len(platinum_move_ids)} Sinnoh TMs) and "
-    f"{compatibility_count} species-machine compatibilities through Sinnoh ({catalog_hash})"
+    f"Generated {len(all_machine_moves)} machines ({len(platinum_move_ids)} Sinnoh + "
+    f"{len(UNOVA_TM_MOVES)} Unova TMs) and {compatibility_count} species-machine "
+    f"compatibilities through Unova ({catalog_hash})"
 )

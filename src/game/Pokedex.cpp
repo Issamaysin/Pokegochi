@@ -19,7 +19,8 @@ bool PokedexLogic::isLegendaryOrMythical(uint16_t speciesId) {
       (speciesId >= 243 && speciesId <= 245) ||
       speciesId == 249 || speciesId == 250 || speciesId == 251 ||
       (speciesId >= 377 && speciesId <= 386) ||
-      (speciesId >= 480 && speciesId <= 493);
+      (speciesId >= 480 && speciesId <= 493) ||
+      speciesId == 494 || (speciesId >= 638 && speciesId <= 649);
 }
 
 void PokedexLogic::markSeen(PokedexState& pokedex, uint16_t speciesId) {
@@ -58,6 +59,7 @@ uint16_t PokedexLogic::generationSpeciesCount(uint8_t generation) {
     case 2: return 251;
     case 3: return 386;
     case 4: return 493;
+    case 5: return 649;
     default: return 0;
   }
 }

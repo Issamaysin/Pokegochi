@@ -161,7 +161,7 @@ OwnedPokemon createBoss(const BossEncounterState& encounter) {
   boss.evs = physicalBoss ? EffortValues{0, 252, 0, 0, 4, 252}
                           : EffortValues{0, 0, 0, 252, 4, 252};
   boss.nature = physicalBoss ? PokemonNature::Adamant : PokemonNature::Modest;
-  CollectionLogic::refreshAbility(boss);
+  CollectionLogic::refreshAbility(boss, 3U);
   CollectionLogic::refreshDerivedStats(boss, false);
 
   const PokemonType type1 = mega ? mega->type1 : species ? species->type1 : PokemonType::Normal;
@@ -245,7 +245,7 @@ void BossSystem::recordAttempt(BossEncounterState& encounter,
 
 BossRewardResult BossSystem::awardVictoryReward(
     Inventory& inventory, EggInventory& eggs, const PokedexState& pokedex,
-    uint32_t seed) {
+    uint8_t unlockedGeneration, uint32_t seed) {
   BossRewardResult reward;
   uint32_t roll = seed ? seed : 0xB055A11U;
   roll ^= roll >> 16U;
@@ -269,7 +269,8 @@ BossRewardResult BossSystem::awardVictoryReward(
   };
   auto grantSpecialEgg = [&]() {
     if (!EggSystem::storeBattleTowerSpecial(
-            eggs,pokedex,roll^0x424F5353UL,&reward.eggSpeciesId))return false;
+            eggs,pokedex,unlockedGeneration,roll^0x424F5353UL,
+            &reward.eggSpeciesId))return false;
     reward.kind = BossRewardKind::SpecialEgg;
     return true;
   };

@@ -69,6 +69,9 @@ struct RecordV32Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 struct GameSaveV33Test : GameSaveV32Test { PpItemInventory ppItems{}; };
 struct RecordV33Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV33Test payload;uint32_t crc;};
 struct BattleStateV34Test {alignas(BattleState) uint8_t bytes[768]{};};
+BattleState& legacyBattle(BattleStateV34Test& state) {
+  return *reinterpret_cast<BattleState*>(state.bytes);
+}
 struct GameSaveV34Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV41 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
@@ -81,7 +84,7 @@ struct RecordV34Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 struct GameSaveV35Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV41 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexStateV41 pokedex{};
+  WildEncounterClock wildEncounterClock{};BattleStateV34Test battle{};PokedexStateV41 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartStateLegacy15Test mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;PpItemInventory ppItems{};
@@ -90,7 +93,7 @@ struct RecordV35Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 struct GameSaveV36Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV41 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexStateV41 pokedex{};
+  WildEncounterClock wildEncounterClock{};BattleStateV34Test battle{};PokedexStateV41 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartStateLegacy15Test mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;PpItemInventory ppItems{};
@@ -100,7 +103,7 @@ struct RecordV36Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 struct GameSaveV37Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV41 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexStateV41 pokedex{};
+  WildEncounterClock wildEncounterClock{};BattleStateV34Test battle{};PokedexStateV41 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;PpItemInventory ppItems{};
@@ -110,7 +113,7 @@ struct RecordV37Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 struct GameSaveV38Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV41 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexStateV41 pokedex{};
+  WildEncounterClock wildEncounterClock{};BattleStateV34Test battle{};PokedexStateV41 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
@@ -132,7 +135,7 @@ struct RecordV40Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 struct GameSaveV41Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV41 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexStateV41 pokedex{};
+  WildEncounterClock wildEncounterClock{};BattleStateV34Test battle{};PokedexStateV41 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
@@ -148,8 +151,8 @@ struct RecordV41Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 // a current record merely because the prefix happens to look compatible.
 struct GameSaveV42Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
-  PokemonCollection collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexState pokedex{};
+  PokemonCollectionV45 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
+  WildEncounterClock wildEncounterClock{};BattleStateV34Test battle{};PokedexStateV45 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
@@ -160,6 +163,24 @@ struct GameSaveV42Test {
   BossEncounterState bossEncounter{};EggInventory eggInventory{};SinnohExpeditionState sinnoh{};
 };
 struct RecordV42Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV42Test payload;uint32_t crc;};
+// Exact final Sinnoh-only record. V46 must expand only Box/Dex capacity and
+// append clean Unova state while preserving this complete prefix.
+struct BattleStateV45Test {alignas(BattleState) uint8_t bytes[856]{};};
+struct GameSaveV45Test {
+  uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
+  PokemonCollectionV45 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
+  WildEncounterClock wildEncounterClock{};BattleStateV45Test battle{};PokedexStateV45 pokedex{};
+  GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
+  MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
+  uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
+  PpItemInventory ppItems{};HomePetPlacementState homePetPlacement{};
+  BerryGardenState berryGarden{};CreativeBackgroundState creativeBackgrounds{};
+  SpecialHeldItemInventory specialHeldItems{};uint32_t lastNpcGiftDay=UINT32_MAX;
+  uint32_t clockLocalEpochSeconds=0,bossCooldownSecondsRemaining=0;
+  BossEncounterState bossEncounter{};EggInventory eggInventory{};SinnohExpeditionState sinnoh{};
+  TowerDefense::CampaignState towerDefense{};Gen4UniqueItemInventory gen4UniqueItems{};
+};
+struct RecordV45Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV45Test payload;uint32_t crc;};
 static_assert(sizeof(BattleStateV33Test)==684);
 static_assert(sizeof(GameSaveV33Test)==25912);
 static_assert(sizeof(RecordV33Test)==25936);
@@ -185,6 +206,7 @@ static_assert(sizeof(GameSaveV41Test)==26624);
 static_assert(offsetof(RecordV41Test,crc)==26640);
 static_assert(sizeof(RecordV41Test)==26648);
 static_assert(sizeof(GameSaveV42Test) < sizeof(GameSave));
+static_assert(sizeof(GameSaveV45Test) < sizeof(GameSave));
 uint32_t crc32(const uint8_t* data,size_t length){uint32_t crc=0xFFFFFFFFU;for(size_t i=0;i<length;++i){crc^=data[i];for(uint8_t bit=0;bit<8;++bit)crc=(crc>>1U)^(0xEDB88320U&(0U-(crc&1U)));}return ~crc;}
 
 PokemonCollectionV41 legacyCollectionWithStarter(uint16_t speciesId) {
@@ -192,6 +214,17 @@ PokemonCollectionV41 legacyCollectionWithStarter(uint16_t speciesId) {
   CollectionLogic::initialize(current);
   assert(CollectionLogic::chooseStarter(current, speciesId));
   PokemonCollectionV41 legacy{};
+  std::memcpy(legacy.box, current.box, sizeof(legacy.box));
+  std::memcpy(legacy.party, current.party, sizeof(legacy.party));
+  legacy.nextUid = current.nextUid;
+  return legacy;
+}
+
+PokemonCollectionV45 legacyCollectionV45WithStarter(uint16_t speciesId) {
+  PokemonCollection current{};
+  CollectionLogic::initialize(current);
+  assert(CollectionLogic::chooseStarter(current, speciesId));
+  PokemonCollectionV45 legacy{};
   std::memcpy(legacy.box, current.box, sizeof(legacy.box));
   std::memcpy(legacy.party, current.party, sizeof(legacy.party));
   legacy.nextUid = current.nextUid;
@@ -257,6 +290,20 @@ int main() {
   original.eggInventory.count=2U;
   original.eggInventory.slots[0]={0xE6610001U,1U,3U,EggRarity::Special};
   original.eggInventory.slots[1]={0xE6610002U,151U,3U,EggRarity::Special};
+  original.unova.unlockedAreas=0x003FU;
+  original.unova.defeatedBosses=0x001FU;
+  original.unova.pwtCompletedTiers=0x03U;
+  original.unova.unovaMachineOwnership=0x00012345U;
+  original.unova.run.seed=0x554E4F56U;
+  original.unova.run.area=5U;
+  original.unova.run.depth=3U;
+  original.unova.run.flags=1U;
+  original.gen5UniqueItems.keyItems=kDnaSplicersBit|kRevealGlassBit;
+  original.gen5UniqueItems.driveQuantities[2]=1U;
+  original.unovaForms.fusedKyuremUid=0x646U;
+  original.unovaForms.fusedDonor=CollectionLogic::createPokemon(
+      0x643U,643U,75U,false,0x643U,5U);
+  original.unovaForms.kyuremOriginalMoves[0]=static_cast<MoveId>(549U);
   assert(original.settings.screenTimeout() == 3);
   assert(original.settings.battleSpeedMultiplier() == 2);
   assert(original.settings.autoBattleText());
@@ -318,6 +365,17 @@ int main() {
   assert(loaded.eggInventory.count==2U&&
          loaded.eggInventory.slots[0].speciesId==1U&&
          loaded.eggInventory.slots[1].speciesId==151U);
+  assert(loaded.unova.unlockedAreas==0x003FU&&
+         loaded.unova.defeatedBosses==0x001FU&&
+         loaded.unova.pwtCompletedTiers==0x03U&&
+         loaded.unova.unovaMachineOwnership==0x00012345U&&
+         loaded.unova.run.seed==0x554E4F56U&&loaded.unova.run.area==5U&&
+         loaded.unova.run.depth==3U&&loaded.unova.run.flags==1U);
+  assert(loaded.gen5UniqueItems.keyItems==(kDnaSplicersBit|kRevealGlassBit)&&
+         loaded.gen5UniqueItems.driveQuantities[2]==1U);
+  assert(loaded.unovaForms.fusedKyuremUid==0x646U&&
+         loaded.unovaForms.fusedDonor.speciesId==643U&&
+         loaded.unovaForms.kyuremOriginalMoves[0]==static_cast<MoveId>(549U));
   loaded.settings.setScreenTimeout(2);
   assert(loaded.settings.battleSpeedMultiplier() == 2);
   assert(loaded.settings.colorTheme() == UiColorTheme::Platinum);
@@ -569,18 +627,19 @@ int main() {
   v39Source.money=13579U;
   v39Source.clockLocalEpochSeconds=1772000000U;
   v39Source.bossCooldownSecondsRemaining=0U;
-  v39Source.battle.kind=BattleKind::Boss;
-  v39Source.battle.outcome=BattleOutcome::Defeat;
-  v39Source.battle.opponentCount=1U;
-  v39Source.battle.opponents[0]=CollectionLogic::createPokemon(
+  BattleState& v39Battle=legacyBattle(v39Source.battle);
+  v39Battle.kind=BattleKind::Boss;
+  v39Battle.outcome=BattleOutcome::Defeat;
+  v39Battle.opponentCount=1U;
+  v39Battle.opponents[0]=CollectionLogic::createPokemon(
       0xB0550040U,150U,100U,false,0xB0550040U);
-  v39Source.battle.opponents[0].maximumHp=10000U;
-  v39Source.battle.opponents[0].currentHp=3456U;
-  v39Source.battle.opponents[0].heldItem=HeldItem::MegaStone;
-  assert(MegaEvolution::setVariantChoice(v39Source.battle.opponents[0],
+  v39Battle.opponents[0].maximumHp=10000U;
+  v39Battle.opponents[0].currentHp=3456U;
+  v39Battle.opponents[0].heldItem=HeldItem::MegaStone;
+  assert(MegaEvolution::setVariantChoice(v39Battle.opponents[0],
                                          MegaVariant::MegaY));
   const uint32_t migratedBossPersonality=
-      v39Source.battle.opponents[0].personality;
+      v39Battle.opponents[0].personality;
   RecordV39Test old39{};old39.magic=0x504F4B45;old39.version=39;
   old39.payloadSize=sizeof(GameSaveV39Test);old39.sequence=91439U;
   old39.payload=v39Source;
@@ -608,15 +667,16 @@ int main() {
   GameSaveV40Test v40Prefix{};
   v40Prefix.collection=legacyCollectionWithStarter(7);
   v40Prefix.playTimeSeconds=89012U;v40Prefix.money=24681U;
-  v40Prefix.battle.kind=BattleKind::Boss;v40Prefix.battle.active=true;
-  v40Prefix.battle.outcome=BattleOutcome::Ongoing;
-  v40Prefix.battle.opponentCount=1U;
-  v40Prefix.battle.opponents[0]=CollectionLogic::createPokemon(
+  BattleState& v40Battle=legacyBattle(v40Prefix.battle);
+  v40Battle.kind=BattleKind::Boss;v40Battle.active=true;
+  v40Battle.outcome=BattleOutcome::Ongoing;
+  v40Battle.opponentCount=1U;
+  v40Battle.opponents[0]=CollectionLogic::createPokemon(
       0xB0550041U,384U,100U,false,0xB0550041U);
-  v40Prefix.battle.opponents[0].maximumHp=10000U;
-  v40Prefix.battle.opponents[0].currentHp=7500U;
+  v40Battle.opponents[0].maximumHp=10000U;
+  v40Battle.opponents[0].currentHp=7500U;
   BossEncounterStateV40Test oldBoss{};
-  oldBoss.personality=v40Prefix.battle.opponents[0].personality;
+  oldBoss.personality=v40Battle.opponents[0].personality;
   oldBoss.speciesId=384U;oldBoss.currentHp=7500U;
   RecordV40Test old40{};old40.magic=0x504F4B45;old40.version=40;
   old40.payloadSize=sizeof(GameSaveV40Test);old40.sequence=101440U;
@@ -670,8 +730,7 @@ int main() {
   // Defense's isolated campaign record with a playable first arena.
   Preferences::resetTestStorage();
   GameSaveV42Test v42Prefix{};
-  CollectionLogic::initialize(v42Prefix.collection);
-  assert(CollectionLogic::chooseStarter(v42Prefix.collection,4U));
+  v42Prefix.collection=legacyCollectionWithStarter(4U);
   v42Prefix.playTimeSeconds=100002U;v42Prefix.money=86421U;
   v42Prefix.sinnoh.research=123U;v42Prefix.sinnoh.unlockedSites=0x07U;
   v42Prefix.sinnoh.selectedSite=2U;v42Prefix.sinnoh.rngState=0x12345678U;
@@ -691,6 +750,59 @@ int main() {
   assert(v42Migrated.towerDefense.unlockedStages==1U&&
          v42Migrated.towerDefense.enabledDefendersMask==0x07U&&
          v42Migrated.towerDefense.totalScore==0U);
+
+  // V46 migrates the last Sinnoh-only V45 record without touching any of its
+  // permanent data. The new 720-slot Box, #649 Dex range and all Unova
+  // sidecars start clean and immediately accept Generation-V records.
+  Preferences::resetTestStorage();
+  GameSaveV45Test v45Prefix{};
+  v45Prefix.collection=legacyCollectionV45WithStarter(7U);
+  PokemonCollection expandedFromV45{};
+  expandedFromV45=v45Prefix.collection;
+  uint32_t arceusUid=0U;
+  assert(CollectionLogic::add(expandedFromV45,
+      CollectionLogic::createPokemon(0U,493U,80U,false,0x493U,4U),
+      &arceusUid));
+  std::memcpy(v45Prefix.collection.box,expandedFromV45.box,
+              sizeof(v45Prefix.collection.box));
+  v45Prefix.collection.nextUid=expandedFromV45.nextUid;
+  v45Prefix.playTimeSeconds=145045U;v45Prefix.money=64949U;
+  v45Prefix.settings.setColorTheme(UiColorTheme::Platinum);
+  v45Prefix.sinnoh.unlockedSites=SinnohExpedition::kAllSitesMask;
+  v45Prefix.sinnoh.research=987U;
+  v45Prefix.gen4UniqueItems.quantities[0]=1U;
+  v45Prefix.gen4UniqueItems.claimedMask=1U;
+  v45Prefix.pokedex.caught[(493U-1U)/8U]|=
+      static_cast<uint8_t>(1U<<((493U-1U)%8U));
+  RecordV45Test old45{};old45.magic=0x504F4B45;old45.version=45;
+  old45.payloadSize=sizeof(GameSaveV45Test);old45.sequence=101445U;
+  old45.payload=v45Prefix;
+  old45.crc=crc32(reinterpret_cast<const uint8_t*>(&old45),
+                  offsetof(RecordV45Test,crc));
+  assert(raw.putBytes("save_a",&old45,sizeof(old45))==sizeof(old45));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v45Migrator;assert(v45Migrator.begin());GameSave v45Migrated;
+  assert(v45Migrator.loadOrCreate(v45Migrated)==SaveLoadResult::Loaded);
+  assert(v45Migrated.playTimeSeconds==145045U&&v45Migrated.money==64949U);
+  assert(CollectionLogic::active(v45Migrated.collection,0U)->speciesId==7U);
+  assert(CollectionLogic::find(v45Migrated.collection,arceusUid)->speciesId==493U);
+  assert(PokedexLogic::hasCaught(v45Migrated.pokedex,493U)&&
+         !PokedexLogic::hasCaught(v45Migrated.pokedex,494U));
+  assert(v45Migrated.sinnoh.unlockedSites==SinnohExpedition::kAllSitesMask&&
+         v45Migrated.sinnoh.research==987U&&
+         v45Migrated.gen4UniqueItems.quantities[0]==1U&&
+         v45Migrated.gen4UniqueItems.claimedMask==1U);
+  assert(v45Migrated.unova.unlockedAreas==0U&&
+         v45Migrated.unova.defeatedBosses==0U&&
+         v45Migrated.unova.rngState==0x554E4F56U&&
+         v45Migrated.unova.royalUnovaLastDay==UINT32_MAX&&
+         v45Migrated.gen5UniqueItems.keyItems==0U&&
+         v45Migrated.unovaForms.fusedKyuremUid==0U);
+  uint32_t genesectUid=0U;
+  assert(CollectionLogic::add(v45Migrated.collection,
+      CollectionLogic::createPokemon(0U,649U,70U,false,0x649U,5U),
+      &genesectUid));
+  assert(CollectionLogic::find(v45Migrated.collection,genesectUid)->speciesId==649U);
 
   // User-requested reset writes a new, complete blank record instead of
   // deleting the two redundant slots first. It must survive a fresh loader.

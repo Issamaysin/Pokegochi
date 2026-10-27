@@ -8,14 +8,27 @@ $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $projectRoot '.tools\python312\python.exe'
-$pioPython = Join-Path $projectRoot '.pio-core\penv\Scripts\python.exe'
+$platformIoCore = Join-Path $projectRoot '.pio-core'
+$pioPython = Join-Path $platformIoCore 'penv\Scripts\python.exe'
+# A clean workspace may use PlatformIO's ordinary per-user installation
+# instead of the optional project-local core. Select whichever complete core
+# is already present; both paths use the same project build directory and the
+# same save-preserving flash procedure below.
+if (-not (Test-Path -LiteralPath $pioPython)) {
+    $userPlatformIoCore = Join-Path $env:USERPROFILE '.platformio'
+    $userPlatformIoPython = Join-Path $userPlatformIoCore 'penv\Scripts\python.exe'
+    if (Test-Path -LiteralPath $userPlatformIoPython) {
+        $platformIoCore = $userPlatformIoCore
+        $pioPython = $userPlatformIoPython
+    }
+}
 $platformioLauncher = Join-Path $PSScriptRoot 'platformio_local.py'
 $environmentName = 'esp32-2432S028R'
-$esptool = Join-Path $projectRoot '.pio-core\packages\tool-esptoolpy\esptool.py'
-$partitionTool = Join-Path $projectRoot '.pio-core\packages\framework-arduinoespressif32\tools\gen_esp32part.py'
+$esptool = Join-Path $platformIoCore 'packages\tool-esptoolpy\esptool.py'
+$partitionTool = Join-Path $platformIoCore 'packages\framework-arduinoespressif32\tools\gen_esp32part.py'
 $mkspiffs = Join-Path $projectRoot '.tools\mkspiffs-0.2.3\mkspiffs-0.2.3-arduino-esp32-win32\mkspiffs.exe'
-$targetSpiffsOffset = 0x3A0000
-$targetSpiffsSize = 0x60000
+$targetSpiffsOffset = 0x3D0000
+$targetSpiffsSize = 0x30000
 
 function Invoke-Checked([string]$Label, [string]$Executable, [string[]]$Arguments) {
     # Several ESP32 utilities write ordinary progress messages to stderr.
@@ -48,8 +61,14 @@ function Convert-HexNumber([string]$Value) {
 }
 
 function Get-DeviceIdentity([string]$SerialPort) {
-    $lines = & $pioPython $esptool '--chip' 'esp32' '--port' $SerialPort 'read-mac' 2>&1
-    $code = $LASTEXITCODE
+    $previousErrorPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $lines = & $pioPython $esptool '--chip' 'esp32' '--port' $SerialPort 'read-mac' 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorPreference
+    }
     if ($lines) { $lines | ForEach-Object { Write-Host $_ } }
     if ($code -ne 0) { throw "Nao foi possivel identificar a placa em $SerialPort." }
     $joined = $lines -join "`n"
@@ -199,7 +218,7 @@ function Reset-OtaBootSelection([string]$SerialPort) {
     Invoke-Checked 'Selecao da nova particao de firmware' $pioPython @(
         $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         '--before', 'default-reset', '--after', 'hard-reset',
-        'erase-region', '0x19000', '0x2000')
+        'erase-region', '0xE000', '0x2000')
     Write-Host 'Metadados OTA reiniciados: o proximo boot usara a app0 gravada agora.' -ForegroundColor Green
 }
 
@@ -212,7 +231,7 @@ function Verify-FlashedFirmware([string]$SerialPort) {
     # configuration regression before the script claims a USB update worked.
     Invoke-Checked 'Verificacao da firmware na app0' $pioPython @(
         $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
-        'verify-flash', '0x20000', $firmware)
+        'verify-flash', '0x10000', $firmware)
 }
 
 function Write-UsbFirmware([string]$SerialPort) {
@@ -220,15 +239,15 @@ function Write-UsbFirmware([string]$SerialPort) {
     $bootloader = Join-Path $buildDir 'bootloader.bin'
     $partitions = Join-Path $buildDir 'partitions.bin'
     $firmware = Join-Path $buildDir 'firmware.bin'
-    $bootApp0 = Join-Path $projectRoot '.pio-core\packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin'
+    $bootApp0 = Join-Path $platformIoCore 'packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin'
     foreach ($required in @($bootloader, $partitions, $bootApp0, $firmware)) {
         if (-not (Test-Path -LiteralPath $required)) {
             throw "Imagem necessaria para gravacao USB nao encontrada: '$required'."
         }
     }
     # Do not delegate this address to PlatformIO's generic ESP32 uploader.
-    # The Pokegochi partition table reserves 0x10000..0x1FFFF for OTA data;
-    # the USB application must start exactly at app0 (0x20000).
+    # The compact preference/OTA header ends at 0x10000, so the USB
+    # application must start exactly at the aligned app0 boundary.
     Invoke-Checked 'Gravacao da firmware e da tabela OTA' $pioPython @(
         $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         '--before', 'default-reset', '--after', 'hard-reset', 'write-flash', '-z',
@@ -236,7 +255,7 @@ function Write-UsbFirmware([string]$SerialPort) {
         '0x1000', $bootloader,
         '0x8000', $partitions,
         '0xe000', $bootApp0,
-        '0x20000', $firmware)
+        '0x10000', $firmware)
 }
 
 function Find-Esp32Ports {
@@ -286,7 +305,7 @@ if (-not $BuildOnly) {
     }
 }
 
-$env:PLATFORMIO_CORE_DIR = Join-Path $projectRoot '.pio-core'
+$env:PLATFORMIO_CORE_DIR = $platformIoCore
 $env:PLATFORMIO_SETTING_ENABLE_TELEMETRY = 'No'
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'

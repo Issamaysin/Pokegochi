@@ -106,8 +106,21 @@ class Multiplayer {
     // whenever the host publishes the authoritative turn.
     DedicatedMoveEffectState hostMoveEffects[kPartyCapacity]{};
     DedicatedMoveEffectState guestMoveEffects[kPartyCapacity]{};
+    Gen4BattlerEffectState hostGen4Effects[kPartyCapacity]{};
+    Gen4BattlerEffectState guestGen4Effects[kPartyCapacity]{};
     uint8_t hostSpikesLayers = 0;
     uint8_t guestSpikesLayers = 0;
+    uint8_t hostToxicSpikesLayers = 0;
+    uint8_t guestToxicSpikesLayers = 0;
+    bool hostStealthRock = false;
+    bool guestStealthRock = false;
+    uint8_t hostTailwindTurns = 0;
+    uint8_t guestTailwindTurns = 0;
+    uint8_t hostLuckyChantTurns = 0;
+    uint8_t guestLuckyChantTurns = 0;
+    uint8_t gravityTurns = 0;
+    uint8_t trickRoomTurns = 0;
+    MoveId lastMoveUsedGlobally = MoveId::None;
   };
 
   bool begin();
@@ -190,7 +203,9 @@ class Multiplayer {
   bool sendPacket(uint8_t type, const void* payload = nullptr, uint16_t length = 0,
                   uint32_t transaction = 0);
   void setState(State next, const char* status = nullptr);
+  void closeTransportLink();
   void resetSession(bool retainRadio);
+  void resetTradeState();
   void processPacket(const uint8_t* bytes, size_t length);
   void maybeBeginTradeCommit();
   void maybeAdvanceBattlePreparation();

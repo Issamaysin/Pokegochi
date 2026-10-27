@@ -28,8 +28,8 @@ android {
         applicationId = "com.pokegochi.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 52
-        versionName = "1.0"
+        versionCode = 77
+        versionName = "2.0"
     }
 
     compileOptions {
@@ -37,7 +37,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    val bundledNdk = file("../../../.tools/android-ndk-r27d")
     ndkVersion = "27.3.13750724"
+    if (bundledNdk.isDirectory) {
+        // Release workspaces carry a pinned NDK so builds do not depend on
+        // enumerating or downloading SDK-side installations.
+        ndkPath = bundledNdk.absolutePath
+    }
     // The firmware save ABI intentionally keeps 8-byte alignment. The
     // 32-bit NDK targets change that layout, so ship the native runtime
     // for current Android devices only.

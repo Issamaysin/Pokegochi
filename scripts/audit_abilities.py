@@ -40,16 +40,18 @@ HANDLER_GROUPS = {
     "entry/weather/form": {
         "DRIZZLE", "INTIMIDATE", "TRACE", "FORECAST", "SAND STREAM",
         "DROUGHT", "PRIMORDIAL SEA", "DESOLATE LAND", "DELTA STREAM",
-        "MEGA SOL", "SNOW WARNING", "DOWNLOAD", "MULTITYPE",
+        "MEGA SOL", "SNOW WARNING", "DOWNLOAD", "MULTITYPE", "IMPOSTER",
+        "ILLUSION", "ZEN MODE",
     },
     "end-turn/cadence": {
         "SPEED BOOST", "RAIN DISH", "SHED SKIN", "TRUANT", "SOLAR POWER",
         "HYDRATION", "ICE BODY", "DRY SKIN", "POISON HEAL", "BAD DREAMS",
+        "HARVEST", "MOODY", "REGENERATOR",
     },
     "accuracy/priority/PP": {
         "SAND VEIL", "COMPOUND EYES", "PRESSURE", "HUSTLE", "NO GUARD",
         "PRANKSTER", "TANGLED FEET", "SNOW CLOAK", "QUICK FEET", "STALL",
-        "UNBURDEN",
+        "UNBURDEN", "VICTORY STAR", "WONDER SKIN",
     },
     "damage and critical modifiers": {
         "BATTLE ARMOR", "SHELL ARMOR", "STURDY", "DAMP", "SHIELD DUST",
@@ -63,11 +65,15 @@ HANDLER_GROUPS = {
         "RIVALRY", "ANGER POINT", "HEATPROOF", "SIMPLE", "IRON FIST",
         "NORMALIZE", "SNIPER", "MAGIC GUARD", "SUPER LUCK",
         "AFTERMATH", "UNAWARE", "TINTED LENS", "SLOW START", "SCRAPPY",
-        "SOLID ROCK", "RECKLESS", "FLOWER GIFT",
+        "SOLID ROCK", "RECKLESS", "FLOWER GIFT", "DEFEATIST",
+        "HEAVY METAL", "LIGHT METAL", "TOXIC BOOST", "FLARE BOOST",
+        "ANALYTIC", "INFILTRATOR", "TURBOBLAZE", "TERAVOLT",
+        "PIERCING DRILL", "UNSEEN FIST",
     },
     "type immunity/absorption/weather suppression": {
         "CLOUD NINE", "AIR LOCK", "VOLT ABSORB", "WATER ABSORB",
-        "FLASH FIRE", "LEVITATE", "MOTOR DRIVE", "STORM DRAIN",
+        "FLASH FIRE", "LEVITATE", "MOTOR DRIVE", "SAP SIPPER", "OVERCOAT",
+        "LIGHTNING ROD", "STORM DRAIN", "EELEVATE",
     },
     "status immunity/cure": {
         "LIMBER", "OBLIVIOUS", "INSOMNIA", "IMMUNITY", "OWN TEMPO",
@@ -77,18 +83,20 @@ HANDLER_GROUPS = {
     "contact/post-damage": {
         "STATIC", "COLOR CHANGE", "ROUGH SKIN", "EFFECT SPORE",
         "SYNCHRONIZE", "POISON POINT", "FLAME BODY", "CUTE CHARM",
-        "LIQUID OOZE",
+        "LIQUID OOZE", "PICKPOCKET", "CURSED BODY", "WEAK ARMOR",
+        "POISON TOUCH", "MUMMY", "JUSTIFIED", "RATTLED", "IRON BARBS",
     },
     "stat-loss prevention": {
         "CLEAR BODY", "KEEN EYE", "HYPER CUTTER", "WHITE SMOKE",
+        "CONTRARY", "DEFIANT", "BIG PECKS", "MOXIE",
     },
     "sound/forced switch/trapping": {
         "SUCTION CUPS", "SHADOW TAG", "MAGNET PULL", "SOUNDPROOF",
         "ARENA TRAP", "CACOPHONY",
     },
-    "items/escape/field": {"RUN AWAY", "PICKUP", "STICKY HOLD", "GLUTTONY", "KLUTZ"},
-    "weather speed": {"SWIFT SWIM", "CHLOROPHYLL"},
-    "secondary effects/reflection": {"SERENE GRACE", "MAGIC BOUNCE"},
+    "items/escape/field": {"RUN AWAY", "PICKUP", "STICKY HOLD", "GLUTTONY", "KLUTZ", "UNNERVE"},
+    "weather speed": {"SWIFT SWIM", "CHLOROPHYLL", "SAND RUSH"},
+    "secondary effects/reflection": {"SERENE GRACE", "MAGIC BOUNCE", "STENCH"},
 }
 
 # These are not accidental omissions. Pokegochi is strictly one-on-one and
@@ -96,9 +104,7 @@ HANDLER_GROUPS = {
 # doubles-only trigger does not exist. Keeping this list explicit makes every
 # future ability addition fail CI until it gains a handler or an adaptation.
 ADAPTED_NO_EFFECT = {
-    "STENCH": "random-step encounter rate does not exist",
     "ILLUMINATE": "random-step encounter rate does not exist",
-    "LIGHTNING ROD": "Generation III effect redirects only in double battles",
     "PLUS": "requires an allied MINUS user in a double battle",
     "MINUS": "requires an allied PLUS user in a double battle",
     "STALWART": "move redirection does not exist in one-on-one battles",
@@ -106,6 +112,9 @@ ADAPTED_NO_EFFECT = {
     "FOREWARN": "warning-only ability; move details are already inspectable",
     "FRISK": "opponent held-item identity is intentionally kept hidden until an item interaction",
     "HONEY GATHER": "no Honey item exists in the compact Bag; Underground research replaces field pickup loops",
+    "HEALER": "heals adjacent allies and Pokegochi battles are one-on-one",
+    "FRIEND GUARD": "reduces damage to allies and Pokegochi battles are one-on-one",
+    "TELEPATHY": "avoids allied attacks and Pokegochi battles are one-on-one",
 }
 
 errors: list[str] = []
@@ -133,10 +142,10 @@ unknown_adaptations = sorted(set(ADAPTED_NO_EFFECT) - set(abilities))
 if unknown_adaptations:
     errors.append("stale adaptations: " + ", ".join(unknown_adaptations))
 
-if len(base) != 124:
-    errors.append(f"expected 124 Gen-I--IV abilities, parsed {len(base)}")
-if len(custom) != 29:
-    errors.append(f"expected 29 custom Mega/Primal abilities, parsed {len(custom)}")
+if len(base) != 165:
+    errors.append(f"expected 165 Gen-I--V abilities, parsed {len(base)}")
+if len(custom) != 32:
+    errors.append(f"expected 32 custom Mega/Primal abilities, parsed {len(custom)}")
 
 if errors:
     print("Ability audit failed:", file=sys.stderr)
@@ -145,7 +154,7 @@ if errors:
     raise SystemExit(1)
 
 print(
-    f"Ability audit passed: {len(base)} Gen-I--IV + {len(custom)} Mega/Primal; "
+    f"Ability audit passed: {len(base)} Gen-I--V + {len(custom)} Mega/Primal; "
     f"{len(abilities) - len(ADAPTED_NO_EFFECT)} implemented, "
     f"{len(ADAPTED_NO_EFFECT)} documented singles/manual adaptations"
 )

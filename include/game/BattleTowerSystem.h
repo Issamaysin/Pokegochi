@@ -47,8 +47,9 @@ class BattleTowerSystem {
   // Battle Tower is the repeatable epilogue. It remains locked until the
   // one-time post-Hoenn Mega Stone challenge has been defeated.
   static bool available(const GymProgress& progress);
-  // The unlocked Tower takes over the former VS Seeker Home control. This is
-  // an explicit progression rule so drawing and touch routing cannot diverge.
+  // The unlocked endgame challenge hub takes over the former VS Seeker Home
+  // control. Keep this Tower readiness predicate explicit so drawing and
+  // touch routing cannot diverge if either destination is gated separately.
   static bool replacesVsSeeker(const GymProgress& progress);
   // Once available, the Tower is a permanent Home destination. It never uses
   // a timer, invitation roll, Center charge, or VS Seeker charge.
@@ -60,7 +61,7 @@ class BattleTowerSystem {
   static bool awardCompletionReward(Inventory& inventory);
   static BattleTowerRewardResult awardCompletionReward(
       Inventory& inventory,EggInventory& eggs,const PokedexState& pokedex,
-      uint32_t seed);
+      uint8_t unlockedGeneration,uint32_t seed);
   static bool start(BattleState& battle, PokemonCollection& collection, uint32_t playerUid,
                     const GymProgress& progress, uint32_t seed);
   static bool advance(BattleState& battle, PokemonCollection& collection);

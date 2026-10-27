@@ -89,6 +89,60 @@ constexpr SiteData kSites[] = {
   {"DISTORTION RIFT", "MYTHIC ECHOES", 270, kDistortionRift, sizeof(kDistortionRift)/sizeof(kDistortionRift[0])},
 };
 
+constexpr MoveId move(uint16_t id) {
+  return static_cast<MoveId>(id);
+}
+
+// Species and moves are the authored Pokemon Platinum leader teams. Levels
+// continue Pokegochi's single-save postgame curve instead of resetting to
+// Platinum's early-game values; the three-Pokemon cap matches every existing
+// Pokegochi Gym and retains each leader's signature ace.
+constexpr SinnohGymDefinition kSinnohGyms[] = {
+  {SinnohSite::LakeVerity, "ROARK", "COAL", "ROCK", "sinnoh_roark",
+   "WELCOME! I'M ROARK.", "SHOW ME YOUR ROCK-SOLID SPIRIT!",
+   {{74,96,{move(446),move(88),MoveId::None,MoveId::None},HeldItem::None},
+    {95,96,{move(446),move(88),move(103),MoveId::None},HeldItem::None},
+    {408,97,{move(29),move(228),move(43),MoveId::None},HeldItem::None}}},
+  {SinnohSite::EternaForest, "GARDENIA", "FOREST", "GRASS", "sinnoh_gardenia",
+   "YOU KEPT ME WAITING!", "LET'S SEE YOUR WAY WITH POKEMON!",
+   {{387,96,{move(447),move(75),move(241),move(115)},HeldItem::None},
+    {421,97,{move(447),move(73),move(345),move(219)},HeldItem::None},
+    {407,97,{move(447),move(345),move(40),move(78)},HeldItem::SitrusBerry}}},
+  {SinnohSite::OreburghMine, "FANTINA", "RELIC", "GHOST", "sinnoh_fantina",
+   "FINALLY, YOU HAVE ARRIVED!", "EN GARDE! LET US BATTLE!",
+   {{355,97,{move(261),move(228),move(425),move(248)},HeldItem::None},
+    {93,97,{move(421),move(389),move(95),move(109)},HeldItem::None},
+    {429,98,{move(247),move(60),move(345),move(109)},HeldItem::SitrusBerry}}},
+  {SinnohSite::GreatMarsh, "MAYLENE", "COBBLE", "FIGHTING", "sinnoh_maylene",
+   "I TAKE BATTLES VERY SERIOUSLY.", "I WILL NOT HOLD BACK!",
+   {{307,97,{move(409),move(93),move(317),move(252)},HeldItem::None},
+    {67,98,{move(2),move(317),move(70),move(116)},HeldItem::None},
+    {448,98,{move(409),move(395),move(232),move(198)},HeldItem::SitrusBerry}}},
+  {SinnohSite::MtCoronet, "CRASHER WAKE", "FEN", "WATER", "sinnoh_wake",
+   "MASKED ROYALTY HAS ARRIVED!", "LET THE CRASHER WAKE WAVE BEGIN!",
+   {{130,98,{move(127),move(362),move(44),move(239)},HeldItem::None},
+    {195,98,{move(341),move(317),move(352),move(281)},HeldItem::None},
+    {419,99,{move(362),move(423),move(242),move(453)},HeldItem::SitrusBerry}}},
+  {SinnohSite::FuegoIron, "BYRON", "MINE", "STEEL", "sinnoh_byron",
+   "THAT'S OREBURGH'S BADGE!", "LET'S BATTLE FOR THE MINE BADGE!",
+   {{82,98,{move(430),move(85),move(161),move(319)},HeldItem::None},
+    {208,99,{move(430),move(423),move(89),move(201)},HeldItem::None},
+    {411,99,{move(368),move(444),move(334),move(269)},HeldItem::SitrusBerry}}},
+  {SinnohSite::Snowpoint, "CANDICE", "ICICLE", "ICE", "sinnoh_candice",
+   "ARE YOU READY TO FREEZE?", "I'LL SHOW YOU MY FOCUS!",
+   {{221,99,{move(419),move(444),move(89),move(258)},HeldItem::None},
+    {460,99,{move(419),move(452),move(352),move(411)},HeldItem::None},
+    {478,100,{move(59),move(104),move(247),move(94)},HeldItem::SitrusBerry}}},
+  {SinnohSite::DistortionRift, "VOLKNER", "BEACON", "ELECTRIC", "sinnoh_volkner",
+   "I'VE BEEN WAITING FOR A CHALLENGER.", "GIVE ME A BATTLE THAT ELECTRIFIES!",
+   {{26,99,{move(451),move(411),move(324),move(98)},HeldItem::None},
+    {405,100,{move(423),move(422),move(242),move(424)},HeldItem::None},
+    {466,100,{move(9),move(7),move(98),move(416)},HeldItem::SitrusBerry}}},
+};
+static_assert(sizeof(kSinnohGyms) / sizeof(kSinnohGyms[0]) ==
+                  SinnohExpedition::kSiteCount,
+              "Every Sinnoh site must own exactly one Gym");
+
 uint32_t nextRandom(uint32_t& state) {
   if (!state) state = 0x53494E4EU;
   state ^= state << 13U;
@@ -158,9 +212,26 @@ bool SinnohExpedition::available(const GymProgress& progress,
           (kTowerCompletedBit | kBossDefeatedBit);
 }
 
+bool SinnohExpedition::goldenBallUnlocked(
+    const GymProgress& progress, const SinnohExpeditionState& state) {
+  return available(progress, state);
+}
+
 void SinnohExpedition::reconcile(SinnohExpeditionState& state, const GymProgress& progress) {
   if (!state.rngState) state.rngState = 0x53494E4EU;
   ensureProgressSchema(state);
+  if ((state.rewardFlags & kGymSchemaBit) == 0U) {
+    // Every-site completion was the old end condition. Preserve that durable
+    // achievement for rewards and Unova, while leaving the eight newly added
+    // leaders unclaimed so an existing player can still battle all of them.
+    if (allSitesUnlocked(state))
+      state.rewardFlags = static_cast<uint8_t>(
+          state.rewardFlags | kLegacyCompletionBit);
+    // This byte used to be the fossil ledger. None of those bits represented
+    // Gym wins, so carrying them forward would award arbitrary badges.
+    state.gymVictoryMask = 0U;
+    state.rewardFlags = static_cast<uint8_t>(state.rewardFlags | kGymSchemaBit);
+  }
   if (!available(progress, state)) return;
   if (!state.unlockedSites) state.unlockedSites = 1U;
 }
@@ -199,6 +270,98 @@ bool SinnohExpedition::allSitesUnlocked(const SinnohExpeditionState& state) {
   return (state.unlockedSites & kAllSitesMask) == kAllSitesMask;
 }
 
+bool SinnohExpedition::hasGymVictory(const SinnohExpeditionState& state,
+                                     SinnohSite site) {
+  return (state.gymVictoryMask & (1U << siteIndex(site))) != 0U;
+}
+
+uint8_t SinnohExpedition::gymVictoryCount(const SinnohExpeditionState& state) {
+  uint8_t count = 0U;
+  for (uint8_t index = 0U; index < kSiteCount; ++index)
+    if ((state.gymVictoryMask & (1U << index)) != 0U) ++count;
+  return count;
+}
+
+bool SinnohExpedition::allGymsDefeated(const SinnohExpeditionState& state) {
+  return (state.gymVictoryMask & kAllSitesMask) == kAllSitesMask;
+}
+
+bool SinnohExpedition::completed(const SinnohExpeditionState& state) {
+  return allGymsDefeated(state) ||
+      (state.rewardFlags & kLegacyCompletionBit) != 0U;
+}
+
+const SinnohGymDefinition* SinnohExpedition::gymDefinition(SinnohSite site) {
+  const uint8_t index = static_cast<uint8_t>(site);
+  return index < kSiteCount ? &kSinnohGyms[index] : nullptr;
+}
+
+bool SinnohExpedition::gymChallengeAvailable(
+    const SinnohExpeditionState& state, SinnohSite site) {
+  const uint8_t index = static_cast<uint8_t>(site);
+  if (index >= kSiteCount || !isUnlocked(state, site) ||
+      hasGymVictory(state, site)) return false;
+  for (uint8_t previous = 0U; previous < index; ++previous)
+    if ((state.gymVictoryMask & (1U << previous)) == 0U) return false;
+  return true;
+}
+
+bool SinnohExpedition::startGym(
+    const SinnohExpeditionState& state, BattleState& battle,
+    PokemonCollection& collection, uint32_t playerUid, SinnohSite site,
+    uint32_t seed) {
+  const SinnohGymDefinition* gym = gymDefinition(site);
+  OwnedPokemon* player = CollectionLogic::find(collection, playerUid);
+  if (!gym || battle.active || !gymChallengeAvailable(state, site) || !player ||
+      !CollectionLogic::isInParty(collection, playerUid) || !player->currentHp ||
+      player->recoverySecondsRemaining) return false;
+
+  BattleEngine::clear(battle);
+  battle.active = true;
+  battle.kind = BattleKind::SinnohGym;
+  battle.outcome = BattleOutcome::Ongoing;
+  battle.playerUid = playerUid;
+  battle.unlockedGeneration = 4U;
+  battle.rngState = seed ? seed :
+      (0x53474D31U ^ (static_cast<uint32_t>(siteIndex(site)) << 16U));
+  battle.gymId = siteIndex(site);
+  battle.gymStage = 2U;
+  battle.opponentCount = kOpponentTeamCapacity;
+  battle.opponentIndex = 0U;
+  battle.opponentItemUses = 2U;
+  battle.rewardMoney = static_cast<uint32_t>(
+      gym->team[kOpponentTeamCapacity - 1U].level) * 150U;
+  for (uint8_t slot = 0U; slot < kOpponentTeamCapacity; ++slot) {
+    const SinnohGymPokemon& authored = gym->team[slot];
+    OwnedPokemon opponent = CollectionLogic::createPokemon(
+        0U, authored.speciesId, authored.level, false,
+        battle.rngState ^ (0x9E3779B9U * (slot + 1U)), 4U);
+    for (uint8_t moveSlot = 0U; moveSlot < kMoveSlots; ++moveSlot) {
+      opponent.moves[moveSlot] = authored.moves[moveSlot];
+      const FullMoveData* moveData = findFullMove(authored.moves[moveSlot]);
+      opponent.movePp[moveSlot] = moveData ? moveData->pp : 0U;
+    }
+    opponent.heldItem = authored.heldItem;
+    battle.opponents[slot] = opponent;
+  }
+  BattleEngine::orderOpponentTeamWeakestFirst(battle);
+  BattleEngine::ensureOpponentUids(battle);
+  BattleEngine::applyEntryAbilities(battle, collection);
+  return true;
+}
+
+bool SinnohExpedition::recordGymVictory(SinnohExpeditionState& state,
+                                        SinnohSite site) {
+  if (!gymChallengeAvailable(state, site)) return false;
+  state.gymVictoryMask = static_cast<uint8_t>(
+      state.gymVictoryMask | (1U << siteIndex(site)));
+  const uint16_t available = state.research < kMaximumResearch
+      ? static_cast<uint16_t>(kMaximumResearch - state.research) : 0U;
+  state.research = static_cast<uint16_t>(
+      state.research + std::min<uint16_t>(kGymResearchReward, available));
+  return true;
+}
+
 bool SinnohExpedition::platinumThemeUnlocked(const SinnohExpeditionState& state) {
   return (state.rewardFlags & kPlatinumThemeRewardBit) != 0U;
 }
@@ -206,7 +369,7 @@ bool SinnohExpedition::platinumThemeUnlocked(const SinnohExpeditionState& state)
 SinnohExpedition::CompletionReward SinnohExpedition::reconcileCompletionReward(
     SinnohExpeditionState& state, Inventory& inventory) {
   CompletionReward reward{};
-  if (!allSitesUnlocked(state)) return reward;
+  if (!completed(state)) return reward;
 
   if (!platinumThemeUnlocked(state)) {
     state.rewardFlags = static_cast<uint8_t>(
@@ -236,7 +399,9 @@ bool SinnohExpedition::selectOrUnlock(SinnohExpeditionState& state, SinnohSite s
   if ((state.unlockedSites & bit) == 0U) {
     // Sites open in a readable expedition order; skipping straight to the
     // Rift would turn research into a menu tax rather than exploration.
-    if (index && (state.unlockedSites & (1U << (index - 1U))) == 0U) return false;
+    if (index && ((state.unlockedSites & (1U << (index - 1U))) == 0U ||
+                  (state.gymVictoryMask & (1U << (index - 1U))) == 0U))
+      return false;
     const uint16_t cost = kSites[index].unlockCost;
     if (state.research < cost) return false;
     state.research = static_cast<uint16_t>(state.research - cost);
@@ -262,8 +427,8 @@ uint16_t SinnohExpedition::recordBattle(SinnohExpeditionState& state, bool succe
   if (!successful) return 0U;
   ++state.battles;
   constexpr uint16_t kResearchPerPokemon = 1U;
-  const uint16_t available = state.research < 999U
-      ? static_cast<uint16_t>(999U - state.research) : 0U;
+  const uint16_t available = state.research < kMaximumResearch
+      ? static_cast<uint16_t>(kMaximumResearch - state.research) : 0U;
   const uint16_t gained = std::min<uint16_t>(kResearchPerPokemon, available);
   state.research = static_cast<uint16_t>(state.research + gained);
   return gained;

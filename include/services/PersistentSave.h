@@ -11,6 +11,8 @@
 #include "game/WorldFeatures.h"
 #include "game/BossSystem.h"
 #include "game/SinnohExpedition.h"
+#include "game/UnovaAdventure.h"
+#include "game/UnovaForms.h"
 #include "game/TowerDefenseSystem.h"
 
 enum class UiColorTheme : uint8_t {
@@ -18,6 +20,7 @@ enum class UiColorTheme : uint8_t {
   Ruby = 1,
   Emerald = 2,
   Platinum = 3,
+  White2 = 4,
 };
 
 struct UserSettings {
@@ -180,6 +183,11 @@ struct GameSave {
   // V44 adds the Gen 4 signature-item sidecar without changing any Pokemon
   // record or the frozen V38--V43 species-item layout.
   Gen4UniqueItemInventory gen4UniqueItems{};
+  // V46 expands the National collection through Unova and appends all Gen-V
+  // campaign/form state. Earlier records migrate through frozen types below.
+  UnovaAdventureState unova{};
+  Gen5UniqueItemInventory gen5UniqueItems{};
+  UnovaFormState unovaForms{};
 };
 // V43 added only the compact Poke Defense campaign record. The V42 and V43
 // ABIs are retained below as explicit frozen records and migrated field by
@@ -209,7 +217,7 @@ class PersistentSave {
  private:
   struct Record;
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 44;
+  static constexpr uint16_t kFormatVersion = 46;
   struct MartStateLegacy7 { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy10 { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy15 { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
@@ -600,8 +608,8 @@ class PersistentSave {
   // complete 768-byte implementation, so freeze it as opaque bytes and grow
   // only the Mart when migrating to V35.
   struct BattleStateV34 { alignas(BattleState) uint8_t bytes[768]{}; };
-  static_assert(sizeof(BattleState)==sizeof(BattleStateV34),
-                "Fields were added to BattleState without freezing a new save ABI");
+  static_assert(offsetof(BattleState, playerGen4Effects)==sizeof(BattleStateV34),
+                "The frozen V34 battle prefix changed");
   struct GameSaveV34 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
@@ -620,7 +628,7 @@ class PersistentSave {
   struct GameSaveV35 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
-    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexStateV41 pokedex{};
+    WildEncounterClock wildEncounterClock{}; BattleStateV34 battle{}; PokedexStateV41 pokedex{};
     GymProgress gymProgress{}; uint32_t money = 3000; MartStateLegacy15 mart{};
     MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
     uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
@@ -635,7 +643,7 @@ class PersistentSave {
   struct GameSaveV36 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
-    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexStateV41 pokedex{};
+    WildEncounterClock wildEncounterClock{}; BattleStateV34 battle{}; PokedexStateV41 pokedex{};
     GymProgress gymProgress{}; uint32_t money = 3000; MartStateLegacy15 mart{};
     MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
     uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
@@ -650,7 +658,7 @@ class PersistentSave {
   struct GameSaveV37 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
-    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexStateV41 pokedex{};
+    WildEncounterClock wildEncounterClock{}; BattleStateV34 battle{}; PokedexStateV41 pokedex{};
     GymProgress gymProgress{}; uint32_t money = 3000; MartState mart{};
     MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
     uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
@@ -667,7 +675,7 @@ class PersistentSave {
   struct GameSaveV38 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
-    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexStateV41 pokedex{};
+    WildEncounterClock wildEncounterClock{}; BattleStateV34 battle{}; PokedexStateV41 pokedex{};
     GymProgress gymProgress{}; uint32_t money = 3000; MartState mart{};
     MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
     uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
@@ -687,7 +695,7 @@ class PersistentSave {
   struct GameSaveV39 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
-    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexStateV41 pokedex{};
+    WildEncounterClock wildEncounterClock{}; BattleStateV34 battle{}; PokedexStateV41 pokedex{};
     GymProgress gymProgress{}; uint32_t money = 3000; MartState mart{};
     MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
     uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
@@ -712,7 +720,7 @@ class PersistentSave {
   struct GameSaveV40 {
     uint32_t playTimeSeconds = 0, bootCount = 0; uint8_t flags = 0, activePetSlot = 0;
     PokemonCollectionV41 collection{}; Inventory inventory{}; EncounterCharges encounterCharges{};
-    WildEncounterClock wildEncounterClock{}; BattleState battle{}; PokedexStateV41 pokedex{};
+    WildEncounterClock wildEncounterClock{}; BattleStateV34 battle{}; PokedexStateV41 pokedex{};
     GymProgress gymProgress{}; uint32_t money = 3000; MartState mart{};
     MoveLearningQueue moveLearning{}; EvolutionQueue evolutionQueue{}; EggState egg{}; UserSettings settings{};
     uint64_t ownedMachines = 0; PlayerStatistics statistics{}; uint32_t martSeenDay = 0;
@@ -740,7 +748,7 @@ class PersistentSave {
     Inventory inventory{};
     EncounterCharges encounterCharges{};
     WildEncounterClock wildEncounterClock{};
-    BattleState battle{};
+    BattleStateV34 battle{};
     PokedexStateV41 pokedex{};
     GymProgress gymProgress{};
     uint32_t money = 3000;
@@ -783,12 +791,12 @@ class PersistentSave {
     uint32_t bootCount = 0;
     uint8_t flags = 0;
     uint8_t activePetSlot = 0;
-    PokemonCollection collection{};
+    PokemonCollectionV45 collection{};
     Inventory inventory{};
     EncounterCharges encounterCharges{};
     WildEncounterClock wildEncounterClock{};
-    BattleState battle{};
-    PokedexState pokedex{};
+    BattleStateV34 battle{};
+    PokedexStateV45 pokedex{};
     GymProgress gymProgress{};
     uint32_t money = 3000;
     MartState mart{};
@@ -817,12 +825,12 @@ class PersistentSave {
     uint32_t bootCount = 0;
     uint8_t flags = 0;
     uint8_t activePetSlot = 0;
-    PokemonCollection collection{};
+    PokemonCollectionV45 collection{};
     Inventory inventory{};
     EncounterCharges encounterCharges{};
     WildEncounterClock wildEncounterClock{};
-    BattleState battle{};
-    PokedexState pokedex{};
+    BattleStateV34 battle{};
+    PokedexStateV45 pokedex{};
     GymProgress gymProgress{};
     uint32_t money = 3000;
     MartState mart{};
@@ -847,6 +855,85 @@ class PersistentSave {
     TowerDefense::CampaignState towerDefense{};
   };
   struct RecordV43 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV43 payload; uint32_t crc; };
+  // V44 added Gen-IV unique-item storage but still used the frozen 768-byte
+  // battle state. V45 appends complete Gen-IV battle mechanics after that
+  // prefix, so retain an explicit byte-exact V44 reader.
+  struct GameSaveV44 {
+    uint32_t playTimeSeconds = 0;
+    uint32_t bootCount = 0;
+    uint8_t flags = 0;
+    uint8_t activePetSlot = 0;
+    PokemonCollectionV45 collection{};
+    Inventory inventory{};
+    EncounterCharges encounterCharges{};
+    WildEncounterClock wildEncounterClock{};
+    BattleStateV34 battle{};
+    PokedexStateV45 pokedex{};
+    GymProgress gymProgress{};
+    uint32_t money = 3000;
+    MartState mart{};
+    MoveLearningQueue moveLearning{};
+    EvolutionQueue evolutionQueue{};
+    EggState egg{};
+    UserSettings settings{};
+    uint64_t ownedMachines = 0;
+    PlayerStatistics statistics{};
+    uint32_t martSeenDay = 0;
+    PpItemInventory ppItems{};
+    HomePetPlacementState homePetPlacement{};
+    BerryGardenState berryGarden{};
+    CreativeBackgroundState creativeBackgrounds{};
+    SpecialHeldItemInventory specialHeldItems{};
+    uint32_t lastNpcGiftDay = UINT32_MAX;
+    uint32_t clockLocalEpochSeconds = 0;
+    uint32_t bossCooldownSecondsRemaining = 0;
+    BossEncounterState bossEncounter{};
+    EggInventory eggInventory{};
+    SinnohExpeditionState sinnoh{};
+    TowerDefense::CampaignState towerDefense{};
+    Gen4UniqueItemInventory gen4UniqueItems{};
+  };
+  struct RecordV44 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV44 payload; uint32_t crc; };
+  // V45 is the last Sinnoh-only payload. It has the complete Generation-IV
+  // battle tail, but still stores exactly 493 Box/Dex positions.
+  struct BattleStateV45 { alignas(BattleState) uint8_t bytes[856]{}; };
+  static_assert(sizeof(BattleStateV45)==856,"Frozen V45 battle ABI changed");
+  struct GameSaveV45 {
+    uint32_t playTimeSeconds = 0;
+    uint32_t bootCount = 0;
+    uint8_t flags = 0;
+    uint8_t activePetSlot = 0;
+    PokemonCollectionV45 collection{};
+    Inventory inventory{};
+    EncounterCharges encounterCharges{};
+    WildEncounterClock wildEncounterClock{};
+    BattleStateV45 battle{};
+    PokedexStateV45 pokedex{};
+    GymProgress gymProgress{};
+    uint32_t money = 3000;
+    MartState mart{};
+    MoveLearningQueue moveLearning{};
+    EvolutionQueue evolutionQueue{};
+    EggState egg{};
+    UserSettings settings{};
+    uint64_t ownedMachines = 0;
+    PlayerStatistics statistics{};
+    uint32_t martSeenDay = 0;
+    PpItemInventory ppItems{};
+    HomePetPlacementState homePetPlacement{};
+    BerryGardenState berryGarden{};
+    CreativeBackgroundState creativeBackgrounds{};
+    SpecialHeldItemInventory specialHeldItems{};
+    uint32_t lastNpcGiftDay = UINT32_MAX;
+    uint32_t clockLocalEpochSeconds = 0;
+    uint32_t bossCooldownSecondsRemaining = 0;
+    BossEncounterState bossEncounter{};
+    EggInventory eggInventory{};
+    SinnohExpeditionState sinnoh{};
+    TowerDefense::CampaignState towerDefense{};
+    Gen4UniqueItemInventory gen4UniqueItems{};
+  };
+  struct RecordV45 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV45 payload; uint32_t crc; };
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   uint64_t sinnohMachineOwnership_ = 0;
@@ -884,11 +971,14 @@ class PersistentSave {
   bool readRecordV41(const char* key, RecordV41& record);
   bool readRecordV42(const char* key, RecordV42& record);
   bool readRecordV43(const char* key, RecordV43& record);
+  bool readRecordV44(const char* key, RecordV44& record);
+  bool readRecordV45(const char* key, RecordV45& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   uint32_t crc32Update(uint32_t state, const uint8_t* data, size_t length) const;
 #if defined(ARDUINO_ARCH_ESP32)
   bool inspectCurrentRecord(const char* key, uint32_t& sequence) const;
+  bool inspectAnyFileRecord(const char* key, uint32_t& sequence) const;
   bool loadCurrentRecord(const char* key, GameSave& save, uint32_t& sequence) const;
 #endif
   bool isNewer(uint32_t a, uint32_t b) const;

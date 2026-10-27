@@ -130,6 +130,10 @@ enum class BattleAnimationMotion : uint8_t {
   CrossChop,
   DirtPlume,
   LocalFixedVelocity,
+  // Shell Smash's two jaw halves have a callback-specific ABI: arguments
+  // 0/1 are local offsets, 3/4 are fixed-point velocity, and 5/6 are the
+  // travel/hold durations.  It must not share LocalFixedVelocity's ABI.
+  LockingJaw,
   OffscreenFly,
   LocalStarVelocity,
   HyperVoiceRing,
@@ -633,6 +637,7 @@ enum class BattleAnimationTaskMotion : uint8_t {
   SmokescreenImpact,
   GlareEyeDots,
   BarrageBall,
+  BestowItemThrow,
   DestinyBondShadow,
   RolloutDebris,
   Raindrops,

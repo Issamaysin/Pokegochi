@@ -131,6 +131,7 @@ struct ArchiveRangeCacheEntry {
 constexpr uint8_t kArchiveRangeCacheCapacity = 64;
 ArchiveRangeCacheEntry archiveRangeCache[kArchiveRangeCacheCapacity]{};
 uint8_t archiveRangeCacheCount = 0;
+uint8_t archiveRangeCacheNextReplacement = 0;
 
 constexpr const char* kAssetArchivePath = "/pokegochi/pokegochi.pak";
 File archiveBatchFile;
@@ -145,6 +146,27 @@ uint32_t assetPathHash(const char* path) {
   uint32_t value = 2166136261UL;
   while (*path) value = (value ^ static_cast<uint8_t>(*path++)) * 16777619UL;
   return value;
+}
+
+bool cachedArchiveRange(uint32_t key, uint32_t& offset, uint32_t& length) {
+  for (uint8_t index = 0; index < archiveRangeCacheCount; ++index) {
+    const ArchiveRangeCacheEntry& cached = archiveRangeCache[index];
+    if (cached.valid && cached.key == key) {
+      offset = cached.offset;
+      length = cached.length;
+      return true;
+    }
+  }
+  return false;
+}
+
+void cacheArchiveRange(uint32_t key, uint32_t offset, uint32_t length) {
+  const uint8_t destination = archiveRangeCacheCount < kArchiveRangeCacheCapacity
+      ? archiveRangeCacheCount++ : archiveRangeCacheNextReplacement;
+  archiveRangeCache[destination] = {key, offset, length, true};
+  if (archiveRangeCacheCount == kArchiveRangeCacheCapacity)
+    archiveRangeCacheNextReplacement = static_cast<uint8_t>(
+        (destination + 1U) % kArchiveRangeCacheCapacity);
 }
 
 bool readFileFully(File& file, uint8_t* destination, size_t length, bool latchFailure = true) {
@@ -185,14 +207,7 @@ bool archiveAssetRange(const char* path, uint32_t& offset, uint32_t& length) {
   offset = length = 0;
   if (!archiveBatchFile || !archiveBatchDepth || !archiveAvailable) return false;
   const uint32_t key = assetPathHash(path);
-  for (uint8_t index = 0; index < archiveRangeCacheCount; ++index) {
-    const ArchiveRangeCacheEntry& cached = archiveRangeCache[index];
-    if (cached.valid && cached.key == key) {
-      offset = cached.offset;
-      length = cached.length;
-      return true;
-    }
-  }
+  if (cachedArchiveRange(key, offset, length)) return true;
   uint32_t low = 0;
   uint32_t high = archiveHeader.assetCount;
   AssetArchiveEntry entry{};
@@ -216,10 +231,7 @@ bool archiveAssetRange(const char* path, uint32_t& offset, uint32_t& length) {
   }
   offset = entry.offset;
   length = entry.length;
-  if (archiveRangeCacheCount < kArchiveRangeCacheCapacity) {
-    ArchiveRangeCacheEntry& cached = archiveRangeCache[archiveRangeCacheCount++];
-    cached = {key, offset, length, true};
-  }
+  cacheArchiveRange(key, offset, length);
   return true;
 }
 
@@ -1770,6 +1782,7 @@ bool drawLargeAsset(PixelCanvas& display, const char* path, int16_t x, int16_t y
 void AssetRenderer::storageUnmounted() {
   archiveBatchDepth = 0;
   archiveRangeCacheCount = 0;
+  archiveRangeCacheNextReplacement = 0;
   if (archiveBatchFile) archiveBatchFile.close();
   archiveAvailable = false;
   archiveHeader = AssetArchiveHeader{};
@@ -1780,6 +1793,7 @@ bool AssetRenderer::usingArchive() { return archiveAvailable; }
 void AssetRenderer::storageMounted() {
   archiveBatchDepth = 0;
   archiveRangeCacheCount = 0;
+  archiveRangeCacheNextReplacement = 0;
   if (archiveBatchFile) archiveBatchFile.close();
   File archive = SD.open(kAssetArchivePath, FILE_READ);
   archiveAvailable = archive && readArchiveHeader(archive, archiveHeader, false);
@@ -1794,7 +1808,6 @@ bool AssetRenderer::beginPreloadBatch() {
     return archiveAvailable && archiveBatchFile;
   }
   archiveBatchDepth = 1;
-  archiveRangeCacheCount = 0;
   if (!archiveAvailable) return false;
   ++assetOpenCount;
   archiveBatchFile = SD.open(kAssetArchivePath, FILE_READ);
@@ -1817,11 +1830,124 @@ bool AssetRenderer::primePreload(const char* path) {
   return archiveAssetRange(path, offset, length);
 }
 
+namespace {
+__attribute__((noinline)) bool primeArchiveRangesSequential(
+    const char* const* paths, uint8_t count) {
+  // A Home manifest contains about 25 assets. Resolving each independently
+  // used 14 random index seeks, or roughly 350 seeks before any pixel payload
+  // was read. Gather its uncached hashes, seek once near the first key and
+  // stream the sorted PGA3 index until every range is known. Keep this in a
+  // separate frame: battle manifests with only a few assets must not reserve
+  // the bulk scanner's buffers on their already shallow ESP32 task stack.
+  constexpr uint8_t kMaximumBatchKeys = 32U;
+  constexpr uint8_t kSequentialLookupThreshold = 6U;
+  uint32_t keys[kMaximumBatchKeys]{};
+  uint8_t keyCount = 0U;
+  for (uint8_t item = 0; item < count; ++item) {
+    const char* path = paths[item];
+    if (!path || !path[0] || AssetRenderer::isPreloaded(path)) continue;
+    const uint32_t key = assetPathHash(path);
+    uint32_t ignoredOffset = 0U, ignoredLength = 0U;
+    if (cachedArchiveRange(key, ignoredOffset, ignoredLength)) continue;
+    bool duplicate = false;
+    for (uint8_t known = 0; known < keyCount; ++known)
+      if (keys[known] == key) { duplicate = true; break; }
+    if (duplicate) continue;
+    if (keyCount >= kMaximumBatchKeys) {
+      for (uint8_t fallback = 0; fallback < count; ++fallback)
+        if (paths[fallback] && paths[fallback][0]) {
+          uint32_t offset = 0U, length = 0U;
+          if (!archiveAssetRange(paths[fallback], offset, length)) return false;
+        }
+      return true;
+    }
+    keys[keyCount++] = key;
+  }
+  if (!keyCount) return true;
+  if (keyCount < kSequentialLookupThreshold) {
+    for (uint8_t item = 0; item < count; ++item)
+      if (paths[item] && paths[item][0]) {
+        uint32_t offset = 0U, length = 0U;
+        if (!archiveAssetRange(paths[item], offset, length)) return false;
+      }
+    return true;
+  }
+  for (uint8_t index = 1U; index < keyCount; ++index) {
+    const uint32_t value = keys[index];
+    uint8_t position = index;
+    while (position && keys[position - 1U] > value) {
+      keys[position] = keys[position - 1U];
+      --position;
+    }
+    keys[position] = value;
+  }
+
+  // Lower-bound only the smallest requested key, then consume adjacent index
+  // records in 192-byte reads. Even a near-complete 134 KiB index scan is far
+  // cheaper on a microSD than hundreds of tiny seeks.
+  uint32_t low = 0U, high = archiveHeader.assetCount;
+  AssetArchiveEntry probe{};
+  while (low < high) {
+    const uint32_t middle = low + (high - low) / 2U;
+    if (!archiveBatchFile.seek(archiveHeader.indexOffset + middle * archiveHeader.entrySize) ||
+        !readFileFully(archiveBatchFile, reinterpret_cast<uint8_t*>(&probe), sizeof(probe)))
+      return false;
+    if (probe.key < keys[0]) low = middle + 1U;
+    else high = middle;
+  }
+  if (low >= archiveHeader.assetCount ||
+      !archiveBatchFile.seek(archiveHeader.indexOffset + low * archiveHeader.entrySize))
+    return false;
+
+  constexpr uint8_t kEntriesPerRead = 16U;
+  AssetArchiveEntry entries[kEntriesPerRead];
+  uint8_t wanted = 0U;
+  uint32_t cursor = low;
+  while (cursor < archiveHeader.assetCount && wanted < keyCount) {
+    const uint32_t remaining = archiveHeader.assetCount - cursor;
+    const uint8_t entriesToRead = static_cast<uint8_t>(
+        std::min<uint32_t>(kEntriesPerRead, remaining));
+    const size_t bytesToRead = static_cast<size_t>(entriesToRead) * sizeof(AssetArchiveEntry);
+    if (!readFileFully(archiveBatchFile, reinterpret_cast<uint8_t*>(entries), bytesToRead))
+      return false;
+    for (uint8_t entryIndex = 0; entryIndex < entriesToRead && wanted < keyCount; ++entryIndex) {
+      const AssetArchiveEntry& entry = entries[entryIndex];
+      if (keys[wanted] < entry.key) return false;
+      if (entry.key != keys[wanted]) continue;
+      if (!entry.length || entry.offset < archiveHeader.dataOffset ||
+          static_cast<uint64_t>(entry.offset) + entry.length > archiveBatchFile.size()) {
+        assetIoFailed = true;
+        return false;
+      }
+      cacheArchiveRange(entry.key, entry.offset, entry.length);
+      ++wanted;
+    }
+    cursor += entriesToRead;
+  }
+  return wanted == keyCount;
+}
+}  // namespace
+
+bool AssetRenderer::primePreloads(const char* const* paths, uint8_t count) {
+  if (!paths || !count) return true;
+  constexpr uint8_t kSequentialLookupThreshold = 6U;
+  if (!archiveBatchDepth || !archiveAvailable || !archiveBatchFile ||
+      count < kSequentialLookupThreshold) {
+    for (uint8_t item = 0; item < count; ++item)
+      if (paths[item] && paths[item][0] && !primePreload(paths[item])) return false;
+    return true;
+  }
+  return primeArchiveRangesSequential(paths, count);
+}
+
 void AssetRenderer::endPreloadBatch() {
   if (!archiveBatchDepth) return;
   --archiveBatchDepth;
   if (!archiveBatchDepth && archiveBatchFile) archiveBatchFile.close();
-  if (!archiveBatchDepth) archiveRangeCacheCount = 0;
+  // Archive offsets are immutable for the lifetime of one mounted pack.
+  // Retaining them across scene batches avoids repeating a binary search
+  // (and roughly fourteen tiny SD seeks) for every Home/Bag/Box revisit.
+  // storageMounted()/storageUnmounted() remain the invalidation boundary.
 }
 
 bool AssetRenderer::begin() {
@@ -1841,17 +1967,28 @@ bool AssetRenderer::begin() {
   return ready;
 }
 
-void AssetRenderer::releaseSceneWorkspaceForRadio() {
+namespace {
+void releaseSceneWorkspace(const char* reason) {
   // No descriptor may survive deletion because cache entries are allowed to
   // spill into this same arena.
-  clearCache();
+  AssetRenderer::clearCache();
   delete[] sceneWorkspace;
   sceneWorkspace = nullptr;
   sceneWorkspaceCapacity = 0;
   sceneWorkspaceOwner = SceneWorkspaceOwner::None;
-  Serial.printf("[GFX] scene workspace released for BLE heap=%u block=%u\n",
+  Serial.printf("[GFX] scene workspace released for %s heap=%u block=%u\n",
+                reason,
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+}
+}  // namespace
+
+void AssetRenderer::releaseSceneWorkspaceForRadio() {
+  releaseSceneWorkspace("BLE");
+}
+
+void AssetRenderer::releaseSceneWorkspaceForStorage() {
+  releaseSceneWorkspace("SAVE");
 }
 
 bool AssetRenderer::restoreSceneWorkspace(bool radioActive) {

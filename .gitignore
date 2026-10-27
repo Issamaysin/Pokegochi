@@ -1,9 +1,13 @@
 .pio/
 .pio-core/
+.pio-core-sandbox/
 .tools/
 .test-build/
+.test-build-*/
 .zig-cache/
+.zig-cache-*/
 .zig-cache-global/
+.zig-global-cache-*/
 .downloads/
 .generated/
 .local-packages/
@@ -26,6 +30,7 @@ data/generated/
 tmp/
 output/
 backups/
+/build/
 legend-fighter/
 /Legend_Fighter_OneStick_2.9.5_APKPure.apk
 

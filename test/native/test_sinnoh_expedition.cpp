@@ -15,6 +15,7 @@ int main() {
   GymProgress progress{};
   SinnohExpeditionState state{};
   assert(!SinnohExpedition::available(progress, state));
+  assert(!SinnohExpedition::goldenBallUnlocked(progress, state));
   progress.starterClaimedBits=MegaChallengeSystem::kCompletionBit;
   SinnohExpedition::reconcile(state, progress);
   assert(!SinnohExpedition::available(progress, state));
@@ -31,6 +32,7 @@ int main() {
   assert(SinnohExpedition::recordBossVictory(state));
   assert(!SinnohExpedition::recordBossVictory(state));
   assert(SinnohExpedition::available(progress, state));
+  assert(SinnohExpedition::goldenBallUnlocked(progress, state));
   assert(SinnohExpedition::discoveryNotificationPending(progress, state));
 
   SinnohExpeditionState reverseOrderState{};
@@ -59,13 +61,81 @@ int main() {
   assert(SinnohExpedition::availableSpecies(
       SinnohSite::DistortionRift, visibleSpecies, 32U) == 0U);
 
-  // Research unlocks one authored location at a time and never opens the
-  // postgame rift merely from selecting its card.
+  // Each badge grants exactly 20 Research once. Replaying a defeated leader
+  // cannot farm points, and the shared Research counter remains capped.
+  static_assert(SinnohExpedition::kGymResearchReward == 20U,
+                "Each Sinnoh Gym must award 20 Research");
+  SinnohExpeditionState gymRewardState{};
+  gymRewardState.unlockedSites = SinnohExpedition::kAllSitesMask;
+  for (uint8_t index = 0; index < SinnohExpedition::kSiteCount; ++index) {
+    const SinnohSite site = static_cast<SinnohSite>(index);
+    const uint16_t before = gymRewardState.research;
+    assert(SinnohExpedition::recordGymVictory(gymRewardState, site));
+    assert(gymRewardState.research ==
+           static_cast<uint16_t>(before + SinnohExpedition::kGymResearchReward));
+    assert(!SinnohExpedition::recordGymVictory(gymRewardState, site));
+    assert(gymRewardState.research ==
+           static_cast<uint16_t>(before + SinnohExpedition::kGymResearchReward));
+  }
+  assert(gymRewardState.research == 160U);
+
+  SinnohExpeditionState cappedGymRewardState{};
+  cappedGymRewardState.unlockedSites = 1U;
+  cappedGymRewardState.research = 990U;
+  assert(SinnohExpedition::recordGymVictory(
+      cappedGymRewardState, SinnohSite::LakeVerity));
+  assert(cappedGymRewardState.research == SinnohExpedition::kMaximumResearch);
+  assert(!SinnohExpedition::recordGymVictory(
+      cappedGymRewardState, SinnohSite::LakeVerity));
+  assert(cappedGymRewardState.research == SinnohExpedition::kMaximumResearch);
+
+  // Research alone is no longer enough to skip through Sinnoh. Every site
+  // owns one Platinum leader and defeating that Gym is also required before
+  // the following site can open.
   assert(!SinnohExpedition::selectOrUnlock(state,SinnohSite::EternaForest));
   state.research=999U;
-  for(uint8_t index=1;index<SinnohExpedition::kSiteCount;++index)
-    assert(SinnohExpedition::selectOrUnlock(state,static_cast<SinnohSite>(index)));
+  assert(!SinnohExpedition::selectOrUnlock(state,SinnohSite::EternaForest));
+  constexpr const char* kExpectedLeaders[] = {
+      "ROARK", "GARDENIA", "FANTINA", "MAYLENE",
+      "CRASHER WAKE", "BYRON", "CANDICE", "VOLKNER"};
+  constexpr const char* kExpectedBadges[] = {
+      "COAL", "FOREST", "RELIC", "COBBLE",
+      "FEN", "MINE", "ICICLE", "BEACON"};
+  for(uint8_t index=0;index<SinnohExpedition::kSiteCount;++index) {
+    const SinnohSite site=static_cast<SinnohSite>(index);
+    assert(SinnohExpedition::isUnlocked(state,site));
+    assert(SinnohExpedition::gymChallengeAvailable(state,site));
+    const SinnohGymDefinition* gym=SinnohExpedition::gymDefinition(site);
+    assert(gym&&gym->site==site&&
+           std::strcmp(gym->leader,kExpectedLeaders[index])==0&&
+           std::strcmp(gym->badge,kExpectedBadges[index])==0);
+    for(uint8_t slot=0;slot<kOpponentTeamCapacity;++slot) {
+      assert(gym->team[slot].speciesId>0U&&gym->team[slot].speciesId<=493U);
+      assert(gym->team[slot].level>=96U&&gym->team[slot].level<=100U);
+      for(uint8_t moveSlot=0;moveSlot<kMoveSlots;++moveSlot)
+        if(gym->team[slot].moves[moveSlot]!=MoveId::None)
+          assert(findFullMove(gym->team[slot].moves[moveSlot]));
+    }
+
+    BattleState gymBattle{};
+    assert(SinnohExpedition::startGym(
+        state,gymBattle,collection,playerUid,site,0x53470000U+index));
+    assert(gymBattle.active&&gymBattle.kind==BattleKind::SinnohGym&&
+           gymBattle.gymId==index&&gymBattle.gymStage==2U&&
+           gymBattle.opponentCount==kOpponentTeamCapacity&&
+           gymBattle.unlockedGeneration==4U);
+    assert(SinnohExpedition::recordGymVictory(state,site));
+    assert(!SinnohExpedition::recordGymVictory(state,site));
+    assert(SinnohExpedition::hasGymVictory(state,site));
+    assert(SinnohExpedition::gymVictoryCount(state)==index+1U);
+
+    if(index+1U<SinnohExpedition::kSiteCount)
+      assert(SinnohExpedition::selectOrUnlock(
+          state,static_cast<SinnohSite>(index+1U)));
+  }
   assert(SinnohExpedition::allSitesUnlocked(state));
+  assert(SinnohExpedition::allGymsDefeated(state));
+  assert(SinnohExpedition::completed(state));
   Inventory completionInventory{};
   const SinnohExpedition::CompletionReward completionReward =
       SinnohExpedition::reconcileCompletionReward(state, completionInventory);
@@ -94,14 +164,42 @@ int main() {
   oldPlayedState.battles = 1U;
   SinnohExpedition::reconcile(oldPlayedState, progress);
   assert(SinnohExpedition::available(progress, oldPlayedState));
+  assert(SinnohExpedition::goldenBallUnlocked(progress, oldPlayedState));
   assert(SinnohExpedition::towerCompleted(oldPlayedState));
   assert(SinnohExpedition::bossDefeated(oldPlayedState));
   assert(!SinnohExpedition::discoveryNotificationPending(progress, oldPlayedState));
+
+  // A player who had opened every site before site Gyms existed keeps the
+  // old completion, rewards and Unova gate. The badges themselves remain
+  // unclaimed, allowing all eight new battles to be played normally.
+  SinnohExpeditionState oldCompletedState{};
+  oldCompletedState.unlockedSites = SinnohExpedition::kAllSitesMask;
+  oldCompletedState.gymVictoryMask = 0xFFU;  // legacy fossil bits
+  SinnohExpedition::reconcile(oldCompletedState, progress);
+  assert(SinnohExpedition::completed(oldCompletedState));
+  assert(SinnohExpedition::gymVictoryCount(oldCompletedState) == 0U);
+  assert(SinnohExpedition::gymChallengeAvailable(
+      oldCompletedState, SinnohSite::LakeVerity));
+
+  // Once the new schema exists, opening every site without winning the
+  // badges is not completion and must not grant either final reward.
+  SinnohExpeditionState gatedCompletion{};
+  gatedCompletion.unlockedSites = SinnohExpedition::kAllSitesMask;
+  gatedCompletion.rewardFlags = SinnohExpedition::kGymSchemaBit;
+  assert(!SinnohExpedition::completed(gatedCompletion));
+  Inventory gatedInventory{};
+  const SinnohExpedition::CompletionReward gatedReward =
+      SinnohExpedition::reconcileCompletionReward(
+          gatedCompletion, gatedInventory);
+  assert(!gatedReward.platinumThemeUnlocked &&
+         !gatedReward.masterBallGranted);
 
   // A full Master Ball stack never swallows the reward: the theme unlocks
   // immediately and the ball is delivered when the player creates space.
   SinnohExpeditionState pendingState{};
   pendingState.unlockedSites = SinnohExpedition::kAllSitesMask;
+  pendingState.gymVictoryMask = SinnohExpedition::kAllSitesMask;
+  pendingState.rewardFlags = SinnohExpedition::kGymSchemaBit;
   Inventory fullInventory{};
   fullInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)] =
       kInventoryStackLimit;

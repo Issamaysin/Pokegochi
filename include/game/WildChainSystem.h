@@ -3,9 +3,11 @@
 #include <cstdint>
 #include "game/BattleEngine.h"
 
-// Transient convenience flow for endgame farming. Every member is deliberately
-// outside GameSave: each Wild battle is committed normally, while a reboot or
-// leaving the flow simply ends the convenience chain.
+struct GymProgress;
+
+// Transient convenience flow unlocked in early progression. Every member is
+// deliberately outside GameSave: each Wild battle is committed normally,
+// while a reboot or leaving the flow simply ends the convenience chain.
 struct WildChainState {
   uint32_t battlerUid = 0;
   uint8_t total = 0;
@@ -24,6 +26,10 @@ class WildChainSystem {
   static constexpr uint8_t kMinimumEncounters = 1;
   static constexpr uint8_t kMaximumEncounters = 50;
 
+  // Unlock immediately after the player's first Gym victory. Deriving this
+  // from the already-persisted Badge bits keeps old saves compatible without
+  // adding a one-time flag or changing the save ABI.
+  static bool isUnlocked(const GymProgress& progress);
   static bool begin(WildChainState& state, uint8_t encounters,
                     uint32_t battlerUid);
   static WildChainDecision completeEncounter(WildChainState& state,

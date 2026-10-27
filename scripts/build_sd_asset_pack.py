@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import colorsys
 import hashlib
+import io
 import json
+import os
 import re
 import struct
 import sys
@@ -18,16 +21,25 @@ from build_home_backgrounds import (
     BACKGROUNDS, build_background_layers, render_map_layers,
     write_firmware_metadata,
 )
+from unova_rom_data import (
+    expansion_bytes, expansion_text, white_item_icon_resources,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
-ROM = ROOT / "rom/extracted/Pokemon - FireRed Version (USA, Europe).gba"
+DEFAULT_FIRERED_ROM = ROOT / "rom/extracted/Pokemon - FireRed Version (USA, Europe).gba"
+ROM = Path(os.environ.get("POKEGOCHI_FIRERED_ROM", DEFAULT_FIRERED_ROM))
 DECOMP = ROOT / ".downloads/pokefirered-tree/pokefirered-master"
 EMERALD = ROOT / ".downloads/pokeemerald-tree/pokeemerald-master"
 CRYSTAL = ROOT / ".downloads/pokecrystal-tree/pokecrystal-master"
 EXPANSION = ROOT / ".downloads/pokeemerald-expansion"
 PLATINUM = ROOT / ".downloads/pokeplatinum-tree"
+SINNOH_TRAINERS = ROOT / ".downloads/sinnoh-trainers"
 OUTPUT = ROOT / ".generated/sdcard/pokegochi/assets"
 ARCHIVE = ROOT / ".generated/sdcard/pokegochi/pokegochi.pak"
+SINNOH_GYM_LEADERS = (
+    "roark", "gardenia", "fantina", "maylene",
+    "wake", "byron", "candice", "volkner",
+)
 
 
 def flattened_data(image: Image.Image):
@@ -40,6 +52,33 @@ def flattened_data(image: Image.Image):
     """
     getter = getattr(image, "get_flattened_data", None)
     return getter() if getter is not None else image.getdata()
+
+
+def white_item_icon(item_id: int) -> Image.Image:
+    """Decode one exact 32x32 4bpp item icon from Pokemon White a/0/2/5."""
+    graphics, palette = white_item_icon_resources(item_id)
+    if len(graphics) < 0x230 or len(palette) < 0x48:
+        raise RuntimeError(f"Truncated Pokemon White item icon {item_id}")
+    colors: list[tuple[int, int, int, int]] = []
+    for offset in range(0x28, 0x48, 2):
+        value = struct.unpack_from("<H", palette, offset)[0]
+        colors.append((
+            (value & 31) * 255 // 31,
+            ((value >> 5) & 31) * 255 // 31,
+            ((value >> 10) & 31) * 255 // 31,
+            0 if offset == 0x28 else 255,
+        ))
+    image = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    pixels = image.load()
+    tile_data = graphics[0x30:0x230]
+    for tile in range(16):
+        tile_x, tile_y = (tile % 4) * 8, (tile // 4) * 8
+        for packed_index in range(32):
+            packed = tile_data[tile * 32 + packed_index]
+            for nibble, color_index in enumerate((packed & 15, packed >> 4)):
+                linear = packed_index * 2 + nibble
+                pixels[tile_x + linear % 8, tile_y + linear // 8] = colors[color_index]
+    return image
 _ASSET_VERSION_HEADER = (ROOT / "include/config/AssetPackVersion.h").read_text(
     encoding="ascii")
 _ASSET_VERSION_MATCH = re.search(
@@ -128,9 +167,16 @@ BATTLE_ANIMATION_TASK_BACKGROUNDS = (
      "battle_anims/masks/cure_bubbles.bin"),
 )
 
-# Only official Mega Evolutions whose base species is in #001-386, plus the
-# two official Primal Reversions. Extra expansion folders (for example fan
-# forms) are intentionally absent from this allow-list.
+# Official Mega Evolutions available through the Pokegochi progression, plus
+# the two official Primal Reversions. Extra expansion folders that are not
+# real released forms remain intentionally absent from this allow-list.
+GEN5_MEGA_FORMS = (
+    (500,"emboar","mega"),(530,"excadrill","mega"),(531,"audino","mega"),
+    (545,"scolipede","mega"),(560,"scrafty","mega"),
+    (604,"eelektross","mega"),(609,"chandelure","mega"),
+    (623,"golurk","mega"),
+)
+
 MEGA_FORMS = (
     (26,"raichu","mega_x"),(26,"raichu","mega_y"),(36,"clefable","mega"),
     (71,"victreebel","mega"),(121,"starmie","mega"),(149,"dragonite","mega"),
@@ -156,7 +202,7 @@ MEGA_FORMS = (
     # expansion decomp, matching the existing Mega Stone renderer.
     (428,"lopunny","mega"),(445,"garchomp","mega"),(448,"lucario","mega"),
     (460,"abomasnow","mega"),(475,"gallade","mega"),
-)
+) + GEN5_MEGA_FORMS
 
 # Stable, player-selectable Platinum forms. Battle-weather forms such as
 # Cherrim and Castform remain runtime-driven; these families have a persistent
@@ -170,6 +216,37 @@ PLATINUM_SELECTABLE_FORMS = (
     (493, "arceus", ("base", "fighting", "flying", "poison", "rock", "bug",
                      "ghost", "dragon", "steel", "fire", "water", "grass",
                      "electric", "psychic", "ice", "ground", "dark")),
+)
+
+# Form order is the persistent numeric order used by
+# CollectionLogic::resolvedForm(). Every source below is authored GBA art from
+# pokeemerald-expansion; the empty folder name means the species root/base
+# form. Keeping base forms in the same namespace is important because the
+# runtime deliberately resolves every multi-form Unova species through one
+# path in battle, Box, Summary and Home.
+UNOVA_SELECTABLE_FORMS = (
+    (550, "basculin", ("", "blue_striped")),
+    (555, "darmanitan", ("", "zen")),
+    (585, "deerling", ("", "summer", "autumn", "winter")),
+    (586, "sawsbuck", ("", "summer", "autumn", "winter")),
+    (641, "tornadus", ("", "therian")),
+    (642, "thundurus", ("", "therian")),
+    (645, "landorus", ("", "therian")),
+    (646, "kyurem", ("", "black", "white")),
+    (647, "keldeo", ("", "resolute")),
+    (648, "meloetta", ("", "pirouette")),
+    (649, "genesect", ("", "douse_drive", "shock_drive", "burn_drive",
+                        "chill_drive")),
+)
+
+# The rooms remain small enough for the ESP32's retained scene arena, but are
+# built from complete authentic map renders rather than procedural colour
+# blocks. The selected Hoenn maps closely match each Unova area's biome while
+# the Pokemon themselves use the exact expansion sprites below.
+UNOVA_AREA_MAPS = (
+    "PetalburgWoods", "Route111", "NewMauville_Inside", "Route110",
+    "MtPyre_2F", "ShoalCave_LowTideStairsRoom", "Route120", "FieryPath",
+    "ShoalCave_LowTideIceRoom", "BattleFrontier_BattlePikeThreePathRoom",
 )
 
 # Ten authored healing-room views. Most Pokemon Centers in one region share
@@ -215,10 +292,12 @@ def jasc_palette(path: Path) -> list[tuple[int, int, int]]:
 
 def shiny_icon(image: Image.Image, normal: list[tuple[int,int,int]], shiny: list[tuple[int,int,int]]) -> Image.Image:
     image=image.convert("RGBA");out=Image.new("RGBA",image.size)
+    colour_count=min(len(normal),len(shiny))
+    if colour_count<2:raise ValueError("Shiny conversion requires transparency plus one colour")
     converted=[]
     for red,green,blue,alpha in flattened_data(image):
         if alpha<128:converted.append((red,green,blue,0));continue
-        nearest=min(range(1,16),key=lambda i:(red-normal[i][0])**2+(green-normal[i][1])**2+(blue-normal[i][2])**2)
+        nearest=min(range(1,colour_count),key=lambda i:(red-normal[i][0])**2+(green-normal[i][1])**2+(blue-normal[i][2])**2)
         converted.append((*shiny[nearest],alpha))
     out.putdata(converted);return out
 
@@ -233,6 +312,106 @@ def source_png(path: Path) -> Image.Image:
         rgba.putalpha(alpha)
         return rgba
     return source.convert("RGBA")
+
+
+def expansion_source_png(path: str) -> Image.Image:
+    """Open a PNG from the sparse expansion checkout or its git object.
+
+    The repository intentionally keeps the expansion worktree sparse to save
+    several gigabytes. Reading through ``git show`` preserves that layout and
+    still makes every canonical Generation-V sprite available to this pack.
+    """
+    source = Image.open(io.BytesIO(expansion_bytes(path)))
+    if source.mode == "P":
+        indices = list(flattened_data(source))
+        rgba = source.convert("RGBA")
+        alpha = Image.new("L", source.size)
+        alpha.putdata([0 if value == 0 else 255 for value in indices])
+        rgba.putalpha(alpha)
+        return rgba
+    return source.convert("RGBA")
+
+
+def expansion_jasc_palette(path: str) -> list[tuple[int, int, int]]:
+    lines = expansion_text(path).splitlines()
+    if len(lines) < 3 or lines[:2] != ["JASC-PAL", "0100"]:
+        raise ValueError(f"Invalid expansion palette {path}")
+    count = int(lines[2])
+    # The expansion deliberately trims unused trailing OBJ slots for some
+    # species (Sandile has 13 authored colours). Preserve that canonical
+    # palette and let expansion_indexed_png reject only an actually invalid
+    # pixel index instead of requiring sixteen padded entries.
+    if count < 2 or len(lines) < 3 + count:
+        raise ValueError(f"Invalid expansion palette length {path}: {count}")
+    return [tuple(map(int, line.split())) for line in lines[3:3 + count]][:16]
+
+
+def expansion_indexed_png(path: str,
+                          palette: list[tuple[int, int, int]]) -> Image.Image:
+    source = Image.open(io.BytesIO(expansion_bytes(path)))
+    if source.mode != "P":
+        raise RuntimeError(f"Expected indexed expansion Pokemon source: {path}")
+    indices = list(flattened_data(source))
+    invalid = next((value for value in indices if value >= len(palette)), None)
+    if invalid is not None:
+        raise RuntimeError(
+            f"Palette index {invalid} exceeds {len(palette)} colours in {path}")
+    output = Image.new("RGBA", source.size)
+    output.putdata([(*palette[value], 0 if value == 0 else 255)
+                    for value in indices])
+    return output
+
+
+def fitted_authentic_map_strip(map_name: str) -> Image.Image:
+    """Fit an authentic Emerald map into Unova's 320x93 room viewport."""
+    source = render_map_layers(EMERALD, map_name).composite.convert("RGBA")
+    scale = max(320 / source.width, 93 / source.height)
+    fitted = source.resize((max(320, round(source.width * scale)),
+                            max(93, round(source.height * scale))),
+                           Image.Resampling.NEAREST)
+    left = (fitted.width - 320) // 2
+    top = (fitted.height - 93) // 2
+    return fitted.crop((left, top, left + 320, top + 93))
+
+
+def centered_source_icon(path: Path) -> Image.Image:
+    """Take one authentic 16x32/32x32 source cel into a 32px room badge."""
+    source = source_png(path)
+    width = min(32, source.width)
+    height = min(32, source.height)
+    frame = source.crop((0, 0, width, height))
+    canvas = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    canvas.alpha_composite(frame, ((32 - width) // 2, 32 - height))
+    return canvas
+
+
+def golden_ball_recolor(image: Image.Image) -> Image.Image:
+    """Turn only a Poke Ball's authored warm-red pixels into gold.
+
+    None of the supplied FireRed, Emerald, Platinum or expansion assets has a
+    Golden Ball. Recolouring the original indexed sprite keeps its exact
+    silhouette, outline, highlights and animation cels; neutral greys and
+    whites are deliberately untouched.
+    """
+    pixels = []
+    for red, green, blue, alpha in image.convert("RGBA").getdata():
+        if alpha < 128:
+            pixels.append((0, 0, 0, 0))
+            continue
+        hue, saturation, value = colorsys.rgb_to_hsv(
+            red / 255.0, green / 255.0, blue / 255.0)
+        if saturation >= 0.35 and (hue <= 0.17 or hue >= 0.97):
+            golden = colorsys.hsv_to_rgb(
+                43.0 / 360.0, max(0.72, saturation), value)
+            red, green, blue = (
+                round(golden[0] * 255.0),
+                round(golden[1] * 255.0),
+                round(golden[2] * 255.0),
+            )
+        pixels.append((red, green, blue, alpha))
+    output = Image.new("RGBA", image.size)
+    output.putdata(pixels)
+    return output
 
 
 def recolor_icon_to_palette(image: Image.Image,
@@ -406,11 +585,19 @@ def export_exact_battle_animation_assets(animation_audit: dict, manifest: dict) 
             frame_name = f"{key}_{frame_index:02}.pkg"
             if alpha.getbbox() is None:
                 empty_frames.append(frame_name)
-                # Ice Ball's last exact cel is deliberately transparent: the
-                # original ANIMCMD sequence uses it to remove the shattered
-                # chunk. Treat it as authored timing, not a broken crop.
-                if (spec.get("template") == "gIceBallChunkSpriteTemplate" and
+                # Every template using gAnims_IceBallChunk shares its final
+                # deliberately transparent cel; the original sequence uses it
+                # to remove the shattered chunk. Freeze Shock is one of those
+                # templates, not a broken crop.
+                if (str(spec.get("animations", "")).endswith("Anims_IceBallChunk") and
                         frame_index == spec["frameCount"] - 1):
+                    intended_empty.add(frame_name)
+                # Heart Stamp deliberately reuses gAnims_HandsAndFeet and
+                # selects sequence 1. Sequence 0 points at the empty first
+                # 32x32 bank in its authored sheet and remains present only so
+                # the sequence selector keeps the exact upstream numbering.
+                if (spec.get("template") == "gHeartStampSpinningHeartTemplate" and
+                        frame_index == 0):
                     intended_empty.add(frame_name)
             if alpha.getextrema()[0] == 255:
                 opaque_frames.append(frame_name)
@@ -1129,6 +1316,134 @@ def patch_asset_archive(relative: str) -> None:
     print(f"Patched {relative} in {ARCHIVE} ({ARCHIVE.stat().st_size} bytes)")
 
 
+def merge_assets_into_archive(relatives: list[str], manifest: dict[str, dict]) -> None:
+    """Add or replace a small set of PKG payloads in an existing PGA3 archive.
+
+    Release workstations do not always retain the proprietary FireRed ROM
+    required for a full rebuild.  This path preserves every existing payload
+    byte, keeps its physical order for animation locality, and appends only
+    the newly generated official-source assets.  The hash-sorted index and
+    embedded pack version are rebuilt atomically around that payload stream.
+    """
+    header = struct.Struct("<4sHHH2xIII")
+    entry = struct.Struct("<III")
+    archive = ARCHIVE.read_bytes()
+    if len(archive) < header.size:
+        raise RuntimeError("Existing asset archive is truncated")
+    (magic, revision, entry_size, _pack_version, asset_count,
+     index_offset, data_offset) = header.unpack_from(archive)
+    if (magic != b"PGA1" or revision != 3 or entry_size != entry.size or
+            index_offset < header.size or
+            index_offset + asset_count * entry.size > data_offset or
+            data_offset > len(archive)):
+        raise RuntimeError("Existing asset archive identity is invalid")
+
+    manifest_names: dict[int, str] = {}
+    for relative in manifest:
+        key = asset_hash(relative)
+        previous = manifest_names.get(key)
+        if previous is not None and previous != relative:
+            raise RuntimeError(f"FNV-1a archive key collision: {(previous, relative)}")
+        manifest_names[key] = relative
+
+    payloads: dict[int, bytes] = {}
+    physical_offsets: dict[int, int] = {}
+    physical_order: list[int] = []
+    for index in range(asset_count):
+        position = index_offset + index * entry.size
+        key, offset, length = entry.unpack_from(archive, position)
+        if (key in payloads or offset < data_offset or offset + length > len(archive)):
+            raise RuntimeError("Existing asset archive index is corrupt")
+        payloads[key] = archive[offset:offset + length]
+        physical_offsets[key] = offset
+        physical_order.append(key)
+    physical_order.sort(key=physical_offsets.__getitem__)
+
+    archive_keys = set(payloads)
+    manifest_keys = set(manifest_names)
+    new_keys = {asset_hash(relative) for relative in relatives}
+    unknown_keys = archive_keys - manifest_keys
+    missing_legacy_keys = manifest_keys - archive_keys - new_keys
+    if unknown_keys or missing_legacy_keys:
+        raise RuntimeError(
+            "Existing archive and manifest disagree: "
+            f"unknown={len(unknown_keys)} missing={len(missing_legacy_keys)}")
+
+    for relative in relatives:
+        key = asset_hash(relative)
+        payload = (OUTPUT / relative).read_bytes()
+        if key not in payloads:
+            physical_order.append(key)
+        payloads[key] = payload
+
+    keys = sorted(payloads)
+    new_index_offset = header.size
+    new_data_offset = new_index_offset + len(keys) * entry.size
+    ranges: dict[int, tuple[int, int]] = {}
+    cursor = new_data_offset
+    for key in physical_order:
+        payload = payloads[key]
+        ranges[key] = (cursor, len(payload))
+        cursor += len(payload)
+
+    temporary = ARCHIVE.with_suffix(".pak.tmp")
+    with temporary.open("wb") as destination:
+        destination.write(header.pack(
+            b"PGA1", 3, entry.size, ASSET_PACK_VERSION,
+            len(keys), new_index_offset, new_data_offset))
+        for key in keys:
+            offset, length = ranges[key]
+            destination.write(entry.pack(key, offset, length))
+        for key in physical_order:
+            destination.write(payloads[key])
+    temporary.replace(ARCHIVE)
+    print(
+        f"Merged {len(relatives)} assets into {ARCHIVE} "
+        f"({len(keys)} assets, {ARCHIVE.stat().st_size} bytes)")
+
+
+def build_sinnoh_gym_assets(manifest: dict[str, dict]) -> list[str]:
+    """Generate the eight authentic Platinum leaders and badge cels."""
+    relatives: list[str] = []
+    for leader in SINNOH_GYM_LEADERS:
+        path = SINNOH_TRAINERS / f"{leader}.png"
+        if not path.exists():
+            raise RuntimeError(f"Missing official Platinum leader sprite: {path}")
+        # These downloaded Platinum portraits are indexed PNGs, but unlike
+        # the decomp GBA sheets their transparent palette entry is not always
+        # index zero. source_png() intentionally applies the GBA convention,
+        # which turned seven portraits' transparent canvas opaque white.
+        # Preserve the PNG's authored tRNS/alpha channel for this source set.
+        with Image.open(path) as source:
+            sprite = source.convert("RGBA")
+        if sprite.size != (80, 80):
+            raise RuntimeError(
+                f"Invalid Platinum leader sprite dimensions: {leader} {sprite.size}")
+        alpha = sprite.getchannel("A")
+        if alpha.getextrema() != (0, 255) or any(
+                alpha.getpixel(point) != 0 for point in
+                ((0, 0), (79, 0), (0, 79), (79, 79))):
+            raise RuntimeError(
+                f"Platinum leader cutout lost transparency: {leader}")
+        relative = f"trainers/sinnoh_{leader}.pkg"
+        write_asset(relative, sprite, manifest)
+        relatives.append(relative)
+
+    badge_sheet = source_png(
+        PLATINUM / "res/graphics/trainer_case/badge_case_sprites.png")
+    if badge_sheet.width != 64 or badge_sheet.height < 512:
+        raise RuntimeError(f"Invalid Platinum badge atlas: {badge_sheet.size}")
+    for badge in range(8):
+        relative = f"platinum/trainer_card/badge_{badge}.pkg"
+        write_asset(
+            relative,
+            badge_sheet.crop((0, badge * 64, 64, badge * 64 + 64)),
+            manifest,
+        )
+        relatives.append(relative)
+    return relatives
+
+
 def home_box_icon() -> Image.Image:
     image = Image.new("RGBA", (24, 24)); draw = ImageDraw.Draw(image)
     draw.rectangle((3, 7, 20, 20), fill=(168, 112, 56), outline=(72, 64, 56))
@@ -1275,6 +1590,27 @@ def normalized_home_icon(source: Image.Image, size: int = 24,
     image = image.resize((width, height), Image.Resampling.NEAREST)
     output = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     output.alpha_composite(image, ((size - width) // 2, (size - height) // 2))
+    return output
+
+
+def centered_region_marker(source: Image.Image) -> Image.Image:
+    """Center a region marker by its visible pixels on a 32x32 canvas.
+
+    Both the Platinum Adamant Orb and White Light Stone use asymmetric source
+    padding. Keeping their untouched canvas placed the visible art four pixels
+    above and left of the badge center even though the package itself was
+    positioned correctly.
+    """
+    image = source.convert("RGBA")
+    alpha_bounds = image.getchannel("A").getbbox()
+    if alpha_bounds is None:
+        raise RuntimeError("Region marker contains no visible pixels")
+    image = image.crop(alpha_bounds)
+    if image.width > 32 or image.height > 32:
+        raise RuntimeError(f"Region marker is larger than 32x32: {image.size}")
+    output = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    output.alpha_composite(
+        image, ((32 - image.width) // 2, (32 - image.height) // 2))
     return output
 
 
@@ -1496,6 +1832,38 @@ def home_vs_icon() -> Image.Image:
     return icon
 
 
+def challenge_hub_home_icon() -> Image.Image:
+    """Return Emerald's authored red-fist battle sprite at Home size.
+
+    This is the user-selected hub icon.  Keep its original pixels and palette;
+    only trim the transparent animation canvas and apply the same nearest-
+    neighbour 22px visual field used by the other Home controls.
+    """
+    source = EMERALD / "graphics/battle_anims/sprites/red_fist.png"
+    if not source.exists():
+        raise RuntimeError("Missing original Emerald red-fist battle sprite")
+    return normalized_home_icon(source_png(source))
+
+
+def region_hub_home_icon() -> Image.Image:
+    """Return Platinum's authored Town Map item for the Home region hub."""
+    source = PLATINUM / "res/items/icons/town_map.png"
+    if not source.exists():
+        raise RuntimeError("Missing original Platinum Town Map sprite")
+    return normalized_home_icon(source_png(source))
+
+
+def sinnoh_region_icon() -> Image.Image:
+    """Return the user-selected Platinum Adamant Orb at its native 32px size."""
+    source = PLATINUM / "res/items/icons/adamant_orb.png"
+    if not source.exists():
+        raise RuntimeError("Missing original Platinum Adamant Orb sprite")
+    image = source_png(source)
+    if image.size != (32, 32) or image.getchannel("A").getbbox() is None:
+        raise RuntimeError(f"Invalid Platinum Adamant Orb sprite: {image.size}")
+    return centered_region_marker(image)
+
+
 def battle_tower_home_icon() -> Image.Image:
     """Return option A's official Frontier medal on a transparent canvas."""
     medal_folder = EMERALD / "graphics/frontier_pass"
@@ -1601,6 +1969,47 @@ def hall_of_fame_victory_background(root: Path, map_name: str) -> Image.Image:
     return canvas
 
 
+def build_mega_form_assets(
+        manifest: dict[str, dict],
+        forms: tuple[tuple[int, str, str], ...] = MEGA_FORMS) -> list[str]:
+    """Export complete normal/shiny Mega form sets from the expansion."""
+    relatives: list[str] = []
+    for species, folder_name, variant in forms:
+        folder = EXPANSION / "graphics/pokemon" / folder_name / variant
+        if not folder.exists():
+            raise RuntimeError(f"Missing official form source: {folder_name}/{variant}")
+        normal_palette = jasc_palette(folder / "normal.pal")
+        shiny_palette = jasc_palette(folder / "shiny.pal")
+        front_path = folder / (
+            "anim_front.png" if (folder / "anim_front.png").exists() else "front.png")
+        # The decompressed PNG supplies only pixel indices; the two palettes
+        # are the authoritative normal/shiny colours for front and back.
+        front = indexed_source_png(front_path, normal_palette).crop((0, 0, 64, 64))
+        back = indexed_source_png(folder / "back.png", normal_palette).crop((0, 0, 64, 64))
+        shiny_front = indexed_source_png(front_path, shiny_palette).crop((0, 0, 64, 64))
+        shiny_back = indexed_source_png(folder / "back.png", shiny_palette).crop((0, 0, 64, 64))
+        icon_sheet = source_png(folder / "icon.png")
+        prefix = f"pokemon/forms/mega/{species:03}/{variant}"
+
+        images = (("front.pkg", front), ("back.pkg", back),
+                  ("shiny/front.pkg", shiny_front),
+                  ("shiny/back.pkg", shiny_back))
+        for suffix, image in images:
+            relative = f"{prefix}/{suffix}"
+            write_asset(relative, image, manifest)
+            relatives.append(relative)
+        for frame in range(2):
+            top = frame * 32 if icon_sheet.height >= 64 else 0
+            icon = icon_sheet.crop((0, top, 32, top + 32))
+            for suffix, image in ((f"icons/{frame}.pkg", icon),
+                                  (f"shiny/icons/{frame}.pkg",
+                                   shiny_icon(icon, normal_palette, shiny_palette))):
+                relative = f"{prefix}/{suffix}"
+                write_asset(relative, image, manifest)
+                relatives.append(relative)
+    return relatives
+
+
 def main() -> None:
     rom = ROM.read_bytes()
     if hashlib.sha1(rom).hexdigest().upper() != EXPECTED_SHA1:
@@ -1698,6 +2107,93 @@ def main() -> None:
             silhouette.putalpha(alpha)
             write_asset(f"pokemon/evolution/{tone}/{species:03}.pkg", silhouette, manifest)
 
+    # Generation V is exported from pokeemerald-expansion's complete GBA
+    # atlas. This is the same ROM-hack source used by the move/ability engine,
+    # so battle, Box, Home and evolution never fall back to recoloured blobs or
+    # DS sprites scaled at runtime.
+    expansion_symbols = re.findall(
+        r"^\s*NATIONAL_DEX_([A-Z0-9_]+),",
+        expansion_text("include/constants/pokedex.h"), re.M)
+    if len(expansion_symbols) <= 649 or expansion_symbols[494] != "VICTINI" or \
+            expansion_symbols[649] != "GENESECT":
+        raise RuntimeError("Unexpected expansion National Dex order")
+    for species in range(494, 650):
+        folder_name = expansion_symbols[species].lower()
+        prefix = f"graphics/pokemon/{folder_name}"
+        normal_palette = expansion_jasc_palette(f"{prefix}/normal.pal")
+        shiny_palette = expansion_jasc_palette(f"{prefix}/shiny.pal")
+        front = expansion_indexed_png(
+            f"{prefix}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+        back = expansion_indexed_png(
+            f"{prefix}/back.png", normal_palette).crop((0, 0, 64, 64))
+        shiny_front = expansion_indexed_png(
+            f"{prefix}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+        shiny_back = expansion_indexed_png(
+            f"{prefix}/back.png", shiny_palette).crop((0, 0, 64, 64))
+        icon_sheet = expansion_source_png(f"{prefix}/icon.png")
+        write_asset(f"pokemon/front/{species:03}.pkg", front, manifest)
+        write_asset(f"pokemon/back/{species:03}.pkg", back, manifest)
+        write_asset(f"pokemon/shiny/front/{species:03}.pkg", shiny_front, manifest)
+        write_asset(f"pokemon/shiny/back/{species:03}.pkg", shiny_back, manifest)
+        for frame in range(2):
+            top = frame * 32 if icon_sheet.height >= 64 else 0
+            icon = icon_sheet.crop((0, top, 32, top + 32))
+            write_asset(f"pokemon/icons/{species:03}_{frame}.pkg", icon, manifest)
+            write_asset(f"pokemon/shiny/icons/{species:03}_{frame}.pkg",
+                        shiny_icon(icon, normal_palette, shiny_palette), manifest)
+        alpha = front.getchannel("A")
+        for tone, color in (("dark", (24, 32, 72, 255)),
+                            ("light", (248, 248, 248, 255))):
+            silhouette = Image.new("RGBA", front.size, color)
+            silhouette.putalpha(alpha)
+            write_asset(f"pokemon/evolution/{tone}/{species:03}.pkg",
+                        silhouette, manifest)
+
+    # Multi-form Unova species use a numeric directory that mirrors the save
+    # enum exactly. Each form includes independent front/back and mini-icon
+    # art, including Kyurem fusions, Therian formes, seasonal Deerling and all
+    # Genesect Drives.
+    for species, species_name, form_names in UNOVA_SELECTABLE_FORMS:
+        for form_index, form_name in enumerate(form_names):
+            species_prefix = f"graphics/pokemon/{species_name}"
+            source_prefix = species_prefix
+            if form_name:
+                source_prefix += f"/{form_name}"
+            # Deerling seasons and Genesect Drives are palette forms in the
+            # expansion, exactly like the cartridge: they intentionally share
+            # base pixel indices. Sawsbuck and every silhouette-changing form
+            # ship independent sheets.
+            palette_only = form_index > 0 and species in (585, 649)
+            battle_prefix = species_prefix if palette_only else source_prefix
+            icon_prefix = species_prefix if species == 649 and form_index > 0 \
+                else source_prefix
+            normal_palette = expansion_jasc_palette(
+                f"{source_prefix}/normal.pal")
+            shiny_palette = expansion_jasc_palette(
+                f"{source_prefix}/shiny.pal")
+            front = expansion_indexed_png(
+                f"{battle_prefix}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+            back = expansion_indexed_png(
+                f"{battle_prefix}/back.png", normal_palette).crop((0, 0, 64, 64))
+            shiny_front = expansion_indexed_png(
+                f"{battle_prefix}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+            shiny_back = expansion_indexed_png(
+                f"{battle_prefix}/back.png", shiny_palette).crop((0, 0, 64, 64))
+            icon_sheet = expansion_source_png(f"{icon_prefix}/icon.png")
+            if species == 649 and form_index > 0:
+                icon_sheet = recolor_icon_to_palette(icon_sheet, normal_palette)
+            output_prefix = f"pokemon/forms/unova/{species:03}/{form_index}"
+            write_asset(f"{output_prefix}/front.pkg", front, manifest)
+            write_asset(f"{output_prefix}/back.pkg", back, manifest)
+            write_asset(f"{output_prefix}/shiny/front.pkg", shiny_front, manifest)
+            write_asset(f"{output_prefix}/shiny/back.pkg", shiny_back, manifest)
+            for frame in range(2):
+                top = frame * 32 if icon_sheet.height >= 64 else 0
+                icon = icon_sheet.crop((0, top, 32, top + 32))
+                write_asset(f"{output_prefix}/icons/{frame}.pkg", icon, manifest)
+                write_asset(f"{output_prefix}/shiny/icons/{frame}.pkg",
+                            shiny_icon(icon, normal_palette, shiny_palette), manifest)
+
     # Persistent Platinum forms use the same native 80x80 battle sheets and
     # shared 32x64 icon sheets as their base species. Keep every form in its
     # own namespace so the runtime can switch without synthesising graphics.
@@ -1779,6 +2275,23 @@ def main() -> None:
             write_asset(f"pokemon/forms/castform/{form_index}/shiny/{view}.pkg",
                         shiny_icon(image, normal_palette, shiny_palette), manifest)
 
+    # Cherrim changes between Overcast and Sunshine in battle while Flower
+    # Gift is active under sun. Platinum ships both authentic 80x80 battle
+    # forms; its party icon remains the canonical species icon.
+    cherrim_root = PLATINUM / "res/pokemon/cherrim/forms"
+    for form_index, form_name in enumerate(("base", "sunny")):
+        folder = cherrim_root / form_name
+        normal_palette = jasc_palette(folder / "normal.pal")
+        shiny_palette = jasc_palette(folder / "shiny.pal")
+        for view in ("front", "back"):
+            source = folder / f"{view}.png"
+            image = indexed_source_png(source, normal_palette).crop((0, 0, 80, 80))
+            shiny_image = indexed_source_png(source, shiny_palette).crop((0, 0, 80, 80))
+            write_asset(f"pokemon/forms/cherrim/{form_index}/{view}.pkg",
+                        image, manifest)
+            write_asset(f"pokemon/forms/cherrim/{form_index}/shiny/{view}.pkg",
+                        shiny_image, manifest)
+
     # Deoxys' four Generation-III forms were split between the original
     # cartridges.  The expansion decomp keeps the authentic GBA artwork in one
     # tree, allowing a single Pokegochi to change form without synthesising or
@@ -1813,32 +2326,7 @@ def main() -> None:
     # GBA-style official Mega/Primal art from pokeemerald-expansion. The
     # runtime treats these as held-item forms of the existing species, so the
     # National Dex and collection identity remain unchanged.
-    for species, folder_name, variant in MEGA_FORMS:
-        folder = EXPANSION / "graphics/pokemon" / folder_name / variant
-        if not folder.exists():
-            raise RuntimeError(f"Missing official form source: {folder_name}/{variant}")
-        normal_palette = jasc_palette(folder / "normal.pal")
-        shiny_palette = jasc_palette(folder / "shiny.pal")
-        front_path = folder / ("anim_front.png" if (folder / "anim_front.png").exists() else "front.png")
-        # The decompressed PNG supplies only pixel indices; normal.pal and
-        # shiny.pal decide their colours. All 43 Mega back PNGs embed the
-        # shiny palette, so source_png(back.png) is observably wrong here.
-        front = indexed_source_png(front_path, normal_palette).crop((0, 0, 64, 64))
-        back = indexed_source_png(folder / "back.png", normal_palette).crop((0, 0, 64, 64))
-        shiny_front = indexed_source_png(front_path, shiny_palette).crop((0, 0, 64, 64))
-        shiny_back = indexed_source_png(folder / "back.png", shiny_palette).crop((0, 0, 64, 64))
-        icon_sheet = source_png(folder / "icon.png")
-        prefix = f"pokemon/forms/mega/{species:03}/{variant}"
-        write_asset(f"{prefix}/front.pkg", front, manifest)
-        write_asset(f"{prefix}/back.pkg", back, manifest)
-        write_asset(f"{prefix}/shiny/front.pkg", shiny_front, manifest)
-        write_asset(f"{prefix}/shiny/back.pkg", shiny_back, manifest)
-        for frame in range(2):
-            top = frame * 32 if icon_sheet.height >= 64 else 0
-            icon = icon_sheet.crop((0, top, 32, top + 32))
-            write_asset(f"{prefix}/icons/{frame}.pkg", icon, manifest)
-            write_asset(f"{prefix}/shiny/icons/{frame}.pkg",
-                        shiny_icon(icon, normal_palette, shiny_palette), manifest)
+    build_mega_form_assets(manifest)
 
     trainer_dir = DECOMP / "graphics/trainers/front_pics"
     for path in trainer_dir.glob("*.png"):
@@ -1858,16 +2346,28 @@ def main() -> None:
     for path in (CRYSTAL/"gfx/trainers").glob("*.png"):
         sprite=source_png(path).resize((64,64),Image.Resampling.NEAREST)
         write_asset(f"trainers/johto_{path.stem}.pkg",sprite,manifest)
+    # Platinum's eight actual 80x80 leader portraits. They remain at native
+    # resolution; the firmware centres them in the larger Trainer Intro stage
+    # instead of resampling DS pixels into a fabricated GBA sprite.
+    build_sinnoh_gym_assets(manifest)
     for ball in ("poke_ball", "great_ball", "ultra_ball", "master_ball"):
         path=DECOMP/"graphics/items/icons"/f"{ball}.png"
         if path.exists():write_asset(f"firered/items/{ball}.pkg",source_png(path),manifest)
+    write_asset(
+        "firered/items/golden_ball.pkg",
+        golden_ball_recolor(source_png(
+            DECOMP / "graphics/items/icons/poke_ball.png")),
+        manifest)
     # The Bag icons above are static. Capture uses the separate 3-frame ball
     # sheets from FireRed's battle renderer (normal, opening, closing), not a
     # hand-drawn substitute.
     battle_ball_sources = {"poke_ball": "poke", "great_ball": "great",
-                           "ultra_ball": "ultra", "master_ball": "master"}
+                           "ultra_ball": "ultra", "master_ball": "master",
+                           "golden_ball": "poke"}
     for output_name, source_name in battle_ball_sources.items():
         source = source_png(DECOMP / "graphics/interface/ball" / f"{source_name}.png")
+        if output_name == "golden_ball":
+            source = golden_ball_recolor(source)
         # FireRed stores two visible 16px cels per ball (closed and open),
         # followed by a transparent padding row. Capture's drop/shake state
         # is the closed cel again. Exporting that padding row as frame three
@@ -1916,6 +2416,58 @@ def main() -> None:
         path = EXPANSION / "graphics/items/icons" / f"{source_name}.png"
         if not path.exists(): raise RuntimeError(f"Missing Gen 4 held item icon: {source_name}")
         write_asset(f"firered/items/held_{index:02}.pkg", source_png(path), manifest)
+
+    # Genesect's four Drives share one exact icon silhouette with four
+    # canonical expansion palettes. Their numeric ids are 88..91, immediately
+    # after the 20 Generation-IV signature items in HeldItem.
+    for index, drive in enumerate(("douse_drive", "shock_drive",
+                                   "burn_drive", "chill_drive"), start=88):
+        icon = expansion_indexed_png(
+            "graphics/items/icons/drive.png",
+            expansion_jasc_palette(
+                f"graphics/items/icon_palettes/{drive}.pal"))
+        write_asset(f"firered/items/held_{index:02}.pkg", icon, manifest)
+    write_asset("unova/key_items/dna_splicers.pkg",
+                expansion_source_png(
+                    "graphics/items/icons/dna_splicers.png"), manifest)
+
+    # Unova's procedural selector uses authentic map pixels and field-effect
+    # sprites. No generated illustration or placeholder enters the SD pack.
+    for area_index, map_name in enumerate(UNOVA_AREA_MAPS):
+        write_asset(f"unova/rooms/area_{area_index:02}.pkg",
+                    fitted_authentic_map_strip(map_name), manifest)
+    unova_room_icons = (
+        EMERALD / "graphics/object_events/pics/people/ninja_boy.png",
+        EMERALD / "graphics/field_effects/pics/tall_grass.png",
+        EMERALD / "graphics/field_effects/pics/ground_impact_dust.png",
+        EMERALD / "graphics/battle_anims/sprites/round_shadow.png",
+        EMERALD / "graphics/battle_anims/sprites/water_orb.png",
+        EMERALD / "graphics/field_effects/pics/secret_power_cave.png",
+        EMERALD / "graphics/object_events/pics/people/old_man.png",
+        EMERALD / "graphics/object_events/pics/people/nurse.png",
+        EMERALD / "graphics/object_events/pics/people/hiker.png",
+        EMERALD / "graphics/object_events/pics/people/expert_m.png",
+    )
+    for kind, source in enumerate(unova_room_icons):
+        write_asset(f"unova/rooms/kind_{kind:02}.pkg",
+                    centered_source_icon(source), manifest)
+
+    # Royal Unova is represented by FireRed's authored Seagallop ferry, not a
+    # firmware-drawn boat. Fit its first complete cel into the Challenge Hub.
+    ferry_source = source_png(DECOMP / "graphics/seagallop/ferry_sprite.png")
+    ferry_frame = ferry_source.crop((0, 0, min(64, ferry_source.width),
+                                     min(64, ferry_source.height)))
+    ferry_frame.thumbnail((32, 32), Image.Resampling.NEAREST)
+    ferry_icon = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    ferry_icon.alpha_composite(
+        ferry_frame, ((32 - ferry_frame.width) // 2,
+                      (32 - ferry_frame.height) // 2))
+    write_asset("unova/royal_unova/home_icon.pkg", ferry_icon, manifest)
+
+    # Region marker selected for Unova: the exact Light Stone icon decoded
+    # from Pokemon White's a/0/2/5 NCGR/NCLR pair, with no generated stand-in.
+    write_asset("unova/region_hub/unova_light_stone.pkg",
+                centered_region_marker(white_item_icon(616)), manifest)
 
     # Berry Garden is a real Route 123 berry patch, not a firmware-drawn set
     # of generic cards.  The six authored soil beds are already part of this
@@ -2005,6 +2557,12 @@ def main() -> None:
             manifest,
         )
     tower_home,tower_facade=battle_tower_assets()
+    write_asset("emerald/challenge_hub/home_icon.pkg",
+                challenge_hub_home_icon(), manifest)
+    write_asset("platinum/region_hub/home_icon.pkg",
+                region_hub_home_icon(), manifest)
+    write_asset("platinum/region_hub/sinnoh_adamant_orb.pkg",
+                sinnoh_region_icon(), manifest)
     write_asset("emerald/battle_tower/home_icon.pkg",tower_home,manifest)
     write_asset("emerald/battle_tower/facade.pkg",tower_facade,manifest)
     write_asset("emerald/boss/home_icon.pkg",boss_home_icon(),manifest)
@@ -2386,11 +2944,11 @@ def main() -> None:
             write_asset("firered/item_menu/bag_icon.pkg",
                         normalized_home_icon(pocket), manifest)
 
-    required=[*(f"pokemon/front/{i:03}.pkg" for i in range(1,494)),*(f"pokemon/back/{i:03}.pkg" for i in range(1,494)),
-      *(f"pokemon/icons/{i:03}_{frame}.pkg" for i in range(1,494) for frame in range(2)),"firered/item_menu/bag_icon.pkg",
-      *(f"pokemon/shiny/front/{i:03}.pkg" for i in range(1,494)),*(f"pokemon/shiny/back/{i:03}.pkg" for i in range(1,494)),
-      *(f"pokemon/shiny/icons/{i:03}_{frame}.pkg" for i in range(1,494) for frame in range(2)),
-      *(f"pokemon/evolution/{tone}/{i:03}.pkg" for tone in ("dark", "light") for i in range(1,494)),
+    required=[*(f"pokemon/front/{i:03}.pkg" for i in range(1,650)),*(f"pokemon/back/{i:03}.pkg" for i in range(1,650)),
+      *(f"pokemon/icons/{i:03}_{frame}.pkg" for i in range(1,650) for frame in range(2)),"firered/item_menu/bag_icon.pkg",
+      *(f"pokemon/shiny/front/{i:03}.pkg" for i in range(1,650)),*(f"pokemon/shiny/back/{i:03}.pkg" for i in range(1,650)),
+      *(f"pokemon/shiny/icons/{i:03}_{frame}.pkg" for i in range(1,650) for frame in range(2)),
+      *(f"pokemon/evolution/{tone}/{i:03}.pkg" for tone in ("dark", "light") for i in range(1,650)),
       "firered/evolution_scene/scene.pkg","firered/evolution_scene/sparkle.pkg",
       "firered/ui/pokedex_icon.pkg","firered/ui/box_icon.pkg",
       *(f"firered/battle_terrain/{terrain}.pkg" for terrain in BATTLE_TERRAINS),
@@ -2413,6 +2971,14 @@ def main() -> None:
       *(f"pokecenter/scene_{index:02}.pkg" for index in range(len(POKECENTER_SCENES))),
       "firered/ui/home_wild.pkg",
       "firered/ui/home_battle.pkg",
+      "emerald/challenge_hub/home_icon.pkg",
+      "platinum/region_hub/home_icon.pkg",
+      "platinum/region_hub/sinnoh_adamant_orb.pkg",
+      "unova/region_hub/unova_light_stone.pkg",
+      "unova/royal_unova/home_icon.pkg",
+      "unova/key_items/dna_splicers.pkg",
+      *(f"unova/rooms/area_{index:02}.pkg" for index in range(10)),
+      *(f"unova/rooms/kind_{index:02}.pkg" for index in range(10)),
       *(f"firered/ui/home_move_effect_{type_index:02}.pkg"
         for type_index in range(18)),
       "firered/ui/wild_transition.pkg",
@@ -2442,10 +3008,15 @@ def main() -> None:
         "johto_bruno","johto_karen","johto_champion","emerald_elite_four_sidney",
         "emerald_elite_four_phoebe","emerald_elite_four_glacia","emerald_elite_four_drake",
         "emerald_champion_wallace","red_front_pic")),
-      "firered/shop/background.pkg","firered/items/poke_ball.pkg","firered/items/great_ball.pkg","firered/items/ultra_ball.pkg",
-      *(f"firered/battle_items/ball_{ball}_{frame:02}.pkg" for ball in ("poke_ball","great_ball","ultra_ball","master_ball") for frame in range(3)),
+      *(f"trainers/sinnoh_{leader}.pkg" for leader in (
+        "roark","gardenia","fantina","maylene",
+        "wake","byron","candice","volkner")),
+      *(f"platinum/trainer_card/badge_{badge}.pkg" for badge in range(8)),
+      "firered/shop/background.pkg","firered/items/poke_ball.pkg","firered/items/great_ball.pkg","firered/items/ultra_ball.pkg","firered/items/golden_ball.pkg",
+      *(f"firered/battle_items/ball_{ball}_{frame:02}.pkg" for ball in ("poke_ball","great_ball","ultra_ball","master_ball","golden_ball") for frame in range(3)),
       *(f"firered/items/mart_{name}.pkg" for name in ("poke_ball","great_ball","ultra_ball","potion","large_potion","full_heal","antidote","status_heal","battle_stat_item")),
       *(f"firered/items/held_{index:02}.pkg" for index in range(1,39)),
+      *(f"firered/items/held_{index:02}.pkg" for index in range(68,92)),
       "firered/items/lucky_egg.pkg",
       "emerald/berry_garden/background.pkg",
       *(f"emerald/berry_garden/sprout_{frame}.pkg" for frame in range(2)),
@@ -2468,8 +3039,19 @@ def main() -> None:
         for _species, species_name, form_names in PLATINUM_SELECTABLE_FORMS
         for form_index, _form_name in enumerate(form_names)
         for shiny in ("", "shiny/") for frame in range(2)),
+      *(f"pokemon/forms/unova/{species:03}/{form_index}/{shiny}{view}.pkg"
+        for species, _species_name, form_names in UNOVA_SELECTABLE_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for view in ("front", "back")),
+      *(f"pokemon/forms/unova/{species:03}/{form_index}/{shiny}icons/{frame}.pkg"
+        for species, _species_name, form_names in UNOVA_SELECTABLE_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for frame in range(2)),
       *(f"pokemon/forms/castform/{form}/{shiny}{view}.pkg"
         for form in range(4) for shiny in ("", "shiny/")
+        for view in ("front", "back")),
+      *(f"pokemon/forms/cherrim/{form}/{shiny}{view}.pkg"
+        for form in range(2) for shiny in ("", "shiny/")
         for view in ("front", "back")),
       *(f"firered/trainer_card/badge_{i}.pkg" for i in range(24))]
     # Validate every frame the runtime can request, not merely frame zero.
@@ -2502,7 +3084,42 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if "--battle-tower-icon-only" in sys.argv:
+    if "--sinnoh-gym-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        relatives = build_sinnoh_gym_assets(manifest)
+        merge_assets_into_archive(relatives, manifest)
+        (OUTPUT / "pack_version.txt").write_text(
+            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print("Built Sinnoh Gym assets and promoted the asset archive")
+    elif "--gen5-mega-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        relatives = build_mega_form_assets(manifest, GEN5_MEGA_FORMS)
+        merge_assets_into_archive(relatives, manifest)
+        (OUTPUT / "pack_version.txt").write_text(
+            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print("Built Generation 5 Mega assets and promoted the asset archive")
+    elif "--region-hub-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        relatives = [
+            "platinum/region_hub/home_icon.pkg",
+            "platinum/region_hub/sinnoh_adamant_orb.pkg",
+            "unova/region_hub/unova_light_stone.pkg",
+        ]
+        write_asset(relatives[0], region_hub_home_icon(), manifest)
+        write_asset(relatives[1], sinnoh_region_icon(), manifest)
+        write_asset(relatives[2],
+                    centered_region_marker(white_item_icon(616)), manifest)
+        merge_assets_into_archive(relatives, manifest)
+        (OUTPUT / "pack_version.txt").write_text(
+            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print("Built Region Hub assets and promoted the asset archive")
+    elif "--battle-tower-icon-only" in sys.argv:
         manifest_path = OUTPUT / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         write_asset("emerald/battle_tower/home_icon.pkg",

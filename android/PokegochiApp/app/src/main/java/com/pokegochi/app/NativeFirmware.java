@@ -73,10 +73,10 @@ final class NativeFirmware implements AutoCloseable {
         }
     }
 
-    void syncPhoneTime(long epochSeconds) {
+    void syncPhoneTime(long utcEpochSeconds, int utcOffsetSeconds) {
         lifecycleLock.readLock().lock();
         try {
-            if (handle != 0) syncPhoneTime(handle, epochSeconds);
+            if (handle != 0) syncPhoneTime(handle, utcEpochSeconds, utcOffsetSeconds);
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -202,7 +202,8 @@ final class NativeFirmware implements AutoCloseable {
     private static native boolean presentFrame(long handle);
     private static native boolean isAlive(long handle);
     private static native void setPhoneBatteryPercent(long handle, int percent);
-    private static native void syncPhoneTime(long handle, long epochSeconds);
+    private static native void syncPhoneTime(long handle, long utcEpochSeconds,
+                                             int utcOffsetSeconds);
     private static native void flushSave(long handle);
     private static native int multiplayerPlayerId(long handle);
     private static native boolean multiplayerEnabled(long handle);

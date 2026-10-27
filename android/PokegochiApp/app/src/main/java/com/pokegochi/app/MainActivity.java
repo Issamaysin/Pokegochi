@@ -30,6 +30,7 @@ import android.view.WindowInsetsController;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.TimeZone;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -48,9 +49,10 @@ public final class MainActivity extends Activity {
     // Android app must also invalidate its private extracted copy when a new
     // APK ships the same pack format with corrected move sprites or firmware
     // rendering code.
-    private static final String ANDROID_ASSET_REVISION = BuildConfig.VERSION_NAME;
+    private static final String ANDROID_ASSET_REVISION =
+            BuildConfig.VERSION_NAME + "-" + BuildConfig.VERSION_CODE;
     private static final String NATIVE_BUILD_ID =
-            "android-app-1.0-release-r157-" + BuildConfig.BUILD_TYPE;
+            "android-app-" + BuildConfig.VERSION_NAME + "-r233-" + BuildConfig.BUILD_TYPE;
     // Release builds must not create private or public diagnostic artifacts.
     // Debug builds keep the existing dump path for development diagnostics.
     private static final boolean DIAGNOSTICS_ENABLED =
@@ -62,6 +64,8 @@ public final class MainActivity extends Activity {
     private volatile boolean destroyed;
     private BroadcastReceiver phoneBatteryReceiver;
     private boolean phoneBatteryReceiverRegistered;
+    private BroadcastReceiver phoneClockReceiver;
+    private boolean phoneClockReceiverRegistered;
     private File pendingDiagnosticDump;
     private boolean diagnosticSessionExported;
 
@@ -106,7 +110,7 @@ public final class MainActivity extends Activity {
             // Reconcile the persisted game clock before the worker is exposed
             // to the UI. This applies closed-app progression without adding a
             // second Android-only copy of the game timers.
-            opened.syncPhoneTime(System.currentTimeMillis() / 1000L);
+            syncPhoneClock(opened);
             final NativeFirmware readyFirmware = opened;
             runOnUiThread(() -> finishInitialization(readyFirmware));
             opened = null;
@@ -124,6 +128,7 @@ public final class MainActivity extends Activity {
         }
         firmware = readyFirmware;
         updatePhoneBattery();
+        registerPhoneClockReceiver();
         phoneBatteryReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
                 updatePhoneBattery();
@@ -166,6 +171,49 @@ public final class MainActivity extends Activity {
                     }
                 });
         bleMultiplayer.start();
+    }
+
+    private static void syncPhoneClock(NativeFirmware target) {
+        if (target == null) return;
+        final long nowMillis = System.currentTimeMillis();
+        final long utcEpochSeconds = nowMillis / 1000L;
+        // Persist UTC for exact offline progression and apply the phone's
+        // current zone only while rendering the local civil clock.
+        final int utcOffsetSeconds = TimeZone.getDefault().getOffset(nowMillis) / 1000;
+        target.syncPhoneTime(utcEpochSeconds, utcOffsetSeconds);
+    }
+
+    private void requestPhoneClockSync() {
+        final NativeFirmware target = firmware;
+        final ExecutorService executor = initializationExecutor;
+        if (target == null || executor == null || executor.isShutdown()) return;
+        executor.execute(() -> {
+            if (!destroyed && firmware == target) syncPhoneClock(target);
+        });
+    }
+
+    private void registerPhoneClockReceiver() {
+        if (phoneClockReceiverRegistered) return;
+        phoneClockReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                requestPhoneClockSync();
+            }
+        };
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_TIME_CHANGED);
+        filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+        filter.addAction(Intent.ACTION_DATE_CHANGED);
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(phoneClockReceiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                registerReceiver(phoneClockReceiver, filter);
+            }
+            phoneClockReceiverRegistered = true;
+        } catch (RuntimeException error) {
+            android.util.Log.w("Pokegochi", "Nao foi possivel observar o relogio", error);
+            phoneClockReceiver = null;
+        }
     }
 
     private void showInitializationError(Throwable error) {
@@ -482,6 +530,11 @@ public final class MainActivity extends Activity {
         if (hasFocus) hideSystemUi();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        requestPhoneClockSync();
+    }
+
     @Override protected void onPause() {
         // onStop is not guaranteed when Android removes a task under memory
         // pressure. Capture at onPause as well, after the runtime has flushed
@@ -527,6 +580,11 @@ public final class MainActivity extends Activity {
             unregisterReceiver(phoneBatteryReceiver);
             phoneBatteryReceiverRegistered = false;
             phoneBatteryReceiver = null;
+        }
+        if (phoneClockReceiverRegistered && phoneClockReceiver != null) {
+            unregisterReceiver(phoneClockReceiver);
+            phoneClockReceiverRegistered = false;
+            phoneClockReceiver = null;
         }
         if (firmware != null) {
             firmware.flushSave();

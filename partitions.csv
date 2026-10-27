@@ -1,9 +1,12 @@
 # Name,   Type, SubType, Offset,   Size,     Flags
-nvs,      data, nvs,     0x9000,   0x10000,
-otadata,  data, ota,     0x19000,  0x2000,
-# The Sinnoh catalog and its compatibility data now need a little more than
-# the previous 0x1B0000 OTA slot. Keep both slots on 64 KiB boundaries and
-# retain 384 KiB for SPIFFS, still far above the redundant save records.
-app0,     app,  ota_0,   0x20000,  0x1C0000,
-app1,     app,  ota_1,   0x1E0000, 0x1C0000,
-spiffs,   data, spiffs,  0x3A0000, 0x60000,
+# Five NVS pages are sufficient for the small preferences sidecars. Keeping
+# the original 0x9000 base also preserves deployed values during USB layout
+# migration; only the unused tail is reclaimed.
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xE000,   0x2000,
+# Gen I--V data requires the largest symmetric OTA pair that fits in 4 MiB.
+# The 192 KiB SPIFFS tail still holds both redundant ~49 KiB save records;
+# commits discard only the older target after validating the other copy.
+app0,     app,  ota_0,   0x10000,  0x1E0000,
+app1,     app,  ota_1,   0x1F0000, 0x1E0000,
+spiffs,   data, spiffs,  0x3D0000, 0x30000,

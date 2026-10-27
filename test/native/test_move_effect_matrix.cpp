@@ -56,6 +56,15 @@ uint16_t moveEventValue(const BattleActionResult& result,MoveId move,BattleSide 
   return 0U;
 }
 
+uint16_t moveEventPower(const BattleActionResult& result,MoveId move,
+                        BattleSide side){
+  for(uint8_t i=0;i<result.eventCount;++i)
+    if(result.events[i].type==BattleEventType::MoveUsed&&
+       result.events[i].side==side&&result.events[i].move==move)
+      return result.events[i].after;
+  return 0U;
+}
+
 int8_t moveEventAnimationTurn(const BattleActionResult& result,MoveId move,
                               BattleSide side){
   for(uint8_t i=0;i<result.eventCount;++i)
@@ -1053,9 +1062,13 @@ int main(){
     Fixture f(enemy?splash:bulletSeed,enemy?bulletSeed:splash);
     OwnedPokemon& attacker=enemy?f.opponent():f.player();
     OwnedPokemon& target=enemy?f.player():f.opponent();
-    attacker.abilityId=138; // custom SKILL LINK
+    attacker.abilityId=93;  // SKILL LINK
     target.abilityId=16;    // COLOR CHANGE
     target.maximumHp=target.currentHp=60000;
+    // Keep this regression deterministic: the default fixture seed produces
+    // a critical fifth strike, whose doubled damage legitimately matches the
+    // first neutral strike and obscures the Color Change assertion.
+    f.battle.rngState=0xD003U;
     const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
     const BattleSide targetSide=enemy?BattleSide::Player:BattleSide::Opponent;
     const BattleSide attackerSide=enemy?BattleSide::Opponent:BattleSide::Player;
@@ -1079,7 +1092,7 @@ int main(){
       Fixture f(enemy?splash:doubleSlap,enemy?doubleSlap:splash);
       OwnedPokemon& attacker=enemy?f.opponent():f.player();
       OwnedPokemon& target=enemy?f.player():f.opponent();
-      attacker.abilityId=138; // custom SKILL LINK
+      attacker.abilityId=93;  // SKILL LINK
       attacker.level=100;
       target.abilityId=27;    // EFFECT SPORE
       target.maximumHp=target.currentHp=60000;
@@ -1109,7 +1122,7 @@ int main(){
     Fixture f(enemy?splash:tripleKick,enemy?tripleKick:splash);
     OwnedPokemon& attacker=enemy?f.opponent():f.player();
     OwnedPokemon& target=enemy?f.player():f.opponent();
-    attacker.abilityId=131; // custom NO GUARD
+    attacker.abilityId=100; // NO GUARD
     target.maximumHp=target.currentHp=60000;
     const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
     const BattleSide targetSide=enemy?BattleSide::Player:BattleSide::Opponent;
@@ -1843,6 +1856,190 @@ int main(){
            tickleTarget.defenseStage==0);
   }
 
+  // Ice Ball shares Rollout's five-hit lock. typecalc2 cancels that lock on
+  // every no-effect result, including Wonder Guard; retaining the old count
+  // would make a later target receive an incorrectly boosted hit.
+  for(bool enemy:{false,true}){
+    const MoveId iceBall=static_cast<MoveId>(301),splash=static_cast<MoveId>(150);
+    Fixture immune(enemy?splash:iceBall,enemy?iceBall:splash);
+    OwnedPokemon& target=enemy?immune.player():immune.opponent();
+    target.abilityId=25; // WONDER GUARD; Ice is neutral against this fixture.
+    DedicatedMoveEffectState& chain=enemy?immune.battle.opponentMoveEffects[0]:
+        immune.battle.playerMoveEffects;
+    CombatVolatile& targetVolatile=enemy?immune.battle.playerVolatile:
+        immune.battle.opponentVolatiles[0];
+    chain.lockedMove=iceBall;chain.lockedMoveTurns=3;chain.rolloutCount=2;
+    targetVolatile.sureHitTurns=enemy?2U:1U;
+    const BattleActionResult blocked=enemy?immune.opponentUses():immune.playerUses();
+    assert(blocked.accepted&&chain.lockedMove==MoveId::None&&
+           chain.lockedMoveTurns==0U&&chain.rolloutCount==0U&&
+           countEvents(blocked,BattleEventType::AbilityActivated,
+               enemy?BattleSide::Player:BattleSide::Opponent)==1U);
+  }
+
+  // BattleScript_EffectSleep performs Substitute/major-status/Insomnia and
+  // Vital Spirit checks before accuracy. Tickle likewise skips accuracy when
+  // both affected stages are already -6. Keep those branches RNG-neutral.
+  {
+    const MoveId grassWhistle=static_cast<MoveId>(320),splash=static_cast<MoveId>(150);
+    Fixture blockedSleep(grassWhistle,splash);
+    blockedSleep.opponent().abilityId=72; // VITAL SPIRIT
+    blockedSleep.battle.rngState=0x32000001U;
+    const uint32_t sleepRng=blockedSleep.battle.rngState;
+    const BattleActionResult stayedAwake=blockedSleep.playerUses();
+    assert(stayedAwake.accepted&&blockedSleep.battle.rngState==sleepRng&&
+           blockedSleep.opponent().status==StatusCondition::None&&
+           countEvents(stayedAwake,BattleEventType::AbilityActivated,
+                       BattleSide::Opponent)==1U);
+
+    const MoveId tickle=static_cast<MoveId>(321);
+    Fixture cappedTickle(tickle,splash);
+    cappedTickle.battle.opponentVolatiles[0].attackStage=kMinimumBattleStatStage;
+    cappedTickle.battle.opponentVolatiles[0].defenseStage=kMinimumBattleStatStage;
+    cappedTickle.battle.rngState=0x32100001U;
+    const uint32_t tickleRng=cappedTickle.battle.rngState;
+    const BattleActionResult noStats=cappedTickle.playerUses();
+    assert(noStats.accepted&&cappedTickle.battle.rngState==tickleRng&&
+           saw(noStats,BattleMoveEffect::Failed,BattleSide::Opponent));
+
+    // A successful primary status move owns only its accuracy draw and the
+    // sleep-duration draw. Sure Hit removes the former, leaving exactly one
+    // xorshift step rather than an extra synthetic 100% chance roll.
+    Fixture primarySleep(grassWhistle,splash);
+    primarySleep.battle.opponentVolatiles[0].sureHitTurns=1U;
+    primarySleep.battle.rngState=0x32000002U;
+    uint32_t expected=primarySleep.battle.rngState;
+    expected^=expected<<13U;expected^=expected>>17U;expected^=expected<<5U;
+    const BattleActionResult slept=primarySleep.playerUses();
+    assert(slept.accepted&&primarySleep.opponent().status==StatusCondition::Sleep&&
+           primarySleep.battle.rngState==expected);
+  }
+
+  // Composite self-boosts fail only when every component is capped. Snatch
+  // must run that requirement against the thief; Magic Coat must run Tickle's
+  // post-accuracy Substitute check against the newly reflected target.
+  {
+    const MoveId cosmicPower=static_cast<MoveId>(322),splash=static_cast<MoveId>(150);
+    Fixture capped(cosmicPower,splash);
+    capped.battle.playerVolatile.defenseStage=kMaximumBattleStatStage;
+    capped.battle.playerVolatile.spDefenseStage=kMaximumBattleStatStage;
+    const BattleActionResult cappedResult=capped.playerUses();
+    assert(cappedResult.accepted&&
+           saw(cappedResult,BattleMoveEffect::Failed,BattleSide::Player));
+
+    Fixture reflected(static_cast<MoveId>(277),static_cast<MoveId>(321));
+    reflected.battle.opponentVolatiles[0].substituteHp=20U;
+    const BattleActionResult reflectedResult=BattleEngine::fightPvp(
+        reflected.battle,reflected.collection,0,0);
+    assert(reflectedResult.accepted&&
+           saw(reflectedResult,BattleMoveEffect::MagicCoatReflected,
+               BattleSide::Player)&&
+           reflected.battle.opponentVolatiles[0].attackStage==0&&
+           reflected.battle.opponentVolatiles[0].defenseStage==0);
+
+    Fixture stolen(static_cast<MoveId>(289),static_cast<MoveId>(303));
+    const uint16_t fullHp=stolen.player().currentHp;
+    const BattleActionResult stolenResult=BattleEngine::fightPvp(
+        stolen.battle,stolen.collection,0,0);
+    assert(stolenResult.accepted&&stolen.player().currentHp==fullHp&&
+           saw(stolenResult,BattleMoveEffect::MoveSnatched,BattleSide::Player)&&
+           saw(stolenResult,BattleMoveEffect::Failed,BattleSide::Player));
+
+    // The redirected FireRed script tests the snatcher's own stat cap, both
+    // for a simple boost and for each component of a compound boost.
+    Fixture cappedIronDefense(static_cast<MoveId>(289),static_cast<MoveId>(334));
+    cappedIronDefense.battle.playerVolatile.defenseStage=kMaximumBattleStatStage;
+    const BattleActionResult cappedIronResult=BattleEngine::fightPvp(
+        cappedIronDefense.battle,cappedIronDefense.collection,0,0);
+    assert(cappedIronResult.accepted&&
+           cappedIronDefense.battle.playerVolatile.defenseStage==
+               kMaximumBattleStatStage&&
+           saw(cappedIronResult,BattleMoveEffect::MoveSnatched,BattleSide::Player)&&
+           saw(cappedIronResult,BattleMoveEffect::Failed,BattleSide::Player));
+
+    Fixture partialBulk(static_cast<MoveId>(289),static_cast<MoveId>(339));
+    partialBulk.battle.playerVolatile.attackStage=kMaximumBattleStatStage;
+    const BattleActionResult partialBulkResult=BattleEngine::fightPvp(
+        partialBulk.battle,partialBulk.collection,0,0);
+    assert(partialBulkResult.accepted&&
+           partialBulk.battle.playerVolatile.attackStage==kMaximumBattleStatStage&&
+           partialBulk.battle.playerVolatile.defenseStage==1&&
+           saw(partialBulkResult,BattleMoveEffect::MoveSnatched,BattleSide::Player));
+  }
+
+  // Block/Mean Look/Spider Web use NO_ACC_CALC: extreme stages and
+  // BrightPowder cannot create an accuracy roll. The trapping script still
+  // runs normally after those reachability/protection checks.
+  for(bool enemy:{false,true}){
+    const MoveId block=static_cast<MoveId>(335),splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:block,enemy?block:splash);
+    CombatVolatile& userState=enemy?f.battle.opponentVolatiles[0]:
+        f.battle.playerVolatile;
+    CombatVolatile& targetState=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    if(enemy){f.opponent().level=100;f.player().level=5;}
+    userState.accuracyStage=kMinimumBattleStatStage;
+    targetState.evasionStage=kMaximumBattleStatStage;
+    target.heldItem=HeldItem::BrightPowder;
+    f.battle.rngState=0x33500001U;
+    const uint32_t beforeRng=f.battle.rngState;
+    const BattleActionResult r=enemy?f.opponentUses():f.playerUses();
+    assert(r.accepted&&r.hit&&f.battle.rngState==beforeRng&&
+           saw(r,BattleMoveEffect::Trapped,
+               enemy?BattleSide::Player:BattleSide::Opponent));
+  }
+
+  // FireRed Shield Dust intercepts effect codes 1..9, not secondary stat
+  // drops. Mud Shot must lower Speed through it, while a guaranteed added
+  // major status remains blocked and announces the Ability.
+  {
+    const MoveId mudShot=static_cast<MoveId>(341),zapCannon=static_cast<MoveId>(192);
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture stats(mudShot,splash);
+    stats.opponent().abilityId=19; // SHIELD DUST
+    stats.opponent().maximumHp=stats.opponent().currentHp=5000;
+    stats.battle.opponentVolatiles[0].sureHitTurns=1U;
+    const BattleActionResult lowered=stats.playerUses();
+    assert(lowered.accepted&&stats.battle.opponentVolatiles[0].speedStage==-1&&
+           countEvents(lowered,BattleEventType::AbilityActivated,
+                       BattleSide::Opponent)==0U);
+
+    Fixture status(zapCannon,splash);
+    status.opponent().abilityId=19; // SHIELD DUST
+    status.opponent().maximumHp=status.opponent().currentHp=5000;
+    status.battle.opponentVolatiles[0].sureHitTurns=1U;
+    const BattleActionResult blocked=status.playerUses();
+    assert(blocked.accepted&&status.opponent().status==StatusCondition::None&&
+           countEvents(blocked,BattleEventType::AbilityActivated,
+                       BattleSide::Opponent)==1U);
+  }
+
+  // Covet shares Thief's item script. Sticky Hold announces itself before
+  // the attacker's occupied-slot check, and ordinary NPC battles cannot
+  // remove the player's persistent held item.
+  {
+    const MoveId covet=static_cast<MoveId>(343),splash=static_cast<MoveId>(150);
+    Fixture sticky(covet,splash);
+    sticky.opponent().heldItem=HeldItem::Leftovers;
+    sticky.opponent().abilityId=60; // STICKY HOLD
+    sticky.battle.opponentVolatiles[0].sureHitTurns=1U;
+    const BattleActionResult held=sticky.playerUses();
+    assert(held.accepted&&!held.heldItemStolen&&
+           sticky.opponent().heldItem==HeldItem::Leftovers&&
+           countEvents(held,BattleEventType::AbilityActivated,
+                       BattleSide::Opponent)==1U);
+
+    Fixture npc(splash,covet,BattleKind::Trainer);
+    npc.player().heldItem=HeldItem::Leftovers;
+    npc.opponent().level=100;npc.player().level=5;
+    npc.battle.playerVolatile.sureHitTurns=2U;
+    const BattleActionResult refused=npc.opponentUses();
+    assert(refused.accepted&&!refused.heldItemStolen&&
+           npc.player().heldItem==HeldItem::Leftovers&&
+           !npc.battle.playerVolatile.hasHeldItemOverride);
+  }
+
   // BEAT UP is another real multi-hit loop in Gen III. Each healthy,
   // status-free team member contributes a separately applied strike; a
   // statused member is skipped. Verify both player and trainer paths and the
@@ -2282,15 +2479,17 @@ int main(){
   assert(mirrorResult.accepted&&mirrorResult.damageDealt&&
          sawMove(mirrorResult,MoveId::Tackle,BattleSide::Player));
 
-  // ME FIRST copies the opponent's command for this turn (not its previous
-  // lastMoveUsed), executes at +1 priority and still deals damage through the
-  // normal resolver. Verify both directions of the link battle path.
+  // Platinum stores ME FIRST at ordinary priority. It succeeds only when its
+  // user acts before the target, then copies that target's command for the
+  // turn (not its previous lastMoveUsed) at 1.5x power.
   {
     const MoveId meFirst=static_cast<MoveId>(382);
-    assert(findFullMove(meFirst)&&findFullMove(meFirst)->priority==1);
+    assert(findFullMove(meFirst)&&findFullMove(meFirst)->priority==0);
     Fixture player(meFirst,MoveId::Tackle);
     player.player().maximumHp=player.player().currentHp=5000;
     player.opponent().maximumHp=player.opponent().currentHp=5000;
+    player.battle.playerVolatile.speedStage=kMaximumBattleStatStage;
+    player.battle.opponentVolatiles[0].speedStage=kMinimumBattleStatStage;
     const BattleActionResult playerResult=BattleEngine::fightPvp(
         player.battle,player.collection,0,0);
     assert(playerResult.accepted&&playerResult.damageDealt&&
@@ -2301,11 +2500,21 @@ int main(){
     Fixture opponent(MoveId::Tackle,meFirst);
     opponent.player().maximumHp=opponent.player().currentHp=5000;
     opponent.opponent().maximumHp=opponent.opponent().currentHp=5000;
+    opponent.battle.playerVolatile.speedStage=kMinimumBattleStatStage;
+    opponent.battle.opponentVolatiles[0].speedStage=kMaximumBattleStatStage;
     const BattleActionResult opponentResult=opponent.opponentUses();
     assert(opponentResult.accepted&&opponentResult.damageTaken&&
            sawMove(opponentResult,meFirst,BattleSide::Opponent)&&
            sawMove(opponentResult,MoveId::Tackle,BattleSide::Opponent)&&
            !saw(opponentResult,BattleMoveEffect::Failed,BattleSide::Opponent));
+
+    Fixture slower(meFirst,MoveId::Tackle);
+    slower.battle.playerVolatile.speedStage=kMinimumBattleStatStage;
+    slower.battle.opponentVolatiles[0].speedStage=kMaximumBattleStatStage;
+    const BattleActionResult slowerResult=BattleEngine::fightPvp(
+        slower.battle,slower.collection,0,0);
+    assert(slowerResult.accepted&&
+           saw(slowerResult,BattleMoveEffect::Failed,BattleSide::Player));
   }
 
   // NATURE POWER uses all ten FireRed terrain rows, not a reduced type-based
@@ -2547,6 +2756,424 @@ int main(){
     wrapped.maximumHp=wrapped.currentHp=160;wrapState.trappedTurns=1;
     (enemy?wrapEnd.opponentUses():wrapEnd.playerUses());
     assert(!wrapState.trappedTurns&&wrapped.currentHp==160U);
+  }
+
+  // Platinum removes Flying for the remainder of Roost's turn. A pure
+  // Flying battler becomes typeless, not Normal: Ghost damage must therefore
+  // remain neutral. Exercise the complete ordered turn from both sides so
+  // this also locks the temporary timing of the type change.
+  for(bool enemy:{false,true}){
+    const MoveId roost=static_cast<MoveId>(355),lick=static_cast<MoveId>(122);
+    Fixture f(enemy?lick:roost,enemy?roost:lick);
+    OwnedPokemon& user=enemy?f.opponent():f.player();
+    CombatVolatile& userVolatile=enemy?f.battle.opponentVolatiles[0]:
+        f.battle.playerVolatile;
+    DedicatedMoveEffectState& userEffects=enemy?
+        f.battle.opponentMoveEffects[0]:f.battle.playerMoveEffects;
+    user.maximumHp=5000;user.currentHp=4000;
+    userEffects.typeOverrideActive=true;
+    userEffects.type1=userEffects.type2=PokemonType::Flying;
+    userVolatile.speedStage=kMaximumBattleStatStage;
+    (enemy?f.battle.playerVolatile:f.battle.opponentVolatiles[0]).speedStage=
+        kMinimumBattleStatStage;
+    f.battle.playerVolatile.sureHitTurns=2U;
+    f.battle.opponentVolatiles[0].sureHitTurns=1U;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        f.battle,f.collection,0,0);
+    assert(result.accepted&&user.currentHp<user.maximumHp&&
+           saw(result,BattleMoveEffect::Roosted,
+               enemy?BattleSide::Opponent:BattleSide::Player));
+  }
+
+  // Cmd_SetMiracleEye does not reject an already marked target. Repeating
+  // the move succeeds and repeats the acknowledgement on both battle sides.
+  for(bool enemy:{false,true}){
+    const MoveId eye=static_cast<MoveId>(357),splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:eye,enemy?eye:splash);
+    const BattleActionResult first=enemy?f.opponentUses():f.playerUses();
+    const BattleActionResult second=enemy?f.opponentUses():f.playerUses();
+    const BattleSide userSide=enemy?BattleSide::Opponent:BattleSide::Player;
+    const BattleSide targetSide=enemy?BattleSide::Player:BattleSide::Opponent;
+    const Gen4BattlerEffectState& target=enemy?f.battle.playerGen4Effects:
+        f.battle.opponentGen4Effects[0];
+    assert(first.accepted&&second.accepted&&target.miracleEye&&
+           saw(second,BattleMoveEffect::MiracleEyeSet,targetSide)&&
+           !saw(second,BattleMoveEffect::Failed,userSide));
+  }
+
+  // The five flavour berries occupy Platinum's 60-power Natural Gift row.
+  // They previously fell through to an incorrect lower placeholder value.
+  for(bool enemy:{false,true})for(HeldItem berry:{HeldItem::FigyBerry,
+      HeldItem::WikiBerry,HeldItem::MagoBerry,HeldItem::AguavBerry,
+      HeldItem::IapapaBerry}){
+    const MoveId gift=static_cast<MoveId>(363),splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:gift,enemy?gift:splash);
+    OwnedPokemon& user=enemy?f.opponent():f.player();
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    CombatVolatile& targetVolatile=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    user.heldItem=berry;target.maximumHp=target.currentHp=5000;
+    targetVolatile.sureHitTurns=enemy?2U:1U;
+    const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+    assert(result.accepted&&user.heldItem==HeldItem::None&&
+           moveEventPower(result,gift,enemy?BattleSide::Opponent:
+               BattleSide::Player)==60U);
+  }
+
+  // Gyro Ball reads the speed snapshot used for turn order. A faster foe's
+  // Scary Face must not retroactively increase Gyro Ball from 101 to 150.
+  for(bool enemy:{false,true}){
+    const MoveId gyro=static_cast<MoveId>(360),scary=static_cast<MoveId>(184);
+    Fixture f(enemy?scary:gyro,enemy?gyro:scary);
+    OwnedPokemon& gyroUser=enemy?f.opponent():f.player();
+    OwnedPokemon& gyroTarget=enemy?f.player():f.opponent();
+    const uint32_t targetUid=gyroTarget.uid;
+    gyroTarget=gyroUser;gyroTarget.uid=targetUid;
+    gyroUser.moves[0]=gyro;gyroUser.movePp[0]=findFullMove(gyro)->pp;
+    gyroTarget.moves[0]=scary;gyroTarget.movePp[0]=findFullMove(scary)->pp;
+    CombatVolatile& gyroState=enemy?f.battle.opponentVolatiles[0]:
+        f.battle.playerVolatile;
+    CombatVolatile& targetState=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    gyroState.speedStage=0;targetState.speedStage=kMaximumBattleStatStage;
+    f.player().maximumHp=f.player().currentHp=5000;
+    f.opponent().maximumHp=f.opponent().currentHp=5000;
+    f.battle.playerVolatile.sureHitTurns=2U;
+    f.battle.opponentVolatiles[0].sureHitTurns=1U;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        f.battle,f.collection,0,0);
+    assert(result.accepted&&gyroState.speedStage==-2&&
+           moveEventPower(result,gyro,enemy?BattleSide::Opponent:
+               BattleSide::Player)==101U);
+  }
+
+  // Heart Swap exchanges Focus Energy together with all seven ordinary stat
+  // stages and is not stopped by Substitute in Platinum.
+  for(bool enemy:{false,true}){
+    const MoveId heartSwap=static_cast<MoveId>(391),splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:heartSwap,enemy?heartSwap:splash);
+    CombatVolatile& user=enemy?f.battle.opponentVolatiles[0]:
+        f.battle.playerVolatile;
+    CombatVolatile& target=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    user.attackStage=3;user.criticalStage=2;
+    target.attackStage=-4;target.criticalStage=0;target.substituteHp=1000;
+    const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+    assert(result.accepted&&user.attackStage==-4&&target.attackStage==3&&
+           user.criticalStage==0U&&target.criticalStage==2U);
+  }
+
+  // Diamond/Pearl/Platinum's retail Fire Fang script accidentally bypasses
+  // Wonder Guard's neutral-hit gate. Preserve that documented cartridge bug
+  // symmetrically while ordinary Fire immunities still use the normal path.
+  for(bool enemy:{false,true}){
+    const MoveId fireFang=static_cast<MoveId>(424),splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:fireFang,enemy?fireFang:splash);
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    CombatVolatile& targetState=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    target.abilityId=25; // WONDER GUARD
+    target.maximumHp=target.currentHp=5000;
+    targetState.sureHitTurns=enemy?2U:1U;
+    const uint16_t before=target.currentHp;
+    const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+    assert(result.accepted&&target.currentHp<before);
+  }
+
+  // Fling removes its item before the hit checks, but the flung item's side
+  // effect is ON_HIT. Light Ball cannot paralyse through Protect.
+  for(bool enemy:{false,true}){
+    const MoveId fling=static_cast<MoveId>(374),protect=static_cast<MoveId>(182);
+    Fixture f(enemy?protect:fling,enemy?fling:protect);
+    OwnedPokemon& user=enemy?f.opponent():f.player();
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    user.heldItem=HeldItem::LightBall;
+    target.maximumHp=target.currentHp=5000;
+    const uint16_t before=target.currentHp;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        f.battle,f.collection,0,0);
+    assert(result.accepted&&user.heldItem==HeldItem::None&&
+           target.currentHp==before&&target.status==StatusCondition::None&&
+           saw(result,BattleMoveEffect::Protected,
+               enemy?BattleSide::Player:BattleSide::Opponent));
+  }
+
+  // Charge Beam, Metal Claw and Steel Wing apply their added effect to the
+  // attacker. A target Substitute absorbs damage, but cannot suppress that
+  // self boost. Search only the deterministic effect draw; the expected
+  // recipient and rule were established manually from each source script.
+  for(const MoveId move:{static_cast<MoveId>(451),static_cast<MoveId>(232),
+                         static_cast<MoveId>(211)})for(bool enemy:{false,true}){
+    bool boosted=false;
+    for(uint32_t seed=1U;seed<=4096U&&!boosted;++seed){
+      const MoveId splash=static_cast<MoveId>(150);
+      Fixture f(enemy?splash:move,enemy?move:splash);
+      OwnedPokemon& user=enemy?f.opponent():f.player();
+      CombatVolatile& userState=enemy?f.battle.opponentVolatiles[0]:
+          f.battle.playerVolatile;
+      CombatVolatile& targetState=enemy?f.battle.playerVolatile:
+          f.battle.opponentVolatiles[0];
+      user.abilityId=32; // SERENE GRACE
+      targetState.substituteHp=5000;
+      f.battle.rngState=seed;
+      const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+      const int8_t stage=move==static_cast<MoveId>(451)?userState.spAttackStage:
+          move==static_cast<MoveId>(232)?userState.attackStage:
+          userState.defenseStage;
+      boosted=result.accepted&&stage==1;
+    }
+    assert(boosted);
+  }
+
+  // Trump Card called by Me First reads the caller command slot's remaining
+  // PP. Me First has 19 PP after its deduction, so copied Trump Card is 40
+  // base power and then receives Me First's 1.5x multiplier: exactly 60.
+  for(bool enemy:{false,true}){
+    const MoveId meFirst=static_cast<MoveId>(382),trump=static_cast<MoveId>(376);
+    Fixture f(enemy?trump:meFirst,enemy?meFirst:trump);
+    CombatVolatile& userState=enemy?f.battle.opponentVolatiles[0]:
+        f.battle.playerVolatile;
+    CombatVolatile& targetState=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    userState.speedStage=kMaximumBattleStatStage;
+    targetState.speedStage=kMinimumBattleStatStage;
+    f.player().maximumHp=f.player().currentHp=5000;
+    f.opponent().maximumHp=f.opponent().currentHp=5000;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        f.battle,f.collection,0,0);
+    assert(result.accepted&&moveEventPower(result,trump,
+        enemy?BattleSide::Opponent:BattleSide::Player)==60U);
+  }
+
+  // A Bind-family effect belongs to its source. It ends immediately when
+  // that source leaves, whether the outgoing battler is local or remote.
+  {
+    const MoveId bind=static_cast<MoveId>(20),splash=static_cast<MoveId>(150);
+    Fixture local(bind,splash);
+    local.battle.opponentVolatiles[0].sureHitTurns=1U;
+    assert(local.playerUses().accepted&&
+           local.battle.opponentVolatiles[0].trappedTurns);
+    uint32_t replacementUid=0;
+    assert(CollectionLogic::add(local.collection,
+        CollectionLogic::createPokemon(0,1,50,false,0xB17D0001U),
+        &replacementUid));
+    assert(CollectionLogic::setPartySlot(local.collection,1,replacementUid));
+    const BattleActionResult switched=BattleEngine::switchToPokemonPvp(
+        local.battle,local.collection,replacementUid,0xFEU,false);
+    assert(switched.accepted&&!local.battle.opponentVolatiles[0].trappedTurns);
+
+    Fixture remote(splash,bind);
+    remote.battle.playerVolatile.sureHitTurns=2U;
+    assert(remote.opponentUses().accepted&&remote.battle.playerVolatile.trappedTurns);
+    remote.battle.opponentCount=2;
+    remote.battle.opponents[1]=CollectionLogic::createPokemon(
+        0xB17D0002U,1,50,false,0xB17D0003U);
+    const BattleActionResult remoteSwitch=BattleEngine::switchOpponentPvp(
+        remote.battle,remote.collection,1);
+    assert(remoteSwitch.accepted&&!remote.battle.playerVolatile.trappedTurns);
+  }
+
+  // Sucker Punch treats a forced Struggle command as an attacking command;
+  // there is intentionally no ordinary move-data pointer for that selection.
+  for(bool enemy:{false,true}){
+    const MoveId sucker=static_cast<MoveId>(389),tackle=MoveId::Tackle;
+    Fixture f(enemy?tackle:sucker,enemy?sucker:tackle);
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      target.moves[slot]=tackle;target.movePp[slot]=0;
+    }
+    target.maximumHp=target.currentHp=5000;
+    const uint16_t before=target.currentHp;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        f.battle,f.collection,enemy?kMoveSlots:0U,0);
+    assert(result.accepted&&target.currentHp<before&&
+           sawMove(result,sucker,enemy?BattleSide::Opponent:BattleSide::Player));
+  }
+
+  // Gastro Acid is a suppression bit around a still-present raw Ability.
+  // Worry Seed replaces that raw value, but Insomnia stays inactive and does
+  // not wake the target until suppression ends. Raw Truant remains immutable.
+  for(bool enemy:{false,true}){
+    const MoveId acid=static_cast<MoveId>(380),seed=static_cast<MoveId>(388);
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:acid,enemy?acid:splash);
+    OwnedPokemon& user=enemy?f.opponent():f.player();
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    Gen4BattlerEffectState& targetGen4=enemy?f.battle.playerGen4Effects:
+        f.battle.opponentGen4Effects[0];
+    CombatVolatile& targetState=enemy?f.battle.playerVolatile:
+        f.battle.opponentVolatiles[0];
+    user.moves[1]=seed;user.movePp[1]=findFullMove(seed)->pp;
+    target.abilityId=2;target.status=StatusCondition::Sleep;
+    targetState.sleepTurns=7;
+    const BattleActionResult suppressed=enemy?f.opponentUses():f.playerUses();
+    const BattleActionResult replaced=enemy?
+        BattleEngine::fightPvp(f.battle,f.collection,0,1):
+        BattleEngine::fightPvp(f.battle,f.collection,1,0xFEU);
+    assert(suppressed.accepted&&replaced.accepted&&targetGen4.abilitySuppressed&&
+           target.abilityId==0U&&targetGen4.suppressedAbilityId==15U&&
+           target.status==StatusCondition::Sleep);
+
+    Fixture truant(enemy?splash:seed,enemy?seed:splash);
+    OwnedPokemon& immutable=enemy?truant.player():truant.opponent();
+    immutable.abilityId=54; // TRUANT
+    const BattleActionResult failed=enemy?truant.opponentUses():truant.playerUses();
+    assert(failed.accepted&&immutable.abilityId==54U&&
+           saw(failed,BattleMoveEffect::Failed,
+               enemy?BattleSide::Opponent:BattleSide::Player));
+  }
+
+  // Role Play, Skill Swap and Transform read and update raw Abilities while
+  // Gastro Acid's suppression remains attached to the battler. This is the
+  // representation used by Platinum's BATTLEMON_ABILITY field.
+  for(bool enemy:{false,true}){
+    const MoveId role=static_cast<MoveId>(272),swap=static_cast<MoveId>(285);
+    const MoveId transform=static_cast<MoveId>(144),splash=static_cast<MoveId>(150);
+    for(const MoveId move:{role,swap,transform}){
+      Fixture f(enemy?splash:move,enemy?move:splash);
+      OwnedPokemon& user=enemy?f.opponent():f.player();
+      OwnedPokemon& target=enemy?f.player():f.opponent();
+      Gen4BattlerEffectState& userGen4=enemy?f.battle.opponentGen4Effects[0]:
+          f.battle.playerGen4Effects;
+      user.abilityId=0;userGen4.abilitySuppressed=true;
+      userGen4.suppressedAbilityId=2;
+      target.abilityId=32; // SERENE GRACE
+      target.moves[0]=splash;target.movePp[0]=40;
+      const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+      assert(result.accepted&&user.abilityId==0U&&
+             userGen4.abilitySuppressed&&userGen4.suppressedAbilityId==32U);
+      if(move==swap)assert(target.abilityId==2U);
+    }
+  }
+
+  // Skill Swap's three immutable cases are explicit source-script checks,
+  // not generic accuracy failures: Wonder Guard, Multitype and either
+  // Griseous Orb holder all leave both raw Abilities untouched.
+  for(bool enemy:{false,true})for(uint8_t blockedCase=0;blockedCase<3;++blockedCase){
+    const MoveId swap=static_cast<MoveId>(285),splash=static_cast<MoveId>(150);
+    Fixture f(enemy?splash:swap,enemy?swap:splash);
+    OwnedPokemon& user=enemy?f.opponent():f.player();
+    OwnedPokemon& target=enemy?f.player():f.opponent();
+    user.abilityId=2;target.abilityId=32;
+    if(blockedCase==0U)user.abilityId=25; // WONDER GUARD
+    else if(blockedCase==1U)target.abilityId=122; // MULTITYPE
+    else user.heldItem=HeldItem::GriseousOrb;
+    const uint8_t userBefore=user.abilityId,targetBefore=target.abilityId;
+    const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+    assert(result.accepted&&user.abilityId==userBefore&&
+           target.abilityId==targetBefore&&
+           saw(result,BattleMoveEffect::Failed,
+               enemy?BattleSide::Opponent:BattleSide::Player));
+  }
+
+  // Copying Truant initializes its parity at the ability-change turn. The
+  // newly affected user therefore loafs on the immediately following turn;
+  // test all three source commands rather than sharing one approximation.
+  for(const MoveId copyMove:{static_cast<MoveId>(272),static_cast<MoveId>(285),
+                             static_cast<MoveId>(144)}){
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture f(copyMove,splash);
+    f.player().abilityId=2;f.opponent().abilityId=54; // TRUANT
+    f.opponent().moves[0]=MoveId::Tackle;
+    f.opponent().movePp[0]=findFullMove(MoveId::Tackle)->pp;
+    const BattleActionResult copied=f.playerUses();
+    assert(copied.accepted&&f.player().abilityId==54U);
+    f.player().moves[0]=MoveId::Tackle;
+    f.player().movePp[0]=findFullMove(MoveId::Tackle)->pp;
+    const BattleActionResult next=f.playerUses();
+    assert(next.accepted&&sawCannotMove(next,BattleSide::Player,9U)&&
+           !sawMove(next,MoveId::Tackle,BattleSide::Player));
+  }
+
+  // Copying Slow Start restarts the five-turn Attack/Speed penalty instead
+  // of inheriting the target's old clock. Compare otherwise identical RNG
+  // streams to a copied benign Ability on each execution side.
+  for(bool enemy:{false,true}){
+    const MoveId role=static_cast<MoveId>(272),splash=static_cast<MoveId>(150);
+    Fixture slowed(enemy?splash:role,enemy?role:splash);
+    Fixture normal(enemy?splash:role,enemy?role:splash);
+    OwnedPokemon& slowUser=enemy?slowed.opponent():slowed.player();
+    OwnedPokemon& normalUser=enemy?normal.opponent():normal.player();
+    OwnedPokemon& slowTarget=enemy?slowed.player():slowed.opponent();
+    OwnedPokemon& normalTarget=enemy?normal.player():normal.opponent();
+    slowTarget.abilityId=113;normalTarget.abilityId=2;
+    assert((enemy?slowed.opponentUses():slowed.playerUses()).accepted);
+    assert((enemy?normal.opponentUses():normal.playerUses()).accepted);
+    slowUser.moves[0]=normalUser.moves[0]=MoveId::Tackle;
+    slowUser.movePp[0]=normalUser.movePp[0]=findFullMove(MoveId::Tackle)->pp;
+    slowTarget.moves[0]=normalTarget.moves[0]=splash;
+    slowTarget.movePp[0]=normalTarget.movePp[0]=40;
+    slowed.battle.rngState=normal.battle.rngState=0x510057A7U;
+    const BattleActionResult slowHit=enemy?slowed.opponentUses():slowed.playerUses();
+    const BattleActionResult normalHit=enemy?normal.opponentUses():normal.playerUses();
+    const uint16_t slowDamage=enemy?slowHit.damageTaken:slowHit.damageDealt;
+    const uint16_t normalDamage=enemy?normalHit.damageTaken:normalHit.damageDealt;
+    assert(slowHit.accepted&&normalHit.accepted&&slowDamage>0U&&
+           normalDamage>slowDamage);
+  }
+
+  // Magic Guard exits Platinum's shared entry-hazard subscript before Toxic
+  // Spikes absorption/status as well as before all HP damage. Validate both
+  // local and remote switch paths.
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture local(splash,splash);
+    uint32_t uid=0;
+    assert(CollectionLogic::add(local.collection,
+        CollectionLogic::createPokemon(0,137,50,false,0x99A60001U),&uid));
+    assert(CollectionLogic::setPartySlot(local.collection,1,uid));
+    OwnedPokemon* incoming=CollectionLogic::find(local.collection,uid);
+    assert(incoming);incoming->abilityId=99; // MAGIC GUARD
+    incoming->maximumHp=incoming->currentHp=1000;
+    local.battle.playerSpikesLayers=3;
+    local.battle.playerToxicSpikesLayers=2;
+    local.battle.playerStealthRock=true;
+    const BattleActionResult switched=BattleEngine::switchToPokemonPvp(
+        local.battle,local.collection,uid,0xFEU,false);
+    assert(switched.accepted&&incoming->currentHp==1000U&&
+           incoming->status==StatusCondition::None&&
+           local.battle.playerToxicSpikesLayers==2U);
+
+    Fixture remote(splash,splash);
+    remote.battle.opponentCount=2;
+    remote.battle.opponents[1]=CollectionLogic::createPokemon(
+        0x99A60002U,137,50,false,0x99A60003U);
+    remote.battle.opponents[1].abilityId=99;
+    remote.battle.opponents[1].maximumHp=
+        remote.battle.opponents[1].currentHp=1000;
+    remote.battle.opponentSpikesLayers=3;
+    remote.battle.opponentToxicSpikesLayers=2;
+    remote.battle.opponentStealthRock=true;
+    const BattleActionResult remoteSwitch=BattleEngine::switchOpponentPvp(
+        remote.battle,remote.collection,1);
+    assert(remoteSwitch.accepted&&remote.opponent().currentHp==1000U&&
+           remote.opponent().status==StatusCondition::None&&
+           remote.battle.opponentToxicSpikesLayers==2U);
+  }
+
+  // Ingrain suppresses Levitate for Ground attacks and trapping Abilities,
+  // but Platinum's entry-hazard grounding test deliberately ignores it. A
+  // Baton-Passed Ingrain therefore does not make a Levitate recipient hit
+  // Spikes or Toxic Spikes.
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture f(splash,splash);
+    uint32_t uid=0;
+    assert(CollectionLogic::add(f.collection,
+        CollectionLogic::createPokemon(0,137,50,false,0x1A6A0001U),&uid));
+    assert(CollectionLogic::setPartySlot(f.collection,1,uid));
+    OwnedPokemon* incoming=CollectionLogic::find(f.collection,uid);
+    assert(incoming);incoming->abilityId=26; // LEVITATE
+    incoming->maximumHp=incoming->currentHp=1000;
+    f.battle.playerMoveEffects.ingrained=true;
+    f.battle.pendingPlayerReplacement=1U; // BATON PASS
+    f.battle.playerSpikesLayers=3;
+    f.battle.playerToxicSpikesLayers=2;
+    const BattleActionResult switched=BattleEngine::completeBatonPassSwitch(
+        f.battle,f.collection,uid,0xFEU);
+    assert(switched.accepted&&f.battle.playerMoveEffects.ingrained&&
+           incoming->currentHp==1000U&&
+           incoming->status==StatusCondition::None);
   }
 
   static Fixture sleepTalk(static_cast<MoveId>(214),MoveId::Tackle);

@@ -1,4 +1,11 @@
 #include "game/WildChainSystem.h"
+#include "game/GymSystem.h"
+
+bool WildChainSystem::isUnlocked(const GymProgress& progress) {
+  constexpr uint32_t kValidBadgeMask =
+      (1UL << static_cast<uint8_t>(GymId::Count)) - 1UL;
+  return (progress.badgeBits & kValidBadgeMask) != 0U;
+}
 
 bool WildChainSystem::begin(WildChainState& state, uint8_t encounters,
                             uint32_t battlerUid) {

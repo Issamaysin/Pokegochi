@@ -27,8 +27,11 @@ class LeagueSystem {
                     const GymProgress& progress, uint32_t seed);
   static bool advance(BattleState& battle, PokemonCollection& collection);
   static bool isChampionStage(const BattleState& battle);
-  // Unlocks the permanent post-Kanto Lucky Egg account bonus. Legacy saves
-  // that still have it equipped are migrated without losing the reward.
+  // Kanto Gym 5 unlocks the permanent +50% Lucky Egg account bonus, the first
+  // Kanto League clear upgrades it to +100%, and Generation IV adds another
+  // 25 points. Legacy equipped Eggs are migrated without changing the save.
+  static uint8_t luckyEggExperienceBonusPercent(
+      const GymProgress& progress, bool generation4Unlocked = false);
   static bool reconcileKantoLuckyEggReward(const GymProgress& progress,
                                             PokemonCollection& collection,
                                             uint64_t& ownedMachines);

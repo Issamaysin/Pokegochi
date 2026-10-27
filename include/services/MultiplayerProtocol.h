@@ -10,7 +10,7 @@
 // discovery, framing and protocol versioning.
 namespace PokegochiMultiplayerProtocol {
 
-constexpr uint8_t kVersion = 6;
+constexpr uint8_t kVersion = 7;
 constexpr uint16_t kPacketMagic = 0x4750; // bytes "PG" in little-endian order
 constexpr uint16_t kMaximumPayload = 160;
 // Android's BLE API separates the mandatory two-byte manufacturer id from

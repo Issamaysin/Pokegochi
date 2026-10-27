@@ -35,6 +35,9 @@ enum class HeldItem : uint8_t {
   DracoPlate, IronPlate, FlamePlate, SplashPlate, MeadowPlate, ZapPlate,
   MindPlate, IciclePlate, EarthPlate, PixiePlate, DreadPlate,
   AdamantOrb, LustrousOrb, GriseousOrb,
+  // Generation-V Drives are unique Genesect form items. Appending keeps all
+  // previously serialized HeldItem values byte-for-byte stable.
+  DouseDrive, ShockDrive, BurnDrive, ChillDrive,
   Count,
 };
 
@@ -45,6 +48,9 @@ constexpr uint8_t kSpecialHeldItemCount = 9;
 constexpr uint8_t kGen4UniqueItemCount = 20;
 constexpr HeldItem kFirstGen4UniqueItem = HeldItem::FistPlate;
 constexpr HeldItem kLastGen4UniqueItem = HeldItem::GriseousOrb;
+constexpr uint8_t kGen5DriveCount = 4;
+constexpr HeldItem kFirstGen5Drive = HeldItem::DouseDrive;
+constexpr HeldItem kLastGen5Drive = HeldItem::ChillDrive;
 
 struct SpecialHeldItemInventory {
   uint16_t quantities[kSpecialHeldItemCount]{};
@@ -62,6 +68,22 @@ struct Gen4UniqueItemInventory {
 };
 static_assert(sizeof(Gen4UniqueItemInventory) == 44,
               "Gen 4 unique-item inventory layout changed");
+
+struct Gen5UniqueItemInventory {
+  uint16_t driveQuantities[kGen5DriveCount]{};
+  // Bit 0 stores DNA Splicers. Bit 1 is reserved for compatibility with saves
+  // created while Reveal Glass was a separate item. Claimed bits prevent a
+  // released legendary from manufacturing another copy during reconciliation.
+  uint8_t keyItems = 0;
+  uint8_t claimedMask = 0;
+};
+static_assert(sizeof(Gen5UniqueItemInventory) == 10,
+              "Gen 5 unique-item inventory layout changed");
+
+constexpr uint8_t kDnaSplicersBit = 1U << 0U;
+// Legacy save bit: intentionally preserved in the serialized layout, but no
+// longer granted, shown or required by gameplay.
+constexpr uint8_t kRevealGlassBit = 1U << 1U;
 
 constexpr uint64_t uniqueHeldItemOwnershipBit(HeldItem item) {
   return item == HeldItem::MegaStone ? kMegaStoneOwnershipBit
@@ -96,6 +118,9 @@ uint16_t specialHeldItemQuantity(const SpecialHeldItemInventory& inventory,
 int8_t gen4UniqueItemIndex(HeldItem item);
 uint16_t gen4UniqueItemQuantity(const Gen4UniqueItemInventory& inventory,
                                 HeldItem item);
+int8_t gen5DriveIndex(HeldItem item);
+uint16_t gen5DriveQuantity(const Gen5UniqueItemInventory& inventory,
+                           HeldItem item);
 
 struct OwnedPokemon;
 bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
@@ -110,6 +135,14 @@ bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
 bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
                      SpecialHeldItemInventory& special,
                      Gen4UniqueItemInventory& gen4, uint64_t& ownedMachines);
+bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
+                   uint16_t inventory[], SpecialHeldItemInventory& special,
+                   Gen4UniqueItemInventory& gen4,
+                   Gen5UniqueItemInventory& gen5, uint64_t& ownedMachines);
+bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
+                     SpecialHeldItemInventory& special,
+                     Gen4UniqueItemInventory& gen4,
+                     Gen5UniqueItemInventory& gen5, uint64_t& ownedMachines);
 
 // Swaps an item from the Bag with the Pokemon's current item. Selecting None
 // takes the current item back. A consumed Berry never returns to the Bag.

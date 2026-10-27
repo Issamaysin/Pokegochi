@@ -30,6 +30,22 @@ constexpr MartOffer ppRecoveryCatalog[]={
 };
 uint32_t next(uint32_t& x){x^=x<<13U;x^=x>>17U;x^=x<<5U;return x;}
 
+uint8_t greatBallStock(uint8_t badgeCount){
+  if(badgeCount<4U)return 0U;
+  if(badgeCount<8U)return 8U;
+  if(badgeCount<12U)return 12U;
+  return 16U;
+}
+
+uint8_t ultraBallStock(uint8_t badgeCount,bool sinnohUnlocked){
+  if(sinnohUnlocked)return 32U;
+  if(badgeCount<12U)return 0U;
+  if(badgeCount<16U)return 8U;
+  if(badgeCount<20U)return 12U;
+  if(badgeCount<24U)return 18U;
+  return 24U;
+}
+
 #include "MachineDataGenerated.inc"
 constexpr MartItem statusMedicines[] = {
   MartItem::FullHeal, MartItem::Antidote, MartItem::ParalyzeHeal,
@@ -58,33 +74,38 @@ bool alreadyOffered(const MartState& mart,uint8_t count,const MartOffer& candida
   return false;
 }
 
-bool machineIsAvailable(uint8_t id, bool sinnohUnlocked) {
-  return id < kLegacyMachineCount || (sinnohUnlocked && id < kMachineCount);
+bool machineIsAvailable(uint8_t id, bool sinnohUnlocked, bool unovaUnlocked) {
+  if(id<kLegacyMachineCount)return true;
+  if(id<kLegacyMachineCount+kSinnohMachineCount)return sinnohUnlocked;
+  return unovaUnlocked&&id<kMachineCount;
 }
 
-bool martHasLockedSinnohOffer(const MartState& mart) {
-  for (const MartOffer& offer : mart.offers)
-    if (offer.isMachine() && offer.machineId() >= kLegacyMachineCount) return true;
+bool martHasLockedRegionalOffer(const MartState& mart,bool sinnohUnlocked,bool unovaUnlocked) {
+  for (const MartOffer& offer : mart.offers) {
+    if(!offer.isMachine())continue;
+    if(!machineIsAvailable(offer.machineId(),sinnohUnlocked,unovaUnlocked))return true;
+  }
   return false;
 }
 
 uint16_t machinePrice(uint8_t id){return id<kMachineCount?machinePrices[id]:0U;}
 
 bool chooseMachineOffer(MartState& mart,uint64_t ownedMachines,uint64_t ownedSinnohMachines,
-                        uint8_t offeredCount,bool sinnohUnlocked,
+                        uint32_t ownedUnovaMachines,uint8_t offeredCount,
+                        bool sinnohUnlocked,bool unovaUnlocked,
                         MartOffer& offer){
   uint8_t availableCount=0;
   for(uint8_t id=0;id<kMachineCount;++id){
-    if(!machineIsAvailable(id,sinnohUnlocked))continue;
-    if(Economy::ownsMachine(ownedMachines,ownedSinnohMachines,id))continue;
+    if(!machineIsAvailable(id,sinnohUnlocked,unovaUnlocked))continue;
+    if(Economy::ownsMachine(ownedMachines,ownedSinnohMachines,ownedUnovaMachines,id))continue;
     const MartOffer candidate=MartOffer::machine(id,machinePrice(id));
     if(!alreadyOffered(mart,offeredCount,candidate))++availableCount;
   }
   if(!availableCount)return false;
   uint8_t selected=static_cast<uint8_t>(next(mart.rng)%availableCount);
   for(uint8_t id=0;id<kMachineCount;++id){
-    if(!machineIsAvailable(id,sinnohUnlocked))continue;
-    if(Economy::ownsMachine(ownedMachines,ownedSinnohMachines,id))continue;
+    if(!machineIsAvailable(id,sinnohUnlocked,unovaUnlocked))continue;
+    if(Economy::ownsMachine(ownedMachines,ownedSinnohMachines,ownedUnovaMachines,id))continue;
     const MartOffer candidate=MartOffer::machine(id,machinePrice(id));
     if(alreadyOffered(mart,offeredCount,candidate))continue;
     if(!selected){offer=candidate;return true;}
@@ -94,8 +115,8 @@ bool chooseMachineOffer(MartState& mart,uint64_t ownedMachines,uint64_t ownedSin
 }
 
 MartOffer randomOffer(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines,
-                      uint64_t ownedSinnohMachines,
-                      uint8_t offeredCount,bool sinnohUnlocked){
+                      uint64_t ownedSinnohMachines,uint32_t ownedUnovaMachines,
+                      uint8_t offeredCount,bool sinnohUnlocked,bool unovaUnlocked){
   const uint8_t roll=static_cast<uint8_t>(next(mart.rng)%100U);
   if(roll<26U){
     MartOffer offer=ppRecoveryCatalog[next(mart.rng)%(sizeof(ppRecoveryCatalog)/sizeof(ppRecoveryCatalog[0]))];
@@ -114,8 +135,8 @@ MartOffer randomOffer(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines,
   // naturally once the player owns every machine.
   if(roll<66U){
     MartOffer machine{};
-    if(chooseMachineOffer(mart,ownedMachines,ownedSinnohMachines,offeredCount,
-                          sinnohUnlocked,machine))return machine;
+    if(chooseMachineOffer(mart,ownedMachines,ownedSinnohMachines,ownedUnovaMachines,
+                          offeredCount,sinnohUnlocked,unovaUnlocked,machine))return machine;
   }
   MartOffer offer=catalog[next(mart.rng)%(sizeof(catalog)/sizeof(catalog[0]))];
   if(offer.item==MartItem::UltraBall&&
@@ -137,39 +158,60 @@ void sortOffersByCategory(MartState& mart){
   }
 }
 }
-// The stocked offers remain stable for six hours, including while the screen
-// is asleep; the next elapsed-time update performs one fresh rotation.
+// The stocked offers remain stable for six hours during the campaign and four
+// hours after the final endgame expedition is unlocked, including while the
+// screen is asleep; the next elapsed-time update performs one fresh rotation.
 bool Economy::refreshIfDue(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines,
-                           uint64_t ownedSinnohMachines,bool sinnohUnlocked){
+                           uint64_t ownedSinnohMachines,bool sinnohUnlocked,
+                           uint32_t ownedUnovaMachines,bool unovaUnlocked){
   // A save produced by an older build may already contain a Sinnoh machine
   // while the region is still locked. Replace that incompatible rotation
   // before it can be displayed or bought.
-  if((!sinnohUnlocked && martHasLockedSinnohOffer(mart)) ||
-     mart.elapsedSeconds>=kRotationSeconds){
-    rotate(mart,badgeCount,ownedMachines,ownedSinnohMachines,sinnohUnlocked);return true;
+  const uint32_t rotationSeconds = sinnohUnlocked ? kEndgameRotationSeconds :
+                                                     kRotationSeconds;
+  if(martHasLockedRegionalOffer(mart,sinnohUnlocked,unovaUnlocked) ||
+     mart.elapsedSeconds>=rotationSeconds){
+    rotate(mart,badgeCount,ownedMachines,ownedSinnohMachines,sinnohUnlocked,
+           ownedUnovaMachines,unovaUnlocked);return true;
   }
   return false;
 }
 void Economy::advance(MartState& mart,uint32_t seconds,uint8_t badgeCount,uint64_t ownedMachines,
-                      uint64_t ownedSinnohMachines,bool sinnohUnlocked){
+                      uint64_t ownedSinnohMachines,bool sinnohUnlocked,
+                      uint32_t ownedUnovaMachines,bool unovaUnlocked){
   mart.elapsedSeconds+=seconds;
-  refreshIfDue(mart,badgeCount,ownedMachines,ownedSinnohMachines,sinnohUnlocked);
+  refreshIfDue(mart,badgeCount,ownedMachines,ownedSinnohMachines,sinnohUnlocked,
+               ownedUnovaMachines,unovaUnlocked);
 }
 void Economy::rotate(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines,
-                     uint64_t ownedSinnohMachines,bool sinnohUnlocked){
-  mart.elapsedSeconds%=kRotationSeconds;++mart.day;
-  mart.offers[0]={MartItem::PokeBall,HeldItem::None,200,12};
-  mart.offers[1]={MartItem::Potion,HeldItem::None,300,8};
+                     uint64_t ownedSinnohMachines,bool sinnohUnlocked,
+                     uint32_t ownedUnovaMachines,bool unovaUnlocked){
+  const uint32_t rotationSeconds = sinnohUnlocked ? kEndgameRotationSeconds :
+                                                     kRotationSeconds;
+  mart.elapsedSeconds%=rotationSeconds;++mart.day;
+  uint8_t guaranteedCount=0;
+  mart.offers[guaranteedCount++]={MartItem::PokeBall,HeldItem::None,200,12};
+  // Better Balls become dependable supplies as capture difficulty rises.
+  // They remain one unique product each, so progression raises stock without
+  // consuming several rows or changing the six-hour rotation cadence.
+  const uint8_t greatStock=greatBallStock(badgeCount);
+  if(greatStock)
+    mart.offers[guaranteedCount++]={MartItem::GreatBall,HeldItem::None,600,greatStock};
+  const uint8_t ultraStock=ultraBallStock(badgeCount,sinnohUnlocked);
+  if(ultraStock)
+    mart.offers[guaranteedCount++]={MartItem::UltraBall,HeldItem::None,1200,ultraStock};
+  mart.offers[guaranteedCount++]={MartItem::Potion,HeldItem::None,300,8};
   const MartItem status=statusMedicines[next(mart.rng)%(sizeof(statusMedicines)/sizeof(statusMedicines[0]))];
   uint16_t statusPrice=100;
   switch(status){case MartItem::FullHeal:statusPrice=600;break;case MartItem::ParalyzeHeal:statusPrice=200;break;case MartItem::Awakening:case MartItem::BurnHeal:case MartItem::IceHeal:statusPrice=250;break;default:break;}
-  mart.offers[2]={status,HeldItem::None,statusPrice,static_cast<uint8_t>(3U+next(mart.rng)%6U)};
+  mart.offers[guaranteedCount++]={status,HeldItem::None,statusPrice,
+                                 static_cast<uint8_t>(3U+next(mart.rng)%6U)};
 
-  uint8_t randomStart=3;
+  uint8_t randomStart=guaranteedCount;
   MartOffer guaranteedMachine{};
-  if(chooseMachineOffer(mart,ownedMachines,ownedSinnohMachines,3U,sinnohUnlocked,
-                        guaranteedMachine)){
-    mart.offers[3]=guaranteedMachine;randomStart=4;
+  if(chooseMachineOffer(mart,ownedMachines,ownedSinnohMachines,ownedUnovaMachines,
+                        randomStart,sinnohUnlocked,unovaUnlocked,guaranteedMachine)){
+    mart.offers[randomStart++]=guaranteedMachine;
   }
   for(uint8_t i=randomStart;i<kMartOfferCount;++i){
     // Twenty slots are useful only when they represent twenty distinct
@@ -177,8 +219,8 @@ void Economy::rotate(MartState& mart,uint8_t badgeCount,uint64_t ownedMachines,
     // probabilities; the bounded fallback still guarantees completion.
     MartOffer candidate{};bool unique=false;
     for(uint8_t attempt=0;attempt<32U;++attempt){
-      candidate=randomOffer(mart,badgeCount,ownedMachines,ownedSinnohMachines,i,
-                            sinnohUnlocked);
+      candidate=randomOffer(mart,badgeCount,ownedMachines,ownedSinnohMachines,
+                            ownedUnovaMachines,i,sinnohUnlocked,unovaUnlocked);
       if(!alreadyOffered(mart,i,candidate)){unique=true;break;}
     }
     // A deterministic fallback makes uniqueness a contract rather than a
@@ -203,11 +245,20 @@ uint8_t Economy::maximumPurchasable(const MartState& mart,uint8_t offer,uint32_t
                                     const Inventory& inventory,uint64_t ownedMachines,
                                     uint64_t ownedSinnohMachines,
                                     const PpItemInventory* ppItems){
+  return maximumPurchasable(mart,offer,money,inventory,ownedMachines,
+                            ownedSinnohMachines,0U,ppItems);
+}
+uint8_t Economy::maximumPurchasable(const MartState& mart,uint8_t offer,uint32_t money,
+                                    const Inventory& inventory,uint64_t ownedMachines,
+                                    uint64_t ownedSinnohMachines,
+                                    uint32_t ownedUnovaMachines,
+                                    const PpItemInventory* ppItems){
   if(offer>=kMartOfferCount)return 0;
   const MartOffer& selected=mart.offers[offer];
   const uint32_t unitPrice=price(selected);
   if(!selected.remaining||!unitPrice)return 0;
-  if(selected.isMachine())return ownsMachine(ownedMachines,ownedSinnohMachines,selected.machineId())||money<unitPrice?0:1;
+  if(selected.isMachine())return ownsMachine(ownedMachines,ownedSinnohMachines,
+      ownedUnovaMachines,selected.machineId())||money<unitPrice?0:1;
   uint16_t owned=0;
   if(selected.isHeldItem()){
     const uint8_t index=static_cast<uint8_t>(selected.heldItem);
@@ -242,14 +293,26 @@ bool Economy::buyQuantity(MartState& mart,uint8_t offer,uint8_t quantity,uint32_
 bool Economy::buyQuantity(MartState& mart,uint8_t offer,uint8_t quantity,uint32_t& money,
                           Inventory& inventory,uint64_t& ownedMachines,
                           uint64_t& ownedSinnohMachines,PpItemInventory* ppItems){
+  uint32_t ignoredUnovaMachines=0U;
+  return buyQuantity(mart,offer,quantity,money,inventory,ownedMachines,
+                     ownedSinnohMachines,ignoredUnovaMachines,ppItems);
+}
+bool Economy::buyQuantity(MartState& mart,uint8_t offer,uint8_t quantity,uint32_t& money,
+                          Inventory& inventory,uint64_t& ownedMachines,
+                          uint64_t& ownedSinnohMachines,uint32_t& ownedUnovaMachines,
+                          PpItemInventory* ppItems){
   if(!quantity||quantity>maximumPurchasable(mart,offer,money,inventory,ownedMachines,
-                                            ownedSinnohMachines,ppItems))return false;
+                                            ownedSinnohMachines,ownedUnovaMachines,
+                                            ppItems))return false;
   MartOffer& selected=mart.offers[offer];
   const uint32_t total=price(selected)*quantity;
   if(selected.isMachine()){
     const uint8_t id=selected.machineId();
     if(id<kLegacyMachineCount)ownedMachines|=uint64_t{1}<<id;
-    else if(id<kMachineCount)ownedSinnohMachines|=uint64_t{1}<<(id-kLegacyMachineCount);
+    else if(id<kLegacyMachineCount+kSinnohMachineCount)
+      ownedSinnohMachines|=uint64_t{1}<<(id-kLegacyMachineCount);
+    else if(id<kMachineCount)
+      ownedUnovaMachines|=uint32_t{1}<<(id-kLegacyMachineCount-kSinnohMachineCount);
   }
   else if(selected.isHeldItem()){
     const uint8_t index=static_cast<uint8_t>(selected.heldItem);
@@ -274,6 +337,12 @@ bool Economy::buy(MartState& mart,uint8_t offer,uint32_t& money,Inventory& inven
 bool Economy::buy(MartState& mart,uint8_t offer,uint32_t& money,Inventory& inventory,uint64_t& ownedMachines,
                   uint64_t& ownedSinnohMachines,PpItemInventory* ppItems){
   return buyQuantity(mart,offer,1,money,inventory,ownedMachines,ownedSinnohMachines,ppItems);
+}
+bool Economy::buy(MartState& mart,uint8_t offer,uint32_t& money,Inventory& inventory,uint64_t& ownedMachines,
+                  uint64_t& ownedSinnohMachines,uint32_t& ownedUnovaMachines,
+                  PpItemInventory* ppItems){
+  return buyQuantity(mart,offer,1,money,inventory,ownedMachines,
+                     ownedSinnohMachines,ownedUnovaMachines,ppItems);
 }
 const char* Economy::name(MartItem item){static const char* names[]={"POKE BALL","GREAT BALL","ULTRA BALL","POTION","SUPER POTION","HYPER POTION","FULL HEAL","ANTIDOTE","PARALYZE HEAL","AWAKENING","BURN HEAL","ICE HEAL","X ATTACK","X DEFENSE","X SPEED","X ACCURACY","DIRE HIT","REVIVE","MAX REVIVE","ETHER","MAX ETHER","ELIXIR","MAX ELIXIR","PP UP","MASTER BALL"};const uint8_t index=static_cast<uint8_t>(item);return index<static_cast<uint8_t>(MartItem::Count)?names[index]:"UNKNOWN";}
 const char* Economy::name(const MartOffer& offer){
@@ -301,12 +370,18 @@ MartOfferCategory Economy::category(const MartOffer& offer){
 }
 MoveId Economy::machineMove(uint8_t machineId){return machineId<kMachineCount?static_cast<MoveId>(machineMoves[machineId]):MoveId::None;}
 bool Economy::canLearnMachine(uint16_t speciesId,uint8_t machineId){
-  if(speciesId==0U||speciesId>=494U||machineId>=kMachineCount)return false;
+  if(speciesId==0U||speciesId>=650U||machineId>=kMachineCount)return false;
   if(machineId<kLegacyMachineCount)
     return (machineLearnsets[speciesId]&(uint64_t{1}<<machineId))!=0U;
-  const uint8_t sinnohBit = static_cast<uint8_t>(machineId-kLegacyMachineCount);
-  return (sinnohMachineLearnsets[speciesId][sinnohBit>>3U] &
-          static_cast<uint8_t>(1U<<(sinnohBit&7U))) != 0U;
+  if(machineId<kLegacyMachineCount+kSinnohMachineCount){
+    const uint8_t sinnohBit = static_cast<uint8_t>(machineId-kLegacyMachineCount);
+    return (sinnohMachineLearnsets[speciesId][sinnohBit>>3U] &
+            static_cast<uint8_t>(1U<<(sinnohBit&7U))) != 0U;
+  }
+  const uint8_t unovaBit=static_cast<uint8_t>(
+      machineId-kLegacyMachineCount-kSinnohMachineCount);
+  return (unovaMachineLearnsets[speciesId][unovaBit>>3U]&
+          static_cast<uint8_t>(1U<<(unovaBit&7U)))!=0U;
 }
 bool Economy::canLearnMachine(const OwnedPokemon& pokemon,uint8_t machineId){
   // Platinum's form JSON deliberately repeats the base species TM/HM list
@@ -318,9 +393,16 @@ bool Economy::ownsMachine(uint64_t ownedMachines,uint8_t machineId){
   return machineId<kLegacyMachineCount&&(ownedMachines&(uint64_t{1}<<machineId));
 }
 bool Economy::ownsMachine(uint64_t ownedMachines,uint64_t ownedSinnohMachines,uint8_t machineId){
+  return ownsMachine(ownedMachines,ownedSinnohMachines,0U,machineId);
+}
+bool Economy::ownsMachine(uint64_t ownedMachines,uint64_t ownedSinnohMachines,
+                          uint32_t ownedUnovaMachines,uint8_t machineId){
   if(machineId<kLegacyMachineCount)return (ownedMachines&(uint64_t{1}<<machineId))!=0U;
-  return machineId<kMachineCount&&
+  if(machineId<kLegacyMachineCount+kSinnohMachineCount)return
       (ownedSinnohMachines&(uint64_t{1}<<(machineId-kLegacyMachineCount)))!=0U;
+  return machineId<kMachineCount&&
+      (ownedUnovaMachines&(uint32_t{1}<<(
+          machineId-kLegacyMachineCount-kSinnohMachineCount)))!=0U;
 }
 bool Economy::isHiddenMachine(uint8_t machineId){
   return machineId>=50U&&machineId<kLegacyMachineCount;
@@ -328,7 +410,11 @@ bool Economy::isHiddenMachine(uint8_t machineId){
 uint8_t Economy::machineNumber(uint8_t machineId){
   if(machineId<50U)return static_cast<uint8_t>(machineId+1U);
   if(machineId<kLegacyMachineCount)return static_cast<uint8_t>(machineId-49U);
-  return static_cast<uint8_t>(machineId-7U);
+  if(machineId<kLegacyMachineCount+kSinnohMachineCount)
+    return static_cast<uint8_t>(machineId-7U);
+  const uint8_t offset=static_cast<uint8_t>(
+      machineId-kLegacyMachineCount-kSinnohMachineCount);
+  return offset<kUnovaMachineCount?unovaMachineNumbers[offset]:0U;
 }
 
-// Emerald/Platinum TM/HM catalog: 39d71559e23232c4
+// Emerald/Platinum TM/HM catalog: 6ed44228e9f8e16b

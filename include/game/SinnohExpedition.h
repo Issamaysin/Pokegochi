@@ -31,13 +31,33 @@ struct SinnohExpeditionState {
   // site. This byte carries a schema marker plus the three endgame flags; old
   // values 0..7 are distinguishable and migrated safely by reconcile().
   uint8_t selectedSite = 0;
-  uint8_t legacyFossilMask = 0;
+  // One victory bit per site Gym. This reuses the retired fossil mask without
+  // changing the twelve-byte Sinnoh record or any shipped save offset.
+  uint8_t gymVictoryMask = 0;
   // Reuses the final reserved byte from the original Sinnoh save record.
-  // These flags make the all-sites reward idempotent across reboot/migration.
+  // These flags make the eight-Gym reward idempotent across reboot/migration.
   uint8_t rewardFlags = 0;
 };
 static_assert(sizeof(SinnohExpeditionState) == 12,
               "Sinnoh expedition save layout changed");
+
+struct SinnohGymPokemon {
+  uint16_t speciesId;
+  uint8_t level;
+  MoveId moves[kMoveSlots];
+  HeldItem heldItem;
+};
+
+struct SinnohGymDefinition {
+  SinnohSite site;
+  const char* leader;
+  const char* badge;
+  const char* type;
+  const char* frontAsset;
+  const char* introLine1;
+  const char* introLine2;
+  SinnohGymPokemon team[kOpponentTeamCapacity];
+};
 
 class SinnohExpedition {
  public:
@@ -46,13 +66,25 @@ class SinnohExpedition {
       static_cast<uint8_t>((1U << kSiteCount) - 1U);
   static constexpr uint8_t kPlatinumThemeRewardBit = 1U << 0;
   static constexpr uint8_t kMasterBallRewardBit = 1U << 1;
+  // The schema marker distinguishes saves created before site Gyms existed.
+  // A legacy-completion bit keeps an already completed region/Unova open,
+  // while still leaving every new Gym available to play.
+  static constexpr uint8_t kGymSchemaBit = 1U << 2;
+  static constexpr uint8_t kLegacyCompletionBit = 1U << 3;
   static constexpr uint8_t kMaxEncounterLevel = 95U;
+  static constexpr uint16_t kMaximumResearch = 999U;
+  static constexpr uint16_t kGymResearchReward = 20U;
   // Match the measured baseline wild rarity: roughly 0.378%, or one
   // legendary/mythical encounter in every 265 Sinnoh encounters.
   static constexpr uint16_t kLegendaryChanceDenominator = 265U;
 
   static bool available(const GymProgress& progress,
                         const SinnohExpeditionState& state);
+  // Golden Ball ownership is derived from the existing Sinnoh gate. This
+  // makes it permanent and grants it automatically to saves that had already
+  // unlocked the region before the item was introduced.
+  static bool goldenBallUnlocked(const GymProgress& progress,
+                                 const SinnohExpeditionState& state);
   static void reconcile(SinnohExpeditionState& state, const GymProgress& progress);
   static bool towerCompleted(const SinnohExpeditionState& state);
   static bool bossDefeated(const SinnohExpeditionState& state);
@@ -63,12 +95,26 @@ class SinnohExpedition {
   static bool acknowledgeDiscovery(SinnohExpeditionState& state);
   static bool isUnlocked(const SinnohExpeditionState& state, SinnohSite site);
   static bool allSitesUnlocked(const SinnohExpeditionState& state);
+  static bool hasGymVictory(const SinnohExpeditionState& state, SinnohSite site);
+  static uint8_t gymVictoryCount(const SinnohExpeditionState& state);
+  static bool allGymsDefeated(const SinnohExpeditionState& state);
+  // New saves complete Sinnoh by defeating all eight leaders. Saves which
+  // had already opened every site before this system existed remain complete
+  // for rewards and Unova, but may still challenge the new leaders.
+  static bool completed(const SinnohExpeditionState& state);
+  static const SinnohGymDefinition* gymDefinition(SinnohSite site);
+  static bool gymChallengeAvailable(const SinnohExpeditionState& state,
+                                    SinnohSite site);
+  static bool startGym(const SinnohExpeditionState& state, BattleState& battle,
+                       PokemonCollection& collection, uint32_t playerUid,
+                       SinnohSite site, uint32_t seed);
+  static bool recordGymVictory(SinnohExpeditionState& state, SinnohSite site);
   static bool platinumThemeUnlocked(const SinnohExpeditionState& state);
   struct CompletionReward {
     bool platinumThemeUnlocked = false;
     bool masterBallGranted = false;
   };
-  // Grants the one-time reward after all eight sites are open. The Platinum
+  // Grants the one-time reward after all eight Gyms are defeated. The Platinum
   // theme is always recorded immediately; the Master Ball remains pending if
   // its inventory stack is full and is granted on the next reconciliation.
   static CompletionReward reconcileCompletionReward(SinnohExpeditionState& state,

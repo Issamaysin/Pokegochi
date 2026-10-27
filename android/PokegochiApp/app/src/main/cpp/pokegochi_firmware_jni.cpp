@@ -408,11 +408,12 @@ Java_com_pokegochi_app_NativeFirmware_setPhoneBatteryPercent(
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_pokegochi_app_NativeFirmware_syncPhoneTime(
-    JNIEnv*, jclass, jlong handle, jlong epochSeconds) {
+    JNIEnv*, jclass, jlong handle, jlong utcEpochSeconds, jint utcOffsetSeconds) {
   auto* session = reinterpret_cast<FirmwareSession*>(handle);
-  if (!session || epochSeconds <= 0) return;
+  if (!session || utcEpochSeconds <= 0) return;
   std::lock_guard<std::mutex> lock(session->runtimeMutex);
-  pokegochi_android_sync_phone_time(static_cast<uint64_t>(epochSeconds));
+  pokegochi_android_sync_phone_time(static_cast<uint64_t>(utcEpochSeconds),
+                                    static_cast<int32_t>(utcOffsetSeconds));
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -39,7 +39,8 @@ extern "C" void pokegochi_android_trace_game_health(
     bool displaySleeping, uint8_t batteryPercent);
 extern "C" void pokegochi_android_set_phone_battery_percent(uint8_t percent);
 extern "C" void pokegochi_android_flush_save();
-extern "C" void pokegochi_android_sync_phone_time(uint64_t epochSeconds);
+extern "C" void pokegochi_android_sync_phone_time(uint64_t utcEpochSeconds,
+                                                   int32_t utcOffsetSeconds);
 bool pokegochi_android_take_touch(TouchPoint& point);
 extern "C" uint32_t pokegochi_android_frame_generation();
 

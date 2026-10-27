@@ -1,8 +1,35 @@
 #pragma once
+#include <cstddef>
 #include <cstdint>
 #include "game/Collection.h"
 
-enum class PokeBallType : uint8_t { PokeBall, GreatBall, UltraBall, MasterBall, Count };
+// Keep the four original values stable: Mart offers and every persisted
+// Inventory written before Sinnoh use these numeric IDs. Golden Ball is a
+// permanent unlock rather than a quantity, so it is appended without growing
+// the stored ball array.
+enum class PokeBallType : uint8_t {
+  PokeBall,
+  GreatBall,
+  UltraBall,
+  MasterBall,
+  GoldenBall,
+  Count,
+};
+constexpr uint8_t kStoredPokeBallTypeCount =
+    static_cast<uint8_t>(PokeBallType::GoldenBall);
+constexpr bool isStoredPokeBall(PokeBallType ball) {
+  return static_cast<uint8_t>(ball) < kStoredPokeBallTypeCount;
+}
+constexpr bool isInfinitePokeBall(PokeBallType ball) {
+  return ball == PokeBallType::GoldenBall;
+}
+static_assert(kStoredPokeBallTypeCount == 4U,
+              "Persistent ball inventory ABI changed");
+static_assert(static_cast<uint8_t>(PokeBallType::PokeBall) == 0U &&
+                  static_cast<uint8_t>(PokeBallType::GreatBall) == 1U &&
+                  static_cast<uint8_t>(PokeBallType::UltraBall) == 2U &&
+                  static_cast<uint8_t>(PokeBallType::MasterBall) == 3U,
+              "Existing Poke Ball IDs must remain save-compatible");
 enum class BattleItem : uint8_t {
   Potion, SuperPotion, HyperPotion, FullHeal, Antidote, ParalyzeHeal,
   Awakening, BurnHeal, IceHeal, XAttack, XDefense, XSpeed, XAccuracy,
@@ -18,12 +45,17 @@ static_assert(static_cast<uint8_t>(BattleItem::PpUp)-static_cast<uint8_t>(Battle
               "PP item inventory no longer matches BattleItem");
 
 struct Inventory {
-  uint16_t balls[static_cast<uint8_t>(PokeBallType::Count)] = {10, 3, 1, 0};
+  uint16_t balls[kStoredPokeBallTypeCount] = {10, 3, 1, 0};
   uint16_t medicine[kStandardMedicineCount]{};
   // Mega Stone ownership uses GameSave::ownedMachines bit 63. Keeping this
   // array at the previous 38 entries preserves the complete save layout.
   uint16_t heldItems[kHeldItemInventorySlots]{};
 };
+static_assert(sizeof(Inventory) ==
+                  sizeof(uint16_t) * (kStoredPokeBallTypeCount +
+                                      kStandardMedicineCount +
+                                      kHeldItemInventorySlots),
+              "Inventory save layout gained unexpected storage or padding");
 
 // HeldItem::None can never be bought, equipped or returned to the Bag, so its
 // existing count slot is persistent spare storage. Rare Candy deliberately
@@ -80,7 +112,14 @@ enum class BattleKind : uint8_t {
   // Appended so every existing serialized BattleKind keeps its numeric value.
   MegaChallenge,
   // Repeatable post-game encounter. Keep appended for save compatibility.
-  Boss
+  Boss,
+  // Generation-V tournament challenges. Appended for save compatibility.
+  Pwt,
+  RoyalUnova,
+  // Sinnoh site Gyms are independent from the 24-bit Kanto/Johto/Hoenn Gym
+  // ledger. Keep this appended so every previously serialized value remains
+  // stable while an interrupted Sinnoh challenge can still resume safely.
+  SinnohGym
 };
 enum class BattleWeather : uint8_t { Clear, Rain, Sun, Sandstorm, Hail, HeavyRain, HarshSun, StrongWinds };
 // The first ten values intentionally match FireRed's gBattleTerrain indices.
@@ -90,7 +129,6 @@ enum class BattleTerrain : uint8_t {
 };
 
 constexpr uint8_t kOpponentTeamCapacity = 3;
-constexpr uint8_t kEvolutionChoiceCapacity = 5;
 // FireRed stores battle stages as 0..12 with 6 as neutral. Pokegochi stores
 // the equivalent signed representation, so every ordinary battle stat is
 // constrained to -6..+6.
@@ -111,7 +149,10 @@ struct CombatVolatile {
   // encounter or temporary trainer from permanently deleting scarce gear.
   HeldItem heldItemOverride = HeldItem::None;
   bool hasHeldItemOverride = false;
-  bool heldItemSuppressed = false;
+  // Packed without changing the frozen V34 ABI. Bit 0 is the permanent
+  // battle-local Knock Off marker; bits 1..3 hold Embargo's remaining turns.
+  // Existing saves wrote only 0/1, so they migrate losslessly.
+  uint8_t heldItemSuppressed = 0;
   bool seeded = false;
   uint8_t toxicCounter = 0;
   uint8_t sleepTurns = 0;
@@ -200,6 +241,45 @@ struct DedicatedMoveEffectState {
   // Occupies former tail padding, preserving the V33 ABI while making the
   // Gen-III Mimic/Sketch transformed-user rejection explicit on both sides.
   bool transformed = false;
+};
+
+// Generation-IV volatile state was added after BattleState V34 had shipped.
+// Keep it in an appended sidecar instead of growing DedicatedMoveEffectState:
+// the latter appears four times inside the frozen 768-byte battle prefix.
+struct Gen4BattlerEffectState {
+  bool roosting = false;
+  bool miracleEye = false;
+  bool aquaRing = false;
+  bool powerTrick = false;
+  bool abilitySuppressed = false;
+  uint8_t suppressedAbilityId = 0;
+  uint8_t healBlockTurns = 0;
+  uint8_t magnetRiseTurns = 0;
+  uint8_t lastResortCount = 0;
+  MoveId lastResortMoves[kMoveSlots]{};
+};
+
+// Generation-V battle-local mechanics. Appended after the complete V45
+// BattleState prefix so every in-progress Sinnoh battle remains migratable.
+struct Gen5BattlerEffectState {
+  uint8_t telekinesisTurns = 0;
+  uint8_t autotomizeUses = 0;
+  uint8_t echoedVoiceCount = 0;
+  bool grounded = false;
+  bool quickGuard = false;
+  bool wideGuard = false;
+  bool skyDropCarried = false;
+  // Illusion is presentation-only: battle calculations continue to use the
+  // real species while the renderer reads this disguise until damage lands.
+  bool illusionActive = false;
+  uint16_t illusionSpeciesId = 0;
+  uint8_t illusionForm = 0;
+  // Power/Guard Split replace the raw calculated stats for the rest of the
+  // current stay on the field; zero means no split override is active.
+  uint16_t attackOverride = 0;
+  uint16_t defenseOverride = 0;
+  uint16_t spAttackOverride = 0;
+  uint16_t spDefenseOverride = 0;
 };
 
 struct BattleRecyclableItemState {
@@ -313,7 +393,40 @@ struct BattleState {
   // an exact byte prefix for lossless migration of existing beta saves.
   alignas(4) TransformBattleSnapshot playerTransformSnapshot{};
   TransformBattleSnapshot opponentTransformSnapshot{};
+  // Everything below this point is the V45 extension. The complete V44 and
+  // earlier battle record remains an exact 768-byte prefix.
+  Gen4BattlerEffectState playerGen4Effects{};
+  Gen4BattlerEffectState opponentGen4Effects[kOpponentTeamCapacity]{};
+  MoveId lastMoveUsedGlobally = MoveId::None;
+  uint8_t gravityTurns = 0;
+  uint8_t trickRoomTurns = 0;
+  uint8_t playerTailwindTurns = 0;
+  uint8_t opponentTailwindTurns = 0;
+  uint8_t playerLuckyChantTurns = 0;
+  uint8_t opponentLuckyChantTurns = 0;
+  uint8_t playerToxicSpikesLayers = 0;
+  uint8_t opponentToxicSpikesLayers = 0;
+  bool playerStealthRock = false;
+  bool opponentStealthRock = false;
+  // 0 = none, 1 = Baton Pass, 2 = U-turn, 3 = Healing Wish, 4 = Lunar Dance.
+  uint8_t pendingPlayerReplacement = 0;
+  uint8_t pendingOpponentMoveSlot = 0xFF;
+  // V45 ended with two implicit alignment bytes (sizeof == 856 while the
+  // final named member ended at byte 854). Make those bytes explicit before
+  // appending the V46 state so an in-progress V45 battle remains an exact
+  // byte prefix on every compiler used by the firmware and native tests.
+  uint8_t v45TrailingPadding[2]{};
+  // Everything below this point is the V46 extension.
+  Gen5BattlerEffectState playerGen5Effects{};
+  Gen5BattlerEffectState opponentGen5Effects[kOpponentTeamCapacity]{};
+  uint8_t wonderRoomTurns = 0;
+  uint8_t magicRoomTurns = 0;
+  MoveId previousMoveUsedGlobally = MoveId::None;
+  uint16_t playerRetaliateDueTurn = 0;
+  uint16_t opponentRetaliateDueTurn = 0;
 };
+static_assert(offsetof(BattleState, playerGen5Effects) == 856,
+              "The frozen V45 battle prefix changed");
 
 enum class BattleEventType : uint8_t {
   MoveUsed, MoveMissed, HpChanged, CriticalHit, Effectiveness,
@@ -375,7 +488,22 @@ enum class BattleMoveEffect : uint8_t {
   WeatherContinues, WeatherHurt,
   // The endgame Boss rejects OHKO and HP-proportional effects in the engine.
   // Appended so existing serialized action journals keep their values.
-  BossImmune
+  BossImmune,
+  GravitySet, GravityEnded, Roosted, MiracleEyeSet,
+  TailwindSet, TailwindEnded, LuckyChantSet, LuckyChantEnded,
+  Embargoed, EmbargoEnded, HealBlocked, HealBlockEnded,
+  AquaRingSet, MagnetRiseSet, MagnetRiseEnded,
+  ToxicSpikesSet, ToxicSpikesAbsorbed, StealthRockSet,
+  AbilitySuppressed, AbilityChanged, TrickRoomSet, TrickRoomEnded,
+  HazardsCleared, ProtectBroken, ReplacementRequested,
+  PowerTricked, StatsSwapped, StatusTransferred, BerryConsumed, ItemFlung,
+  HealingWishSet, LunarDanceSet, UTurnSwitch, AquaRingHeal,
+  WideGuardSet, QuickGuardSet, WonderRoomSet, WonderRoomEnded,
+  MagicRoomSet, MagicRoomEnded, TelekinesisSet, SmackedDown,
+  AbilityChangedGen5, ItemBestowed, StatsAveraged,
+  // Appended for journal/save compatibility. AFTER YOU and QUASH are legal
+  // in singles while their target still has an action pending.
+  TurnOrderAdjusted
 };
 
 enum class BattleSide : uint8_t { Player, Opponent };
@@ -495,6 +623,10 @@ class EncounterLogic {
 
 class BattleEngine {
  public:
+  static void setPermanentExperienceBoostPercent(uint8_t bonusPercent);
+  static uint8_t permanentExperienceBoostPercent();
+  // Compatibility aliases for callers that only distinguish inactive/active.
+  // The bool setter retains the original Kanto-League meaning: true is +100%.
   static void setPermanentExperienceBoost(bool active);
   static bool permanentExperienceBoost();
   static void clear(BattleState& battle);
@@ -552,10 +684,12 @@ class BattleEngine {
   static BattleActionResult forfeitPvp(BattleState& battle, PokemonCollection& collection,
                                        bool localPlayerForfeits);
   static BattleActionResult throwBall(BattleState& battle, PokemonCollection& collection,
-                                      Inventory& inventory, PokeBallType ball);
+                                      Inventory& inventory, PokeBallType ball,
+                                      bool goldenBallUnlocked = false);
   static void throwBallInto(BattleState& battle, PokemonCollection& collection,
                             Inventory& inventory, PokeBallType ball,
-                            BattleActionResult& result);
+                            BattleActionResult& result,
+                            bool goldenBallUnlocked = false);
   static BattleActionResult useItem(BattleState& battle, PokemonCollection& collection,
                                     Inventory& inventory, BattleItem item, uint32_t targetUid = 0,
                                     PpItemInventory* ppItems = nullptr, uint8_t moveSlot = 0xFF);
@@ -576,6 +710,10 @@ class BattleEngine {
   static void applyEntryAbilities(BattleState& battle, PokemonCollection& collection,
                                   BattleEntryScope scope = BattleEntryScope::Both,
                                   BattleActionResult* result = nullptr);
+  static uint16_t displayedSpeciesId(const BattleState& battle,
+                                     const OwnedPokemon& pokemon);
+  static uint8_t displayedForm(const BattleState& battle,
+                               const OwnedPokemon& pokemon);
   static void synchronizeWeatherForms(BattleState& battle,
                                       PokemonCollection& collection);
   // Shared by reflected Magic Coat moves; public to let the compact internal
@@ -595,7 +733,10 @@ class BattleEngine {
                                   const CombatVolatile& defenderVolatile,
                                   uint16_t* effectivenessOut=nullptr,bool* criticalOut=nullptr,
                                   bool allowCritical=true,uint16_t powerOverride=0,
-                                  uint8_t powerMultiplierPercent=100);
+                                  uint8_t powerMultiplierPercent=100,
+                                  bool targetAlreadyActed=false,
+                                  bool targetDamagedThisTurn=false,
+                                  uint8_t commandMovePp=0xFFU);
   static uint8_t chooseDamageHitCount(BattleState& battle,
                                   const OwnedPokemon& attacker, MoveId move);
   static uint16_t calculateDelayedBaseDamage(const BattleState& battle,

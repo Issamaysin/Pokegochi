@@ -96,6 +96,7 @@ struct BattleSyncVolatilePayload {
   uint8_t slot;
   CombatVolatile state;
   DedicatedMoveEffectState moveEffects;
+  Gen4BattlerEffectState gen4Effects;
 };
 struct BattleSyncCorePayload {
   uint16_t turn;
@@ -120,6 +121,17 @@ struct BattleSyncCorePayload {
   uint8_t guestNightmare;
   uint8_t hostSpikesLayers;
   uint8_t guestSpikesLayers;
+  uint8_t hostToxicSpikesLayers;
+  uint8_t guestToxicSpikesLayers;
+  uint8_t hostStealthRock;
+  uint8_t guestStealthRock;
+  uint8_t hostTailwindTurns;
+  uint8_t guestTailwindTurns;
+  uint8_t hostLuckyChantTurns;
+  uint8_t guestLuckyChantTurns;
+  uint8_t gravityTurns;
+  uint8_t trickRoomTurns;
+  MoveId lastMoveUsedGlobally;
   uint8_t hostCount;
   uint8_t guestCount;
   uint8_t hostActiveRosterSlot;
@@ -165,6 +177,7 @@ struct TransportEvent {
   uint8_t bytes[180]{};
 };
 QueueHandle_t gTransportQueue = nullptr;
+uint32_t gLastAdvertisementLogMs = 0;
 
 void queueTransportEvent(const TransportEvent& event) {
   if (gTransportQueue) xQueueSend(gTransportQueue, &event, 0);
@@ -176,6 +189,8 @@ class ServerCallbacks final : public NimBLEServerCallbacks {
     gOutboundPhysicalLink = false;
     gInboundConnectionHandle = info.getConnHandle();
     TransportEvent event{}; event.kind = TransportEventKind::Connected; event.outbound = false;
+    Serial.printf("[BLE] inbound physical link connected handle=%u\n",
+                  static_cast<unsigned>(info.getConnHandle()));
     queueTransportEvent(event);
   }
   void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) override {
@@ -183,6 +198,7 @@ class ServerCallbacks final : public NimBLEServerCallbacks {
     if (!gOutboundPhysicalLink) {
       TransportEvent event{}; event.kind = TransportEventKind::Disconnected; queueTransportEvent(event);
     }
+    Serial.println("[BLE] inbound physical link disconnected");
     if (gMultiplayer && gMultiplayer->enabled()) NimBLEDevice::startAdvertising();
   }
 } gServerCallbacks;
@@ -200,6 +216,7 @@ class ClientCallbacks final : public NimBLEClientCallbacks {
   void onConnect(NimBLEClient*) override {
     gOutboundPhysicalLink = true;
     TransportEvent event{}; event.kind = TransportEventKind::Connected; event.outbound = true;
+    Serial.println("[BLE] outbound physical link connected");
     queueTransportEvent(event);
   }
   void onDisconnect(NimBLEClient*, int) override {
@@ -207,6 +224,7 @@ class ClientCallbacks final : public NimBLEClientCallbacks {
       TransportEvent event{}; event.kind = TransportEventKind::Disconnected; queueTransportEvent(event);
     }
     gOutboundPhysicalLink = false;
+    Serial.println("[BLE] outbound physical link disconnected");
   }
 } gClientCallbacks;
 
@@ -224,11 +242,24 @@ class ScanCallbacks final : public NimBLEScanCallbacks {
     // so NimBLE silently omitted this record and every Pokegochi was rejected
     // by the scanner. The full UUID is still verified after connecting.
     const std::string data = device->getManufacturerData();
+    const std::string address = device->getAddress().toString();
+    const uint32_t now = millis();
+    if (now - gLastAdvertisementLogMs >= 500U) {
+      gLastAdvertisementLogMs = now;
+      char hex[37]{};
+      const size_t shown = std::min<size_t>(data.size(), 18U);
+      for (size_t i = 0; i < shown; ++i)
+        std::snprintf(hex + i * 2U, sizeof(hex) - i * 2U, "%02X",
+                      static_cast<unsigned>(static_cast<uint8_t>(data[i])));
+      Serial.printf("[BLE] adv rssi=%d address=%s type=%u mfg_len=%u mfg=%s\n",
+                    static_cast<int>(device->getRSSI()), address.c_str(),
+                    static_cast<unsigned>(device->getAddressType()),
+                    static_cast<unsigned>(data.size()), hex);
+    }
     PokegochiMultiplayerProtocol::Advertisement advertisement{};
     if (!PokegochiMultiplayerProtocol::decodeManufacturerAdvertisement(
             reinterpret_cast<const uint8_t*>(data.data()), data.size(), advertisement) ||
         advertisement.playerId == gMultiplayer->playerId()) return;
-    const std::string address = device->getAddress().toString();
     TransportEvent event{}; event.kind = TransportEventKind::Discovered;
     event.id = advertisement.playerId; event.rssi = device->getRSSI();
     event.addressType = device->getAddressType();
@@ -261,7 +292,7 @@ bool Multiplayer::begin() {
     // Radio power is deliberately session-only. Restoring ON before the
     // renderer can release its scene arena caused a PHY allocation abort and
     // an endless reboot loop after one successful tap.
-    prefs.putBool("enabled", false);
+    if (prefs.getBool("enabled", false)) prefs.putBool("enabled", false);
     prefs.end();
   } else {
     // The save service deliberately keeps its own NVS handle open. On a
@@ -353,6 +384,9 @@ bool Multiplayer::setEnabled(bool enable) {
                 static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #endif
   setState(State::Advertising, "READY. FIND A NEARBY PLAYER.");
+  // Advertising and scanning are independent BLE roles. Start both so peer
+  // discovery does not depend on a narrow race between scan windows.
+  startScan();
   return true;
 }
 
@@ -423,11 +457,25 @@ bool Multiplayer::startTransport() {
 }
 
 void Multiplayer::startScan() {
-  if (!enabled_ || connected()) return;
+  const bool link = connected();
+#if defined(ARDUINO_ARCH_ESP32)
+  NimBLEScan* scan = NimBLEDevice::getScan();
+  if (!enabled_ || link || !scan) {
+    Serial.printf("[BLE] scan skipped enabled=%u connected=%u transport=%u peer=%05lu state=%u scan=%u\n",
+                  enabled_ ? 1U : 0U, link ? 1U : 0U, transportConnected_ ? 1U : 0U,
+                  static_cast<unsigned long>(peerId_), static_cast<unsigned>(state_),
+                  scan ? 1U : 0U);
+    return;
+  }
+#else
+  if (!enabled_ || link) return;
+#endif
   peerCount_ = 0;
   setState(State::Scanning, "SEARCHING FOR POKEGOCHIS...");
 #if defined(ARDUINO_ARCH_ESP32)
-  NimBLEDevice::getScan()->start(5000, false, true);
+  const bool started = scan->start(5000, false, true);
+  Serial.printf("[BLE] scan started window=5000ms result=%u active=%u\n",
+                started ? 1U : 0U, scan->isScanning() ? 1U : 0U);
 #endif
 }
 
@@ -466,6 +514,7 @@ void Multiplayer::answerPeerInvitation(bool accept) {
   if (state_ != State::ConfirmIncomingPeer) return;
   if (!accept) {
     sendPacket(InviteReject, nullptr, 0, invitationToken_);
+    closeTransportLink();
     resetSession(true); setState(State::Advertising, "INVITATION DECLINED.");
   } else {
     sendPacket(InviteAccept, nullptr, 0, invitationToken_);
@@ -478,20 +527,31 @@ bool Multiplayer::connectTransport(const PeerRecord& peer) {
   (void)peer; transportConnected(true); return sendPacket(Invite, nullptr, 0, invitationToken_);
 #else
   NimBLEDevice::getScan()->stop();
+  Serial.printf("[BLE] connecting player=%05lu address=%s type=%u\n",
+                static_cast<unsigned long>(peer.publicData.playerId), peer.address,
+                static_cast<unsigned>(peer.addressType));
   if (!gClient) {
     gClient = NimBLEDevice::createClient();
-    if (!gClient) return false;
+    if (!gClient) { Serial.println("[BLE] client allocation failed"); return false; }
     gClient->setClientCallbacks(&gClientCallbacks, false);
     gClient->setConnectionParams(12, 24, 0, 240);
     gClient->setConnectTimeout(5 * 1000);
   }
   const NimBLEAddress address(std::string(peer.address), peer.addressType);
-  if (!gClient->connect(address, true, false, true)) return false;
+  if (!gClient->connect(address, true, false, true)) {
+    Serial.printf("[BLE] physical connection failed error=%d\n", gClient->getLastError());
+    return false;
+  }
   NimBLERemoteService* service = gClient->getService(kServiceUuid);
-  if (!service) { gClient->disconnect(); return false; }
+  if (!service) {
+    Serial.printf("[BLE] multiplayer service missing error=%d\n", gClient->getLastError());
+    gClient->disconnect(); return false;
+  }
   gRemoteRx = service->getCharacteristic(kRxUuid);
   NimBLERemoteCharacteristic* remoteTx = service->getCharacteristic(kTxUuid);
   if (!gRemoteRx || !remoteTx || !remoteTx->subscribe(true, notificationCallback)) {
+    Serial.printf("[BLE] characteristic/subscribe failed rx=%u tx=%u error=%d\n",
+                  gRemoteRx ? 1U : 0U, remoteTx ? 1U : 0U, gClient->getLastError());
     gClient->disconnect(); return false;
   }
   outbound_ = true;
@@ -572,15 +632,26 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
       }
       break;
     case InviteReject:
-      if (state_ == State::Connecting) { resetSession(true); setState(State::Advertising, "PLAYER DECLINED."); }
+      if (state_ == State::Connecting) {
+        closeTransportLink();
+        resetSession(true); setState(State::Advertising, "PLAYER DECLINED.");
+      }
       break;
     case SessionClose:
+      // SessionClose is a logical packet, but the old implementation left the
+      // GATT link alive.  Both peers then looked idle while their BLE stacks
+      // still occupied the only connection, so the next connection failed.
+      closeTransportLink();
       resetSession(true); setState(State::Advertising, "PLAYER ENDED THE SESSION.");
       break;
     case ActivityRequest:
       if (!connected() || header.payloadLength != sizeof(ActivityPayload)) break;
       activity_ = static_cast<Activity>(reinterpret_cast<const ActivityPayload*>(payload)->activity);
       if (activity_ != Activity::Battle && activity_ != Activity::Trade) break;
+      // A physical BLE link is intentionally reused for more than one
+      // activity.  Do not let a completed/cancelled trade leave its two-phase
+      // commit latch armed when the peer starts the next one.
+      resetTradeState();
       setState(State::ConfirmIncomingActivity,
                activity_ == Activity::Battle ? "PLAYER REQUESTS A BATTLE." : "PLAYER REQUESTS A TRADE.");
       break;
@@ -616,8 +687,7 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
       }
       break;
     case TradeReject:
-      localTradeConfirmed_ = remoteTradeConfirmed_ = false;
-      localOffer_ = {}; remoteOffer_ = {}; transactionId_ = 0;
+      resetTradeState();
       setState(State::TradeSelecting, "TRADE CANCELLED. CHOOSE AGAIN.");
       break;
     case TradeCommitRequest:
@@ -684,8 +754,7 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
     case ActivityCancel:
       if (connected()) {
         activity_ = Activity::None; activityAccepted_ = false;
-        localTradeConfirmed_ = remoteTradeConfirmed_ = false;
-        localOffer_ = {}; remoteOffer_ = {}; transactionId_ = 0;
+        resetTradeState();
         localBattleReady_ = remoteBattleReady_ = localLeadReady_ = remoteLeadReady_ = false;
         battleLaunchPending_ = false; std::memset(&localRoster_, 0, sizeof(localRoster_));
         std::memset(&remoteRoster_, 0, sizeof(remoteRoster_));
@@ -744,6 +813,7 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
         if (packet.slot >= kPartyCapacity) break;
         (packet.side ? incomingBattleState_.guestVolatiles : incomingBattleState_.hostVolatiles)[packet.slot] = packet.state;
         (packet.side ? incomingBattleState_.guestMoveEffects : incomingBattleState_.hostMoveEffects)[packet.slot] = packet.moveEffects;
+        (packet.side ? incomingBattleState_.guestGen4Effects : incomingBattleState_.hostGen4Effects)[packet.slot] = packet.gen4Effects;
         incomingBattleVolatileMask_ |= static_cast<uint8_t>(1U << (packet.slot + packet.side * kPartyCapacity));
       }
       break;
@@ -775,6 +845,17 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
         incomingBattleState_.guestNightmare = packet.guestNightmare != 0;
         incomingBattleState_.hostSpikesLayers = packet.hostSpikesLayers;
         incomingBattleState_.guestSpikesLayers = packet.guestSpikesLayers;
+        incomingBattleState_.hostToxicSpikesLayers = packet.hostToxicSpikesLayers;
+        incomingBattleState_.guestToxicSpikesLayers = packet.guestToxicSpikesLayers;
+        incomingBattleState_.hostStealthRock = packet.hostStealthRock != 0;
+        incomingBattleState_.guestStealthRock = packet.guestStealthRock != 0;
+        incomingBattleState_.hostTailwindTurns = packet.hostTailwindTurns;
+        incomingBattleState_.guestTailwindTurns = packet.guestTailwindTurns;
+        incomingBattleState_.hostLuckyChantTurns = packet.hostLuckyChantTurns;
+        incomingBattleState_.guestLuckyChantTurns = packet.guestLuckyChantTurns;
+        incomingBattleState_.gravityTurns = packet.gravityTurns;
+        incomingBattleState_.trickRoomTurns = packet.trickRoomTurns;
+        incomingBattleState_.lastMoveUsedGlobally = packet.lastMoveUsedGlobally;
         incomingBattleState_.delayedToHost = packet.delayedToHost;
         incomingBattleState_.delayedToGuest = packet.delayedToGuest;
         incomingBattleState_.hostCount = packet.hostCount; incomingBattleState_.guestCount = packet.guestCount;
@@ -801,19 +882,29 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
 
 void Multiplayer::disconnect() {
   if (transportConnected_ && peerId_) sendPacket(SessionClose);
-#if defined(ARDUINO_ARCH_ESP32)
-  if (gClient && gClient->isConnected()) gClient->disconnect();
-  else if (gServer && gInboundConnectionHandle != BLE_HS_CONN_HANDLE_NONE)
-    gServer->disconnect(gInboundConnectionHandle);
-#endif
+  closeTransportLink();
   resetSession(enabled_);
   if (enabled_) setState(State::Advertising, "READY. FIND A NEARBY PLAYER.");
 }
 
+void Multiplayer::closeTransportLink() {
+#if defined(ARDUINO_ARCH_ESP32)
+  if (gClient && gClient->isConnected()) {
+    Serial.println("[BLE] closing outbound physical link");
+    gClient->disconnect();
+  } else if (gServer && gInboundConnectionHandle != BLE_HS_CONN_HANDLE_NONE) {
+    Serial.println("[BLE] closing inbound physical link");
+    gServer->disconnect(gInboundConnectionHandle);
+  }
+#endif
+  transportConnected_ = false;
+  outbound_ = false;
+}
+
 void Multiplayer::resetSession(bool) {
-  peerId_ = invitationToken_ = transactionId_ = 0; activity_ = Activity::None;
-  activityAccepted_ = localTradeConfirmed_ = remoteTradeConfirmed_ = false;
-  tradeCommitOffered_ = tradeCommitPending_ = false; localOffer_ = {}; remoteOffer_ = {}; pendingCommit_ = {};
+  peerId_ = invitationToken_ = 0; activity_ = Activity::None;
+  activityAccepted_ = false;
+  resetTradeState();
   localBattleReady_ = remoteBattleReady_ = localLeadReady_ = remoteLeadReady_ = false;
   battleLaunchPending_ = false; std::memset(&localRoster_, 0, sizeof(localRoster_));
   std::memset(&remoteRoster_, 0, sizeof(remoteRoster_));
@@ -826,8 +917,20 @@ void Multiplayer::resetSession(bool) {
   battleStateAckPending_ = false; battleStateAckTurn_ = 0;
 }
 
+void Multiplayer::resetTradeState() {
+  transactionId_ = 0;
+  localTradeConfirmed_ = false;
+  remoteTradeConfirmed_ = false;
+  tradeCommitOffered_ = false;
+  tradeCommitPending_ = false;
+  localOffer_ = {};
+  remoteOffer_ = {};
+  pendingCommit_ = {};
+}
+
 bool Multiplayer::requestActivity(Activity activity) {
   if (!connected() || (activity != Activity::Battle && activity != Activity::Trade)) return false;
+  resetTradeState();
   activity_ = activity; activityAccepted_ = false;
   const ActivityPayload payload{static_cast<uint8_t>(activity)};
   if (!sendPacket(ActivityRequest, &payload, sizeof(payload))) return false;
@@ -846,8 +949,8 @@ void Multiplayer::answerActivity(bool accept) {
 
 void Multiplayer::clearActivity() {
   if (connected() && activity_ != Activity::None) sendPacket(ActivityCancel);
-  activity_ = Activity::None; activityAccepted_ = false; localOffer_ = {}; remoteOffer_ = {};
-  localTradeConfirmed_ = remoteTradeConfirmed_ = false; transactionId_ = 0;
+  activity_ = Activity::None; activityAccepted_ = false;
+  resetTradeState();
   localBattleReady_ = remoteBattleReady_ = localLeadReady_ = remoteLeadReady_ = false;
   battleLaunchPending_ = false; std::memset(&localRoster_, 0, sizeof(localRoster_));
   std::memset(&remoteRoster_, 0, sizeof(remoteRoster_));
@@ -992,6 +1095,7 @@ bool Multiplayer::publishBattleState(const BattleState& battle, const PokemonCol
   for (uint8_t slot = 0; slot < localRoster_.count; ++slot) {
     CombatVolatile state{};
     DedicatedMoveEffectState moveEffects{};
+    Gen4BattlerEffectState gen4Effects{};
     if (slot == hostActiveSlot) state = battle.playerVolatile;
     else {
       const uint32_t uid = localRoster_.members[slot].uid;
@@ -1003,14 +1107,17 @@ bool Multiplayer::publishBattleState(const BattleState& battle, const PokemonCol
       }
     }
     if (slot == hostActiveSlot) moveEffects = battle.playerMoveEffects;
-    const BattleSyncVolatilePayload packet{battle.turn, 0, slot, state, moveEffects};
+    if (slot == hostActiveSlot) gen4Effects = battle.playerGen4Effects;
+    const BattleSyncVolatilePayload packet{battle.turn, 0, slot, state, moveEffects,
+                                            gen4Effects};
     if (!sendPacket(BattleSyncVolatile, &packet, sizeof(packet), battle.turn)) return false;
   }
   for (uint8_t index = 0; index < battle.opponentCount; ++index) {
     const uint8_t rosterSlot = remoteRosterSlotAtIndex[index];
     const BattleSyncVolatilePayload packet{battle.turn, 1, rosterSlot,
                                             battle.opponentVolatiles[index],
-                                            battle.opponentMoveEffects[index]};
+                                            battle.opponentMoveEffects[index],
+                                            battle.opponentGen4Effects[index]};
     if (!sendPacket(BattleSyncVolatile, &packet, sizeof(packet), battle.turn)) return false;
   }
   const BattleSyncCorePayload core{battle.turn, battle.rngState,
@@ -1026,6 +1133,12 @@ bool Multiplayer::publishBattleState(const BattleState& battle, const PokemonCol
       static_cast<uint8_t>(battle.playerNightmare),
       static_cast<uint8_t>(battle.opponentNightmares[battle.opponentIndex]),
       battle.playerSpikesLayers, battle.opponentSpikesLayers,
+      battle.playerToxicSpikesLayers, battle.opponentToxicSpikesLayers,
+      static_cast<uint8_t>(battle.playerStealthRock),
+      static_cast<uint8_t>(battle.opponentStealthRock),
+      battle.playerTailwindTurns, battle.opponentTailwindTurns,
+      battle.playerLuckyChantTurns, battle.opponentLuckyChantTurns,
+      battle.gravityTurns, battle.trickRoomTurns, battle.lastMoveUsedGlobally,
       localRoster_.count, remoteRoster_.count, hostActiveSlot, guestActiveSlot,
       battle.delayedToPlayer, battle.delayedToOpponent};
   return sendPacket(BattleSyncCore, &core, sizeof(core), battle.turn);
@@ -1058,6 +1171,12 @@ bool Multiplayer::submitTradeOffer(const OwnedPokemon& pokemon) {
     setState(State::TradeSelecting,"REMOVE THE UNIQUE ITEM BEFORE TRADING.");
     return false;
   }
+  // A new offer always starts a new two-phase transaction.  In particular,
+  // this clears the coordinator latch left by an older beta after its first
+  // successful trade, which otherwise made every later trade wait forever.
+  tradeCommitOffered_ = false;
+  tradeCommitPending_ = false;
+  pendingCommit_ = {};
   localOffer_.valid = true; localOffer_.ownerId = playerId_; localOffer_.pokemon = pokemon;
   localTradeConfirmed_ = remoteTradeConfirmed_ = false;
   transactionId_ = remoteOffer_.valid
@@ -1073,7 +1192,7 @@ bool Multiplayer::setTradeConfirmation(bool accept) {
   if (activity_ != Activity::Trade || !localOffer_.valid || !remoteOffer_.valid) return false;
   if (!accept) {
     sendPacket(TradeReject, nullptr, 0, transactionId_);
-    localOffer_ = {}; remoteOffer_ = {}; localTradeConfirmed_ = remoteTradeConfirmed_ = false;
+    resetTradeState();
     setState(State::TradeSelecting, "TRADE CANCELLED. CHOOSE AGAIN."); return true;
   }
   localTradeConfirmed_ = true;
@@ -1101,19 +1220,16 @@ void Multiplayer::completeTradeCommit(bool success) {
   if (!pendingCommit_.ready) return;
   if (!success) {
     sendPacket(TradeReject, nullptr, 0, transactionId_);
-    pendingCommit_ = {}; setState(State::TradeSelecting, "TRADE COULD NOT BE SAVED."); return;
+    resetTradeState();
+    setState(State::TradeSelecting, "TRADE COULD NOT BE SAVED."); return;
   }
-  if (playerId_ > peerId_) {
-    sendPacket(TradeCommitApplied, nullptr, 0, transactionId_);
-    localOffer_ = {}; remoteOffer_ = {}; pendingCommit_ = {};
-    localTradeConfirmed_ = remoteTradeConfirmed_ = false;
-    setState(State::Connected, "TRADE COMPLETE!"); activity_ = Activity::None;
-  } else {
-    sendPacket(TradeCommitApplied, nullptr, 0, transactionId_);
-    localOffer_ = {}; remoteOffer_ = {}; pendingCommit_ = {};
-    localTradeConfirmed_ = remoteTradeConfirmed_ = false;
-    setState(State::Connected, "TRADE COMPLETE!"); activity_ = Activity::None;
-  }
+  // Keep the transaction id until the acknowledgement is on the wire, then
+  // clear every trade-only latch before returning to the reusable session.
+  sendPacket(TradeCommitApplied, nullptr, 0, transactionId_);
+  resetTradeState();
+  activityAccepted_ = false;
+  activity_ = Activity::None;
+  setState(State::Connected, "TRADE COMPLETE!");
 }
 
 void Multiplayer::update() {
@@ -1129,6 +1245,8 @@ void Multiplayer::update() {
     }
   }
   if (state_ == State::Scanning && !NimBLEDevice::getScan()->isScanning()) {
+    const bool started = NimBLEDevice::getScan()->start(5000, false, true);
+    Serial.printf("[BLE] scan window ended; restarting result=%u\n", started ? 1U : 0U);
     setState(State::Scanning, peerCount_ ? "SELECT A NEARBY PLAYER." : "NO POKEGOCHIS FOUND.");
   }
 #endif

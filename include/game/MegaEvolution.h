@@ -18,7 +18,10 @@ struct MegaFormData {
 };
 
 namespace MegaEvolution {
-constexpr uint8_t kFirstCustomAbilityId = 128;
+// Keep fan-Mega abilities above every canonical Generation-V ability. The
+// original 128..156 range collided with Unova's canonical IDs 127..155 and
+// made the same byte resolve to two unrelated abilities.
+constexpr uint8_t kFirstCustomAbilityId = 192;
 const MegaFormData* formData(uint16_t speciesId, MegaVariant variant);
 MegaVariant variantFor(const OwnedPokemon& pokemon);
 bool canTransform(uint16_t speciesId);

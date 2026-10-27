@@ -25,8 +25,9 @@ the permanent save, battle rules, and visual language of the existing V2 game.
   Z-Moves, or other later battle systems.
 - Species-specific held items: Light Ball, Lucky Punch, Thick Club, Stick,
   Metal Powder, Quick Powder, DeepSeaTooth, DeepSeaScale, and Soul Dew.
-- Lucky Egg is now a permanent party-wide experience bonus after it is earned
-  and no longer occupies a held-item slot.
+- Lucky Egg is now earned from Kanto Gym 5 as a permanent party-wide +50%
+  experience bonus, upgraded to +100% by the first Kanto League clear and to
+  +125% when Generation IV unlocks; it no longer occupies a held-item slot.
 - Enemy and wild Pokémon consume PP and use Struggle after exhausting every
   usable move.
 - Battle Tower completions have an independent 0.5% Master Ball reward chance.

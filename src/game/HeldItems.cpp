@@ -92,6 +92,10 @@ constexpr HeldItemData kItems[] = {
   {HeldItem::AdamantOrb,"ADAMANT ORB",0,255,0,false,false,PokemonType::Dragon},
   {HeldItem::LustrousOrb,"LUSTROUS ORB",0,255,0,false,false,PokemonType::Water},
   {HeldItem::GriseousOrb,"GRISEOUS ORB",0,255,0,false,false,PokemonType::Ghost},
+  {HeldItem::DouseDrive,"DOUSE DRIVE",0,255,0,false,false,PokemonType::Water},
+  {HeldItem::ShockDrive,"SHOCK DRIVE",0,255,0,false,false,PokemonType::Electric},
+  {HeldItem::BurnDrive,"BURN DRIVE",0,255,0,false,false,PokemonType::Fire},
+  {HeldItem::ChillDrive,"CHILL DRIVE",0,255,0,false,false,PokemonType::Ice},
 };
 static_assert(sizeof(kItems)/sizeof(kItems[0]) == static_cast<uint8_t>(HeldItem::Count)-1U,
               "Held item catalog must cover every item");
@@ -163,11 +167,11 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::Stick: return "RAISES FARFETCH'D'S CRITICAL-HIT RATIO.";
     case HeldItem::LaxIncense: return "LOWERS THE ACCURACY OF MOVES USED AGAINST THE HOLDER.";
     case HeldItem::ThickClub: return "DOUBLES CUBONE OR MAROWAK'S ATTACK.";
-    case HeldItem::MetalPowder: return "BOOSTS DITTO'S DEFENSE AND SP. DEF BY 50%.";
+    case HeldItem::MetalPowder: return "DOUBLES DITTO'S DEFENSE.";
     case HeldItem::PetayaBerry: return "RAISES SP. ATK IN A PINCH.";
     case HeldItem::LuckyPunch: return "RAISES CHANSEY'S CRITICAL-HIT RATIO.";
     case HeldItem::GanlonBerry: return "RAISES DEFENSE IN A PINCH.";
-    case HeldItem::LuckyEgg: return "A PERMANENT ACCOUNT REWARD THAT DOUBLES PARTY EXP.";
+    case HeldItem::LuckyEgg: return "GYM 5: +50% EXP. KANTO LEAGUE: +100%. GEN 4: +125%.";
     case HeldItem::QuickPowder: return "DOUBLES DITTO'S SPEED BEFORE IT TRANSFORMS.";
     case HeldItem::FistPlate: return "BOOSTS FIGHTING-TYPE MOVES BY 20%; ARCEUS BECOMES FIGHTING-TYPE.";
     case HeldItem::SkyPlate: return "BOOSTS FLYING-TYPE MOVES BY 20%; ARCEUS BECOMES FLYING-TYPE.";
@@ -189,6 +193,10 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::AdamantOrb: return "BOOSTS DIALGA'S STEEL- AND DRAGON-TYPE MOVES BY 20%.";
     case HeldItem::LustrousOrb: return "BOOSTS PALKIA'S WATER- AND DRAGON-TYPE MOVES BY 20%.";
     case HeldItem::GriseousOrb: return "BOOSTS GIRATINA'S GHOST- AND DRAGON-TYPE MOVES BY 20%.";
+    case HeldItem::DouseDrive: return "MAKES GENESECT'S TECHNO BLAST WATER-TYPE.";
+    case HeldItem::ShockDrive: return "MAKES GENESECT'S TECHNO BLAST ELECTRIC-TYPE.";
+    case HeldItem::BurnDrive: return "MAKES GENESECT'S TECHNO BLAST FIRE-TYPE.";
+    case HeldItem::ChillDrive: return "MAKES GENESECT'S TECHNO BLAST ICE-TYPE.";
     default: return "NO BATTLE EFFECT.";
   }
 }
@@ -246,7 +254,8 @@ uint8_t heldItemBoostPercent(HeldItem item,PokemonType type) {
 bool heldItemBoostsType(HeldItem item,PokemonType type) { return heldItemBoostPercent(item,type)!=0U; }
 bool heldItemIsTransferLocked(HeldItem item) {
   return uniqueHeldItemOwnershipBit(item)!=0U ||
-      (item>=kFirstGen4UniqueItem && item<=kLastGen4UniqueItem);
+      (item>=kFirstGen4UniqueItem && item<=kLastGen4UniqueItem) ||
+      (item>=kFirstGen5Drive && item<=kLastGen5Drive);
 }
 uint8_t heldItemCount(){return kHeldItemInventorySlots-1U;}
 
@@ -270,6 +279,14 @@ uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
   const int8_t index=gen4UniqueItemIndex(item);
   return index>=0?&gen4.quantities[static_cast<uint8_t>(index)]:nullptr;
 }
+uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
+                          SpecialHeldItemInventory& special,
+                          Gen4UniqueItemInventory& gen4,
+                          Gen5UniqueItemInventory& gen5){
+  if (uint16_t* quantity=countedQuantity(item,inventory,special,gen4)) return quantity;
+  const int8_t index=gen5DriveIndex(item);
+  return index>=0?&gen5.driveQuantities[static_cast<uint8_t>(index)]:nullptr;
+}
 }
 
 int8_t specialHeldItemIndex(HeldItem item){
@@ -290,6 +307,16 @@ int8_t gen4UniqueItemIndex(HeldItem item) {
 uint16_t gen4UniqueItemQuantity(const Gen4UniqueItemInventory& inventory,HeldItem item) {
   const int8_t index=gen4UniqueItemIndex(item);
   return index>=0?inventory.quantities[static_cast<uint8_t>(index)]:0U;
+}
+
+int8_t gen5DriveIndex(HeldItem item) {
+  if (item < kFirstGen5Drive || item > kLastGen5Drive) return -1;
+  return static_cast<int8_t>(static_cast<uint8_t>(item) -
+                             static_cast<uint8_t>(kFirstGen5Drive));
+}
+uint16_t gen5DriveQuantity(const Gen5UniqueItemInventory& inventory,HeldItem item) {
+  const int8_t index=gen5DriveIndex(item);
+  return index>=0?inventory.driveQuantities[static_cast<uint8_t>(index)]:0U;
 }
 
 bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
@@ -375,6 +402,72 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
   if(changed&&pokemon.speciesId==487U){
     if(selected==HeldItem::GriseousOrb) pokemon.form=1U;
     else if(equipped==HeldItem::GriseousOrb) pokemon.form=0U;
+  }
+  return changed;
+}
+
+bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
+                   SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                   Gen5UniqueItemInventory& gen5,uint64_t& ownedMachines){
+  if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
+  uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:
+      countedQuantity(selected,inventory,special,gen4,gen5);
+  uint16_t* equippedBagQuantity=equipped==HeldItem::None?nullptr:
+      countedQuantity(equipped,inventory,special,gen4,gen5);
+  if(selected==equipped){
+    if(!heldItemIsBerry(selected)||!selectedQuantity||!*selectedQuantity||
+       equippedQuantity>=CollectionLogic::kMaximumHeldBerryQuantity)return false;
+    --*selectedQuantity;
+    return CollectionLogic::setHeldItemQuantity(
+        pokemon,selected,static_cast<uint8_t>(equippedQuantity+1U));
+  }
+  const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
+  const uint64_t equippedBit=uniqueHeldItemOwnershipBit(equipped);
+  if(selected!=HeldItem::None){
+    if(selectedBit){if(!(ownedMachines&selectedBit))return false;}
+    else if(!selectedQuantity||!*selectedQuantity)return false;
+  }
+  if(equipped!=HeldItem::None&&!equippedBit&&
+     (!equippedBagQuantity||UINT16_MAX-*equippedBagQuantity<equippedQuantity))return false;
+  if(equippedBit)ownedMachines|=equippedBit;
+  else if(equippedBagQuantity)*equippedBagQuantity=static_cast<uint16_t>(
+      *equippedBagQuantity+equippedQuantity);
+  if(selectedBit)ownedMachines&=~selectedBit;
+  else if(selectedQuantity)--*selectedQuantity;
+  const bool changed=CollectionLogic::setHeldItemQuantity(
+      pokemon,selected,selected==HeldItem::None?0U:1U);
+  if(changed){
+    if(pokemon.speciesId==487U)
+      pokemon.form=selected==HeldItem::GriseousOrb?1U:0U;
+    if(pokemon.speciesId==649U) pokemon.form=CollectionLogic::resolvedForm(pokemon);
+    CollectionLogic::refreshAbility(pokemon,5U);
+    CollectionLogic::refreshDerivedStats(pokemon,true);
+  }
+  return changed;
+}
+
+bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
+                     SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                     Gen5UniqueItemInventory& gen5,uint64_t& ownedMachines){
+  if(pokemon.heldItem==HeldItem::None)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const uint8_t quantity=CollectionLogic::heldItemQuantity(pokemon);
+  const uint64_t ownershipBit=uniqueHeldItemOwnershipBit(equipped);
+  if(ownershipBit){
+    ownedMachines|=ownershipBit;
+    return CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+  }
+  uint16_t* bagQuantity=countedQuantity(equipped,inventory,special,gen4,gen5);
+  if(!bagQuantity||UINT16_MAX-*bagQuantity<quantity)return false;
+  *bagQuantity=static_cast<uint16_t>(*bagQuantity+quantity);
+  const bool changed=CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+  if(changed){
+    if(pokemon.speciesId==487U&&equipped==HeldItem::GriseousOrb) pokemon.form=0U;
+    if(pokemon.speciesId==649U) pokemon.form=0U;
+    CollectionLogic::refreshAbility(pokemon,5U);
+    CollectionLogic::refreshDerivedStats(pokemon,true);
   }
   return changed;
 }

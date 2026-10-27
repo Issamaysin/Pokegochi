@@ -1,5 +1,1196 @@
 # Índice de pedidos do Codex
 
+## Regras operacionais permanentes
+
+- A placa Pokegochi conectada por USB normalmente aparece como `USB-SERIAL CH340` na `COM6` ou `COM7`.
+- Em qualquer pedido de leitura, diagnóstico ou atualização da placa, testar `COM6` e `COM7` diretamente e consultar `Get-PnpDevice -PresentOnly -Class Ports` antes de concluir que ela não está conectada. `Win32_SerialPort` pode omitir temporariamente a CH340 e não deve ser usado sozinho.
+- Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
+
+## R20261027-233 - publicar app 2.0 e firmware 3.0 no GitHub
+
+```mermaid
+graph TD
+    R20261027_233["R20261027-233: release público coordenado"]
+    R20261027_233 --> A1["Android App 2.0 / versionCode 77"]
+    R20261027_233 --> F1["Firmware 3.0 UNOVA"]
+    A1 --> V1["Testes, assinatura e APK"]
+    F1 --> V2["Testes, firmware e atualização sem fio"]
+    V1 --> G1["Commit e push de todo o projeto atualizado"]
+    V2 --> G1
+    G1 --> R1["GitHub Release com binários e checksums"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261027-233 | 2026-10-27 | Mudar o aplicativo para 2.0 e o firmware para 3.0, gerar os releases e subir todo o projeto atualizado no GitHub | Concluído, validado e publicado | Todo o estado acumulado do projeto foi versionado e enviado à `main`, incluindo código, gerados, testes e documentação de Unova. O app passou para `2.0`/`versionCode 77`, manteve o certificado de atualização `B2923926...1EDCE7D`, foi alinhado e validado em assinatura v2/v3; APK com 9.881.386 bytes e SHA-256 `7BF58400...479D3C98`. O firmware passou para `3.0 UNOVA`, compilou com 113.144 bytes de RAM e 1.954.220/1.966.080 bytes de flash; binário de 1.961.712 bytes e SHA-256 `3E5E82ED...E12C1EF5`. O pacote sem fio usa sequência `1793104046`, asset pack 41, assinatura P-256/SHA-256 e SHA-256 `8022F670...260D3C39`. Suíte completa aprovada com `All native tests passed.`. Release conjunto: [GitHub](https://github.com/Issamaysin/Pokegochi/releases/tag/app-v2.0-fw-v3.0). |
+
+## R20261026-232 - auditar e corrigir todas as formas alternativas da Gen 5
+
+```mermaid
+graph TD
+    R20261026_232["R20261026-232: consistência das formas de Unova"]
+    R20261026_232 --> P1["Pool de golpes e reaprendizado por forma"]
+    R20261026_232 --> A1["Stats, tipos e abilities efetivos"]
+    R20261026_232 --> S1["Sprites e nomes de todas as formas"]
+    R20261026_232 --> T1["Gatilhos, reversão e persistência"]
+    P1 --> K1["Kyurem normal, Black e White"]
+    A1 --> F1["Basculin, Darmanitan e trio Therian"]
+    S1 --> V1["Deerling, Sawsbuck, Keldeo, Meloetta e Genesect"]
+    T1 --> C1["Matriz de regressão comum para firmware e app"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-232 | 2026-10-26 | Corrigir o movepool do Kyurem e outras inconsistências das muitas formas alternativas da Gen 5 | Concluído, validado e publicado | Kyurem normal/Black/White agora possuem pools, aprendizado por nível e reaprendizado próprios; o Summary usa a forma efetiva. A auditoria também corrigiu Basculin (stripe independente do slot de ability e Rock Head), nomes genéricos das espécies com formas, PP Ups na troca de golpe e a separação do Kyurem sem apagar TMs/edições feitas enquanto fundido. Regressões cobrem stats, tipos, abilities, gatilhos/reversões e os 240 sprites de Basculin, Darmanitan, Deerling/Sawsbuck, trio Therian, Kyurem, Keldeo, Meloetta e Genesect. Suíte completa aprovada, APK app 1.1 v76 assinado e publicado no Drive (`1Pixn1eoEVMIQyLgLDnfjZByRC7ZyshKH`), firmware v41 compilado; placa não enumerada em COM6/COM7, portanto não gravada. |
+
+## R20261026-231 - diagnosticar movepool idêntico nas formas de Kyurem
+
+```mermaid
+graph TD
+    R20261026_231["R20261026-231: movepool do Kyurem não muda"]
+    R20261026_231 --> E1["Golpes equipados na fusão"]
+    R20261026_231 --> M1["Pool do Summary / relearner"]
+    E1 --> E2["Troca condicional já implementada"]
+    M1 --> M2["Formas 0, 1 e 2 usam a mesma tabela"]
+    M2 --> B1["Bug confirmado no pool form-aware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-231 | 2026-10-26 | Verificar se é correto o movepool do Kyurem permanecer igual em todas as formas | Concluído em R20261026-232 | Confirmado e corrigido: Black Kyurem substitui `Scary Face`/`Glaciate` por `Fusion Bolt`/`Freeze Shock`; White Kyurem usa `Fusion Flare`/`Ice Burn`. A regra agora vale para Summary, relearner, aprendizado por nível, Rare Candy e ganho de nível em batalha. |
+
+## R20261026-230 - tornar o DNA Splicers acionável no pocket
+
+```mermaid
+graph TD
+    R20261026_230["R20261026-230: Splicer aparece, mas não abre"]
+    R20261026_230 --> S1["Separar a seleção do Trainer Card e do DNA Splicers"]
+    S1 --> A1["Tocar no Splicer abre o Kyurem correto na Box"]
+    A1 --> F1["Abrir diretamente o seletor FORM"]
+    F1 --> V1["Validar app, firmware e preservar o save"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-230 | 2026-10-26 | Fazer o DNA Splicers exibido em Key Items ser clicável, em vez de o único `OPEN` abrir sempre o Trainer Card | Concluído, validado, publicado e instalado na placa | Key Items agora trata Trainer Card e DNA Splicers como ações independentes, com cursor, ícone, descrição e rótulo `OPEN`/`USE` próprios. Tocar no Splicer ou usar seu botão localiza o Kyurem real, abre sua página correta da Box e entra diretamente no mesmo `FormSelect` usado por `BOX -> FORM`; ausência de Kyurem ou dos dragões doadores produz mensagem explícita, sem alterar o save. A suíte completa terminou em `All native tests passed.`, Android release e firmware canônico v41 compilaram, e a placa MAC `B4:BF:E9:21:3C:E4` recebeu pela COM7 somente a partição app compatível com seu pack v40 (`3E139DB0...1C8D11C`), preservando o SPIFFS; o boot confirmou `Save OK`, assets OK e `Ready`. APK app 1.1 `versionCode 75`, 9.881.386 bytes, assinatura v2/v3 e SHA-256 `F5D4743B...AB69C294`: [Drive](https://drive.google.com/file/d/17xSkWJE_FL5Hra62fy7zRq2QCHCzfEEV/view?usp=drivesdk). |
+
+## R20261026-229 - preparar corretamente o save para testar DNA Splicers
+
+```mermaid
+graph TD
+    R20261026_229["R20261026-229: Splicers não apareceu"]
+    R20261026_229 --> G1["Confirmar a regra de desbloqueio"]
+    G1 --> K1["Kyurem libera o DNA Splicers"]
+    K1 --> D1["Reshiram ou Zekrom funciona como doador"]
+    D1 --> P1["Adicionar Kyurem à placa sem alterar o restante do save"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-229 | 2026-10-26 | Verificar por que DNA Splicers não apareceu mesmo com Reshiram e Zekrom no mesmo save | Concluído e validado na placa | A regra está correta: DNA Splicers é liberado ao possuir Kyurem 646 e funde Kyurem com Reshiram 643 ou Zekrom 644; os dois doadores não fundem entre si. A placa foi confirmada na COM7 pela MAC `B4:BF:E9:21:3C:E4`, o SPIFFS inteiro foi salvo antes de qualquer tentativa (`A8BB2A87...32FC77FE`) e o verificador idempotente confirmou `KYUREM ALREADY PRESENT`, sem criar duplicata nem alterar a coleção. Portanto, para liberar a função no save do app, é preciso trocar esse Kyurem da placa para o app e manter junto Reshiram ou Zekrom. O código temporário foi removido e o boot final normal confirmou `Save OK`, assets OK e `Ready`. |
+
+## R20261026-228 - diagnosticar segundo trade que não conclui entre placa e app
+
+```mermaid
+graph TD
+    R20261026_228["R20261026-228: segundo trade bloqueado"]
+    R20261026_228 --> L1["Capturar estado e eventos BLE na COM7"]
+    L1 --> P1["Identificar etapa ou validação que rejeita"]
+    P1 --> F1["Corrigir sem alterar o save fora do trade"]
+    F1 --> V1["Validar dois trades consecutivos"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-228 | 2026-10-26 | Investigar na placa por que um trade normal concluiu, mas o segundo não está indo | Concluído, placa atualizada e APK publicado | A captura na COM7 provou que descoberta e advertising funcionavam, mas o GATT físico da sessão anterior permanecia ocupado depois do fechamento lógico; em paralelo, `tradeCommitOffered_` e o estado da transação anterior não eram zerados, fazendo o coordenador recusar o commit do segundo trade. App e firmware agora encerram explicitamente links obsoletos em close/reject, limpam filas e zeram integralmente o estado de trade antes de reutilizar a sessão. O contrato nativo passou com duas trocas consecutivas (incluindo Reshiram/Zekrom), encerramento, recusa e reconexão. A placa recebeu a firmware final compatível com seu pack v40 (`D7C5CA3A...81D578E7`), preservando o save; o boot confirmou app0, `Save OK`, asset pack OK e `Ready`. APK app 1.1 `versionCode 74`, 9.881.386 bytes, assinatura v2/v3 e SHA-256 `2DF49E79...0819BEC`: [Drive](https://drive.google.com/file/d/17slSZBibz3Htvt5gtpfJEGn2h6GZRG1o/view?usp=drivesdk). |
+
+## R20261026-227 - inserir Reshiram e Zekrom na Box da placa para testar DNA Splicers
+
+```mermaid
+graph TD
+    R20261026_227["R20261026-227: preparar teste do Splicers na placa"]
+    R20261026_227 --> P1["Detectar ESP32 em COM6 ou COM7"]
+    P1 --> B1["Fazer backup verificável do save"]
+    B1 --> E1["Adicionar Reshiram e Zekrom em slots vazios"]
+    E1 --> V1["Validar coleção e regravar o save"]
+    V1 --> R1["Confirmar leitura na placa"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-227 | 2026-10-26 | Usar o cabo para colocar Reshiram e Zekrom diretamente na Box da placa e permitir o teste do DNA Splicers | Concluído e validado na placa | A CH340 foi confirmada na COM7 pelo MAC `B4:BF:E9:21:3C:E4`. Antes da alteração foram preservados tabela de partições, NVS, OTA e os 196.608 bytes completos do SPIFFS (`21A86AF9...CE124D`). Um injetor temporário e idempotente usou o serializador real do jogo para adicionar Reshiram 643 (UID 19) e Zekrom 644 (UID 20), ambos no nível 75, marcar a Pokédex e elevar a Box a 18 Pokémon; a placa confirmou `added=2` e o snapshot posterior mudou para `A0822E32...CCB62`. O injetor foi retirado integralmente do projeto. Como o microSD físico ainda contém o pack v40, a placa recebeu a mesma firmware atual em uma variante somente de compatibilidade com esse cartão (`334C6D5A...F1CEE`), enquanto o repositório e seu artefato padrão continuam exigindo v41. O boot final confirmou app0, `Save OK`, `archive probe OK`, `sprite asset pack OK`, player 56925 e `Ready`. |
+
+## R20261026-226 - corrigir a fase visual instantânea de Solar Beam
+
+```mermaid
+graph TD
+    R20261026_226["R20261026-226: Solar Beam no Sol"]
+    R20261026_226 --> C1["Determinar se o golpe realmente exige carga"]
+    C1 --> J1["Registrar setup ou liberação no journal visual"]
+    J1 --> N1["Tempo comum: carregar e depois disparar"]
+    J1 --> S1["Sun, Harsh Sun e Mega Sol: disparar imediatamente"]
+    N1 --> T1["Testar jogador e oponente"]
+    S1 --> T1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-226 | 2026-10-26 | Fazer Solar Beam exibir diretamente o feixe quando Sunny Day elimina o turno de carga, preservando as duas animações fora do Sol | Concluído e validado | O journal visual agora deriva a fase do resultado real de `isChargingMove`: clima comum registra setup no primeiro turno e liberação no segundo; Sun, Harsh Sun e o Sol pessoal de Mega Sol registram diretamente a liberação. A mesma regra foi aplicada ao jogador e ao oponente, sem vazar Mega Sol para o outro lado. Regressões confirmaram as duas fases normais, Sunny Day instantâneo nos dois lados, Mega Sol e o caso sem vazamento. A matriz direcionada e a suíte completa passaram (`All native tests passed.`), o Android release compilou e o firmware ESP32 fechou com 113.144 bytes de RAM e 1.952.764/1.966.080 bytes de flash. |
+
+## R20261026-225 - renomear o tema White 2 para Black
+
+```mermaid
+graph TD
+    R20261026_225["R20261026-225: nome do tema"]
+    R20261026_225 --> U1["Trocar todo rótulo visível para BLACK"]
+    U1 --> S1["Preservar enum, save e assets internos"]
+    S1 --> T1["Validar Settings e aviso de desbloqueio"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261026-225 | 2026-10-26 | Trocar o nome exibido do tema White 2 para apenas Black | Concluído e validado | Settings, `themeName()` e o aviso de conclusão de Unova agora exibem apenas `BLACK`/`BLACK THEME`. A identidade persistente interna `UiColorTheme::White2` e seus flags foram preservados, portanto saves existentes continuam compatíveis. O contrato da tela passou e o firmware compilou com 113.144 bytes de RAM e 1.952.736/1.966.080 bytes de flash. |
+
+## R20261025-224 - implementar as Mega Evoluções de espécies da Gen 5
+
+```mermaid
+graph TD
+    R20261025_224["R20261025-224: Megas da Gen 5"]
+    R20261025_224 --> H1["Validar formas, dados e arte no ROM hack"]
+    H1 --> C1["Cadastrar as 8 formas no catálogo Mega"]
+    C1 --> A1["Implementar Piercing Drill, Eelevate e Unseen Fist"]
+    C1 --> S1["Exportar sprites normal, shiny, front, back e ícones"]
+    A1 --> T1["Regressões de batalha e transformação"]
+    S1 --> T1
+    T1 --> V1["Suíte, asset pack e firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261025-224 | 2026-10-25 | Verificar se as oito Megas de espécies da Gen 5 existem no ROM hack e, existindo, implementá-las como nas Gens 1–4 | Concluído e validado | As oito formas do `pokeemerald-expansion` foram integradas com os stats, tipos e abilities exatos: Mega Emboar, Excadrill, Audino, Scolipede, Scrafty, Eelektross, Chandelure e Golurk. Piercing Drill e Unseen Fist atravessam proteção apenas com contato; Eelevate cobre imunidade Ground, Spikes/Toxic Spikes, Arena Trap, interação com Mold Breaker e boost do maior stat após KO. O pack v41 recebeu 64 assets normal/shiny (front, back e dois ícones por forma), totalizando 11.235 entradas; o APK Android release compilou com o pack v41 embutido. A suíte terminou em `All native tests passed.` e o contrato dedicado confirmou 8 formas, 3 abilities e 64 assets. O firmware ESP32 compilou com 113.144 bytes de RAM e 1.952.752/1.966.080 bytes de flash. |
+
+## R20261025-223 - listar as Mega Evoluções de espécies da Gen 5
+
+```mermaid
+graph TD
+    R20261025_223["R20261025-223: Megas da Gen 5"]
+    R20261025_223 --> O1["Conferir catálogo oficial atual"]
+    R20261025_223 --> P1["Conferir catálogo implementado no Pokegochi"]
+    O1 --> R1["8 formas oficiais"]
+    P1 --> R2["0 formas Gen 5 implementadas"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261025-223 | 2026-10-25 | Listar as Mega Evoluções de Pokémon da Gen 5 | Respondido | A lista oficial atual contém Mega Emboar, Mega Excadrill, Mega Audino, Mega Scolipede, Mega Scrafty, Mega Eelektross, Mega Chandelure e Mega Golurk. O catálogo atual do Pokegochi não implementa nenhuma Mega de espécie Gen 5; `kForms` termina nas cinco espécies Mega da Gen 4. |
+
+## R20261024-222 - corrigir Wonder Room e auditar accuracy 101
+
+```mermaid
+graph TD
+    R20261024_222["R20261024-222: moves com accuracy 101"]
+    R20261024_222 --> A1["Interpretar 101 como sem rolagem"]
+    R20261024_222 --> P1["Cobrir eventos Gen 5 no apresentador"]
+    A1 --> T1["Testar 22 moves nos dois lados"]
+    P1 --> T2["Impedir efeito válido virar FAILED"]
+    T1 --> V1["Suíte completa"]
+    T2 --> V1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261024-222 | 2026-10-24 | Corrigir Wonder Room, que sempre aparenta falhar, e conferir todos os golpes com accuracy 101 | Concluído e validado | O valor 101 importado de Black/White agora é tratado como o sentinel de precisão `--`: alcance e imunidades continuam válidos, mas não há rolagem comum de Accuracy/Evasion. A IA também normaliza esse valor para 100 ao comparar e pontuar golpes. Os 22 golpes Gen 5 com 101 foram executados pelos dois lados sob Accuracy -6 contra Evasion +6 (44/44 cenários sem miss indevido). Wonder Room já alterava o estado, porém seus eventos sem apresentação caíam no `default` enganoso `But it failed!`; ativação e encerramento agora têm mensagens próprias. A auditoria revelou e cobriu os 11 eventos Gen 5 que faltavam, fechando 136/136 `BattleMoveEffect` com apresentação explícita. A suíte completa terminou em `All native tests passed.` e o firmware ESP32 compilou com 113.144 bytes de RAM e 1.952.136/1.966.080 bytes de flash. |
+
+## R20261024-221 - retirar Heal Pulse das batalhas 1x1
+
+```mermaid
+graph TD
+    R20261024_221["R20261024-221: Heal Pulse no 1x1"]
+    R20261024_221 --> A1["Bloquear aquisição, relearn e IA"]
+    R20261024_221 --> S1["Sanear slots de saves antigos"]
+    A1 --> H1["Preservar handler canônico"]
+    S1 --> T1["Validar sem apagar moves válidas"]
+    H1 --> T1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261024-221 | 2026-10-24 | Excluir Heal Pulse do formato 1x1, pois ele apenas cura o oponente | Concluído e validado | Heal Pulse permanece no catálogo canônico, mas agora é filtrado da aquisição, reaprendizado, seleção normal e IA do formato 1x1. O saneamento de coleção remove o golpe de saves antigos sem alterar os demais slots nem PP Ups; se ele era o único golpe válido, o moveset é reconstruído pelo learnset normal. A regressão ainda chama diretamente o handler importado nos dois lados e confirma cura e evento de HP corretos. O sweep fecha 92/92 moves auditadas, 89 utilizáveis executadas em 178/178 lados e três exclusões deliberadas (Rage Powder, Ally Switch e Heal Pulse); a suíte completa terminou em `All native tests passed.`. |
+
+## R20261024-220 - publicar APK com a auditoria das moves Gen 5
+
+```mermaid
+graph TD
+    R20261024_220["R20261024-220: APK atualizado"]
+    R20261024_220 --> V1["Incrementar versionCode"]
+    V1 --> B1["Compilar release Android"]
+    B1 --> S1["Alinhar e assinar com certificado existente"]
+    S1 --> D1["Publicar na pasta existente do Drive"]
+    D1 --> C1["Reler metadados e conferir arquivo"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261024-220 | 2026-10-24 | Gerar e subir um APK atualizado com a auditoria e correções das novas moves | Concluído, validado e publicado | APK Android 1.1 `versionCode 73` compilado para arm64-v8a e x86_64 com o sweep R219, alinhado para páginas de 16 KiB e assinado em v2/v3 com o mesmo certificado das versões anteriores (`B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`). O pacote final `Pokegochi-Android-1.1-gen5-move-sweep-r220.apk` possui 9.852.515 bytes e SHA-256 `CF699D4551ABF170A0F29ABB559F89542207B204835FF07494332F399760FD9A`. Publicado na pasta existente do Drive como arquivo `1KCIYOXA_vKqbm-fiyQkGaXAxk-e576PG`; a leitura posterior confirmou nome, MIME, tamanho e pasta. [Drive](https://drive.google.com/file/d/1KCIYOXA_vKqbm-fiyQkGaXAxk-e576PG/view?usp=drivesdk). |
+
+## R20261024-219 - auditar individualmente as novas moves da Gen 5
+
+```mermaid
+graph TD
+    R20261024_219["R20261024-219: sweep das moves 468–559"]
+    R20261024_219 --> M1["Executar cada move nos dois lados"]
+    R20261024_219 --> V1["Validar programa e runtime visual"]
+    M1 --> C1["Separar condição legítima de falha da engine"]
+    V1 --> C1
+    C1 --> F1["Corrigir grupos defeituosos"]
+    F1 --> T1["Fixar regressão permanente por move"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261024-219 | 2026-10-24 | Repetir o check move a move, apenas para as 92 moves novas da Gen 5, pois algumas parecem falhar sempre | Concluído e validado | As 92 moves 468–559 foram auditadas individualmente. Após o refinamento R221, o teste permanente executa as 89 moves utilizáveis pelo jogador e pelo adversário (178/178 cenários), confirma dano real em todo golpe ofensivo e executa os dois turnos de Sky Drop, Freeze Shock e Ice Burn. After You e Quash deixaram de falhar incondicionalmente; o handler canônico de Heal Pulse registra corretamente a alteração de HP, mas o golpe foi excluído do 1x1 porque só curaria o oponente; Circle Throw e Dragon Tail não reportam falha quando causam dano sem reserva para trocar. Rage Powder, Ally Switch e Heal Pulse são filtrados da aquisição/IA e removidos de saves antigos sem tocar nos demais slots. O catálogo visual fechou 92/92 programas, e o harness físico agora aceita toda a faixa até 559. A auditoria manual foi estendida move a move, a suíte completa terminou em `All native tests passed.` e o firmware ESP32 compilou com 113.144 bytes de RAM e 1.951.428/1.966.080 bytes de flash. |
+
+## R20261024-218 - corrigir estado visual do Champions Tournament
+
+```mermaid
+graph TD
+    R20261024_218["R20261024-218: Champions replayável após vitória"]
+    R20261024_218 --> G1["Unificar condição visual e condição de entrada"]
+    G1 --> C1["Primeira vitória marca COMPLETED"]
+    C1 --> R1["Card continua habilitado para replay"]
+    C1 --> U1["Royal Unova permanece desbloqueado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261024-218 | 2026-10-24 | Corrigir Champions Tournament que aparece como LOCKED depois da primeira vitória, embora ainda permita entrar | Concluído e validado | `UnovaTournament::championsUnlocked()` agora é a fonte única das condições de acesso, usada tanto pela tela quanto por `beginChampions()`. Concluir o torneio não o bloqueia: o card passa a mostrar `COMPLETED`, mantém o botão `ENTER` habilitado para replay e o Royal Unova continua desbloqueado. A regressão confirmou acesso antes e depois da primeira vitória, início de uma segunda tentativa e abandono normal. Teste dedicado e suíte completa passaram (`All native tests passed.`); firmware ESP32 compilado com 113.272 bytes de RAM e 1.950.984/1.966.080 bytes de flash. |
+
+## R20261023-217 - publicar APK com correções R215 e R216
+
+```mermaid
+graph TD
+    R20261023_217["R20261023-217: distribuir correções recentes"]
+    R20261023_217 --> A1["Incrementar versionCode e revisão"]
+    A1 --> A2["Compilar APK release"]
+    A2 --> A3["Alinhar, assinar e verificar"]
+    A3 --> D1["Subir na pasta existente do Drive"]
+    D1 --> D2["Reler metadados do arquivo"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-217 | 2026-10-23 | Gerar e subir no Drive o APK com as correções mais recentes | Concluído e validado | APK Android 1.1 revisão r217 (`versionCode 72`) compilado para arm64-v8a e x86_64 com as correções R215/R216, alinhado para páginas de 16 KiB e assinado com o mesmo certificado de atualização (`B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`). Verificações `zipalign` e `apksigner` v2/v3 aprovadas; arquivo de 9.852.714 bytes, SHA-256 `AEAEA5EA44FABE834FA66C369F4BC5D0C50398066E3C7485263B8FC3AAF27706`. Publicado na pasta existente do Drive como `Pokegochi-Android-1.1-unova-heal-hidden-ability-r217.apk`, arquivo `1-G0wBkAZPgOlWSd-7v4ogo-Vmr4fXDSL`; metadados relidos confirmaram nome, MIME, tamanho e pasta. |
+
+## R20261023-216 - preservar Hidden Ability ao retirar Mega Stone
+
+```mermaid
+graph TD
+    R20261023_216["R20261023-216: Hidden Ability sobrevive ao ciclo Mega"]
+    R20261023_216 --> E1["Equipar Mega Stone"]
+    E1 --> M1["Usar habilidade temporária da Mega"]
+    M1 --> U1["Retirar Mega Stone"]
+    U1 --> H1["Restaurar Hidden Ability original"]
+    R20261023_216 --> A1["Eliminar geração implícita em refreshAbility"]
+    A1 --> H1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-216 | 2026-10-23 | Corrigir Pokémon com Hidden Ability que volta para a habilidade normal depois de usar e retirar Mega Stone | Concluído e validado | O bit persistente da Hidden Ability já sobrevivia, mas a interface recalculava a habilidade com o antigo valor padrão de Gen 3 depois de equipar ou retirar o item. `refreshAbility` agora exige a geração explicitamente, todas as chamadas foram classificadas pelo contexto real e as operações da Bag/Box usam `unlockedContentGeneration()`. A regressão equipa Mega Stone em um Venusaur de Hidden Ability, confirma a habilidade temporária da Mega, retira a pedra e confirma a restauração exata da Hidden Ability e de sua procedência. Não restou chamada com geração implícita; teste dedicado e suíte completa passaram (`All native tests passed.`). Firmware ESP32 compilado com 113.272 bytes de RAM e 1.950.964/1.966.080 bytes de flash. |
+
+## R20261023-215 - fechar exploit da enfermeira em Unova
+
+```mermaid
+graph TD
+    R20261023_215["R20261023-215: cura de área sem reviver"]
+    R20261023_215 --> H1["Curar integralmente membros aptos"]
+    R20261023_215 --> F1["Preservar HP e trava dos desmaiados"]
+    F1 --> T1["Executar o próximo tick de recuperação"]
+    H1 --> T1
+    T1 --> V1["Garantir que nenhum desmaiado reviva"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-215 | 2026-10-23 | Corrigir o exploit em que a enfermeira de Unova deixa Pokémon desmaiados com HP cheio e eles revivem no tick seguinte | Concluído e validado | A cura de área agora só completa o HP de membros aptos. Pokémon com HP zero ou com a trava `recoverySecondsRemaining` ativa preservam exatamente o HP e continuam incapacitados; status e PP ainda são tratados sem antecipar a recuperação. A regressão cobre simultaneamente um membro vivo, um desmaiado em 0 HP e outro com recuperação parcial, executa o tick seguinte e confirma que nenhum revive. O teste dedicado e a suíte completa passaram (`All native tests passed.`). Firmware ESP32 compilado com 113.272 bytes de RAM e 1.950.956/1.966.080 bytes de flash. |
+
+## R20261023-214 - fixar detecção da placa em COM6 ou COM7
+
+```mermaid
+graph TD
+    R20261023_214["R20261023-214: tornar a porta conhecida parte do procedimento"]
+    R20261023_214 --> P1["Testar COM6 e COM7 diretamente"]
+    P1 --> P2["Consultar CH340 também pelo PnP"]
+    P2 --> P3["Confirmar chip e MAC com esptool"]
+    P3 --> P4["Só então considerar a placa ausente"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-214 | 2026-10-23 | Parar de perder a placa conectada e registrar que ela normalmente fica na COM6 ou COM7 | Concluído | A regra foi promovida para instrução permanente no topo deste índice: toda operação física deve testar COM6 e COM7 diretamente, usar PnP para localizar a CH340 e confirmar chip/MAC pelo `esptool`; uma consulta WMI vazia não será mais tratada como placa desconectada. |
+
+## R20261023-213 - publicar APK atualizado e gravar a placa
+
+```mermaid
+graph TD
+    R20261023_213["R20261023-213: distribuir build acumulada"]
+    R20261023_213 --> A1["Incrementar versionCode e revisão Android"]
+    A1 --> A2["Compilar, alinhar, assinar e verificar APK"]
+    A2 --> D1["Subir no Google Drive e reler metadados"]
+    R20261023_213 --> P1["Detectar ESP32 conectada"]
+    P1 --> P2["Gravar firmware preservando save"]
+    P2 --> P3["Verificar digest e boot"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-213 | 2026-10-23 | Gerar o APK mais recente, publicar no Drive e atualizar a placa conectada | Concluído e validado | APK Android 1.1 revision r213 (`versionCode 71`) compilado, alinhado para páginas de 16 KiB e assinado com o certificado de atualização existente; verificação `apksigner` v2/v3 aprovada, tamanho 9.848.419 bytes e SHA-256 `18DBCD24CC5E1F964567C14AC7E7493C3CF03B599F1D8F79E02B1C87E2D2F66B`. Publicado e relido no Drive como `Pokegochi-Android-1.1-special-egg-r213.apk` (arquivo `1QLm6eMZL0EpQ-YrHKQpg4aiJtNoxsEpD`). Firmware ESP32 compilado com 113.272 bytes de RAM e 1.950.944/1.966.080 bytes de flash, gravado na COM7 da placa MAC `b4:bf:e9:21:3c:e4` preservando o save; digest da flash conferido. Boot serial confirmou firmware `2.3.2 SINNOH`, `Save OK`, pacote de sprites `OK` e `[BOOT] Ready`. |
+
+## R20261023-212 - ampliar lendários do Special Egg por geração
+
+```mermaid
+graph TD
+    R20261023_212["R20261023-212: Special Egg acompanha o progresso"]
+    R20261023_212 --> G3["Endgame inicial: lendários Gen I-III"]
+    G3 --> G4["Sinnoh desbloqueada: incluir lendários Gen IV"]
+    G4 --> G5["Unova desbloqueada: incluir lendários Gen V"]
+    R20261023_212 --> S1["Manter somente os nove iniciais Gen I-III no pool prioritário"]
+    G5 --> T1["Validar limites e cobertura por geração"]
+    S1 --> T1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-212 | 2026-10-23 | Fazer o Special Egg incluir lendários até a geração desbloqueada, sem acrescentar os iniciais das Gens 4 e 5 | Concluído e validado | Battle Tower e BOSS agora passam a geração de conteúdo efetivamente liberada ao Special Egg. Depois de obter os nove iniciais das Gens 1-3, o pool usa a classificação oficial da Pokédex e fica limitado a 386 na Gen 3, inclui 480-493 ao liberar Sinnoh/Gen 4 e inclui 494/638-649 ao liberar Unova/Gen 5. Os iniciais de Sinnoh e Unova não foram adicionados: mesmo com Gen 5 aberta, o pool prioritário continua contendo somente os nove iniciais antigos que ainda faltam. A regressão percorreu 4.096 seeds por estágio, confirmou a presença dos lendários novos, ausência de espécies futuras e exclusão dos iniciais posteriores. Suíte completa aprovada (`All native tests passed.`); firmware ESP32 compilado com 113.272 bytes de RAM e 1.950.944/1.966.080 bytes de flash. |
+
+## R20261023-211 - ocultar o aviso antecipado do Kyurem na Trainer Card
+
+```mermaid
+graph TD
+    R20261023_211["R20261023-211: restaurar texto normal da Trainer Card"]
+    R20261023_211 --> N1["Antes de Kyurem: mostrar somente progresso de badges e Liga"]
+    N1 --> K1["Ao obter Kyurem: revelar diretamente DNA Splicers"]
+    K1 --> U1["Unificar desenho completo e atualização parcial"]
+    U1 --> T1["Validar regressão da interface"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-211 | 2026-10-23 | Tirar da Trainer Card o texto antecipando Kyurem, restaurar o texto anterior à Gen 5 e revelar a função somente após obter Kyurem | Concluído e validado | O aviso `DNA SPLICERS APPEAR HERE WHEN KYUREM IS OWNED.` foi removido. Antes do desbloqueio, o pocket voltou ao layout normal com `CHECK BADGES AND LEAGUE PROGRESS.`; depois que a obtenção de Kyurem concede o DNA Splicers, o item aparece diretamente no painel, sem antecipação. A composição completa e a atualização parcial agora usam o mesmo helper, e o asset do Splicers só entra no manifesto quando está desbloqueado. Contrato específico e suíte completa passaram (`All native tests passed.`); firmware ESP32 compilado com 113.272 bytes de RAM e 1.950.908/1.966.080 bytes de flash. |
+
+## R20261023-210 - otimizar Summary e Edit Moveset na placa
+
+```mermaid
+graph TD
+    R20261023_210["R20261023-210: acelerar páginas do Summary"]
+    R20261023_210 --> D1["Medir cache, SD e recomposição retida"]
+    D1 --> C1["Reutilizar fundos e dados derivados entre páginas"]
+    C1 --> P1["Limitar repaints do editor de moveset"]
+    P1 --> T1["Compilar, gravar e validar na ESP32"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-210 | 2026-10-23 | Otimizar novamente a placa, com foco na troca lenta de páginas do Summary e Edit Moveset | Concluído e validado na placa | O Summary deixou de reconstruir o pool completo de golpes em cada uma das 30 faixas retidas, as páginas Edit Moveset/EV passaram a ser compostas sem abrir assets do SD e mudanças locais invalidam somente suas regiões. Skills/Moves não carregam mais o sprite frontal que não exibem, e a fonte interrompe cedo o raster de linhas fora da faixa lógica atual. Na ESP32 física, abrir Edit Moveset caiu de ~498 para 58 ms, a paginação interna de ~295 para 5-7 ms, Edit/EV de ~440-452 para 14 ms, Summary de 607 para 261 ms e Skills/Moves de 576-701 para 229-245 ms. O contador permaneceu em 8 acessos ao SD durante Edit/EV; stack, heap e save ficaram estáveis. O firmware final (1.958.464 bytes) foi gravado em app0 na COM7, teve digest verificado e iniciou com Save OK/Ready. Build: 113.272 bytes de RAM e 1.950.976/1.966.080 bytes de flash; contrato de desempenho aprovado. |
+
+## R20261023-209 - atualizar a placa conectada
+
+```mermaid
+graph TD
+    R20261023_209["R20261023-209: gravar firmware atual na placa"]
+    R20261023_209 --> P1["Identificar ESP32 CH340 em COM7"]
+    P1 --> S1["Preservar e verificar a partição de save"]
+    S1 --> B1["Compilar e gravar app0"]
+    B1 --> V1["Verificar flash e boot serial"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-209 | 2026-10-23 | Atualizar a placa conectada com o firmware mais recente | Concluído e validado na placa | A ESP32 CH340 em `COM7` (MAC `B4BFE9213CE4`) recebeu o firmware atual em app0. O layout SPIFFS já era o ampliado, portanto o save permaneceu no lugar sem migração ou formatação. A gravação de 1.957.984 bytes e o readback passaram pela verificação de digest; apenas os metadados OTA foram reiniciados. O boot confirmou firmware 2.3.2 SINNOH em app0, Save OK, archive probe OK, sprite asset pack OK, velocidade 3x restaurada e Ready. Build: 113.264 bytes de RAM e 1.950.504/1.966.080 bytes de flash. |
+
+## R20261023-208 - gerar e publicar APK com a progressão do Lucky Egg
+
+```mermaid
+graph TD
+    R20261023_208["R20261023-208: APK atualizado no Drive"]
+    R20261023_208 --> V1["Incrementar versionCode e revisão Android"]
+    V1 --> B1["Compilar runtime compartilhado e APK release"]
+    B1 --> S1["Alinhar e assinar com o certificado já publicado"]
+    S1 --> D1["Subir no Google Drive e verificar o arquivo"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-208 | 2026-10-23 | Gerar o APK com a progressão completa do Lucky Egg e subir no Google Drive | Concluído, validado e publicado | O release incorpora os níveis permanentes do Lucky Egg de +50% no Ginásio 5 de Kanto, +100% na primeira Liga de Kanto e +125% ao desbloquear Sinnoh/Gen 4. Usa versão 1.1, `versionCode 70` e revisão `android-app-1.1-lucky-egg-progression-r208-release`; foi compilado para arm64-v8a/x86_64, alinhado para páginas de 16 KiB e assinado em v2/v3 com o mesmo certificado já publicado (`b2923926...1edce7d`). Arquivo `Pokegochi-Android-1.1-lucky-egg-progression-r208.apk`, 9.852.714 bytes, SHA-256 `A13E2996EFA25B797E03131C6ED63C1C40E2570A84DF120524E0AFF9A354FB30`; [Drive](https://drive.google.com/file/d/1jQVM1pIDwezGTE3XGVzraB8NwL46OqEE/view?usp=drivesdk). |
+
+## R20261023-207 - ampliar o Lucky Egg ao desbloquear a geração 4
+
+```mermaid
+graph TD
+    R20261023_207["R20261023-207: terceiro nível do Lucky Egg"]
+    R20261023_207 --> G4["Detectar desbloqueio de Sinnoh/Gen 4"]
+    G4 --> B1["Elevar bônus de +100% para +125%"]
+    B1 --> C1["Manter derivação retroativa pelo progresso salvo"]
+    C1 --> T1["Validar EXP total de 2,25x"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-207 | 2026-10-23 | Adicionar mais 25% ao bônus do Lucky Egg quando o jogador desbloquear a geração 4 | Concluído e validado | O desbloqueio efetivo de Sinnoh/Gen 4 agora eleva automaticamente o Lucky Egg de +100% para +125%, totalizando 2,25x a EXP-base antes da divisão da equipe. O nível é derivado do progresso existente e também beneficia saves antigos. A regressão cobre o cálculo real de 2,25x; a suíte terminou em `All native tests passed.` e o firmware compilou com 113.136 bytes de RAM e 1.950.640/1.966.080 bytes de flash. |
+
+## R20261023-206 - Lucky Egg progressivo em Kanto
+
+```mermaid
+graph TD
+    R20261023_206["R20261023-206: Lucky Egg progressivo"]
+    R20261023_206 --> G1["Ginásio 5 de Kanto concede +50% EXP"]
+    G1 --> L1["Primeira Liga de Kanto aprimora para +100%"]
+    L1 --> S1["Derivar os níveis do progresso já salvo"]
+    S1 --> T1["Validar cálculo, migração, textos e recompensas"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-206 | 2026-10-23 | Entregar o Lucky Egg no quinto ginásio da geração 1 com +50% de EXP e aprimorá-lo para +100% na primeira Liga de Kanto | Concluído e validado | O bônus agora possui níveis permanentes derivados da Soul Badge, da conclusão da Liga e do desbloqueio de Sinnoh, sem alterar o formato do save. O item é concedido no Ginásio 5 com +50%, aprimorado na Liga para +100% e aplicado à EXP total antes da divisão da equipe. A regressão cobre concessão, migração e ambos os cálculos; a suíte terminou em `All native tests passed.`. |
+
+## R20261023-205 - simplificar as formas dos gênios de Unova
+
+```mermaid
+graph TD
+    R20261023_205["R20261023-205: remover Reveal Glass"]
+    R20261023_205 --> F1["Usar FORM comum para Tornadus, Thundurus e Landorus"]
+    R20261023_205 --> K1["Manter DNA Splicers e a fusão real de Kyurem"]
+    R20261023_205 --> S1["Preservar compatibilidade com saves anteriores"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-205 | 2026-10-23 | Remover o item especial dos gênios e tratá-los como as outras formas, mantendo o item do Kyurem | Concluído | Reveal Glass deixou de ser concedido, exibido e exigido. Tornadus, Thundurus e Landorus agora usam diretamente a ação `FORM` da Box. DNA Splicers continua obrigatório para fundir Kyurem com Reshiram ou Zekrom. O bit antigo foi preservado apenas para compatibilidade binária com saves existentes. |
+
+## R20261023-204 - confirmar bônus do primeiro Lucky Egg
+
+```mermaid
+graph TD
+    R20261023_204["R20261023-204: bônus do Lucky Egg"]
+    R20261023_204 --> C1["Conferir cálculo de experiência"]
+    C1 --> R1["Confirmar 2x EXP permanente para toda a conta"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-204 | 2026-10-23 | Confirmar quanto o primeiro Lucky Egg aumenta a experiência | Consulta concluída | O primeiro e único Lucky Egg, recebido na primeira vitória da Liga de Kanto, ativa permanentemente um multiplicador de `2x` na EXP para todo o grupo/conta, equivalente a `+100%`. O bônus não exige equipar o item. |
+
+## R20261023-203 - esclarecer o texto dos Key Items de Unova
+
+```mermaid
+graph TD
+    R20261023_203["R20261023-203: texto claro nos Key Items"]
+    R20261023_203 --> T1["Remover a referência ambígua a itens acima"]
+    T1 --> C1["Explicar que os Key Items de Unova aparecem no mesmo pocket"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-203 | 2026-10-23 | Corrigir o texto confuso `UNIQUE UNOVA TOOLS APPEAR ABOVE` no card da Trainer Card | Concluído | A descrição agora diz `OPEN THE TRAINER CARD. UNOVA KEY ITEMS APPEAR IN THIS POCKET.`, deixando claro que DNA Splicers e Reveal Glass aparecem no pocket de Key Items. |
+
+## R20261023-202 - gerar e publicar APK com Hidden Grottos por geração
+
+```mermaid
+graph TD
+    R20261023_202["R20261023-202: APK atualizado no Drive"]
+    R20261023_202 --> V1["Incrementar versionCode e revisão Android"]
+    V1 --> B1["Compilar runtime nativo e APK release"]
+    B1 --> S1["Alinhar e assinar com a chave já publicada"]
+    S1 --> D1["Subir no Google Drive e verificar metadados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-202 | 2026-10-23 | Gerar o APK com as mudanças mais recentes e subir no Google Drive | Concluído, validado e publicado | O APK incorpora o estado atual do jogo, incluindo os Hidden Grottos por geração do R201, usa `versionCode 69`, versão 1.1 e revisão `android-app-1.1-hidden-abilities-r202-release`. O protocolo multiplayer passou, o release compilou para arm64-v8a/x86_64, foi alinhado para páginas de 16 KiB e assinado em v2/v3 com o mesmo certificado das versões anteriores (`b2923926...1edce7d`). Arquivo `Pokegochi-Android-1.1-hidden-abilities-r202.apk`, 9.848.419 bytes, SHA-256 `F18E5B9E225C577FF8EF773F5E63A57DA59D8C8457D0B3871266F097F4E35318`; [Drive](https://drive.google.com/file/d/13TPmc7nbz34tJaBWY5pCpUWO9ZjWKBwJ/view?usp=drivesdk). |
+
+## R20261023-201 - disponibilizar Hidden Abilities das gerações 1 a 4
+
+```mermaid
+graph TD
+    R20261023_201["R20261023-201: antigos com Hidden Ability"]
+    R20261023_201 --> P1["Separar o pool dos Grottos por geração"]
+    P1 --> G1["Garantir somente espécies com HA oficial"]
+    G1 --> C1["Priorizar espécies cuja HA ainda não está na coleção"]
+    C1 --> U1["Informar a geração na seleção de área e no card"]
+    U1 --> T1["Validar gerações 1 a 5 e persistência na captura"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-201 | 2026-10-23 | Criar uma forma de o jogador encontrar Pokémon das gerações 1 a 4 com Hidden Ability | Concluído e validado | Os dez Hidden Grottos agora são distribuídos em pares: áreas 1-2 oferecem Gen I, 3-4 Gen II, 5-6 Gen III, 7-8 Gen IV e 9-10 Gen V. O pool elimina espécies sem HA oficial, prioriza variantes HA ainda ausentes da coleção e só repete depois de completar a geração; são 141/92/111/86/128 espécies comuns elegíveis respectivamente. Lendários com HA oficial mantêm um sorteio separado de 1/240, com 4/5/3/4/3 candidatos por geração. A seleção de área e o card do Grotto mostram `GEN X H.A.`; nenhum campo de save foi adicionado. O teste cobre as cinco faixas, persistência na Box, prevenção de repetição e lendário HA raro. A suíte terminou em `All native tests passed.` e o firmware ESP32 compilou com 113.136 bytes de RAM e 1.950.924/1.966.080 bytes de flash. |
+
+## R20261023-200 - esclarecer Hidden Abilities das gerações anteriores
+
+```mermaid
+graph TD
+    R20261023_200["R20261023-200: Hidden Abilities das gerações 1 a 4"]
+    R20261023_200 --> D1["Conferir dados de espécies anteriores a Unova"]
+    D1 --> G1["Separar suporte da mecânica e roster dos Grottos"]
+    G1 --> C1["Confirmar limitação atual aos encontros de Unova"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-200 | 2026-10-23 | Esclarecer se Pokémon das gerações 1 a 4 possuem Hidden Ability ou se a mecânica vale apenas para a geração 5 | Consulta concluída | Os dados do jogo incluem Hidden Abilities retroativas para espécies das gerações 1 a 4, ativadas quando Unova/Gen 5 está desbloqueada. A limitação está no conteúdo atual dos Hidden Grottos: os rosters comuns das dez áreas usam apenas espécies de Unova, então Pokémon antigos não são oferecidos atualmente nesses encontros, embora o motor suporte suas Hidden Abilities. |
+
+## R20261023-199 - conferir Hidden Abilities nos Hidden Grottos
+
+```mermaid
+graph TD
+    R20261023_199["R20261023-199: Hidden Abilities nos Grottos"]
+    R20261023_199 --> M1["Auditar sorteio de sala, item e encontro"]
+    M1 --> R1["Relacionar o encontro ao roster de cada área"]
+    R1 --> E1["Identificar espécies sem Hidden Ability oficial"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-199 | 2026-10-23 | Explicar onde são encontrados os Pokémon com Hidden Ability e como o Hidden Grotto ficou | Consulta concluída | O card `HIDDEN GROTTO` pode surgir entre as três rotas dos andares comuns das dez áreas de Unova. Ao escolhê-lo, o resultado atual é item ou encontro; o encontro usa o roster de 12 espécies da área e persiste a Hidden Ability na captura. A auditoria encontrou uma ressalva: Tynamo, Eelektrik, Eelektross, Yamask, Cofagrigus, Cryogonal e Hydreigon não possuem Hidden Ability oficial nos dados Gen 5, portanto esses sorteios conservam a habilidade normal apesar de terem vindo do Grotto. |
+
+## R20261023-198 - seleção de 1 a 50 encontros no EXPLORE de Sinnoh
+
+```mermaid
+graph TD
+    R20261023_198["R20261023-198: sequência configurável em Sinnoh"]
+    R20261023_198 --> S1["Reutilizar seletor de 1 a 50 encontros"]
+    S1 --> S2["Fixar a sequência no site visível ao tocar EXPLORE"]
+    S2 --> B1["Preservar HP, captura, nível, raridade e 1 Research por vitória"]
+    B1 --> R1["Retornar a Sinnoh ao concluir, perder, fugir ou cancelar"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-198 | 2026-10-23 | Permitir escolher até 50 Pokémon em sequência nos EXPLORE de Sinnoh | Concluído e validado sem compilar | O EXPLORE de qualquer site desbloqueado agora abre o seletor compartilhado de 1 a 50 encontros. A escolha do site é congelada no toque, todas as batalhas seguintes usam a tabela daquele local, cada vitória ou captura mantém a recompensa normal de 1 Research e a sequência encerra ao perder, fugir ou ficar sem o Pokémon selecionado. Cancelar ou concluir retorna à tela de Sinnoh; a mensagem de encontro mostra o progresso atual. Um contrato de regressão cobre o limite, o contexto do site e o relançamento correto. Firmware e APK não foram compilados nem gravados, conforme solicitado para acumular mudanças. |
+
+## R20261023-197 - otimização integral de desempenho na placa
+
+```mermaid
+graph TD
+    R20261023_197["R20261023-197: deixar o Pokegochi mais liso e rápido"]
+    R20261023_197 --> D1["Medir CPU, heap, SD e tempo de render na placa"]
+    D1 --> G1["Localizar gargalos reais em telas e batalhas"]
+    G1 --> O1["Otimizar composição, cache, assets e esperas"]
+    O1 --> R1["Preservar timing visual e integridade do save"]
+    R1 --> T1["Validar suíte, firmware e fluxos físicos"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-197 | 2026-10-23 | Otimizar ao máximo a fluidez e velocidade do Pokegochi físico sem quebrar nada, usando a placa conectada para diagnóstico e testes | Concluído e validado na placa | O renderer agora mantém os offsets PGA3 entre cenas, resolve manifests grandes por varredura sequencial, usa um raster de fonte com metade da altura, recompõe com segurança depois de saves sob pressão e impede save no meio de uma apresentação de batalha. O loop principal caiu de 3.440 para 336 bytes de frame ao isolar os grandes estados de multiplayer; no hardware, a margem mínima observada em batalha subiu de 140 para mais de 3.300 bytes. O microSD passou por varreduras simples, mistas e intercaladas com TFT sem erro até 20 MHz, adotado com fallback automático; o boot mediu 1.054 KiB/s contra cerca de 719 KiB/s antes. Home frio caiu de aproximadamente 1.657 para 898 ms e os retornos usuais ficaram em 480-482 ms; Box frio caiu de 1.162 para 859 ms, Dex para 87 ms e Bag ficou estável em 302 ms. Run, save, HP e animações Tackle, Thunderbolt, Synthesis, Twister e Acid foram reproduzidos no ESP32 sem reset, asset ausente ou corrupção; o save foi preservado. Firmware final gravado em COM7, 1.957.440 bytes, SHA-256 `98C106FE9C135A26075B1931B78F89E383CD341484B1C0D70FED4C799EE70F55`. O pacote assinado `dist/pokegochi-performance-r197.pgota` usa sequência 1792765930 e SHA-256 `08754CBD0B1DDFB71B60D766F1E115FD6AA15BB98C83BE34D4776D576E202952`. A suíte completa terminou em `All native tests passed.`. |
+
+## R20261023-196 - restaurar animações de todas as moves da Gen 5
+
+```mermaid
+graph TD
+    R20261023_196["R20261023-196: animações das moves Gen 5"]
+    R20261023_196 --> A1["Auditar IDs 468-559 no catálogo"]
+    A1 --> G1["Importar programas e assets exatos do expansion"]
+    G1 --> T1["Validar cobertura integral das 92 moves"]
+    T1 --> B1["Gerar e publicar APK atualizado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-196 | 2026-10-23 | Corrigir todas as novas moves da Gen 5 que estão sem animação | Concluído, validado e publicado | A causa estrutural foi removida: o gerador importava o expansion somente até o ID 467 e agora compila os scripts exatos das 92 moves de IDs 468-559. Foram traduzidos os comandos multi-alvo e os callbacks próprios de Shell Smash, Reflect Type, Searing Shot, Ally Switch, Bestow, Grudge e demais tarefas alcançáveis; a auditoria fecha com 559 programas, zero script ausente, zero comando não traduzido, 692 recursos visuais e 1.829 frames. Um contrato novo exige cobertura visual e programa executável para 92/92 moves Gen 5, e a suíte completa terminou em `All native tests passed.`. O pack PGA1 v40 contém 11.171 assets e catálogo `2bf91af231161bed`. O APK `versionCode 68` foi alinhado, assinado em v2/v3, instalado por cima sem limpar dados e retomou a batalha persistida sem fatal. Arquivo: `Pokegochi-Android-1.1-gen5-animations-r196.apk`, 9.832.234 bytes, SHA-256 `35643905E2B3AD349D830ED308503D829D81AB0C63A2B6F911C120B490AE0C36`; [Drive](https://drive.google.com/file/d/1KconbzmiSs0hEGvkLGwXsMvU4wIDo3Rl/view?usp=drivesdk). |
+
+## R20261023-195 - corrigir alinhamento dos símbolos e textos no hub de regiões
+
+```mermaid
+graph TD
+    R20261023_195["R20261023-195: reparar cards de Sinnoh e Unova"]
+    R20261023_195 --> I1["Centralizar os pixels visíveis dos dois símbolos"]
+    R20261023_195 --> T1["Restaurar alinhamento central antes de cada card"]
+    I1 --> P1["Promover o pack de assets para v39"]
+    T1 --> V1["Validar o layout e gerar APK versionCode 67"]
+    P1 --> V1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261023-195 | 2026-10-23 | Corrigir o símbolo de Sinnoh fora do centro e o card de Unova com símbolo e textos desalinhados | Concluído, validado e publicado | Corrigidas as duas causas independentes: o gerador agora recorta e recentraliza os pixels visíveis dos marcadores de Sinnoh e Unova em canvases transparentes de 32x32, e o renderer restaura `MC_DATUM` antes de desenhar cada card para que o botão anterior não contamine o alinhamento dos textos seguintes. O contrato específico valida margens simétricas nos dois PKG2, centro único para ícone/nome/descrição e pack v39; a suíte completa terminou em `All native tests passed.`. O APK `versionCode 67` contém o pack PGA1 v39 com 10.987 assets, foi alinhado e assinado em v2/v3. Arquivo: `Pokegochi-Android-1.1-region-hub-layout-r195.apk`, 9.713.450 bytes, SHA-256 `B722AF100CB5D12BAC449F6B3B06ED2D13855AC184AC0F4138DB7ABE9705C0E1`; [Drive](https://drive.google.com/file/d/118SDPpNwUKS5NEWwqbLbVbDREXmXNhcG/view?usp=drivesdk). |
+
+## R20261022-194 - conceder 20 pontos de exploração por ginásio de Sinnoh
+
+```mermaid
+graph TD
+    R20261022_194["R20261022-194: recompensa de exploração dos ginásios"]
+    R20261022_194 --> G1["Conceder 20 Research na primeira vitória"]
+    G1 --> G2["Impedir farm em revanche e limitar o total a 999"]
+    G2 --> T1["Cobrir os oito líderes e o limite em testes"]
+    T1 --> A1["Gerar, validar e publicar APK versionCode 66"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261022-194 | 2026-10-22 | Fazer cada ginásio de Sinnoh conceder 20 pontos de exploração | Concluído, validado e publicado | A primeira vitória sobre cada um dos oito líderes agora concede 20 Research no mesmo registro atômico da insígnia. Repetir um líder não concede pontos novamente, e o contador continua limitado a 999; o aviso da vitória mostra o ganho real ou `RESEARCH MAX`. Os testes cobrem os oito prêmios, a proteção contra farm e o teto, e a suíte completa terminou em `All native tests passed.`. O APK `versionCode 66` foi alinhado, assinado em v2/v3 e instalado sobre o 65 sem limpar dados; retomou a batalha persistida, carregou o pack com `archive probe OK`/`sprite asset pack OK`, chegou a `Ready` e não registrou fatal. Arquivo: `Pokegochi-Android-1.1-sinnoh-gym-research-r194.apk`, 9.713.450 bytes, SHA-256 `625725272E955C987AE3F0C1E18C3041DAC7ABA5463245324FC5DA56EE18F1DA`; [Drive](https://drive.google.com/file/d/1f4iltGRFx7eGkTzzs3ifRbCz3WGvZSl0/view?usp=drivesdk). |
+
+## R20261022-193 - corrigir transparência dos líderes de Sinnoh no Android
+
+```mermaid
+graph TD
+    R20261022_193["R20261022-193: remover quadrados brancos dos NPCs"]
+    R20261022_193 --> C1["Auditar PNG, PKG2 e renderer"]
+    C1 --> C2["Preservar o alpha embutido dos oito retratos"]
+    C2 --> A1["Regenerar e validar os payloads no pack v38"]
+    A1 --> B1["Gerar e testar APK versionCode 65"]
+    B1 --> D1["Publicar correção no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261022-193 | 2026-10-22 | Corrigir o recorte dos NPCs que aparece com um quadrado branco ao redor | Concluído, validado e publicado | Os PNGs oficiais dos oito líderes já continham recorte correto, mas o carregador genérico para sprites GBA sobrescrevia o canal alpha assumindo que o índice de paleta 0 era sempre transparente; em sete retratos isso transformava o canvas em branco opaco. O gerador agora preserva o `tRNS`/alpha embutido dessa fonte e rejeita retratos sem transparência nos quatro cantos. As oito máscaras dos PKG2 foram comparadas pixel a pixel com os PNGs, auditadas visualmente sobre tabuleiro e verificadas novamente dentro do pack v38 e do APK. A suíte completa passou. O `versionCode 65` foi instalado sobre o 64 preservando o save e retomando a batalha, com `archive probe OK`, `sprite asset pack OK`, `Ready` e nenhum fatal. Arquivo: `Pokegochi-Android-1.1-sinnoh-alpha-r193.apk`, 9.713.450 bytes, SHA-256 `FC37F0C08FE606832EAD203B414E87CA60AE1EE0E3C053EF48F5163A879E03E4`; [Drive](https://drive.google.com/file/d/1EBpQU1uXJ_snrfP-cMQuFfJvrtl6X0FB/view?usp=drivesdk). |
+
+## R20261022-192 - gerar APK acumulado mais recente e publicar no Drive
+
+```mermaid
+graph TD
+    R20261022_192["R20261022-192: APK mais recente"]
+    R20261022_192 --> S1["Consolidar Unova, Rare Candy e ginásios de Sinnoh"]
+    S1 --> A1["Promover o pacote de assets para v38"]
+    A1 --> T1["Executar testes nativos e auditorias do pacote"]
+    T1 --> B1["Compilar, alinhar e assinar o APK release"]
+    B1 --> V1["Instalar sobre a versão anterior e validar o boot"]
+    V1 --> D1["Publicar no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261022-192 | 2026-10-22 | Gerar um APK novo com todas as atualizações mais recentes do jogo e subir no Google Drive | Concluído, validado e publicado | A árvore acumulada agora compila no Android com Unova, as correções de evolução/Rare Candy e os oito ginásios de Sinnoh. O pack PGA3 foi promovido de v37 para v38 preservando os 10.971 payloads existentes e acrescentando os oito líderes 80x80 e as oito insígnias 64x64 oficiais: 10.987 assets, 21.800.892 bytes, índice íntegro e payloads novos conferidos byte a byte. A suíte completa terminou em `All native tests passed.`; duas falhas exclusivas do compilador Android no fluxo de Unova foram corrigidas e o release arm64-v8a/x86_64 foi alinhado e assinado em v2/v3. O `versionCode 64` foi instalado por cima do 63 sem limpar dados; após START, o jogo retomou a batalha persistida, permaneceu em primeiro plano e registrou `archive probe OK`, `sprite asset pack OK` e `Ready`, sem fatal. Arquivo: `Pokegochi-Android-1.1-unova-sinnoh-gyms-r192.apk`, 9.713.450 bytes, SHA-256 `2C427576E72AD414ECDA400EA709F3CD67AC0486C2CC158AB7DDC6EA9988B0A6`; [Drive](https://drive.google.com/file/d/102y3hE28av90KQFlEQ-eyVpZSBHOTzSs/view?usp=drivesdk). |
+
+## R20261022-191 - adicionar oito ginásios à expedição de Sinnoh
+
+```mermaid
+graph TD
+    R20261022_191["R20261022-191: oito ginásios de Sinnoh"]
+    R20261022_191 --> S1["Associar um líder e uma insígnia a cada site"]
+    S1 --> G1["Exigir a vitória para liberar o site seguinte"]
+    G1 --> F1["Concluir Sinnoh somente após o oitavo ginásio"]
+    S1 --> V1["Usar dados e sprites oficiais de Platinum"]
+    F1 --> M1["Migrar saves antigos sem relocar Unova já concluída"]
+    M1 --> T1["Cobrir progressão, batalhas, UI e persistência"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261022-191 | 2026-10-22 | Tornar Sinnoh menos simples adicionando um ginásio em cada um dos oito sites | Concluído e validado localmente | Os oito sites agora recebem, em ordem, Roark, Gardenia, Fantina, Maylene, Crasher Wake, Byron, Candice e Volkner, com equipes, moves, itens, retratos e insígnias de Platinum adaptados ao endgame. Research e a vitória no líder anterior são necessários para avançar; o oitavo badge conclui Sinnoh, entrega Platinum/Master Ball e libera Unova. O save continua com 12 bytes: o antigo ledger de fósseis é limpo e reaproveitado para os badges, enquanto saves que já concluíram os oito sites mantêm recompensas e Unova sem ganhar badges falsos. UI, intro, batalha, premiação, retorno, boot log e asset pack v38 foram integrados. A suíte nativa completa passou; firmware e SD não foram compilados nem gravados conforme solicitado. |
+
+## R20261022-190 - corrigir Rare Candy e cadeias de evolução tardias
+
+```mermaid
+graph TD
+    R20261022_190["R20261022-190: auditar Rare Candy e evoluções"]
+    R20261022_190 --> R1["Reproduzir primeira evolução em nível alto"]
+    R1 --> G1["Unificar o limite com a geração de conteúdo desbloqueada"]
+    R1 --> L1["Recuperar evolução elegível no nível 100"]
+    G1 --> B1["Corrigir Rare Candy e batalhas Wild/Trainer"]
+    L1 --> T1["Cobrir cadeias Gen 4/5 e progressão normal"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261022-190 | 2026-10-22 | Verificar e corrigir Pokémon de nível alto que fazem a primeira evolução com Rare Candy e depois não alcançam a terceira forma nem com Candy nem com XP normal | Concluído e validado | Rare Candy agora usa a geração de conteúdo realmente desbloqueada e reconhece evoluções tardias das Gen 4/5. No nível 100, o Candy só é aceito e consumido quando existe uma evolução válida: dispara a evolução sem criar nível 101; formas finais e evoluções ainda bloqueadas não aceitam nem consomem o item. Batalhas também voltam a oferecer evoluções elegíveis no nível 100, e os fluxos genéricos Wild/Trainer respeitam Unova. Cobertura adicionada para Togepi/Togetic/Togekiss, Elekid/Electabuzz/Electivire, Roggenrola e Porygon2/Porygon-Z; contratos, matrizes de golpes/passivas e toda a suíte nativa passaram. |
+
+## R20261021-189 - implementar Unova completa
+
+```mermaid
+graph TD
+    R20261021_189["R20261021-189: implementar Unova"]
+    R20261021_189 --> D1["National Dex 649, moves, passivas, TMs e formas"]
+    R20261021_189 --> S1["Migrar save e ampliar Box sem perdas"]
+    R20261021_189 --> A1["Dez áreas procedurais com salas, pistas, Gate Trainer e Boss"]
+    A1 --> W1["Fenômenos, Hidden Grottos e lendários raros"]
+    R20261021_189 --> P1["PWT, Benga, Champions Tournament e Royal Unova"]
+    R20261021_189 --> V1["Assets oficiais, tema White 2 e interface polida"]
+    V1 --> T1["Suíte nativa e auditoria integral do pack v37"]
+    T1 --> H1["Build e hardware adiados por solicitação"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-189 | 2026-10-21 | Implementar integralmente tudo que foi aprovado para Unova, planejando antes, preservando o índice e usando sprites autênticos nas salas e interfaces | Concluído em fonte e validado; firmware adiado a pedido | Entregues National Dex #649, 559 moves, 165 habilidades oficiais Gen I-V, 25 TMs de Unova, Box 720/save V46, conteúdo retroativo bloqueado pelo unlock, dez áreas procedurais com grupo persistente/uma cura/sem Bag, fenômenos e Hidden Grottos, lendários raros, cinco PWTs, Benga, Champions Tournament, tema White 2, Royal Unova diário, itens/formas Gen 5, multiplayer e UI completa. O pack PGA3 v37 contém 10.971 assets e 21.758.082 bytes, com 264 recursos obrigatórios de Unova presentes e auditoria sem frames inválidos. `scripts/test.ps1` terminou em `All native tests passed.`. Nenhum firmware/OTAP/APK foi compilado ou gravado neste lote, conforme solicitado. |
+
+## R20261021-188 - pesquisar e projetar a progressão de Unova
+
+```mermaid
+graph TD
+    R20261021_188["R20261021-188: estudar Unova após Sinnoh"]
+    R20261021_188 --> R1["Inspecionar as ROMs locais de White e White 2"]
+    R1 --> R2["Confirmar White íntegro e detectar White 2 truncado"]
+    R20261021_188 --> A1["Auditar a base Gen 5 do pokeemerald-expansion"]
+    A1 --> A2["Confirmar 156 espécies-base, formas e sprites completos no histórico"]
+    R20261021_188 --> M1["Comparar Treehollow, PWT, Hidden Grotto, Subway e atividades laterais"]
+    M1 --> D1["Recomendar campanha procedural inspirada no White Treehollow"]
+    D1 --> D2["Usar PWT como checkpoints e Hidden Grottos como captura especial"]
+    D2 --> D3["Desbloquear Unova somente ao completar todos os sites de Sinnoh"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-188 | 2026-10-21 | Examinar White e White 2, verificar as fontes visuais da romhack e propor uma região de Unova posterior a Sinnoh que não repita o sistema de pesquisa nem seja apenas uma sequência de ginásios | Pesquisa concluída; proposta aguardando aprovação | A ROM local de White foi validada e aberta como `IRAO`, com 256 MiB, 237 arquivos NARC e 237 overlays ARM9. O ZIP de White 2 perdeu exatamente 393.216 bytes no início e não pode ser descomprimido; a mecânica exclusiva foi validada pelo manual oficial e documentação do jogo. O histórico completo de `pokeemerald-expansion` possui os 156 Pokémon-base da Gen 5, 199 registros contando formas e os assets de batalha, ícone, overworld e paletas necessários. A proposta recomendada é uma campanha procedural de dez áreas inspirada no White Treehollow, com HP/PP persistentes, Bag bloqueada, uma cura limitada, Gate Trainer e Boss; PWT em checkpoints de progressão; e Hidden Grottos/fenômenos como camada de captura e acesso a Hidden Abilities. Battle Subway foi descartado como núcleo por duplicar a Battle Tower atual. Nenhum sistema de Unova foi implementado ou compilado nesta etapa. |
+
+## R20261021-187 - gerar APK com o firmware e pack v36 mais recentes
+
+```mermaid
+graph TD
+    R20261021_187["R20261021-187: publicar APK atualizado"]
+    R20261021_187 --> A1["Incorporar o hub de regiões do firmware atual"]
+    A1 --> A2["Gerar Town Map e Adamant Orb no pack v36"]
+    A2 --> T1["Executar suíte completa e contrato do Region Hub"]
+    T1 --> B1["Compilar e assinar APK versionCode 63"]
+    B1 --> D1["Testar instalação e publicar no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-187 | 2026-10-21 | Gerar um APK com as mudanças mais recentes do firmware e subir no Google Drive | Concluído, validado e publicado | O APK agora incorpora o Region Hub de R20261021-186 e usa `versionCode 63`, versão 1.1 e revisão Android `1.1-63`. Como a ROM proprietária não está presente, o gerador ganhou um caminho incremental atômico que preservou os 9.141 payloads anteriores e acrescentou Town Map e Adamant Orb oficiais; o PGA3 v36 final contém 9.143 assets e ambos foram relidos e comparados byte a byte. A suíte terminou em `All native tests passed.` e `Region hub contract passed.`. O APK foi inspecionado para confirmar `RegionHub` e os dois caminhos de asset no binário, alinhado, assinado em v2/v3 e instalado sobre o save existente; o boot confirmou `archive probe OK`, `sprite asset pack OK` e ausência de fatal. Arquivo: `Pokegochi-Android-1.1-region-hub-r187.apk`, 8.693.347 bytes, SHA-256 `E717EFF8BB795C19725C1DB3F5A2CBB07B340BA6E461785BB91CF7A50D74AB1E`; [Drive](https://drive.google.com/file/d/1PDs950HJkKY-6V6SgY-owHnwZJRd-zwX/view?usp=drivesdk). |
+
+## R20261021-186 - implementar o hub de regiões com Town Map e Adamant Orb
+
+```mermaid
+graph TD
+    R20261021_186["R20261021-186: hub extensível de regiões"]
+    R20261021_186 --> H1["Usar o Town Map oficial de Platinum no antigo slot de Gyms"]
+    H1 --> H2["Manter o slot vazio até Sinnoh ser desbloqueada"]
+    H2 --> H3["Abrir o seletor de regiões com duas opções por página"]
+    R20261021_186 --> S1["Usar o Adamant Orb oficial para Sinnoh"]
+    S1 --> S2["Abrir as expedições e voltar ao hub"]
+    R20261021_186 --> P1["Remover o atalho de Sinnoh da Pokédex"]
+    R20261021_186 --> A1["Adicionar os dois sprites ao asset pack v36"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-186 | 2026-10-21 | Fixar o candidato 2, Adamant Orb, como ícone de Sinnoh e implementar o hub de regiões anteriormente aprovado com o Town Map | Concluído em fonte; compilação adiada a pedido do usuário | O antigo slot de Gyms agora permanece vazio no intervalo entre a migração dos desafios para o Battle Fist e o desbloqueio de Sinnoh. Depois disso, exibe o Town Map oficial de Platinum, abre um seletor extensível com até duas regiões por página e apresenta Sinnoh com o Adamant Orb oficial. A notificação de novidade foi transferida para esse fluxo e é dispensada ao abrir Sinnoh. O atalho anterior foi removido da Pokédex, cujo botão BACK voltou a ser fixo. Os dois assets entraram no pack v36 e `test/test_region_hub_contract.py` cobre o contrato da navegação e das fontes visuais. Nenhum firmware, APK ou pack foi compilado nesta etapa, conforme solicitado. |
+
+## R20261021-185 - aprovar Town Map e renovar símbolos de Sinnoh
+
+```mermaid
+graph TD
+    R20261021_185["R20261021-185: segunda rodada visual de regiões"]
+    R20261021_185 --> H1["Aprovar Town Map de Platinum para o hub"]
+    R20261021_185 --> S1["Descartar os dez candidatos anteriores de Sinnoh"]
+    S1 --> S2["Excluir qualquer Pokémon dos novos candidatos"]
+    S2 --> S3["Apresentar dez símbolos oficiais inéditos"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|---|
+| R20261021-185 | 2026-10-21 | Fixar o Town Map de Platinum como ícone do hub e sugerir outros dez símbolos para Sinnoh sem incluir Pokémon | Hub escolhido; nova escolha de Sinnoh pendente | O candidato `Town Map (Platinum)` foi registrado como escolha visual do hub de regiões. A segunda prancha de Sinnoh não repete nenhum dos dez candidatos anteriores e usa somente símbolos oficiais não-Pokémon de Platinum: Griseous Orb, Adamant Orb, Lustrous Orb, Azure Flute, Lunar Wing, Galactic Key, Old Charm, Poffin Case, Gracidea e Odd Keystone. Nenhum código, asset pack ou firmware foi alterado/compilado. |
+
+## R20261021-184 - planejar o hub de regiões e o ícone de Sinnoh
+
+```mermaid
+graph TD
+    R20261021_184["R20261021-184: novos ícones de regiões"]
+    R20261021_184 --> H1["Mover o acesso de Sinnoh da Pokédex para o antigo slot de Gyms"]
+    H1 --> H2["Manter o slot vazio antes do desbloqueio"]
+    H2 --> H3["Abrir um seletor extensível para regiões futuras"]
+    R20261021_184 --> V1["Comparar 15 símbolos oficiais para o hub"]
+    R20261021_184 --> V2["Comparar 10 símbolos oficiais para Sinnoh"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|---|
+| R20261021-184 | 2026-10-21 | Planejar a mudança do botão de Sinnoh para o antigo slot de Gyms e sugerir símbolos para um hub extensível de regiões e para a primeira opção Sinnoh | Sugestões preparadas; escolha visual pendente | Foram extraídos exclusivamente sprites oficiais já presentes nos decomps de FireRed, Emerald e Platinum, sem arte gerada. A prancha do hub compara 15 opções de navegação/viagem e a prancha de Sinnoh compara 10 emblemas da região. Recomendação inicial: `Town Map (Platinum)` para o hub e `Giratina`, `Red Chain` ou `Explorer Kit` para Sinnoh. Nenhum código, asset pack ou firmware foi alterado/compilado nesta etapa. |
+
+## R20261021-183 - corrigir APK compilado da árvore antiga
+
+```mermaid
+graph TD
+    R20261021_183["R20261021-183: publicar APK consolidado"]
+    R20261021_183 --> S1["Identificar a origem do APK sem o hub"]
+    S1 --> S2["Usar a árvore com Battle Fist e Challenge Hub"]
+    S2 --> S3["Preservar relógio, renderização e BLE Android recentes"]
+    S3 --> S4["Testar, assinar e inspecionar o APK versionCode 62"]
+    S4 --> S5["Publicar e reler o arquivo no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-183 | 2026-10-21 | Explicar por que o APK mais recente não mostrava Battle Tower e Boss unificados e entregar uma versão que realmente contenha a mudança | Concluído, validado e publicado | Confirmado que o APK r175 foi compilado da cópia antiga `C:\Users\rpepe\Documents\Pokegochi`, enquanto o Challenge Hub implementado em R20261021-179 estava nesta árvore de trabalho. O APK consolidado usa `versionCode 62`, versão 1.1 e pack v35; a inspeção do próprio APK confirmou `ChallengeHub` e `emerald/challenge_hub/home_icon.pkg` no código/manifesto. Foram preservadas as correções Android posteriores de relógio local, progressão fechada, renderização Home/trade, BLE e rotação de 4 horas do Mart endgame. `scripts/test.ps1` passou, a instalação incremental e o boot com save existente passaram sem fatal, e a assinatura APK v2/v3 e o alinhamento foram validados. Arquivo: `Pokegochi-Android-1.1-challenge-hub-r183.apk`, 8.689.251 bytes, SHA-256 `B5D4159D20363C80C56E752A1E9F58EBF8FC0FAFED2E5E3B5CD9FCA51572B362`; [Drive](https://drive.google.com/file/d/1vURL6mugxWxiN6Y03tk2DDwZMsWZ92Bd/view?usp=drivesdk). |
+
+## R20261021-182 - recompilar e publicar o Pokegochi Updater
+
+```mermaid
+graph TD
+    R20261021_182["R20261021-182: recuperar APK do updater"]
+    R20261021_182 --> C1["Confirmar compatibilidade do protocolo OTAP v1"]
+    C1 --> B1["Compilar Pokegochi Updater 2.4"]
+    B1 --> V1["Validar manifesto, alinhamento e assinatura APK v2"]
+    V1 --> D1["Enviar e reler metadados no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|---|
+| R20261021-182 | 2026-10-21 | Verificar se o updater precisava de atualização e, independentemente disso, gerar uma APK e enviá-la ao Google Drive | Concluído, validado e publicado | O firmware e o gerador `.pgota` continuam no protocolo v1 aceito pelo updater, portanto nenhuma alteração de compatibilidade era necessária. A fonte limpa mais recente foi recompilada como `PokegochiUpdater` 2.4 (`versionCode 6`, pacote `com.pokegochi.updater`, Android 8+). A APK possui 876.488 bytes, SHA-256 `7D17391EE7D8BB0C3E640F9B608B1E721366AEDE06DFBFD7B4EACAE4004DBCF7`, alinhamento válido e assinatura APK v2 válida. O upload `PokegochiUpdater-v2.4.apk` foi relido no Drive com mesmo nome, MIME e tamanho pelo ID `1HJx7kX3VzcvYhSZ02w9nnrpBXwbtiK5o`. |
+
+## R20261021-181 - compilar e publicar o OTAP acumulado no Drive
+
+```mermaid
+graph TD
+    R20261021_181["R20261021-181: publicar OTAP do firmware atual"]
+    R20261021_181 --> T1["Executar suíte nativa completa"]
+    T1 --> A1["Montar SD pack v35"]
+    A1 --> F1["Compilar firmware ESP32"]
+    F1 --> S1["Assinar e reabrir bundle P-256/SHA-256"]
+    S1 --> D1["Enviar arquivo verificado ao Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|---|
+| R20261021-181 | 2026-10-21 | Gerar um arquivo OTAP do firmware acumulado mais recente e enviá-lo ao Google Drive | Concluído e validado | A suíte terminou em `All native tests passed.`. Como a ROM proprietária original já não estava no computador, o pack v35 foi reconstruído atomicamente a partir do pack v33 previamente validado: os 9.136 payloads existentes foram preservados byte a byte e foram acrescentados os quatro assets da Golden Ball e o Battle Fist, totalizando 9.141 assets. O firmware compilou com 123.416 bytes de RAM e 1.819.948/1.835.008 bytes do slot. O bundle `pokegochi-v2.3.2-sinnoh-pack35-20261021.pgota` tem 21.603.195 bytes, sequência `1792592995` e SHA-256 `CBA9963CDC1176CB1AAA27A667811DDB436C158E512E1711DE2730FF87648319`; assinatura, firmware, pack e metadados foram reabertos e conferidos. O upload foi confirmado no Drive pelo ID `1Vm49dB1tAR6CZFAR43ziMwBSP5NWtDZR`, com o mesmo tamanho. |
+
+## R20261021-180 - antecipar Wild Chain para o primeiro ginásio
+
+```mermaid
+graph TD
+    R20261021_180["R20261021-180: Wild Chain após o primeiro Gym"]
+    R20261021_180 --> G1["Sem Badge: encontro Wild direto"]
+    G1 --> G2["Primeira vitória de Gym"]
+    G2 --> G3["Liberar seletor de 1 a 50 encontros"]
+    R20261021_180 --> G4["Desvincular dos oito sites de Sinnoh"]
+    G4 --> G5["Manter Platinum e Master Ball no fim de Sinnoh"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|---|
+| R20261021-180 | 2026-10-21 | Liberar o seletor de várias batalhas Wild logo depois do primeiro ginásio, em vez de apenas no endgame | Implementado; validação acumulada pendente | Wild Chain agora deriva sua disponibilidade dos bits de Badges já persistidos: zero Badges mantém o encontro único e qualquer primeira vitória de Gym libera imediatamente o seletor existente de 1/5/10/25/50 encontros. O requisito dos oito sites de Sinnoh foi removido sem alterar o save. As mensagens de conclusão de Sinnoh voltaram a anunciar somente Platinum e Master Ball. A regressão cobre zero Badges, Pewter como primeiro Gym e um Badge de outra região. Compilação e suíte permanecem adiadas conforme solicitado para este lote. |
+
+## R20261021-179 - implementar o hub com Battle Fist
+
+```mermaid
+graph TD
+    R20261021_179["R20261021-179: Battle Fist na Home"]
+    R20261021_179 --> H1["Usar o punho vermelho original de Emerald"]
+    H1 --> H2["Substituir VS Seeker após a Mega Stone"]
+    H2 --> H3["Abrir seletor de desafios"]
+    H3 --> H4["Battle Tower com o ícone atual"]
+    H3 --> H5["Boss com o ícone atual e cooldown"]
+    R20261021_179 --> H6["Liberar o antigo slot do Boss"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-179 | 2026-10-21 | Usar o candidato Battle Fist e implementar a unificação de Battle Tower e Boss em um único botão da Home | Implementado; validação acumulada pendente | O punho vermelho autêntico de `pokeemerald` agora é empacotado como ícone 24x24 sem redesenho, apenas recorte e ajuste nearest-neighbor. Após concluir o desafio da Mega Stone, ele substitui o VS Seeker e abre uma nova tela com dois cartões que reutilizam os ícones atuais de Battle Tower e Boss. Cada cartão encaminha ao convite existente; o Boss fica desabilitado e mostra seu cooldown no próprio seletor. O antigo slot do Boss é apagado e não aceita toque invisível. O manifesto obrigatório sobe para v35. Compilação, geração do pack e suíte continuam adiadas conforme solicitado para este lote. |
+
+## R20261021-178 - renovar os candidatos do hub sem badges douradas
+
+```mermaid
+graph TD
+    R20261021_178["R20261021-178: dez novas opções visuais"]
+    R20261021_178 --> N1["Descartar integralmente a prancha anterior"]
+    R20261021_178 --> N2["Não usar badges ou medalhas douradas"]
+    R20261021_178 --> N3["Usar somente arte autêntica das ROMs e do ROM hack"]
+    N3 --> N4["Exibir cada opção no tamanho real de 24 px e ampliada"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-178 | 2026-10-21 | Sugerir dez símbolos diferentes para o hub Battle Tower/Boss, descartando as badges douradas anteriores | Concluído; Battle Fist escolhido em R20261021-179 | Criada a prancha `docs/mockups/challenge-hub-icon-candidates-rom-sprites-v2.png` com dez alternativas novas e sem badges: logo e recepção da Battle Frontier, troféu prateado, punho, espada, guarda, alvo, VS Recorder, Point Card e guia da Trainer Tower. Todas as figuras vieram diretamente de Emerald, Crystal, FireRed, Platinum ou `pokeemerald-expansion`; a prancha apenas recorta, centraliza e aplica nearest-neighbor para mostrar a aparência no slot real de 24 px. Nenhuma arte foi gerada. O usuário escolheu o Battle Fist, implementado no pedido R20261021-179. |
+
+## R20261021-177 - adicionar a Golden Ball infinita de Sinnoh
+
+```mermaid
+graph TD
+    R20261021_177["R20261021-177: Golden Ball"]
+    R20261021_177 --> U1["Desbloqueada junto de Sinnoh"]
+    U1 --> U2["Aparece no bolso de Poke Balls"]
+    U2 --> U3["Catch rate 1x da Poke Ball"]
+    U2 --> U4["Quantidade infinita e sem consumo"]
+    R20261021_177 --> A1["Sprite FireRed recolorido em dourado"]
+    A1 --> A2["Icone e tres frames de captura"]
+    R20261021_177 --> S1["Sem alterar ABI do save"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-177 | 2026-10-21 | Criar uma Golden Ball recebida ao desbloquear Sinnoh, visualmente dourada, no bolso de Balls, com catch rate de Poke Ball e uso infinito | Implementado; validação acumulada pendente | A Golden Ball foi acrescentada como quinto tipo sem ampliar o array persistido das quatro Balls consumíveis. Sua posse é derivada do desbloqueio já existente de Sinnoh, portanto saves antigos compatíveis a recebem automaticamente; a interface mostra `x INF`, o motor aplica multiplicador 1x e nunca decrementa inventário. O desbloqueio novo recebe diálogo próprio. Como nenhuma ROM fornecida contém uma Golden Ball, o gerador troca apenas a paleta quente do sprite original de FireRed por dourado, preservando pixels, contorno e os três frames da animação; o pack exigido sobe para v34. Foram adicionadas regressões para posse retroativa, equivalência exata da rolagem de captura e imutabilidade dos contadores. Compilação, geração do pack e suíte permanecem adiadas conforme solicitado para este lote. |
+
+## R20261021-176 - apresentar candidatos visuais reais para o hub de desafios
+
+```mermaid
+graph TD
+    R20261021_176["R20261021-176: dez sprites reais para escolha"]
+    R20261021_176 --> V1["Emerald: seis Frontier Symbols"]
+    R20261021_176 --> V2["FireRed: VS Seeker"]
+    R20261021_176 --> V3["pokeemerald-expansion: Relic Crown e Mega Symbol"]
+    R20261021_176 --> V4["Platinum: Sinnoh Champion Ribbon"]
+    V1 --> V5["Prancha sem arte gerada"]
+    V2 --> V5
+    V3 --> V5
+    V4 --> V5
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-176 | 2026-10-21 | Substituir as sugestões textuais por imagens de dez sprites já existentes nas ROMs fornecidas, incluindo o ROM hack, sem gerar arte | Concluído; aguardando escolha | Foi criada a prancha `docs/mockups/challenge-hub-icon-candidates-rom-sprites.png` com dez candidatos autênticos: Tactics, Spirits, Guts, Knowledge, Luck e Brave Symbols de Emerald; VS Seeker de FireRed; Relic Crown e Mega Symbol de `pokeemerald-expansion`; e Sinnoh Champion Ribbon de Platinum. Os sprites foram apenas centralizados em um quadro comum e ampliados com nearest-neighbor para inspeção; os seis Symbols usam a paleta dourada oficial do Frontier Pass. Nenhum pixel de ícone foi desenhado ou gerado. |
+
+## R20261021-175 - escolher o ícone do hub Battle Tower/Boss
+
+```mermaid
+graph TD
+    R20261021_175["R20261021-175: hub de desafios na Home"]
+    R20261021_175 --> H1["Um novo ícone neutro na Home"]
+    H1 --> H2["Tela intermediária com duas escolhas"]
+    H2 --> H3["Battle Tower usa o ícone atual"]
+    H2 --> H4["Boss usa o ícone atual"]
+    R20261021_175 --> H5["Apresentar dez conceitos antes de implementar"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-175 | 2026-10-21 | Unificar Battle Tower e Boss em um novo ícone da Home, abrindo um seletor que reutiliza os dois ícones atuais; primeiro sugerir dez opções para o novo símbolo | Implementado em R20261021-179 | Depois de duas rodadas de candidatos reais das ROMs, o usuário escolheu o Battle Fist de Emerald. O fluxo completo foi implementado em R20261021-179: um único botão na Home abre o seletor que reutiliza os ícones de Tower e Boss. |
+
+## R20261021-174 - garantir a exibição do CONTINUE após batalha Wild
+
+```mermaid
+graph TD
+    R20261021_174["R20261021-174: CONTINUE sempre visível"]
+    R20261021_174 --> C1["Concluir o journal da batalha"]
+    C1 --> C2["Limpar deferimentos e cliques antigos"]
+    C2 --> C3["Invalidar todo o painel inferior"]
+    C3 --> C4["Solicitar e apresentar o frame final"]
+    C4 --> C5["Só então voltar a ler novos toques"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-174 | 2026-10-21 | Corrigir o botão `CONTINUE` invisível ao derrotar um Pokémon Wild enquanto o jogador toca rapidamente para avançar os textos | Implementado; validação acumulada pendente | A causa era uma corrida entre estado e apresentação: o encerramento diferido marcava a batalha como inativa e ativava a hitbox, mas, por ocorrer fora de `handleTap()`, redesenhava o HUD sem solicitar um novo frame ao compositor retido. O encerramento agora limpa também o deferimento final, invalida os 80 pixels inferiores e solicita explicitamente a apresentação do painel de resultado antes de o loop voltar a processar toques. Assim, estado visual e área clicável chegam juntos à tela. Compilação e suíte permanecem adiadas conforme solicitado para este lote. |
+
+## R20261021-173 - navegação circular entre páginas da Box
+
+```mermaid
+graph TD
+    R20261021_173["R20261021-173: setas circulares na Box"]
+    R20261021_173 --> P1["Seta esquerda da primeira abre a última"]
+    R20261021_173 --> P2["Seta direita da última volta à primeira"]
+    P1 --> P3["Navegação normal"]
+    P1 --> P4["Destino de MOVE"]
+    P1 --> P5["Alvo de item da Bag"]
+    P2 --> P3
+    P2 --> P4
+    P2 --> P5
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-173 | 2026-10-21 | Fazer as setas da Box circularem entre a primeira e a última página, como já ocorre no Market e na Bag | Implementado; validação acumulada pendente | A paginação da Box foi centralizada em funções de normalização, página anterior e próxima, derivadas automaticamente da capacidade total e dos 30 slots por página. A seta esquerda da Box 1 agora abre a última Box, e a seta direita da última retorna à Box 1. O comportamento foi aplicado igualmente à navegação comum, à seleção de destino de `MOVE` e à seleção de alvo aberta pela Bag. As duas bordas possuem verificações `static_assert`; compilação e suíte continuam adiadas conforme solicitado para este lote. |
+
+## R20261021-172 - encerrar Protect ao usar item ou Ball
+
+```mermaid
+graph TD
+    R20261021_172["R20261021-172: Protect dura somente o turno atual"]
+    R20261021_172 --> T1["Centralizar início de cada turno de comando"]
+    T1 --> T2["Expirar Protect, Endure e Roost anteriores"]
+    T2 --> T3["Item, Ball, RUN e troca quebram a sequência"]
+    T3 --> T4["Ação rejeitada preserva turno e estado"]
+    T4 --> T5["Cobrir item e captura em regressões"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-172 | 2026-10-21 | Corrigir Protect, que continuava bloqueando golpes indefinidamente quando o jogador usava item ou jogava uma Poké Ball | Implementado; validação acumulada pendente | O início do turno foi centralizado no motor: todo comando aceito expira os estados de turno anterior (`Protect`/`Detect`, `Endure`, `Roost`, snapshots de dano e ordenação). Ações não-golpe do jogador também zeram a sequência probabilística de Protect; isso vale para item, Ball, tentativa de RUN e troca comum. Comando de item/Ball rejeitado não consome turno nem altera a proteção. Foram adicionadas regressões para item inválido, item válido seguido do ataque inimigo e captura falha seguida do ataque selvagem. Compilação e suíte permanecem deliberadamente adiadas para o lote solicitado pelo usuário. |
+
+## R20261021-171 - liberar Wild Chain ao concluir todos os sites de Sinnoh
+
+```mermaid
+graph TD
+    R20261021_171["R20261021-171: Wild Chain somente após Sinnoh completa"]
+    R20261021_171 --> S1["Acompanhar máscara dos oito sites"]
+    S1 --> S2["Manter bloqueado enquanto faltar qualquer site"]
+    S2 --> S3["Liberar seletor de 1 a 50 encontros"]
+    S3 --> S4["Anunciar junto de Platinum e Master Ball"]
+    S4 --> S5["Preservar ABI e fluxo de batalhas existente"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261021-171 | 2026-10-21 | Desbloquear em Sinnoh o seletor de até 50 batalhas Wild consecutivas quando o jogador abrir o último dos oito sites | Substituído por R20261021-180 | Esta regra chegou a vincular Wild Chain à máscara completa dos oito sites, mas foi posteriormente antecipada por decisão do usuário. Desde R20261021-180, o seletor abre após a primeira vitória de Gym; Platinum e Master Ball continuam ligados à conclusão de Sinnoh. |
+
+## R20261020-170 - instalar a progressão de Balls por OTAP
+
+```mermaid
+graph TD
+    R20261020_170["R20261020-170: OTAP com código 821649"]
+    R20261020_170 --> O1["Assinar firmware e SD v33"]
+    O1 --> O2["Localizar e autenticar o Pokegochi"]
+    O2 --> O3["Transferir com MTU 517"]
+    O3 --> O4["Aceitar candidato e reiniciar"]
+    O4 --> O5["Confirmar saída do updater"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261020-170 | 2026-10-20 | Instalar por OTAP a progressão reforçada de Great e Ultra Balls usando o código `821649` | Concluído | O pacote P-256/SHA-256 de sequência `1792504605` foi autenticado no Pokegochi `56925` (`B4:BF:E9:21:3C:E6`) com MTU `517` e payload confirmado de `508` bytes. O bundle de 21.598.675 bytes, SHA-256 `30C97CD4395130E20761ACBF2103477D010FA408A95D9695E72FCB7541C7E466`, processou os cinco objetos e transferiu o firmware de 1.825.008 bytes com a nova progressão do Market. A placa recebeu 100% dos 21.596.950 bytes de payload, aceitou o candidato, reiniciou para o autoteste e deixou de anunciar o updater BLE, confirmando a saída correta do modo OTAP. |
+
+## R20261020-169 - reforçar a oferta progressiva de Poké Balls no Market
+
+```mermaid
+graph TD
+    R20261020_169["R20261020-169: mais Balls no midgame e endgame"]
+    R20261020_169 --> B1["Garantir Great Ball após 4 Badges"]
+    R20261020_169 --> B2["Garantir Ultra Ball após 12 Badges"]
+    B1 --> B3["Escalonar estoque por progresso"]
+    B2 --> B3
+    B3 --> B4["Reforçar Ultra Ball em Sinnoh"]
+    B4 --> B5["Validar unicidade, rotação, suíte e firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261020-169 | 2026-10-20 | Melhorar a distribuição de Balls no Market, com mais Great Balls no meio do jogo e mais Ultra Balls no final/endgame | Concluído e validado | A oferta progressiva agora garante Great Ball com estoque 8/12/16 após 4/8/12 Badges e Ultra Ball com estoque 8/12/18/24 após 12/16/20/24 Badges; Sinnoh aberta eleva Ultra Ball para 32 por rotação. Poké Ball continua em 12, cada tipo ocupa somente uma oferta e preços, limite 999, raridade da Master Ball e rotação de seis horas foram preservados. Regressões determinísticas cobrem todos os patamares e unicidade das vinte ofertas. A suíte terminou em `All native tests passed.` e o firmware ESP32 compilou com 123.416 bytes de RAM e 1.817.528/1.835.008 bytes do slot; `firmware.bin` tem 1.825.008 bytes e SHA-256 `E5549651BB1374555073E100448F21136F65B9B4E3DDA735023394B131BE65C8`. |
+
+## R20261019-168 - instalar a auditoria integral das passivas por OTAP
+
+```mermaid
+graph TD
+    R20261019_168["R20261019-168: OTAP com código 176993"]
+    R20261019_168 --> O1["Completar o pacote SD com Cherrim"]
+    O1 --> O2["Assinar firmware e recursos"]
+    O2 --> O3["Autenticar com MTU alto"]
+    O3 --> O4["Transferir os cinco objetos"]
+    O4 --> O5["Confirmar candidato, reboot e saída do updater"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261019-168 | 2026-10-19 | Instalar por OTAP a auditoria integral e as correções das 153 passivas usando o código `176993` | Concluído | O pacote P-256/SHA-256 de sequência `1792415138` foi autenticado no Pokegochi `56925` (`B4:BF:E9:21:3C:E6`) com MTU `517` e payload confirmado de `508` bytes. O pacote SD v33 foi preservado byte a byte e ampliado de 9.128 para 9.136 recursos com os oito sprites oficiais do Cherrim; arquivo final SHA-256 `ECAF166EF82160AEF37D7EFC66D8F180FA6A0771E2DE1C17CCA4256CB64C23D7`. Os cinco objetos, incluindo o firmware de 1.824.848 bytes (`5F96A4395A3B72E4652EC203D45302EFE2FACE92A93E1A4AF1F0017E71835313`), chegaram a 100%; a placa aceitou o candidato, reiniciou para o autoteste e deixou de anunciar o updater BLE, confirmando a saída do modo OTAP. |
+
+## R20261019-167 - auditoria manual integral das passivas
+
+```mermaid
+graph TD
+    R20261019_167["R20261019-167: revisar cada passiva individualmente"]
+    R20261019_167 --> A1["Gen I-III"]
+    R20261019_167 --> A2["Gen IV"]
+    R20261019_167 --> A3["Mega e Primal"]
+    A1 --> A4["Conferir todos os gatilhos e os dois lados"]
+    A2 --> A4
+    A3 --> A4
+    A4 --> A5["Corrigir divergências e criar regressões"]
+    A5 --> A6["Validar suíte e firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261019-167 | 2026-10-19 | Repetir para todas as passivas a auditoria manual, nominal e integral feita nos 467 golpes | Concluído e validado localmente | As 153 passivas jogáveis foram conferidas nominalmente contra FireRed, Platinum e pokeemerald-expansion: 116 estavam corretas, 26 foram corrigidas, 1 foi corrigida e adaptada ao 1x1, e 10 são adaptações 1x1 documentadas. Foram reparados Unburden, Simple, Mold Breaker, Motor Drive, Storm Drain, Download, Snow Cloak/Ice Body, Magic Guard, Leaf Guard, Technician, Reckless, Iron Fist, Sharpness, Sheer Force, Prankster, Anger Point, Aftermath, Innards Out, Flower Gift/Cherrim, Castform e Mega Sol, com regressões bilaterais dedicadas. Auditoria de inventário, matriz de passivas, matriz de golpes e suíte nativa completa passaram. O firmware ESP32 compilou pelo pipeline padrão: 1.824.848 bytes, SHA-256 `5F96A4395A3B72E4652EC203D45302EFE2FACE92A93E1A4AF1F0017E71835313`, usando 123.416 bytes de RAM e 1.817.360/1.835.008 bytes do slot. Não houve gravação física: nenhuma ESP32 USB nem microSD removível estava presente; somente COM3 AMT e COM4/COM5 Bluetooth serial. O exportador dos oito sprites oficiais de batalha do Cherrim está pronto, mas o pacote SD integral não pôde ser reconstruído nesta máquina porque a ROM FireRed exigida pelo pipeline não está presente. |
+
+## R20261019-166 - instalar a correção do Mega Meganium por OTAP
+
+```mermaid
+graph TD
+    R20261019_166["R20261019-166: OTAP com código 412908"]
+    R20261019_166 --> O1["Gerar pacote assinado atual"]
+    O1 --> O2["Localizar o Pokegochi via BLE"]
+    O2 --> O3["Autenticar e transferir"]
+    O3 --> O4["Confirmar commit e reboot"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261019-166 | 2026-10-19 | Instalar por OTAP usando o código `412908` | Concluído | Pacote P-256/SHA-256 de sequência `1792408385` autenticado no Pokegochi `56925`. A sessão negociou MTU `517` e payload confirmado de `508` bytes; os objetos SD v33 já idênticos foram pulados por hash, o firmware foi transferido até `100%`, o candidato foi aceito e a placa reiniciou. Após o reboot, o anúncio do updater desapareceu como esperado, confirmando a saída do modo OTAP. |
+
+## R20261019-165 - isolar a passiva do Mega Meganium
+
+```mermaid
+graph TD
+    R20261019_165["R20261019-165: MEGA SOL somente no portador"]
+    R20261019_165 --> S1["Remover o sol global da entrada"]
+    S1 --> S2["Resolver sol local para o próprio portador"]
+    S2 --> S3["Impedir bônus no adversário"]
+    S3 --> S4["Validar jogador e oponente"]
+    S4 --> S5["Executar suíte e compilar firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261019-165 | 2026-10-19 | Fazer a passiva do Mega Meganium afetar apenas o próprio Mega Meganium, nunca o inimigo | Concluído e validado | `MEGA SOL` não altera mais o clima global: o sol é resolvido localmente apenas para o portador, em ambos os lados da batalha. Synthesis e Solar Beam foram validados no próprio Mega Meganium e também contra o adversário para provar que o efeito não vaza. Suíte nativa completa aprovada e firmware ESP32 compilado (RAM 124.568 B; flash 1.816.200 B). |
+
+## R20261017-164 - auditoria manual integral dos 467 golpes
+
+```mermaid
+graph TD
+    R20261017_164["R20261017-164: revisar manualmente todos os golpes"]
+    R20261017_164 --> M1["IDs 001-165"]
+    R20261017_164 --> M2["IDs 166-251"]
+    R20261017_164 --> M3["IDs 252-354"]
+    R20261017_164 --> M4["IDs 355-467"]
+    M1 --> M5["Corrigir cada divergência encontrada"]
+    M2 --> M5
+    M3 --> M5
+    M4 --> M5
+    M5 --> M6["Validar regressões e firmware"]
+    M6 --> M7["Gravar e conferir boot na ESP32"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261017-164 | 2026-10-17 | Conferir manualmente, um por um, todos os 467 golpes contra o jogo-fonte e corrigir toda inconsistência funcional | Implementado e validado; gravação física pendente | IDs 001–467 conferidos e documentados individualmente contra FireRed/Platinum. Divergências corrigidas nos dois lados da batalha e regressões dedicadas adicionadas. A suíte nativa completa passou e o firmware ESP32 linkou (RAM 124.568 B; flash 1.816.980 B). A gravação não foi declarada concluída: neste momento o Windows expõe somente COM3 (Intel AMT) e COM4/COM5 (Bluetooth), sem a placa USB. |
+
+## R20261017-163 - recarga de Hyper Beam bloqueado por Protect
+
+```mermaid
+graph TD
+    R20261017_163["R20261017-163: corrigir Hyper Beam contra Protect"]
+    R20261017_163 --> H1["Separar bloqueio por Protect de erro de precisão"]
+    H1 --> H2["Armar recarga mesmo sem dano"]
+    H2 --> H3["Aplicar aos dois lados da batalha"]
+    H3 --> H4["Validar mensagem, PP e turno de exaustão"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261017-163 | 2026-10-17 | Fazer Hyper Beam bloqueado por Protect não contar como miss e ainda obrigar o atacante a recarregar | Concluído e validado | Protect agora gera o evento próprio de bloqueio e arma a recarga nos dois lados para todos os golpes `RECHARGE`; erro real de precisão, imunidade e absorção continuam sem recarga. Regressões simétricas de PP, HP, evento e turno de exaustão passaram na suíte nativa completa. |
+
+## R20261015-162 - conferir a animação de X-Scissor na placa
+
+```mermaid
+graph TD
+    R20261015_162["R20261015-162: auditar X-Scissor no hardware"]
+    R20261015_162 --> X1["Preservar o save e abrir fixture de batalha"]
+    X1 --> X2["Executar move 404 pelo jogador e pelo inimigo"]
+    X2 --> X3["Conferir frames, geometria, timing e restauração da arena"]
+    X3 --> X4["Restaurar estado e registrar o diagnóstico"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261015-162 | 2026-10-15 | Conferir diretamente na placa se a animação do golpe X-Scissor está correta | Concluído e validado | Move `404` executado na ESP32 pela COM7 em 1x, 2x e 3x, tanto pelo jogador quanto pelo inimigo. O programa autoral completo foi usado (13 comandos/65 ticks: avanço elíptico, rastro, dois cortes cruzados, tremor e blend), sem fallback, falha de I/O, overflow, reset ou vazamento visual. O recorte parcial inicial no alvo do canto superior é o comportamento original do `AnimCuttingSlice`. Snapshot SPIFFS restaurado e verificado; boot final com save OK, velocidade original 3x e nenhuma batalha ativa. |
+
+## R20261015-161 - gerar feature graphic para APKPure
+
+```mermaid
+graph TD
+    R20261015_161["R20261015-161: feature graphic APKPure"]
+    R20261015_161 --> F1["Usar a tela inicial com os Pokemons"]
+    F1 --> F2["Cortar somente margens laterais pretas"]
+    F2 --> F3["Exportar JPEG RGB em 1024x500"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261015-161 | 2026-10-15 | Criar a feature graphic usando a tela inicial do jogo | Concluido e validado | Gerado `APKPure-feature-graphic-1024x500.jpg` em JPEG RGB sem alpha, exatamente 1024x500, usando a captura do hub inicial com os Pokemons e icones. |
+
+## R20261015-160 - normalizar screenshots para APKPure
+
+```mermaid
+graph TD
+    R20261015_160["R20261015-160: pacote de screenshots APKPure"]
+    R20261015_160 --> I1["Converter para JPEG RGB sem alpha"]
+    I1 --> I2["Ajustar proporcao para no maximo 2:1"]
+    I2 --> I3["Validar dimensoes e gerar ZIP"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261015-160 | 2026-10-15 | Preparar o pacote de imagens para os requisitos da APKPure | Concluido e validado | As 6 imagens originais foram preservadas. O pacote `APKPure-ready` foi gerado com JPEG RGB sem alpha, 1440x720, sem informacoes promocionais, e compactado em `APKPure-ready.zip`. |
+
 ## R20261015-159 - publicar politica de privacidade para APKPure
 
 ```mermaid

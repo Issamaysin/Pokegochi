@@ -1,17 +1,16 @@
-# Pokegochi v2.2
+# Pokegochi Firmware 3.0 / Android App 2.0
 
 Pokegochi is a persistent Pokemon-inspired virtual pet and battle game for the
 ESP32-2432S028R (CYD). It adapts the FireRed visual language and Generation III
 battle rules to a 320x240 landscape touchscreen.
 
-The ready-to-install v2.2 distribution is in
-[`POKEGOCHI_V2/`](POKEGOCHI_V2/README.md). It contains the firmware images,
-FAT32 microSD package, Android Bluetooth updater, signed OTA package,
-standalone Windows installation scripts, hardware documentation, and the
-battery/charging/soldering guide.
+The current Android APK and ESP32 firmware are published together in the
+[GitHub releases](https://github.com/Issamaysin/Pokegochi/releases). The legacy
+ready-to-install v2.2 hardware distribution remains in
+[`POKEGOCHI_V2/`](POKEGOCHI_V2/README.md).
 
-See the [v2.2 release notes](docs/RELEASE_NOTES_V2.2.md) for the complete
-gameplay, interface, updater, and reliability changes in this release.
+See the [3.0 / 2.0 release notes](docs/RELEASE_NOTES_V3.0.md) for the current
+gameplay, compatibility, build and installation notes.
 
 ## Current game
 

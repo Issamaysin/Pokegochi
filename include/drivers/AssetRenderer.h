@@ -65,6 +65,10 @@ class AssetRenderer {
   // a smaller bank while the radio is active. Disabling BLE restores the
   // normal 64 KiB renderer bank.
   static void releaseSceneWorkspaceForRadio();
+  // SPIFFS may need a several-KiB contiguous allocation while atomically
+  // replacing a save record. On the no-PSRAM board the renderer can lend its
+  // arena for that synchronous transaction and recreate it immediately after.
+  static void releaseSceneWorkspaceForStorage();
   static bool restoreSceneWorkspace(bool radioActive);
   // Shared short-lived workspace for synchronous UI algorithms. The renderer
   // and text layout never run concurrently on the Arduino loop task, allowing
@@ -182,6 +186,9 @@ class AssetRenderer {
   // a numbered sequence first keeps the following payload reads contiguous
   // instead of bouncing between the archive index and image data.
   static bool primePreload(const char* path);
+  // Resolve a complete UI manifest with one lower-bound and a sequential
+  // archive-index scan when that is cheaper than independent binary searches.
+  static bool primePreloads(const char* const* paths, uint8_t count);
   static void endPreloadBatch();
   // True only when an asset already lives in the current RAM scene cache.
   // Battle scenes use this to detect that another screen (Bag, Party, etc.)

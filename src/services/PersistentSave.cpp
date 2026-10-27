@@ -9,7 +9,8 @@
 #include <esp_system.h>
 #endif
 
-static_assert(sizeof(GameSave) < 40000, "GameSave no longer fits the redundant SPIFFS layout");
+static_assert(sizeof(GameSave) < UINT16_MAX,
+              "GameSave no longer fits the 16-bit redundant SPIFFS layout");
 
 namespace {
 struct CurrentSaveHeader {
@@ -56,6 +57,8 @@ void initializeNewSave(GameSave& save) {
   save.creativeBackgrounds.activeSlot = 0xFF;
   save.berryGarden.rngState = 0x42455252UL;
   save.sinnoh.rngState = 0x53494E4EU;
+  save.unova.rngState = 0x554E4F56UL;
+  save.unova.royalUnovaLastDay = UINT32_MAX;
   save.towerDefense.rngState = 0x544F5745UL;
   save.towerDefense.unlockedStages = 1U;
   save.towerDefense.enabledDefendersMask = 0x07U;
@@ -183,6 +186,46 @@ bool PersistentSave::inspectCurrentRecord(const char* key, uint32_t& sequence) c
   uint32_t storedCrc = 0;
   uint32_t trailingPadding = 0;
   const bool complete = file.readBytes(reinterpret_cast<char*>(&storedCrc), sizeof(storedCrc)) == sizeof(storedCrc) &&
+      file.readBytes(reinterpret_cast<char*>(&trailingPadding), sizeof(trailingPadding)) == sizeof(trailingPadding);
+  file.close();
+  if (!complete || storedCrc != ~crc) return false;
+  sequence = header.sequence;
+  return true;
+}
+
+bool PersistentSave::inspectAnyFileRecord(const char* key, uint32_t& sequence) const {
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file || file.size() < sizeof(CurrentSaveHeader) + 2U * sizeof(uint32_t)) {
+    if (file) file.close();
+    return false;
+  }
+  CurrentSaveHeader header{};
+  if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) != sizeof(header) ||
+      header.magic != kMagic || header.version < 21U ||
+      header.version > kFormatVersion || !header.payloadSize ||
+      header.payloadSize > sizeof(GameSave) ||
+      file.size() != sizeof(CurrentSaveHeader) + header.payloadSize +
+                         2U * sizeof(uint32_t)) {
+    file.close();
+    return false;
+  }
+  uint32_t crc = crc32Update(0xFFFFFFFFU,
+      reinterpret_cast<const uint8_t*>(&header), sizeof(header));
+  uint8_t chunk[256];
+  size_t remaining = header.payloadSize;
+  while (remaining) {
+    const size_t requested = std::min(remaining, sizeof(chunk));
+    if (file.readBytes(reinterpret_cast<char*>(chunk), requested) != requested) {
+      file.close();
+      return false;
+    }
+    crc = crc32Update(crc, chunk, requested);
+    remaining -= requested;
+  }
+  uint32_t storedCrc = 0;
+  uint32_t trailingPadding = 0;
+  const bool complete =
+      file.readBytes(reinterpret_cast<char*>(&storedCrc), sizeof(storedCrc)) == sizeof(storedCrc) &&
       file.readBytes(reinterpret_cast<char*>(&trailingPadding), sizeof(trailingPadding)) == sizeof(trailingPadding);
   file.close();
   if (!complete || storedCrc != ~crc) return false;
@@ -617,6 +660,39 @@ bool PersistentSave::readRecordV43(const char* key, RecordV43& record) {
   return read && record.magic == kMagic && record.version == 43 &&
          record.payloadSize == sizeof(GameSaveV43) && record.crc == calculatedCrc;
 }
+
+bool PersistentSave::readRecordV44(const char* key, RecordV44& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV44)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV44) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV44, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 44 &&
+         record.payloadSize == sizeof(GameSaveV44) && record.crc == calculatedCrc;
+}
+bool PersistentSave::readRecordV45(const char* key, RecordV45& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV45)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV45) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV45, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 45 &&
+         record.payloadSize == sizeof(GameSaveV45) && record.crc == calculatedCrc;
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -675,6 +751,11 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     // offer[0].remaining stays zero so Home performs the normal rotation the
     // first time the migrated Mart is opened, without coupling save loading
     // to the Economy module.
+  };
+  auto migrateFrozenBattle = [&](const BattleStateV34& oldBattle) {
+    // initializeNewSave() has already zeroed every V45 extension. Copy only
+    // the byte-exact battle prefix written by V34--V44.
+    std::memcpy(&save.battle, oldBattle.bytes, sizeof(oldBattle.bytes));
   };
   auto migrateBattleV25 = [&](const BattleStateV25& old) {
     save.battle.active=old.active;save.battle.kind=old.kind;save.battle.outcome=old.outcome;
@@ -829,6 +910,120 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     std::memset(save.battle.opponentEncoreTurns,0,sizeof(save.battle.opponentEncoreTurns));
   };
   if (!found) {
+    // V46 enlarges Box/Dex storage and appends Unova state. Preserve the
+    // complete V45 Sinnoh payload before initializing the new tail.
+    static_assert(sizeof(Record) >= sizeof(RecordV45),
+                  "V46 record must hold the V45 migration buffer");
+    RecordV45* legacy45 = reinterpret_cast<RecordV45*>(record);
+    bool legacy45Found = false;
+    uint32_t legacy45Sequence = 0;
+    for (const char* key : {"save_a", "save_b"}) {
+      std::memset(legacy45, 0, sizeof(*legacy45));
+      if (!readRecordV45(key, *legacy45) ||
+          (legacy45Found && !isNewer(legacy45->sequence, legacy45Sequence))) continue;
+      initializeNewSave(save);
+      const GameSaveV45& old = legacy45->payload;
+      save.playTimeSeconds = old.playTimeSeconds;
+      save.bootCount = old.bootCount;
+      save.flags = old.flags;
+      save.activePetSlot = old.activePetSlot;
+      save.collection = old.collection;
+      save.inventory = old.inventory;
+      save.encounterCharges = old.encounterCharges;
+      save.wildEncounterClock = old.wildEncounterClock;
+      std::memcpy(&save.battle,old.battle.bytes,sizeof(old.battle.bytes));
+      save.pokedex = old.pokedex;
+      save.gymProgress = old.gymProgress;
+      save.money = old.money;
+      save.mart = old.mart;
+      save.moveLearning = old.moveLearning;
+      save.evolutionQueue = old.evolutionQueue;
+      save.egg = old.egg;
+      save.settings = old.settings;
+      save.ownedMachines = old.ownedMachines;
+      save.statistics = old.statistics;
+      save.martSeenDay = old.martSeenDay;
+      save.ppItems = old.ppItems;
+      save.homePetPlacement = old.homePetPlacement;
+      save.berryGarden = old.berryGarden;
+      save.creativeBackgrounds = old.creativeBackgrounds;
+      save.specialHeldItems = old.specialHeldItems;
+      save.lastNpcGiftDay = old.lastNpcGiftDay;
+      save.clockLocalEpochSeconds = old.clockLocalEpochSeconds;
+      save.bossCooldownSecondsRemaining = old.bossCooldownSecondsRemaining;
+      save.bossEncounter = old.bossEncounter;
+      save.eggInventory = old.eggInventory;
+      save.sinnoh = old.sinnoh;
+      save.towerDefense = old.towerDefense;
+      save.gen4UniqueItems = old.gen4UniqueItems;
+      legacy45Sequence = legacy45->sequence;
+      legacy45Found = true;
+    }
+    if (legacy45Found) {
+      sequence_ = legacy45Sequence;
+      nextSlotA_ = true;
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
+  }
+  if (!found) {
+    // V45 appends Gen-IV battle state. Preserve the complete V44 save and
+    // initialize only the new battle tail to clean defaults.
+    static_assert(sizeof(Record) >= sizeof(RecordV44),
+                  "V45 record must hold the V44 migration buffer");
+    RecordV44* legacy44 = reinterpret_cast<RecordV44*>(record);
+    bool legacy44Found = false;
+    uint32_t legacy44Sequence = 0;
+    for (const char* key : {"save_a", "save_b"}) {
+      std::memset(legacy44, 0, sizeof(*legacy44));
+      if (!readRecordV44(key, *legacy44) ||
+          (legacy44Found && !isNewer(legacy44->sequence, legacy44Sequence))) continue;
+      initializeNewSave(save);
+      const GameSaveV44& old = legacy44->payload;
+      save.playTimeSeconds = old.playTimeSeconds;
+      save.bootCount = old.bootCount;
+      save.flags = old.flags;
+      save.activePetSlot = old.activePetSlot;
+      save.collection = old.collection;
+      save.inventory = old.inventory;
+      save.encounterCharges = old.encounterCharges;
+      save.wildEncounterClock = old.wildEncounterClock;
+      migrateFrozenBattle(old.battle);
+      save.pokedex = old.pokedex;
+      save.gymProgress = old.gymProgress;
+      save.money = old.money;
+      save.mart = old.mart;
+      save.moveLearning = old.moveLearning;
+      save.evolutionQueue = old.evolutionQueue;
+      save.egg = old.egg;
+      save.settings = old.settings;
+      save.ownedMachines = old.ownedMachines;
+      save.statistics = old.statistics;
+      save.martSeenDay = old.martSeenDay;
+      save.ppItems = old.ppItems;
+      save.homePetPlacement = old.homePetPlacement;
+      save.berryGarden = old.berryGarden;
+      save.creativeBackgrounds = old.creativeBackgrounds;
+      save.specialHeldItems = old.specialHeldItems;
+      save.lastNpcGiftDay = old.lastNpcGiftDay;
+      save.clockLocalEpochSeconds = old.clockLocalEpochSeconds;
+      save.bossCooldownSecondsRemaining = old.bossCooldownSecondsRemaining;
+      save.bossEncounter = old.bossEncounter;
+      save.eggInventory = old.eggInventory;
+      save.sinnoh = old.sinnoh;
+      save.towerDefense = old.towerDefense;
+      save.gen4UniqueItems = old.gen4UniqueItems;
+      legacy44Sequence = legacy44->sequence;
+      legacy44Found = true;
+    }
+    if (legacy44Found) {
+      sequence_ = legacy44Sequence;
+      nextSlotA_ = true;
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
+  }
+  if (!found) {
     // V43 predates the Gen 4 signature-item sidecar. Copy its complete
     // payload into the V44 record and leave gen4UniqueItems at clean defaults;
     // the normal Home reconciliation immediately backfills rewards for any
@@ -852,7 +1047,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.inventory = old.inventory;
       save.encounterCharges = old.encounterCharges;
       save.wildEncounterClock = old.wildEncounterClock;
-      save.battle = old.battle;
+      migrateFrozenBattle(old.battle);
       save.pokedex = old.pokedex;
       save.gymProgress = old.gymProgress;
       save.money = old.money;
@@ -909,7 +1104,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.inventory = old.inventory;
       save.encounterCharges = old.encounterCharges;
       save.wildEncounterClock = old.wildEncounterClock;
-      save.battle = old.battle;
+      migrateFrozenBattle(old.battle);
       save.pokedex = old.pokedex;
       save.gymProgress = old.gymProgress;
       save.money = old.money;
@@ -965,7 +1160,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.inventory = old.inventory;
       save.encounterCharges = old.encounterCharges;
       save.wildEncounterClock = old.wildEncounterClock;
-      save.battle = old.battle;
+      migrateFrozenBattle(old.battle);
       save.pokedex = old.pokedex;
       save.gymProgress = old.gymProgress;
       save.money = old.money;
@@ -1013,7 +1208,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.flags=old.flags;save.activePetSlot=old.activePetSlot;
       save.collection=old.collection;save.inventory=old.inventory;
       save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
-      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      migrateFrozenBattle(old.battle);save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
       save.money=old.money;save.mart=old.mart;save.moveLearning=old.moveLearning;
       save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
       save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
@@ -1067,7 +1262,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.flags=old.flags;save.activePetSlot=old.activePetSlot;
       save.collection=old.collection;save.inventory=old.inventory;
       save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
-      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      migrateFrozenBattle(old.battle);save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
       save.money=old.money;save.mart=old.mart;save.moveLearning=old.moveLearning;
       save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
       save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
@@ -1110,7 +1305,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.flags=old.flags;save.activePetSlot=old.activePetSlot;
       save.collection=old.collection;save.inventory=old.inventory;
       save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
-      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      migrateFrozenBattle(old.battle);save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
       save.money=old.money;save.mart=old.mart;save.moveLearning=old.moveLearning;
       save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
       save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
@@ -1138,7 +1333,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.flags=old.flags;save.activePetSlot=old.activePetSlot;
       save.collection=old.collection;save.inventory=old.inventory;
       save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
-      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      migrateFrozenBattle(old.battle);save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
       save.money=old.money;save.mart=old.mart;save.moveLearning=old.moveLearning;
       save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
       save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
@@ -1162,7 +1357,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.flags=old.flags;save.activePetSlot=old.activePetSlot;
       save.collection=old.collection;save.inventory=old.inventory;
       save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
-      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      migrateFrozenBattle(old.battle);save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
       save.money=old.money;migrateLegacyMart(old.mart);save.moveLearning=old.moveLearning;
       save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
       save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
@@ -1188,7 +1383,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       save.flags=old.flags;save.activePetSlot=old.activePetSlot;
       save.collection=old.collection;save.inventory=old.inventory;
       save.encounterCharges=old.encounterCharges;save.wildEncounterClock=old.wildEncounterClock;
-      save.battle=old.battle;save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
+      migrateFrozenBattle(old.battle);save.pokedex=old.pokedex;save.gymProgress=old.gymProgress;
       save.money=old.money;migrateLegacyMart(old.mart);save.moveLearning=old.moveLearning;
       save.evolutionQueue=old.evolutionQueue;save.egg=old.egg;save.settings=old.settings;
       save.ownedMachines=old.ownedMachines;save.statistics=old.statistics;
@@ -1253,7 +1448,8 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
       if(save.battle.opponentIndex<kOpponentTeamCapacity&&
          save.battle.opponentMoveEffects[save.battle.opponentIndex].transformed){
         OwnedPokemon& opponent=save.battle.opponents[save.battle.opponentIndex];
-        opponent.speciesId=132;opponent.form=0;CollectionLogic::refreshAbility(opponent);
+        opponent.speciesId=132;opponent.form=0;
+        CollectionLogic::refreshAbility(opponent,3U);
         opponent.moves[0]=static_cast<MoveId>(144);opponent.movePp[0]=10;
         for(uint8_t slot=1;slot<kMoveSlots;++slot){opponent.moves[slot]=MoveId::None;opponent.movePp[slot]=0;}
         save.battle.opponentMoveEffects[save.battle.opponentIndex].transformed=false;
@@ -1727,14 +1923,40 @@ bool PersistentSave::commit(const GameSave& save) {
   const char* finalPath = savePath(key);
   const char* temporaryPath = temporarySavePath(key);
   SPIFFS.remove(temporaryPath);
+  // A 192 KiB SPIFFS volume comfortably stores the two redundant records but
+  // not three full copies at once. If the opposite slot is independently CRC
+  // valid (including a legacy V21--V45 record), the target is by definition
+  // the expendable older copy and can be removed before writing the temp.
+  // Power loss still leaves the verified opposite slot intact.
+  const char* fallbackKey = nextSlotA_ ? "save_b" : "save_a";
+  uint32_t fallbackSequence = 0;
+  const bool fallbackValid = inspectAnyFileRecord(fallbackKey, fallbackSequence);
+  const bool targetRemovedEarly = SPIFFS.exists(finalPath) && fallbackValid;
+  if (targetRemovedEarly && !SPIFFS.remove(finalPath)) {
+    Serial.printf("[SAVE] could not retire older slot key=%s fallback=%s/%lu\n",
+                  key, fallbackKey, static_cast<unsigned long>(fallbackSequence));
+    return false;
+  }
   File file = SPIFFS.open(temporaryPath, "w");
-  const bool written = file &&
-      file.write(reinterpret_cast<const uint8_t*>(&header), sizeof(header)) == sizeof(header) &&
-      file.write(reinterpret_cast<const uint8_t*>(&save), sizeof(save)) == sizeof(save) &&
-      file.write(reinterpret_cast<const uint8_t*>(&recordCrc), sizeof(recordCrc)) == sizeof(recordCrc) &&
-      file.write(reinterpret_cast<const uint8_t*>(&trailingPadding), sizeof(trailingPadding)) == sizeof(trailingPadding);
+  const auto writeAll = [&file](const void* source, size_t length) {
+    // Keep each VFS request bounded. A single 48 KiB File::write can require a
+    // larger transient block in the Arduino/IDF stack than remains beside the
+    // renderer, despite SPIFFS itself being able to stream the record.
+    constexpr size_t kSaveWriteChunkBytes = 512U;
+    const uint8_t* cursor = static_cast<const uint8_t*>(source);
+    size_t written = 0U;
+    while (written < length) {
+      const size_t chunk = std::min(kSaveWriteChunkBytes, length - written);
+      if (file.write(cursor + written, chunk) != chunk) return false;
+      written += chunk;
+    }
+    return true;
+  };
+  const bool written = file && writeAll(&header, sizeof(header)) &&
+      writeAll(&save, sizeof(save)) && writeAll(&recordCrc, sizeof(recordCrc)) &&
+      writeAll(&trailingPadding, sizeof(trailingPadding));
   if (file) { file.flush(); file.close(); }
-  if (!written || (SPIFFS.exists(finalPath) && !SPIFFS.remove(finalPath)) ||
+  if (!written || (!targetRemovedEarly && SPIFFS.exists(finalPath) && !SPIFFS.remove(finalPath)) ||
       !SPIFFS.rename(temporaryPath, finalPath)) {
 #if defined(ARDUINO_ARCH_ESP32)
     Serial.printf("[SAVE] write failed key=%s written=%u tmp=%u final=%u total=%u used=%u\n",
@@ -1768,9 +1990,16 @@ bool PersistentSave::commit(const GameSave& save) {
 #endif
     return false;
   }
-  if (preferences_.putBytes("sinnoh_tms", &sinnohMachineOwnership_,
-                           sizeof(sinnohMachineOwnership_)) !=
-      sizeof(sinnohMachineOwnership_)) {
+  uint64_t storedSinnohMachines = 0;
+  const bool sinnohSidecarCurrent =
+      preferences_.getBytesLength("sinnoh_tms") == sizeof(storedSinnohMachines) &&
+      preferences_.getBytes("sinnoh_tms", &storedSinnohMachines,
+                            sizeof(storedSinnohMachines)) == sizeof(storedSinnohMachines) &&
+      storedSinnohMachines == sinnohMachineOwnership_;
+  if (!sinnohSidecarCurrent &&
+      preferences_.putBytes("sinnoh_tms", &sinnohMachineOwnership_,
+                            sizeof(sinnohMachineOwnership_)) !=
+          sizeof(sinnohMachineOwnership_)) {
 #if defined(ARDUINO_ARCH_ESP32)
     Serial.println("[SAVE] Sinnoh TM sidecar write failed");
 #endif

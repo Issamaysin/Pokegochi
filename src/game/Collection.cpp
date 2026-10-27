@@ -192,12 +192,19 @@ OwnedPokemon CollectionLogic::createPokemon(uint32_t uid, uint16_t speciesId, ui
                                          ((personality & 0x00000300U) >> 6U) |
                                           (personality & 0x00000003U)) % 28U);
   }
+  // Basculin's stripe is stable per individual, but it must not reuse the
+  // low personality bit which already selects Ability slot 1/2. Keeping the
+  // two rolls independent lets both stripes legitimately have Adaptability,
+  // while Red can roll Reckless and Blue can roll Rock Head. Deerling and
+  // Sawsbuck start in Spring and follow the world-calendar season at runtime.
+  if (speciesId == 550U)
+    pokemon.form=static_cast<uint8_t>((pokemon.personality>>1U)&1U);
   pokemon.shiny = shiny;
   pokemon.level = level;
   pokemon.experience = experienceForLevel(species->growthRate, level);
   pokemon.maximumHp = calculatedMaximumHp(pokemon);
   pokemon.currentHp = pokemon.maximumHp;
-  const uint8_t contentGeneration = std::min<uint8_t>(4U, unlockedGeneration);
+  const uint8_t contentGeneration = std::min<uint8_t>(5U, unlockedGeneration);
   refreshAbility(pokemon, contentGeneration);
   const uint8_t moveCount = movesForForm(speciesId, pokemon.form, level, pokemon.moves,
                                           contentGeneration);
@@ -219,7 +226,7 @@ bool CollectionLogic::ensureUsableMoves(OwnedPokemon& pokemon) {
       continue;
     }
     const FullMoveData* move = findFullMove(pokemon.moves[slot]);
-    if (!move) {
+    if (!move || !isMoveAvailableInSingleBattle(pokemon.moves[slot])) {
       pokemon.moves[slot] = MoveId::None;
       pokemon.movePp[slot] = 0;
       clearMovePpUps(pokemon, slot);
@@ -236,7 +243,7 @@ bool CollectionLogic::ensureUsableMoves(OwnedPokemon& pokemon) {
   if (validCount) return changed;
 
   MoveId recovered[kMoveSlots]{};
-  const uint8_t moveCount = movesForForm(pokemon.speciesId, pokemon.form,
+  const uint8_t moveCount = movesForForm(pokemon.speciesId, resolvedForm(pokemon),
                                          pokemon.level, recovered);
   if (!moveCount) recovered[0] = defaultMoveForSpecies(pokemon.speciesId);
   for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
@@ -460,12 +467,37 @@ void CollectionLogic::refreshAbility(OwnedPokemon& pokemon, uint8_t unlockedGene
     pokemon.abilityId = 0;
     return;
   }
-  const bool platinum = species && unlockedGeneration >= 4U;
-  const uint8_t ability1 = platinum ? species->sinnohAbility1 : species->ability1;
-  const uint8_t ability2 = platinum ? species->sinnohAbility2 : species->ability2;
+  const bool unova = unlockedGeneration >= 5U;
+  const bool platinum = unlockedGeneration >= 4U;
+  const uint8_t ability1 = unova ? species->unovaAbility1 :
+      platinum ? species->sinnohAbility1 : species->ability1;
+  const uint8_t ability2 = unova ? species->unovaAbility2 :
+      platinum ? species->sinnohAbility2 : species->ability2;
   const uint8_t normal=species ?
       ((ability2 && (pokemon.personality & 1U)) ? ability2 : ability1) : 0;
-  pokemon.abilityId=MegaEvolution::abilityId(pokemon,normal);
+  const uint8_t resolved = unova && hasHiddenAbility(pokemon) &&
+      species->hiddenAbility ? species->hiddenAbility : normal;
+  pokemon.abilityId=MegaEvolution::abilityId(pokemon,resolved);
+}
+
+namespace {
+constexpr uint32_t kHiddenAbilityMask = 1UL << 14U;
+}
+
+bool CollectionLogic::hasHiddenAbility(const OwnedPokemon& pokemon) {
+  return (pokemon.legacyCareCounterReserved & kHiddenAbilityMask) != 0U;
+}
+
+bool CollectionLogic::setHiddenAbility(OwnedPokemon& pokemon, bool enabled,
+                                       uint8_t unlockedGeneration) {
+  const SpeciesData* species = findSpecies(pokemon.speciesId);
+  if (enabled && (!species || !species->hiddenAbility || unlockedGeneration < 5U))
+    return false;
+  const bool before = hasHiddenAbility(pokemon);
+  if (enabled) pokemon.legacyCareCounterReserved |= kHiddenAbilityMask;
+  else pokemon.legacyCareCounterReserved &= ~kHiddenAbilityMask;
+  refreshAbility(pokemon, unlockedGeneration);
+  return before != enabled;
 }
 
 void CollectionLogic::applyGenerationContent(PokemonCollection& collection,
@@ -481,6 +513,9 @@ uint8_t CollectionLogic::resolvedForm(const OwnedPokemon& pokemon) {
   // Castform writes this byte only while it is on the battlefield. The
   // battle teardown path always restores NORMAL before returning Home.
   if (pokemon.speciesId == 351) return std::min<uint8_t>(pokemon.form, 3U);
+  // Cherrim's Sunshine form is likewise battle/weather-driven and is not a
+  // player-selectable persistent form.
+  if (pokemon.speciesId == 421) return std::min<uint8_t>(pokemon.form, 1U);
   if (pokemon.speciesId == 386) return std::min<uint8_t>(pokemon.form, 3U);
   if (pokemon.speciesId == 479) return std::min<uint8_t>(pokemon.form, 5U);
   if (pokemon.speciesId == 487)
@@ -488,6 +523,28 @@ uint8_t CollectionLogic::resolvedForm(const OwnedPokemon& pokemon) {
   if (pokemon.speciesId == 492) return std::min<uint8_t>(pokemon.form, 1U);
   if (pokemon.speciesId == 493 && heldItemIsArceusPlate(pokemon.heldItem))
     return arceusFormForType(arceusPlateType(pokemon.heldItem));
+  if (pokemon.speciesId == 550U) return std::min<uint8_t>(pokemon.form,1U);
+  if (pokemon.speciesId == 555U) return std::min<uint8_t>(pokemon.form,1U);
+  if (pokemon.speciesId == 585U || pokemon.speciesId == 586U)
+    return std::min<uint8_t>(pokemon.form,3U);
+  if (pokemon.speciesId == 641U || pokemon.speciesId == 642U ||
+      pokemon.speciesId == 645U) return std::min<uint8_t>(pokemon.form,1U);
+  if (pokemon.speciesId == 646U) return std::min<uint8_t>(pokemon.form,2U);
+  if (pokemon.speciesId == 647U) {
+    for (MoveId move:pokemon.moves)
+      if (move==static_cast<MoveId>(548U)) return 1U; // SECRET SWORD
+    return 0U;
+  }
+  if (pokemon.speciesId == 648U) return std::min<uint8_t>(pokemon.form,1U);
+  if (pokemon.speciesId == 649U) {
+    switch(pokemon.heldItem){
+      case HeldItem::DouseDrive:return 1U;
+      case HeldItem::ShockDrive:return 2U;
+      case HeldItem::BurnDrive:return 3U;
+      case HeldItem::ChillDrive:return 4U;
+      default:return 0U;
+    }
+  }
   return 0;
 }
 
@@ -497,6 +554,12 @@ uint8_t CollectionLogic::formCount(uint16_t speciesId) {
   if (speciesId == 479) return 6U;
   if (speciesId == 487 || speciesId == 492) return 2U;
   if (speciesId == 493) return 17U;
+  if (speciesId == 550U || speciesId == 555U || speciesId == 641U ||
+      speciesId == 642U || speciesId == 645U || speciesId == 647U ||
+      speciesId == 648U) return 2U;
+  if (speciesId == 585U || speciesId == 586U) return 4U;
+  if (speciesId == 646U) return 3U;
+  if (speciesId == 649U) return 5U;
   return 1U;
 }
 
@@ -511,6 +574,8 @@ const char* CollectionLogic::formName(uint16_t speciesId, uint8_t form) {
       "NORMAL", "FIGHTING", "FLYING", "POISON", "ROCK", "BUG", "GHOST",
       "DRAGON", "STEEL", "FIRE", "WATER", "GRASS", "ELECTRIC", "PSYCHIC",
       "ICE", "GROUND", "DARK"};
+  static constexpr const char* kSeasons[] = {"SPRING","SUMMER","AUTUMN","WINTER"};
+  static constexpr const char* kGenesectForms[] = {"NORMAL","DOUSE","SHOCK","BURN","CHILL"};
   if (speciesId == 201) return kUnownForms[std::min<uint8_t>(form, 27U)];
   if (speciesId == 386) return kDeoxysForms[std::min<uint8_t>(form, 3U)];
   if (speciesId == 351) return kCastformForms[std::min<uint8_t>(form, 3U)];
@@ -518,15 +583,25 @@ const char* CollectionLogic::formName(uint16_t speciesId, uint8_t form) {
   if (speciesId == 487) return form ? "ORIGIN" : "ALTERED";
   if (speciesId == 492) return form ? "SKY" : "LAND";
   if (speciesId == 493) return kArceusForms[std::min<uint8_t>(form, 16U)];
+  if (speciesId == 550U) return form?"BLUE STRIPE":"RED STRIPE";
+  if (speciesId == 555U) return form?"ZEN":"STANDARD";
+  if (speciesId == 585U || speciesId == 586U) return kSeasons[std::min<uint8_t>(form,3U)];
+  if (speciesId == 641U || speciesId == 642U || speciesId == 645U)
+    return form?"THERIAN":"INCARNATE";
+  if (speciesId == 646U) return form==1U?"BLACK":form==2U?"WHITE":"NORMAL";
+  if (speciesId == 647U) return form?"RESOLUTE":"ORDINARY";
+  if (speciesId == 648U) return form?"PIROUETTE":"ARIA";
+  if (speciesId == 649U) return kGenesectForms[std::min<uint8_t>(form,4U)];
   return "NORMAL";
 }
 
 bool CollectionLogic::canChangeForm(const OwnedPokemon& pokemon) {
   // Unown and Castform are derived/battle-local. The explicit picker is for
-  // Deoxys and the Sinnoh forms that have a stable handheld representation.
+  // stable forms that the player can select directly from the Box.
   return pokemon.speciesId == 386U || pokemon.speciesId == 479U ||
          (pokemon.speciesId == 487U && pokemon.heldItem != HeldItem::GriseousOrb) ||
-         pokemon.speciesId == 492U;
+         pokemon.speciesId == 492U || pokemon.speciesId == 641U ||
+         pokemon.speciesId == 642U || pokemon.speciesId == 645U;
 }
 
 bool CollectionLogic::setForm(OwnedPokemon& pokemon, uint8_t form) {
@@ -534,7 +609,7 @@ bool CollectionLogic::setForm(OwnedPokemon& pokemon, uint8_t form) {
   if (!canChangeForm(pokemon) || form >= count || pokemon.form == form) return false;
   pokemon.form = form;
   synchronizeRotomFormMove(pokemon, resolvedForm(pokemon));
-  refreshAbility(pokemon, 4U);
+  refreshAbility(pokemon, pokemon.speciesId >= 494U ? 5U : 4U);
   refreshDerivedStats(pokemon, true);
   return true;
 }
@@ -548,6 +623,14 @@ bool CollectionLogic::normalizeForm(OwnedPokemon& pokemon) {
         ? 1U : std::min<uint8_t>(pokemon.form, 1U);
   else if (pokemon.speciesId == 493)
     normalized = resolvedForm(pokemon);
+  else if (pokemon.speciesId == 550U || pokemon.speciesId == 555U ||
+           pokemon.speciesId == 641U || pokemon.speciesId == 642U ||
+           pokemon.speciesId == 645U || pokemon.speciesId == 647U ||
+           pokemon.speciesId == 648U)
+    normalized = resolvedForm(pokemon);
+  else if (pokemon.speciesId == 585U || pokemon.speciesId == 586U ||
+           pokemon.speciesId == 646U || pokemon.speciesId == 649U)
+    normalized = resolvedForm(pokemon);
   else if (pokemon.speciesId == 201) {
     // Repair older saves whose Unown form byte was always cleared to zero.
     const uint32_t personality = pokemon.personality;
@@ -559,8 +642,25 @@ bool CollectionLogic::normalizeForm(OwnedPokemon& pokemon) {
   const bool changed = pokemon.form != normalized;
   if (changed) pokemon.form = normalized;
   synchronizeRotomFormMove(pokemon, resolvedForm(pokemon));
-  refreshAbility(pokemon);
+  refreshAbility(pokemon, pokemon.speciesId >= 494U ? 5U : 4U);
   if (changed) refreshDerivedStats(pokemon, true);
+  return changed;
+}
+
+bool CollectionLogic::applyUnovaSeason(OwnedPokemon& pokemon, uint8_t season) {
+  if (pokemon.speciesId != 585U && pokemon.speciesId != 586U) return false;
+  season = std::min<uint8_t>(season, 3U);
+  if (pokemon.form == season) return false;
+  pokemon.form = season;
+  return true;
+}
+
+bool CollectionLogic::applyUnovaSeason(PokemonCollection& collection,
+                                       uint8_t season) {
+  bool changed = false;
+  for (OwnedPokemon& pokemon : collection.box)
+    if (pokemon.uid != kEmptyPokemonUid && applyUnovaSeason(pokemon, season))
+      changed = true;
   return changed;
 }
 
@@ -632,20 +732,53 @@ bool CollectionLogic::evolve(PokemonCollection& collection, uint32_t uid,
   OwnedPokemon shedinjaSource{};
   if (createsShedinja) shedinjaSource = *pokemon;
 
+  const uint16_t oldSpeciesId = pokemon->speciesId;
+  const uint8_t oldForm = pokemon->form;
   pokemon->speciesId = newSpeciesId;
-  pokemon->form = 0;
-  refreshAbility(*pokemon, std::min<uint8_t>(4U, unlockedGeneration));
+  pokemon->form = oldSpeciesId == 585U && newSpeciesId == 586U
+      ? std::min<uint8_t>(oldForm, 3U) : 0U;
+  refreshAbility(*pokemon, std::min<uint8_t>(5U, unlockedGeneration));
   refreshDerivedStats(*pokemon);
 
   if (createsShedinja) {
     shedinjaSource.uid = kEmptyPokemonUid;
     shedinjaSource.speciesId = 292U;
     shedinjaSource.form = 0;
-    refreshAbility(shedinjaSource, std::min<uint8_t>(4U, unlockedGeneration));
+    refreshAbility(shedinjaSource, std::min<uint8_t>(5U, unlockedGeneration));
     refreshDerivedStats(shedinjaSource, false);
     add(collection, shedinjaSource, bonusUid);
   }
   return true;
+}
+
+RareCandyProgression CollectionLogic::applyRareCandy(
+    OwnedPokemon& pokemon, uint8_t unlockedGeneration) {
+  RareCandyProgression result{};
+  const SpeciesData* species = findSpecies(pokemon.speciesId);
+  if (!species) return result;
+
+  const uint8_t generation = std::min<uint8_t>(5U, unlockedGeneration);
+  if (pokemon.level < 100U) {
+    ++pokemon.level;
+    pokemon.experience = std::max<uint32_t>(
+        pokemon.experience,
+        experienceForLevel(species->growthRate, pokemon.level));
+    result.learnedMove = moveLearnedAtLevelForForm(
+        pokemon.speciesId, resolvedForm(pokemon), pokemon.level, generation);
+    refreshDerivedStats(pokemon, true);
+    result.levelIncreased = true;
+  }
+
+  result.evolutionChoiceCount = evolutionChoices(
+      pokemon.speciesId, pokemon.level,
+      calculatedStat(pokemon, PokemonStat::Attack),
+      calculatedStat(pokemon, PokemonStat::Defense), generation,
+      result.evolutionChoices, kEvolutionChoiceCapacity);
+
+  // Below Lv.100 the level increase is itself a valid use. At Lv.100 the
+  // Candy is useful only when it can recover a pending evolution.
+  result.applied = result.levelIncreased || result.evolutionChoiceCount != 0U;
+  return result;
 }
 
 bool CollectionLogic::isInParty(const PokemonCollection& collection, uint32_t uid) {

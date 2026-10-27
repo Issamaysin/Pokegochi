@@ -9,6 +9,60 @@ void pump(Multiplayer& from, Multiplayer& to) {
   while (from.takeOutgoingPacket(bytes, length)) to.transportPacket(bytes, length);
 }
 
+OwnedPokemon pokemon(uint32_t uid, uint16_t species, uint32_t personality) {
+  OwnedPokemon value{};
+  value.uid = uid;
+  value.speciesId = species;
+  value.personality = personality;
+  value.level = 50;
+  value.maximumHp = 100;
+  value.currentHp = 100;
+  return value;
+}
+
+void tradeOnce(Multiplayer& coordinator, Multiplayer& peer,
+               const OwnedPokemon& coordinatorOffer,
+               const OwnedPokemon& peerOffer) {
+  assert(coordinator.requestActivity(Multiplayer::Activity::Trade));
+  pump(coordinator, peer);
+  assert(peer.state() == Multiplayer::State::ConfirmIncomingActivity);
+  peer.answerActivity(true);
+  pump(peer, coordinator);
+  assert(coordinator.state() == Multiplayer::State::TradeSelecting);
+  assert(peer.state() == Multiplayer::State::TradeSelecting);
+
+  assert(coordinator.submitTradeOffer(coordinatorOffer));
+  pump(coordinator, peer);
+  assert(peer.submitTradeOffer(peerOffer));
+  pump(peer, coordinator);
+  assert(coordinator.state() == Multiplayer::State::TradeConfirming);
+  assert(peer.state() == Multiplayer::State::TradeConfirming);
+
+  assert(peer.setTradeConfirmation(true));
+  pump(peer, coordinator);
+  assert(coordinator.setTradeConfirmation(true));
+  pump(coordinator, peer);
+
+  Multiplayer::TradeCommit peerCommit{};
+  assert(peer.takeTradeCommit(peerCommit));
+  assert(peerCommit.outgoingUid == peerOffer.uid);
+  assert(peerCommit.incoming.speciesId == coordinatorOffer.speciesId);
+  peer.completeTradeCommit(true);
+  pump(peer, coordinator);
+
+  Multiplayer::TradeCommit coordinatorCommit{};
+  assert(coordinator.takeTradeCommit(coordinatorCommit));
+  assert(coordinatorCommit.outgoingUid == coordinatorOffer.uid);
+  assert(coordinatorCommit.incoming.speciesId == peerOffer.speciesId);
+  coordinator.completeTradeCommit(true);
+  pump(coordinator, peer);
+
+  assert(coordinator.state() == Multiplayer::State::Connected);
+  assert(peer.state() == Multiplayer::State::Connected);
+  assert(coordinator.activity() == Multiplayer::Activity::None);
+  assert(peer.activity() == Multiplayer::Activity::None);
+}
+
 int main() {
   Multiplayer app;
   Multiplayer device;
@@ -35,5 +89,38 @@ int main() {
   assert(device.activity() == Multiplayer::Activity::Battle);
   assert(app.state() == Multiplayer::State::BattlePreparing);
   assert(device.state() == Multiplayer::State::BattlePreparing);
+
+  app.clearActivity();
+  pump(app, device);
+  assert(app.state() == Multiplayer::State::Connected);
+  assert(device.state() == Multiplayer::State::Connected);
+
+  // The lower player id coordinates the two-phase commit.  Two consecutive
+  // trades on the same BLE connection cover the stale commit-latch regression
+  // that used to leave the second trade waiting forever after confirmation.
+  tradeOnce(app, device, pokemon(11, 25, 0x11111111U),
+            pokemon(21, 133, 0x22222222U));
+  tradeOnce(app, device, pokemon(12, 643, 0x33333333U),
+            pokemon(22, 644, 0x44444444U));
+
+  // Closing or declining a logical session must release the physical link so
+  // the very next invitation can establish a fresh connection.
+  app.disconnect();
+  pump(app, device);
+  assert(app.state() == Multiplayer::State::Advertising);
+  assert(device.state() == Multiplayer::State::Advertising);
+  assert(app.requestPeer(2002));
+  pump(app, device);
+  assert(device.state() == Multiplayer::State::ConfirmIncomingPeer);
+  device.answerPeerInvitation(false);
+  pump(device, app);
+  assert(app.state() == Multiplayer::State::Advertising);
+  assert(device.state() == Multiplayer::State::Advertising);
+  assert(app.requestPeer(2002));
+  pump(app, device);
+  device.answerPeerInvitation(true);
+  pump(device, app);
+  assert(app.state() == Multiplayer::State::Connected);
+  assert(device.state() == Multiplayer::State::Connected);
   return 0;
 }

@@ -112,12 +112,13 @@ def _expand_battle_script_macros(script: str, macro_source: Path) -> str:
                 values["permanent"] + ", " +
                 ("TRUE, " + color if color else "FALSE, RGB_BLACK")
             ]
-        if parts[0] == "createspriteontargets_onpos":
+        if parts[0] in {"createspriteontargets_onpos", "createspriteontargets"}:
             actual = [values.get(name, "") for name, _default, _required in parameters]
-            # The only supported on-pos wrapper in the Gen-IV catalog targets
-            # one battle side at a time. Keeping its exact template, priority,
-            # offsets and relative-battler arguments is equivalent on the
-            # Pokegochi single-target battle scene.
+            # Both expansion wrappers iterate the selected battle side and
+            # replace argv[battlerargindex] for each battler. Pokegochi has a
+            # single target per side, so removing only the loop-control index
+            # and retaining the authored argv is source-equivalent. This is
+            # required by Electroweb's shared ElectricityEffect_OnTargets.
             raw = _split_macro_operands(parts[1] if len(parts) > 1 else "")
             if len(raw) < 4:
                 return [line]
@@ -189,9 +190,10 @@ FIRERED_SCRIPT = (D / "data/battle_anim_scripts.s").read_text(encoding="utf-8")
 EXPANSION_SCRIPT = _expand_battle_script_macros(
     (EXPANSION / "data/battle_anim_scripts.s").read_text(encoding="utf-8"),
     EXPANSION / "asm/macros/battle_anim_script.inc")
-# Keep the original catalog intact and append the complete Gen-IV program
-# range from pokeemerald-expansion. Their ids are above FireRed's 354, so the
-# merged arrays remain sorted and the existing VM needs no numeric remapping.
+# Keep the original catalog intact and append the complete Gen-IV and Gen-V
+# program ranges from pokeemerald-expansion. Their ids are above FireRed's
+# 354, so the merged arrays remain sorted and the existing VM needs no
+# numeric remapping.
 SCRIPT = FIRERED_SCRIPT + "\n" + EXPANSION_SCRIPT
 MOVES = (D / "include/constants/moves.h").read_text(encoding="utf-8")
 GRAPHICS = (D / "src/graphics.c").read_text(encoding="utf-8")
@@ -204,7 +206,7 @@ EXPANSION_GRAPHICS = (EXPANSION / "src/graphics.c").read_text(encoding="utf-8")
 EXPANSION_BATTLE_DATA = (EXPANSION / "src/data/battle_anim.h").read_text(encoding="utf-8")
 EXPANSION_GRAPHICS_RULES = (EXPANSION / "graphics_file_rules.mk").read_text(encoding="utf-8")
 EXPANSION_SPRITES = EXPANSION / "graphics/battle_anims/sprites"
-EXPANSION_MOVE_IDS = set(range(355, 468))
+EXPANSION_MOVE_IDS = set(range(355, 560))
 SOURCE_NUMERIC_CONSTANTS: dict[str, int] = {}
 
 
@@ -710,6 +712,18 @@ MANUAL_TILE_PHASE_VARIANTS: dict[str, tuple[int, ...]] = {
 # template's source image.
 TEMPLATE_SEQUENCE_LIMITS: dict[str, int] = {
     "gPalmSpriteTemplate": 1,
+    # Quick Guard loads a dedicated one-cel 32x32 hand but deliberately
+    # reuses the generic hands/feet AnimCmd table. Its authored calls pass
+    # animation selector zero, so later fist/foot sequences belong to the
+    # shared table rather than this compact sheet.
+    "gQuickGuardArmImpactTemplate": 1,
+    # Quash likewise loads one dedicated 32x32 palm while borrowing the
+    # shared hands/feet table; AnimStompFoot never selects another sequence.
+    "gQuashArmHitTemplate": 1,
+    # Heart Stamp's dedicated sheet contains exactly two 32x32 hearts and its
+    # script selects sequence one. The remaining hands/feet sequences are not
+    # part of this asset.
+    "gHeartStampSpinningHeartTemplate": 2,
     # Power Orbs reuses the two-frame spore table, but the expansion asset is
     # one 16x16 cel and the authored scripts always select sequence 0.
     "gPowerOrbs_Float": 1,
@@ -1418,8 +1432,8 @@ for source, _source_name in animation_sources:
             "loopStep": infinite_loop_step,
         }
     for match in re.finditer(
-            r"(?:static\s+)?const\s+union\s+AnimCmd\s*\*\s*const\s+"
-            r"(\w+)\[\]\s*=\s*\{(.*?)\};", source, re.S):
+        r"(?:static\s+)?const\s+union\s+AnimCmd\s*\*\s*const\s+"
+            r"(\w+)\[\]\s*=\s*(?://[^\r\n]*)?\s*\{(.*?)\};", source, re.S):
         if _source_name == "expansion" and match.group(1) in anim_pointer_tables:
             continue
         anim_pointer_tables[match.group(1)] = re.findall(
@@ -1489,8 +1503,8 @@ for source, _source_name in animation_sources:
             "loopCommand": infinite_loop_command,
         }
     for match in re.finditer(
-            r"(?:static\s+)?const\s+union\s+AffineAnimCmd\s*\*\s*const\s+"
-            r"(\w+)\[\]\s*=\s*\{(.*?)\};", source, re.S):
+        r"(?:static\s+)?const\s+union\s+AffineAnimCmd\s*\*\s*const\s+"
+            r"(\w+)\[\]\s*=\s*(?://[^\r\n]*)?\s*\{(.*?)\};", source, re.S):
         if _source_name == "expansion" and match.group(1) in affine_pointer_tables:
             continue
         affine_pointer_tables[match.group(1)] = re.findall(
@@ -1612,6 +1626,20 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     "AnimGunkShotImpact": ("BattleAnimationMotion::Static", 64),
     "AnimPunishment": ("BattleAnimationMotion::Static", 64),
     "AnimRockPolishSparkle": ("BattleAnimationMotion::Static", 32),
+    # Reflect Type and later expansion moves place a guard ring 40px below
+    # the attacker and linearly raise it 72px over thirteen frames.
+    "SpriteCB_SurroundingRing": ("BattleAnimationMotion::RaiseSprite", 14),
+    # Water Pledge starts at the target and rises by arg3 pixels per frame
+    # until reaching arg2. The retained Rising profile preserves that visible
+    # target-local vertical travel instead of freezing the orb at spawn.
+    "AnimFlyUpTarget": ("BattleAnimationMotion::Rising", 48),
+    # Reflect Type reuses String Shot's exact three-frame blink cadence and
+    # 51-frame lifetime; only the initializer name differs in expansion.
+    "SpriteCB_ToxicThreadWrap": ("BattleAnimationMotion::StringWrapBlink", 51),
+    # Searing Shot uses the same hold-then-frozen-affine state machine as the
+    # canonical spinning kick/punch callback, with arg4 only selecting the
+    # affected battler in doubles (the app's battle scene is single-target).
+    "SpriteCB_SearingShotRock": ("BattleAnimationMotion::SpinningKickOrPunchExact", 96),
 }
 
 # Stationary is a valid FireRed contract only for callbacks reviewed here.
@@ -1717,6 +1745,7 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimDirtPlumeParticle": ("BattleAnimationMotion::DirtPlume", 64),
         "AnimFireCross": ("BattleAnimationMotion::LocalFixedVelocity", 64),
         "AnimFireSpread": ("BattleAnimationMotion::LocalFixedVelocity", 64),
+        "SpriteCB_LockingJaw": ("BattleAnimationMotion::LockingJaw", 40),
         "AnimFlyBallAttack": ("BattleAnimationMotion::OffscreenFly", 64),
         "AnimGrantingStars": ("BattleAnimationMotion::LocalStarVelocity", 64),
         "AnimSparklingStars": ("BattleAnimationMotion::LocalStarVelocity", 64),
@@ -2477,6 +2506,10 @@ QUERY_TASKS = {
 def task_kind(name: str) -> str:
     lowered = name.lower()
     body = expanded_task_callback_body(name).lower()
+    if name in {"AnimTask_AllySwitchAttacker", "AnimTask_AllySwitchPartner"}:
+        return "BattleAnimationTaskKind::BattlerMotion"
+    if name == "AnimTask_TechnoBlast":
+        return "BattleAnimationTaskKind::Control"
     if lowered.startswith("soundtask_"):
         return "BattleAnimationTaskKind::Sound"
     if (lowered.startswith("animtask_get") or
@@ -2557,14 +2590,24 @@ def task_kind(name: str) -> str:
     return "BattleAnimationTaskKind::Effect"
 
 
+TASK_INTERNAL_SPRITE_TEMPLATES: dict[str, tuple[str, ...]] = {
+    # Bestow creates the held-item icon dynamically. The retained renderer
+    # uses the canonical item-bag cel from Present with the same authored
+    # projectile arguments, avoiding a runtime dependency on item icon VRAM.
+    "AnimTask_CreateBestowItem": ("gPresentSpriteTemplate",),
+}
+
+
 def task_sprite_templates(name: str) -> list[str]:
     """Exact SpriteTemplates instantiated inside a visual task callback."""
     body = expanded_task_callback_body(name)
-    return sorted({
+    templates = {
         template for template in re.findall(
             r"\b([A-Za-z_][A-Za-z0-9_]*SpriteTemplate)\b", body)
         if template in template_specs
-    })
+    }
+    templates.update(TASK_INTERNAL_SPRITE_TEMPLATES.get(name, ()))
+    return sorted(templates)
 
 
 # Explicit retained-renderer semantics for every FireRed task callback that
@@ -2573,6 +2616,8 @@ def task_sprite_templates(name: str) -> list[str]:
 # a generation error.  This is the per-routine audit that prevents all
 # deformation tasks from regressing to one generic wobble.
 TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
+    "AnimTask_AllySwitchAttacker": ("DoubleTeam", "Attacker"),
+    "AnimTask_AllySwitchPartner": ("DoubleTeam", "Target"),
     "AnimTask_AcidArmor": ("AcidArmor", "ScriptAnchor"),
     "AnimTask_AttackerStretchAndDisappear": ("AttackerStretchAndDisappear", "Attacker"),
     "AnimTask_CurseStretchingBlackBg": ("CurseStretchingBlackBg", "Screen"),
@@ -2702,12 +2747,14 @@ TASK_SHAKE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_ShakeMon2": ("ShakeMon2Exact", "ScriptAnchor"),
     "AnimTask_ShakeMonInPlace": ("ShakeMonInPlaceExact", "ScriptAnchor"),
     "AnimTask_ShakeTargetBasedOnMovePowerOrDmg": ("ShakeTargetPowerOrDamage", "Target"),
+    "AnimTask_ShakeTargetPartnerBasedOnMovePowerOrDmg": ("ShakeTargetPowerOrDamage", "Target"),
     "AnimTask_ShakeTargetInPattern": ("ShakeTargetInPatternExact", "Target"),
 }
 
 TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_AirCutterProjectile": ("AirCutterProjectiles", "Target"),
     "AnimTask_BarrageBall": ("BarrageBall", "Target"),
+    "AnimTask_CreateBestowItem": ("BestowItemThrow", "Target"),
     "AnimTask_BrineRain": ("Raindrops", "Screen"),
     "AnimTask_CreateRaindrops": ("Raindrops", "Screen"),
     "AnimTask_CreateSmallSolarBeamOrbs": ("SolarBeamOrbs", "Attacker"),
@@ -2719,6 +2766,7 @@ TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_FrozenIceCube": ("FrozenIceCube", "Target"),
     "AnimTask_GlareEyeDots": ("GlareEyeDots", "Target"),
     "AnimTask_GrudgeFlames": ("GrudgeFlames", "Attacker"),
+    "AnimTask_PurpleFlamesOnTarget": ("GrudgeFlames", "Target"),
     "AnimTask_Hail": ("HailStones", "Screen"),
     "AnimTask_ImprisonOrbs": ("ImprisonOrbs", "Attacker"),
     "AnimTask_LeafBlade": ("LeafBladePath", "Target"),
@@ -2812,7 +2860,7 @@ TASK_MOTION_LIFETIMES = {
     "PaletteBackupCommit": 1, "CurseWhiteLines": 64,
     "DrillPeckHitSplats": 33, "SolarBeamOrbs": 185,
     "ElectricBoltSegments": 25, "SmokescreenImpact": 42,
-    "GlareEyeDots": 89, "BarrageBall": 58,
+    "GlareEyeDots": 89, "BarrageBall": 58, "BestowItemThrow": 41,
     "DestinyBondShadow": 120, "RolloutDebris": 100,
     "Raindrops": 134, "SpeedDust": 132, "HailStones": 150,
     "TormentThoughtBubbles": 132, "ElectricChargingParticles": 150,
@@ -3402,11 +3450,14 @@ expansion_move_definitions = [
         (EXPANSION / "include/constants/moves.h").read_text(encoding="utf-8"))
     if int(number_text) in EXPANSION_MOVE_IDS
 ]
-# The first Gen-IV enum entry aliases MOVES_COUNT_GEN3 instead of spelling
-# out 355. Keep Roost in the exact catalog rather than silently losing the
-# boundary entry to the parser's numeric-only expression.
+# The first entries for Gen IV and Gen V alias the preceding generation count
+# instead of spelling out their numeric IDs. Keep both boundary moves in the
+# exact catalog rather than silently losing them to the numeric-only parser.
 if 355 in EXPANSION_MOVE_IDS:
     expansion_move_definitions.insert(0, ("ROOST", 355))
+if 468 in EXPANSION_MOVE_IDS:
+    expansion_move_definitions.append(("HONE_CLAWS", 468))
+expansion_move_definitions.sort(key=lambda entry: entry[1])
 move_definitions += expansion_move_definitions
 
 for symbol, number in move_definitions:
@@ -3950,7 +4001,7 @@ matrix_lines = [
     "# FireRed + expansion battle animation coverage",
     "",
     "Generated from every reachable branch of the original 354 FireRed move "
-    "scripts plus the exact expansion overlay selected for Gen-IV moves. "
+    "scripts plus the exact expansion overlay selected for Gen-IV and Gen-V moves. "
     "Generation fails if a visual task has no renderer, if an installed sprite "
     "state callback moves but resolves to Static, if any SpriteTemplate still "
     "depends on an unaudited name heuristic, or if a non-dummy frame/affine "

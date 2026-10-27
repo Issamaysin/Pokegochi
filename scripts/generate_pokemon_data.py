@@ -6,6 +6,9 @@ import re
 import json
 from pathlib import Path
 
+from unova_rom_data import (evolutions as white_evolutions, expansion_text,
+                            internal_ability_id, personal_record)
+
 ROOT = Path(__file__).resolve().parent.parent
 DECOMP = ROOT / ".downloads" / "pokefirered-tree" / "pokefirered-master"
 PLATINUM = ROOT / ".downloads" / "pokeplatinum-tree"
@@ -46,6 +49,21 @@ gen4_ability_ids = {symbol: 78 + index
                      for index, symbol in enumerate(gen4_ability_symbols)}
 all_ability_ids = {**ability_ids, **gen4_ability_ids, "NONE": 0}
 
+gen5_ability_symbols = [
+    "PICKPOCKET", "SHEER_FORCE", "CONTRARY", "UNNERVE", "DEFIANT",
+    "DEFEATIST", "CURSED_BODY", "HEALER", "FRIEND_GUARD", "WEAK_ARMOR",
+    "HEAVY_METAL", "LIGHT_METAL", "MULTISCALE", "TOXIC_BOOST",
+    "FLARE_BOOST", "HARVEST", "TELEPATHY", "MOODY", "OVERCOAT",
+    "POISON_TOUCH", "REGENERATOR", "BIG_PECKS", "SAND_RUSH",
+    "WONDER_SKIN", "ANALYTIC", "ILLUSION", "IMPOSTER", "INFILTRATOR",
+    "MUMMY", "MOXIE", "JUSTIFIED", "RATTLED", "MAGIC_BOUNCE",
+    "SAP_SIPPER", "PRANKSTER", "SAND_FORCE", "IRON_BARBS", "ZEN_MODE",
+    "VICTORY_STAR", "TURBOBLAZE", "TERAVOLT",
+]
+gen5_ability_ids = {symbol: 125 + index
+                    for index, symbol in enumerate(gen5_ability_symbols)}
+all_ability_ids.update(gen5_ability_ids)
+
 platinum_species_symbols = [line.strip().removeprefix("SPECIES_")
                             for line in (PLATINUM / "generated/species.txt").read_text(
                                 encoding="utf-8").splitlines()
@@ -73,6 +91,12 @@ for species_id, symbol in species:
         all_ability_ids[ability_one.removeprefix("ABILITY_")],
         all_ability_ids[ability_two.removeprefix("ABILITY_")],
     )
+
+
+def white_ability_triplet(species_id: int) -> tuple[int, int, int]:
+    record = personal_record(species_id)
+    return tuple(internal_ability_id(record[offset])
+                 for offset in (24, 25, 26))
 
 type_map = {
     "NORMAL": "Normal", "FIGHTING": "Fighting", "FLYING": "Flying",
@@ -130,6 +154,8 @@ for number, symbol in species:
         f'{field(block,"baseAttack")}, {field(block,"baseDefense")}, {field(block,"baseSpAttack")}, {field(block,"baseSpDefense")}, {field(block,"baseSpeed")}, '
         f'{field(block,"catchRate")}, {field(block,"expYield")}, GrowthRate::{growth_map[field(block,"growthRate").removeprefix("GROWTH_")]}, {ability_ids[abilities.group(1)]}, {ability_ids[abilities.group(2)]}, '
         f'{sinnoh_ability_by_id[number][0]}, {sinnoh_ability_by_id[number][1]}, '
+        f'{white_ability_triplet(number)[0]}, {white_ability_triplet(number)[1]}, '
+        f'{white_ability_triplet(number)[2]}, '
         f'{field(block,"evYield_HP")}, {field(block,"evYield_Attack")}, {field(block,"evYield_Defense")}, '
         f'{field(block,"evYield_SpAttack")}, {field(block,"evYield_SpDefense")}, {field(block,"evYield_Speed")}, '
         f'{gender_ratio(block)}}},'
@@ -171,9 +197,66 @@ for number, symbol in gen4_species:
         f'{all_ability_ids[ability_two.removeprefix("ABILITY_")]}, '
         f'{all_ability_ids[ability_one.removeprefix("ABILITY_")]}, '
         f'{all_ability_ids[ability_two.removeprefix("ABILITY_")]}, '
+        f'{white_ability_triplet(number)[0]}, {white_ability_triplet(number)[1]}, '
+        f'{white_ability_triplet(number)[2]}, '
         f'{yields["hp"]}, {yields["attack"]}, {yields["defense"]}, '
         f'{yields["special_attack"]}, {yields["special_defense"]}, {yields["speed"]}, '
         f'{gender_ratio_map[source["gender_ratio"]]}}},')
+
+# Generation V base species are read from the actual local Pokemon White ROM.
+# This preserves White's original stats, experience yields, ability slots and
+# EV yields even where later games or the expansion decomp revised them.
+expansion_species_constants = expansion_text("include/constants/species.h")
+gen5_symbols = {
+    int(number): symbol
+    for symbol, number in re.findall(
+        r"\bSPECIES_([A-Z0-9_]+)\s*=\s*(\d+)", expansion_species_constants)
+    if 494 <= int(number) <= 649
+}
+if len(gen5_symbols) != 156:
+    raise RuntimeError(f"Expected 156 Gen-V species symbols, got {len(gen5_symbols)}")
+
+gen5_display_names = {
+    "PANSAGE": "PANSAGE", "PANSEAR": "PANSEAR", "PANPOUR": "PANPOUR",
+    "MR_RIME": "MR. RIME",
+    # The National-Dex row represents the species, not one persistent form.
+    # Form-specific names are supplied by CollectionLogic::formName(); keeping
+    # the ROM/decomp symbol suffix here made Blue Basculin, Zen Darmanitan,
+    # seasonal coats, Therian formes, Resolute Keldeo and Pirouette Meloetta
+    # all display the name of their base form in otherwise-correct sprites.
+    "BASCULIN_RED_STRIPED": "BASCULIN",
+    "DARMANITAN_STANDARD": "DARMANITAN",
+    "DEERLING_SPRING": "DEERLING",
+    "SAWSBUCK_SPRING": "SAWSBUCK",
+    "TORNADUS_INCARNATE": "TORNADUS",
+    "THUNDURUS_INCARNATE": "THUNDURUS",
+    "LANDORUS_INCARNATE": "LANDORUS",
+    "KELDEO_ORDINARY": "KELDEO",
+    "MELOETTA_ARIA": "MELOETTA",
+}
+ds_types = [
+    "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug",
+    "Ghost", "Steel", "Fire", "Water", "Grass", "Electric", "Psychic",
+    "Ice", "Dragon", "Dark",
+]
+ds_growth = ["MediumFast", "Erratic", "Fluctuating", "MediumSlow", "Fast", "Slow"]
+for number in range(494, 650):
+    record = personal_record(number)
+    symbol = gen5_symbols[number]
+    name = gen5_display_names.get(symbol, symbol.replace("_", " "))
+    ev_bits = int.from_bytes(record[10:12], "little")
+    evs = [(ev_bits >> shift) & 0x3 for shift in (0, 2, 4, 8, 10, 6)]
+    ability_one, ability_two, hidden = white_ability_triplet(number)
+    rows.append(
+        f'    {{{number}, "{name}", PokemonType::{ds_types[record[6]]}, '
+        f'PokemonType::{ds_types[record[7]]}, {record[0]}, {record[1]}, '
+        f'{record[2]}, {record[4]}, {record[5]}, {record[3]}, {record[8]}, '
+        f'{int.from_bytes(record[34:36], "little")}, GrowthRate::{ds_growth[record[21]]}, '
+        f'{ability_one}, {ability_two}, {ability_one}, {ability_two}, '
+        f'{ability_one}, {ability_two}, {hidden}, '
+        f'{evs[0]}, {evs[1]}, {evs[2]}, {evs[3]}, {evs[4]}, {evs[5]}, '
+        f'{record[18]}}},'
+    )
 
 # Keep original level evolutions. Convert stones/trades/friendship to deterministic
 # levels across the National Dex. Every branch is retained for the in-game chooser.
@@ -268,6 +351,27 @@ for source_symbol, source_id in platinum_symbol_to_id.items():
         if entry not in evolutions:
             evolutions.append(entry)
 
+
+def unova_evolution_level(method: int, parameter: int) -> int:
+    # White evolution method ids 4/8/9/10/14/15/23/24 carry a real level.
+    if method in {4, 8, 9, 10, 14, 15, 23, 24}:
+        return max(1, min(100, parameter))
+    if method in {1, 2, 3}:
+        return 30  # friendship / friendship by time
+    if method in {5, 6}:
+        return 40  # trade / trade holding an item
+    return 36      # stones, locations, known move or party species
+
+
+for source_id in range(1, 650):
+    for method, parameter, target_id in white_evolutions(source_id):
+        if target_id > 649 or (source_id <= 493 and target_id <= 493):
+            continue
+        entry = (source_id, target_id,
+                 unova_evolution_level(method, parameter))
+        if entry not in evolutions:
+            evolutions.append(entry)
+
 content = "// Generated by scripts/generate_pokemon_data.py from local pokefirered data.\n"
 content += "constexpr SpeciesData kSpecies[] = {\n" + "\n".join(rows) + "\n};\n\n"
 content += "constexpr EvolutionData kEvolutions[] = {\n"
@@ -301,7 +405,7 @@ gen4_ability_descriptions = {
     "ANGER_POINT": "MAXIMIZES ATTACK AFTER A CRITICAL HIT.",
     "UNBURDEN": "RAISES SPEED AFTER LOSING ITS HELD ITEM.",
     "HEATPROOF": "WEAKENS FIRE DAMAGE AND BURN DAMAGE.",
-    "SIMPLE": "DOUBLES STAT STAGE CHANGES.",
+    "SIMPLE": "DOUBLES THE EFFECT OF STAT CHANGES.",
     "DRY_SKIN": "RECOVERS IN RAIN; WEAK TO FIRE.",
     "DOWNLOAD": "RAISES A STAT ON ENTERING BATTLE.",
     "IRON_FIST": "BOOSTS PUNCHING MOVES.",
@@ -329,7 +433,7 @@ gen4_ability_descriptions = {
     "FILTER": "REDUCES SUPER-EFFECTIVE DAMAGE.",
     "SLOW_START": "HALVES ATTACK AND SPEED FOR FIVE TURNS.",
     "SCRAPPY": "NORMAL AND FIGHTING MOVES HIT GHOSTS.",
-    "STORM_DRAIN": "DRAWS WATER MOVES AND RAISES SP. ATK.",
+    "STORM_DRAIN": "DRAWS IN WATER-TYPE MOVES.",
     "ICE_BODY": "RECOVERS HP DURING HAIL.",
     "SOLID_ROCK": "REDUCES SUPER-EFFECTIVE DAMAGE.",
     "SNOW_WARNING": "SUMMONS HAIL ON ENTERING BATTLE.",
@@ -342,6 +446,23 @@ gen4_ability_descriptions = {
 }
 for symbol in gen4_ability_symbols:
     content += f'    {{{gen4_ability_ids[symbol]}, "{symbol.replace("_", " ")}", "{gen4_ability_descriptions[symbol]}"}},\n'
+
+expansion_abilities = expansion_text("src/data/abilities.h")
+for symbol in gen5_ability_symbols:
+    block_match = re.search(
+        rf"\[ABILITY_{symbol}\]\s*=\s*\{{(.*?)\n\s*\}},",
+        expansion_abilities, re.S)
+    if not block_match:
+        raise RuntimeError(f"Missing expansion ability block {symbol}")
+    block = block_match.group(1)
+    name_match = re.search(r'\.name\s*=\s*_\("([^"]+)"\)', block)
+    description_match = re.search(
+        r'\.description\s*=\s*COMPOUND_STRING\("([^"]*)"\)', block)
+    name = (name_match.group(1) if name_match else symbol.replace("_", " ")).upper()
+    description = (description_match.group(1) if description_match else
+                   "GENERATION V ABILITY.").replace("\\n", " ").upper()
+    description = description.replace('\\', '\\\\').replace('"', '\\"')
+    content += f'    {{{gen5_ability_ids[symbol]}, "{name}", "{description}"}},\n'
 content += "};\n"
 
 wild_data = json.loads((DECOMP / "src/data/wild_encounters.json").read_text(encoding="utf-8"))

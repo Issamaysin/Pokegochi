@@ -14,7 +14,12 @@ constexpr uint16_t kFontTransparent = 0xF81F;
 // Keep the original FireRed glyphs clean. Colour contrast is handled by the
 // UI palettes; even a one-pixel shadow looks artificial at this resolution.
 constexpr uint16_t kTextRasterWidth = 320U;
-constexpr uint16_t kTextRasterHeight = 32U;
+// Body text is 16 pixels high and dominates every menu. A second 16-pixel
+// half used only by doubled headings cost 10 KiB of permanent internal RAM,
+// enough to prevent the expanded Gen-V save from coexisting with FatFs on a
+// real ESP32. Large headings retain the existing exact run renderer below;
+// ordinary labels keep the single-transfer fast path.
+constexpr uint16_t kTextRasterHeight = 16U;
 constexpr size_t kTextRasterPixels = static_cast<size_t>(kTextRasterWidth) * kTextRasterHeight;
 uint16_t textRaster[kTextRasterPixels];
 
@@ -109,11 +114,21 @@ void FireRedFont::drawString(const char* text, int16_t x, int16_t y, uint8_t sty
     case BR_DATUM: x -= width; y -= height; break;
     default: break;
   }
+  // The physical ESP32 presenter reconstructs one eight-row stripe at a
+  // time. Most labels are wholly outside 29 of the 30 stripe clips; building
+  // their RGB565 glyph raster anyway dominated menu transitions such as
+  // Summary and Edit Moveset. PixelCanvas would discard those pixels later,
+  // so reject the same invisible single-line string before touching the
+  // shared raster. Multiline legacy strings retain the conservative path.
+  const bool hasLineBreak = std::strchr(text, '\n') != nullptr;
+  if (!hasLineBreak &&
+      (x >= display_.logicalClipRight() || x + width <= display_.logicalClipLeft() ||
+       y >= display_.logicalClipBottom() || y + height <= display_.logicalClipTop()))
+    return;
   const int16_t origin = x;
   const bool small = style == 3;
   const uint8_t scale = style >= 4 ? 2 : 1;
   const int16_t tracking = 1;
-  const bool hasLineBreak = std::strchr(text, '\n') != nullptr;
 
   // Normal strings are at most one TFT line tall. Build their sparse glyph
   // pixels in RAM and push the result in a single transaction. Style-4

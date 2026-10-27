@@ -30,9 +30,11 @@ def partition_rows() -> dict[str, tuple[int, int]]:
 
 def main() -> None:
     rows = partition_rows()
-    assert rows["app0"] == (0x20000, 0x1C0000)
-    assert rows["app1"] == (0x1E0000, 0x1C0000)
-    assert rows["spiffs"] == (0x3A0000, 0x60000)
+    assert rows["nvs"] == (0x9000, 0x5000)
+    assert rows["otadata"] == (0xE000, 0x2000)
+    assert rows["app0"] == (0x10000, 0x1E0000)
+    assert rows["app1"] == (0x1F0000, 0x1E0000)
+    assert rows["spiffs"] == (0x3D0000, 0x30000)
     assert rows["app0"][0] % 0x10000 == 0
     assert rows["app1"][0] % 0x10000 == 0
     assert rows["app1"][0] + rows["app1"][1] == rows["spiffs"][0]
@@ -40,11 +42,11 @@ def main() -> None:
 
     script = FLASH_SCRIPT.read_text(encoding="utf-8")
     assert "function Write-UsbFirmware" in script
-    assert "'0x20000', $firmware" in script
-    assert "'verify-flash', '0x20000', $firmware" in script
-    assert "'erase-region', '0x19000', '0x2000'" in script
-    assert "$targetSpiffsOffset = 0x3A0000" in script
-    assert "$targetSpiffsSize = 0x60000" in script
+    assert "'0x10000', $firmware" in script
+    assert "'verify-flash', '0x10000', $firmware" in script
+    assert "'erase-region', '0xE000', '0x2000'" in script
+    assert "$targetSpiffsOffset = 0x3D0000" in script
+    assert "$targetSpiffsSize = 0x30000" in script
     print("USB flash-layout guard passed.")
 
 

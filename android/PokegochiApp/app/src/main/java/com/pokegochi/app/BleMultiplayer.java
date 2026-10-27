@@ -20,11 +20,13 @@ import android.bluetooth.le.BluetoothLeAdvertiser;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
 import android.bluetooth.le.ScanResult;
+import android.bluetooth.le.ScanSettings;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
 
 import java.util.ArrayDeque;
 import java.util.HashMap;
@@ -70,14 +72,18 @@ final class BleMultiplayer implements AutoCloseable {
     private BluetoothGattServer server;
     private BluetoothGattCharacteristic serverTx;
     private BluetoothDevice connectedDevice;
+    private boolean serverReady;
+    private boolean advertising;
     private boolean running;
     private boolean active;
     private boolean centralConnecting;
     private boolean centralReady;
+    private boolean centralDiscoveryStarted;
     private boolean writeInFlight;
     private boolean lastFirmwareEnabled;
     private int lastFirmwareState = -1;
     private boolean lastPermissionsMissing;
+    private long idleLinkSinceMs;
 
     BleMultiplayer(Context context, NativeFirmware firmware, Listener listener) {
         this.context = context.getApplicationContext();
@@ -116,6 +122,7 @@ final class BleMultiplayer implements AutoCloseable {
             if (active) {
                 drainFirmwareOutbound();
                 int state = firmware.multiplayerState();
+                releaseStalePhysicalSession(state);
                 if (state == STATE_SCANNING) startScan();
                 else stopScan();
                 if (state == STATE_CONNECTING) connectSelectedPeer();
@@ -130,21 +137,30 @@ final class BleMultiplayer implements AutoCloseable {
         if (!hasClientPermissions() || !supported()) return;
         active = true;
         startServer();
-        advertiser = adapter.getBluetoothLeAdvertiser();
-        if (advertiser != null && hasPeripheralPermissions()) {
-            AdvertiseSettings settings = new AdvertiseSettings.Builder()
-                    .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                    .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-                    .setConnectable(true).build();
-            AdvertiseData data = new AdvertiseData.Builder()
-                    .setIncludeDeviceName(false)
-                    .addManufacturerData(MultiplayerProtocol.MANUFACTURER_ID,
-                            MultiplayerProtocol.androidManufacturerPayload(
-                                    firmware.multiplayerPlayerId()))
-                    .build();
-            advertiser.startAdvertising(settings, data, advertiseCallback);
-        }
+        startAdvertisingIfReady();
         status("BLE transport ready for player " + firmware.multiplayerPlayerId() + ".");
+    }
+
+    @SuppressLint("MissingPermission")
+    private void startAdvertisingIfReady() {
+        if (!active || !serverReady || advertising || !hasPeripheralPermissions()) return;
+        if (advertiser == null) advertiser = adapter.getBluetoothLeAdvertiser();
+        if (advertiser == null) {
+            status("BLE advertiser unavailable.");
+            return;
+        }
+        AdvertiseSettings settings = new AdvertiseSettings.Builder()
+                .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+                .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+                .setConnectable(true).build();
+        AdvertiseData data = new AdvertiseData.Builder()
+                .setIncludeDeviceName(false)
+                .addManufacturerData(MultiplayerProtocol.MANUFACTURER_ID,
+                        MultiplayerProtocol.androidManufacturerPayload(
+                                firmware.multiplayerPlayerId()))
+                .build();
+        advertising = true;
+        advertiser.startAdvertising(settings, data, advertiseCallback);
     }
 
     @SuppressLint("MissingPermission")
@@ -152,7 +168,11 @@ final class BleMultiplayer implements AutoCloseable {
         if (scanner != null || !hasClientPermissions() || !supported()) return;
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) return;
-        scanner.startScan(scanCallback);
+        ScanSettings settings = new ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .setReportDelay(0L)
+                .build();
+        scanner.startScan(null, settings, scanCallback);
     }
 
     @SuppressLint("MissingPermission")
@@ -171,6 +191,7 @@ final class BleMultiplayer implements AutoCloseable {
         if (device == null) return;
         stopScan();
         centralConnecting = true;
+        centralDiscoveryStarted = false;
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
         if (gatt == null) {
             centralConnecting = false;
@@ -185,6 +206,7 @@ final class BleMultiplayer implements AutoCloseable {
         if (manager == null) return;
         server = manager.openGattServer(context, serverCallback);
         if (server == null) return;
+        serverReady = false;
         BluetoothGattService service = new BluetoothGattService(
                 SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY);
         BluetoothGattCharacteristic rx = new BluetoothGattCharacteristic(RX,
@@ -198,7 +220,13 @@ final class BleMultiplayer implements AutoCloseable {
                 BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE));
         service.addCharacteristic(rx);
         service.addCharacteristic(serverTx);
-        server.addService(service);
+        if (!server.addService(service)) {
+            status("BLE GATT service registration failed.");
+            server.close();
+            server = null;
+            return;
+        }
+        status("BLE GATT service registration pending.");
     }
 
     private boolean supported() {
@@ -229,6 +257,7 @@ final class BleMultiplayer implements AutoCloseable {
             advertiser.stopAdvertising(advertiseCallback);
             advertiser = null;
         }
+        advertising = false;
         if (gatt != null) {
             gatt.disconnect();
             gatt.close();
@@ -238,14 +267,59 @@ final class BleMultiplayer implements AutoCloseable {
             server.close();
             server = null;
         }
+        serverReady = false;
         remoteRx = null;
         serverTx = null;
         connectedDevice = null;
         centralConnecting = false;
         centralReady = false;
+        centralDiscoveryStarted = false;
         writeInFlight = false;
         pendingWrites.clear();
+        idleLinkSinceMs = 0L;
         active = false;
+    }
+
+    @SuppressLint("MissingPermission")
+    private void releaseStalePhysicalSession(int firmwareState) {
+        final boolean idleProtocol = firmwareState == STATE_ADVERTISING ||
+                firmwareState == STATE_SCANNING;
+        final boolean physicalLinkPresent = gatt != null || connectedDevice != null ||
+                centralConnecting || centralReady;
+        if (!idleProtocol || !physicalLinkPresent) {
+            idleLinkSinceMs = 0L;
+            return;
+        }
+
+        // Give a freshly connected peripheral enough time to deliver Invite,
+        // and give an outbound SessionClose enough time to leave the write
+        // queue.  A real session moves out of ADVERTISING immediately; a stale
+        // GATT link remains idle and is released on the next polls.
+        final long now = SystemClock.elapsedRealtime();
+        if (idleLinkSinceMs == 0L) {
+            idleLinkSinceMs = now;
+            return;
+        }
+        if (now - idleLinkSinceMs < 500L) return;
+
+        status("BLE releasing stale physical session.");
+        BluetoothGatt oldGatt = gatt;
+        BluetoothDevice oldDevice = connectedDevice;
+        gatt = null;
+        connectedDevice = null;
+        remoteRx = null;
+        centralConnecting = false;
+        centralReady = false;
+        centralDiscoveryStarted = false;
+        writeInFlight = false;
+        pendingWrites.clear();
+        idleLinkSinceMs = 0L;
+        if (oldGatt != null) {
+            oldGatt.disconnect();
+            oldGatt.close();
+        }
+        if (server != null && oldDevice != null) server.cancelConnection(oldDevice);
+        firmware.multiplayerDisconnected();
     }
 
     private void drainFirmwareOutbound() {
@@ -348,39 +422,63 @@ final class BleMultiplayer implements AutoCloseable {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         @Override public void onConnectionStateChange(BluetoothGatt g, int status, int newState) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                g.discoverServices();
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                centralConnecting = false;
-                firmware.multiplayerDisconnected();
-                if (gatt == g) {
-                    g.close();
-                    gatt = null;
+            BleMultiplayer.this.status("BLE central state=" + newState + " status=" + status);
+            if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
+                centralConnecting = true;
+                centralDiscoveryStarted = false;
+                // Negotiate enough room for complete roster/battle packets
+                // before discovering the service exposed by the ESP32.
+                if (Build.VERSION.SDK_INT >= 21 && g.requestMtu(185)) {
+                    handler.postDelayed(() -> discoverServicesOnce(g), 1000L);
+                } else {
+                    discoverServicesOnce(g);
                 }
-                remoteRx = null;
-                centralReady = false;
+            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                failCentral(g, "BLE central disconnected status=" + status);
+            } else if (newState != BluetoothProfile.STATE_CONNECTED) {
+                failCentral(g, "BLE central connection failed status=" + status);
             }
+        }
+
+        @Override public void onMtuChanged(BluetoothGatt g, int mtu, int status) {
+            BleMultiplayer.this.status("BLE MTU=" + mtu + " status=" + status);
+            discoverServicesOnce(g);
         }
 
         @SuppressLint("MissingPermission")
         @Override public void onServicesDiscovered(BluetoothGatt g, int status) {
-            if (status != BluetoothGatt.GATT_SUCCESS) return;
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                failCentral(g, "BLE service discovery failed status=" + status);
+                return;
+            }
             BluetoothGattService service = g.getService(SERVICE);
-            if (service == null) return;
+            if (service == null) {
+                failCentral(g, "BLE multiplayer service missing on peer");
+                return;
+            }
             remoteRx = service.getCharacteristic(RX);
             BluetoothGattCharacteristic tx = service.getCharacteristic(TX);
-            if (remoteRx == null || tx == null) return;
-            g.setCharacteristicNotification(tx, true);
+            if (remoteRx == null || tx == null) {
+                failCentral(g, "BLE multiplayer characteristics missing on peer");
+                return;
+            }
+            if (!g.setCharacteristicNotification(tx, true)) {
+                failCentral(g, "BLE notification registration failed");
+                return;
+            }
             BluetoothGattDescriptor descriptor = tx.getDescriptor(CCCD);
             if (descriptor != null) {
                 descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                g.writeDescriptor(descriptor);
+                if (!g.writeDescriptor(descriptor))
+                    failCentral(g, "BLE CCCD write could not start");
             } else beginCentralSession();
         }
 
         @Override public void onDescriptorWrite(BluetoothGatt g, BluetoothGattDescriptor descriptor, int status) {
             if (descriptor.getUuid().equals(CCCD) && status == BluetoothGatt.GATT_SUCCESS)
                 beginCentralSession();
+            else if (descriptor.getUuid().equals(CCCD))
+                failCentral(g, "BLE CCCD write failed status=" + status);
         }
 
         @Override public void onCharacteristicWrite(BluetoothGatt g,
@@ -403,6 +501,31 @@ final class BleMultiplayer implements AutoCloseable {
         }
     };
 
+    @SuppressLint("MissingPermission")
+    private void discoverServicesOnce(BluetoothGatt connection) {
+        if (connection == null || gatt != connection || centralDiscoveryStarted) return;
+        centralDiscoveryStarted = true;
+        if (!connection.discoverServices())
+            failCentral(connection, "BLE service discovery could not start");
+    }
+
+    @SuppressLint("MissingPermission")
+    private void failCentral(BluetoothGatt connection, String reason) {
+        status(reason);
+        if (gatt == connection) {
+            centralConnecting = false;
+            centralReady = false;
+            centralDiscoveryStarted = false;
+            remoteRx = null;
+            gatt = null;
+            writeInFlight = false;
+            pendingWrites.clear();
+            connection.disconnect();
+            connection.close();
+            firmware.multiplayerDisconnected();
+        }
+    }
+
     private void beginCentralSession() {
         if (centralReady) return;
         centralReady = true;
@@ -411,13 +534,31 @@ final class BleMultiplayer implements AutoCloseable {
     }
 
     private final BluetoothGattServerCallback serverCallback = new BluetoothGattServerCallback() {
+        @Override public void onServiceAdded(int status, BluetoothGattService service) {
+            if (server == null || !active || service == null || !SERVICE.equals(service.getUuid())) return;
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                BleMultiplayer.this.status("BLE GATT service registration failed status=" + status);
+                return;
+            }
+            serverReady = true;
+            BleMultiplayer.this.status("BLE GATT service ready.");
+            startAdvertisingIfReady();
+        }
+
         @Override public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                if (!serverReady) {
+                    BleMultiplayer.this.status("BLE client connected before GATT service was ready.");
+                    return;
+                }
                 connectedDevice = device;
+                idleLinkSinceMs = 0L;
                 firmware.multiplayerTransportConnected(false);
                 drainFirmwareOutbound();
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED && device.equals(connectedDevice)) {
                 connectedDevice = null;
+                writeInFlight = false;
+                pendingWrites.clear();
                 firmware.multiplayerDisconnected();
             }
         }
@@ -440,12 +581,16 @@ final class BleMultiplayer implements AutoCloseable {
 
     private final AdvertiseCallback advertiseCallback = new AdvertiseCallback() {
         @Override public void onStartSuccess(AdvertiseSettings settingsInEffect) {
+            advertising = true;
             status("BLE advertising started manufacturer=0x" +
                     Integer.toHexString(MultiplayerProtocol.MANUFACTURER_ID));
         }
 
         @Override public void onStartFailure(int errorCode) {
+            advertising = false;
             status("BLE advertising failed: " + errorCode);
+            if (active && handler != null)
+                handler.postDelayed(BleMultiplayer.this::startAdvertisingIfReady, 750L);
         }
     };
 }

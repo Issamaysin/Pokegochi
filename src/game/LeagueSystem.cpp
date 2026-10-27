@@ -131,10 +131,18 @@ bool LeagueSystem::isChampionStage(const BattleState& battle) {
   return battle.kind == BattleKind::League && battle.leagueStage == kMemberCount - 1U;
 }
 
+uint8_t LeagueSystem::luckyEggExperienceBonusPercent(
+    const GymProgress& progress, bool generation4Unlocked) {
+  if (GymSystem::leagueComplete(progress, 1U))
+    return generation4Unlocked?125U:100U;
+  if (GymSystem::hasBadge(progress, GymId::Fuchsia)) return 50U;
+  return 0U;
+}
+
 bool LeagueSystem::reconcileKantoLuckyEggReward(const GymProgress& progress,
                                                 PokemonCollection& collection,
                                                 uint64_t& ownedMachines) {
-  if (!GymSystem::leagueComplete(progress, 1U)) return false;
+  if (!luckyEggExperienceBonusPercent(progress)) return false;
   bool removedLegacyHolder=false;
   for (OwnedPokemon& pokemon : collection.box)
     if (pokemon.uid != kEmptyPokemonUid && pokemon.heldItem == HeldItem::LuckyEgg){

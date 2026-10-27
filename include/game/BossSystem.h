@@ -61,7 +61,7 @@ class BossSystem {
   // prize instead of destroying an existing Egg or overflowing an item stack.
   static BossRewardResult awardVictoryReward(
       Inventory& inventory, EggInventory& eggs, const PokedexState& pokedex,
-      uint32_t seed);
+      uint8_t unlockedGeneration, uint32_t seed);
   static bool start(BattleState& battle, PokemonCollection& collection,
                     uint32_t playerUid, const GymProgress& progress,
                     uint32_t cooldownSecondsRemaining,

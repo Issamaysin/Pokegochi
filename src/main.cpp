@@ -39,6 +39,9 @@
 #include "game/BattleTowerSystem.h"
 #include "game/BossSystem.h"
 #include "game/SinnohExpedition.h"
+#include "game/UnovaAdventure.h"
+#include "game/UnovaForms.h"
+#include "game/UnovaTournament.h"
 #include "game/WildChainSystem.h"
 #include "game/HomeBackgrounds.h"
 #include "game/HomeWeather.h"
@@ -82,6 +85,8 @@ void resolvePendingEvolution(uint8_t choiceIndex);
 void drawMoveLearn();
 void drawTrainerIntro();
 void drawBossInvite();
+void drawChallengeHub();
+void drawRegionHub();
 void drawWildChainSelect();
 void drawBattleSummary();
 void drawBox();
@@ -122,6 +127,9 @@ void serviceKidsTowerBattle(uint32_t now);
 void drawBerryGarden();
 void drawMegaFormSelect();
 void drawSinnohExpedition();
+void drawUnovaAdventure();
+void drawUnovaTournament();
+uint8_t currentUnovaSeason();
 void drawPokedex();
 void turnDisplayOff();
 bool seriesIntroPending();
@@ -135,7 +143,7 @@ void drawFireRedBattleWindow(int16_t x, int16_t y, int16_t width, int16_t height
 void drawGbaInsetPanel(int16_t x, int16_t y, int16_t width, int16_t height,
                        uint8_t radius, uint16_t frame, uint16_t paper,
                        uint16_t highlight);
-enum class Screen : uint8_t { Diagnostic, OakIntro, Starter, RegionalDiscovery, RegionalStarter, PokedexUpdated, PokedexCompleteReward, Home, PokecenterConfirm, Settings, PlayerStats, WirelessUpdate, KidsMenu, KidsMemory, KidsPaint, EggOffer, EggStatus, EggHatch, GymInvite, LeagueInvite, MegaChallengeInvite, TowerInvite, BossInvite, LeagueComplete, ChooseBattler, TrainerIntro, Battle, MoveSelect, EvolutionCinematic, TradeCinematic, EvolutionChoose, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, TrainerCard, BadgeCase, Box, Pokedex, PokedexDetail, Mart, Recovery, BerryGarden, KidsCatch, KidsTowerCampaign, KidsTowerTeam, KidsTowerBattle, MegaFormSelect, WildChainSelect, SinnohExpedition };
+enum class Screen : uint8_t { Diagnostic, OakIntro, Starter, RegionalDiscovery, RegionalStarter, PokedexUpdated, PokedexCompleteReward, Home, PokecenterConfirm, Settings, PlayerStats, WirelessUpdate, KidsMenu, KidsMemory, KidsPaint, EggOffer, EggStatus, EggHatch, GymInvite, LeagueInvite, MegaChallengeInvite, TowerInvite, BossInvite, LeagueComplete, ChooseBattler, TrainerIntro, Battle, MoveSelect, EvolutionCinematic, TradeCinematic, EvolutionChoose, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, TrainerCard, BadgeCase, Box, Pokedex, PokedexDetail, Mart, Recovery, BerryGarden, KidsCatch, KidsTowerCampaign, KidsTowerTeam, KidsTowerBattle, MegaFormSelect, WildChainSelect, SinnohExpedition, ChallengeHub, RegionHub, UnovaAdventure, UnovaTournament };
 #if defined(POKEGOCHI_ANDROID)
 const char* androidScreenName(Screen value) {
   switch (value) {
@@ -190,6 +198,10 @@ const char* androidScreenName(Screen value) {
     case Screen::MegaFormSelect: return "MegaFormSelect";
     case Screen::WildChainSelect: return "WildChainSelect";
     case Screen::SinnohExpedition: return "SinnohExpedition";
+    case Screen::ChallengeHub: return "ChallengeHub";
+    case Screen::RegionHub: return "RegionHub";
+    case Screen::UnovaAdventure: return "UnovaAdventure";
+    case Screen::UnovaTournament: return "UnovaTournament";
   }
   return "Unknown";
 }
@@ -236,14 +248,9 @@ struct InventoryEntry {
 // any realistic play session, so that bit records the one-time Oak rescue.
 constexpr uint32_t kOakRescueUsedMask = 0x80000000UL;
 constexpr uint32_t kMartSeenDayMask = 0x7FFFFFFFUL;
-// Bump the in-game/about and signed OTAP metadata together with the Sinnoh
-// expansion. Keeping the old 2.2 label made a fully installed Gen-IV update
-// look indistinguishable from the previous firmware.
-// Keep this semantic label in the executable and the signed OTAP metadata.
-// 2.3.2 adds a read-back check for the bootloader OTA selection, so an
-// installed package can never be reported as complete while an old slot is
-// still selected for the next boot.
-constexpr char kGameVersion[] = "2.3.2 SINNOH";
+// Single semantic label shared by the firmware UI, boot diagnostics and signed
+// wireless-update metadata. Version 3.0 is the first public Unova release.
+constexpr char kGameVersion[] = "3.0 UNOVA";
 // Colours sampled from FireRed's battle_interface palettes.  They are used
 // by the arena and by every battle-adjacent screen so pre-battle selection
 // no longer looks like a separate blue application.
@@ -274,7 +281,7 @@ TouchDriver touch;
 PersistentSave saves;
 Multiplayer multiplayer;
 WirelessUpdate wirelessUpdate;
-// GameSave is ~25 KiB. Keeping it as a linker-time BSS object left no static
+// GameSave is ~48 KiB with the living-dex Box. Keeping it as a linker-time BSS object left no static
 // DRAM window for the BLE controller even though the same memory is available
 // from the normal 8-bit heap at boot. Allocate it once, before every renderer
 // and radio allocation, and retain the familiar reference syntax below.
@@ -299,7 +306,8 @@ uint32_t battlePresentationDurationMs(uint32_t authoredDurationMs) {
 // needed by the retained battle canvas on the 320 KiB ESP32.
 RTC_DATA_ATTR uint64_t ownedSinnohMachines = 0;
 bool ownsMachine(uint8_t machineId) {
-  return Economy::ownsMachine(gameSave.ownedMachines, ownedSinnohMachines, machineId);
+  return Economy::ownsMachine(gameSave.ownedMachines, ownedSinnohMachines,
+                              gameSave.unova.unovaMachineOwnership, machineId);
 }
 
 struct UiThemePalette {
@@ -319,6 +327,7 @@ const UiThemePalette& uiThemePaletteFor(UiColorTheme theme) {
     {0xD8A7, 0xF92C, 0x780C, 0xFDD7}, // Ruby
     {0x04CD, 0x07F3, 0x0247, 0xB7F1}, // Emerald
     {0x632C, 0x9D39, 0x2104, 0xD69A}, // Platinum
+    {0x39E7, 0x73AE, 0x1082, 0xEF7D}, // White 2
   };
   uint8_t index = static_cast<uint8_t>(theme);
   if (index >= sizeof(palettes) / sizeof(palettes[0])) index = 0;
@@ -326,8 +335,10 @@ const UiThemePalette& uiThemePaletteFor(UiColorTheme theme) {
 }
 
 const UiThemePalette& uiThemePalette() {
-  return uiThemePaletteFor(gameSaveStorage
-      ? gameSave.settings.colorTheme() : UiColorTheme::Sapphire);
+  if (gameSaveStorage && UnovaAdventure::white2ThemeSelected(gameSave.unova))
+    return uiThemePaletteFor(UiColorTheme::White2);
+  return uiThemePaletteFor(gameSaveStorage ? gameSave.settings.colorTheme()
+                                           : UiColorTheme::Sapphire);
 }
 
 uint16_t themePrimary() { return uiThemePalette().primary; }
@@ -340,6 +351,7 @@ const char* themeName(UiColorTheme theme) {
     case UiColorTheme::Ruby: return "RUBY RED";
     case UiColorTheme::Emerald: return "EMERALD GREEN";
     case UiColorTheme::Platinum: return "PLATINUM SILVER";
+    case UiColorTheme::White2: return "BLACK";
     default: return "SAPPHIRE BLUE";
   }
 }
@@ -347,6 +359,9 @@ const char* themeName(UiColorTheme theme) {
 Screen screen = Screen::Diagnostic;
 bool sdReady = false, assetsReady = false, saveReady = false, wasTouched = false, saveDirty = false;
 #if defined(POKEGOCHI_ANDROID)
+// Keep the persisted anchor in UTC for offline progression, while using the
+// phone-zone offset only to derive the local civil clock shown by the game.
+int32_t androidPhoneUtcOffsetSeconds = 0;
 uint32_t lastAndroidHealthTraceMs = UINT32_MAX;
 uint32_t lastAndroidThrottledTouchTraceMs = 0;
 #endif
@@ -1063,6 +1078,14 @@ MoveId summaryMovePool[kSummaryMovePoolCapacity]{};
 uint8_t summaryMovePoolCount = 0;
 uint8_t summaryMovePoolOffset = 0;
 int8_t summaryMovePoolSelection = -1;
+// The retained TFT compositor invokes the complete screen painter once per
+// eight-row stripe. Building the relearn pool scans the complete evolution
+// and learnset tables, so doing it from every stripe made Edit Moveset appear
+// frozen even though all of its pixels were resident. Cache the data model by
+// the fields that can actually change that pool; cursor/page repaints then do
+// no game-data scan at all.
+uint32_t summaryMovePoolCacheKey = 0;
+bool summaryMovePoolCacheValid = false;
 // The EV page is visible at every level, but becomes a staged editor only at
 // Lv.90. Removing points puts them in a local pool and adding points consumes
 // that same pool, so an unfinished edit can never manufacture or discard
@@ -1105,6 +1128,11 @@ BatterySampleBurst batterySampleBurst;
 uint8_t renderedHomeBackground = 0xFF;
 uint32_t preparedUiSceneKey = 0;
 bool preparedUiSceneComplete = false;
+// A pressure save temporarily lends the renderer's scene arena to SPIFFS.
+// The physical panel keeps its last complete frame, but every descriptor in
+// that arena is invalid afterwards. Rebuild the current manifest from the
+// normal loop before the retained compositor enters its strict no-I/O pass.
+bool rendererSceneRewarmPending = false;
 char message[64] = "";
 // Wild battles open with the actual encountered species. If Home weather is
 // active, keep its mandatory notice as a second acknowledged message instead
@@ -1423,6 +1451,11 @@ bool battleFlowShowEventDeferred = false;
 // A tap only requests the next journal event; the shallow main-loop iteration
 // below performs its animation and presentation after handleTap has returned.
 bool battleFlowAdvanceDeferred = false;
+// Finishing a battle may play an evolution cinematic and open several assets.
+// Never do that from the deeply nested touch/event call chain: on the ESP32
+// the remaining loop-task stack can be only a few hundred bytes at that point.
+// The main loop consumes this flag on its next, shallow iteration.
+bool battleFlowFinishDeferred = false;
 // Status animations are separate scripts in FireRed.  A MoveEffect journal
 // entry can be revisited while the retained arena is being rebuilt, so keep
 // the last visualised index and never replay the same status animation.
@@ -1446,6 +1479,7 @@ void clearBattleFlowState() {
   battleFlowPresentationDeferred = false;
   battleFlowShowEventDeferred = false;
   battleFlowAdvanceDeferred = false;
+  battleFlowFinishDeferred = false;
   battleStatusVisualEventIndex = 0xFFU;
   battleStatusAnimationDeferred = false;
   battleStatusAnimationPendingSide = BattleSide::Player;
@@ -1459,33 +1493,45 @@ WildChainState wildChain{};
 uint8_t wildChainSelection = 1U;
 uint8_t pendingWildEncounterCount = 1U;
 // Sinnoh expeditions use normal, capturable Wild battles. This transient flag
-// only selects the source table while choosing a party member; it never adds
-// a new BattleKind or changes the regular Home encounter pool.
+// preserves the source context through the count and party selectors; it never
+// adds a new BattleKind or changes the regular Home encounter pool.
 bool sinnohEncounterPending = false;
 // Set only after the Sinnoh EXPLORE flow has launched a real battle.  It lets
 // the common Wild battle presenter award research and return to the expedition
 // screen without changing regular Home encounters.
 bool sinnohBattleActive = false;
+// Snapshot the visible site when EXPLORE is pressed. A multi-encounter run
+// must keep using that site's encounter table for all 1-50 battles, regardless
+// of any later UI redraw or cursor change.
+uint8_t sinnohEncounterSite = 0;
 // Sinnoh is presented as one expedition site per screen. The cursor is kept
 // separate from the selected save slot so browsing never changes the active
 // site until the player confirms it.
 uint8_t sinnohSiteCursor = 0;
+// Region destinations are paged two at a time.  Keeping the cursor transient
+// makes future regions a data-table addition without changing the save ABI.
+uint8_t regionHubPage = 0;
+uint8_t challengeHubPage = 0;
+uint8_t unovaAreaCursor = 0;
+uint8_t unovaTournamentCursor = 0;
 char sinnohNotice[56] = "SELECT A RESEARCH SITE.";
+char unovaNotice[72] = "CHOOSE AN AREA. YOUR PARTY OF THREE ENTERS TOGETHER.";
+// These flags remember which persistent activity owns the common battle
+// result panel. The activity state itself is committed before CONTINUE, so a
+// defeated area boss can safely clear its run without losing the return path.
+bool unovaAreaBattleResultPending = false;
+bool unovaTournamentBattleResultPending = false;
 // Completion rewards are committed to the Sinnoh state immediately. The final
 // byte of this fixed-size notice buffer is reserved for the transient
 // acknowledgement mask, so this feature costs no additional DRAM global.
-// Finishing a battle may play an evolution cinematic and open several assets.
-// Never do that from the deeply nested touch/event call chain: on the ESP32
-// the remaining loop-task stack can be only a few hundred bytes at that point.
-// The main loop consumes this flag on its next, shallow iteration.
-bool battleFlowFinishDeferred = false;
 // Tower and Boss prizes are awarded and saved immediately. These transient
 // flags merely sequence their acknowledgement after the victory dialogue.
 bool rareCandyRewardMessagePending = false;
 bool specialEggRewardMessagePending = false;
 bool masterBallRewardMessagePending = false;
 bool bossRewardStorageFullMessagePending = false;
-bool luckyEggMessagePending = false;
+uint8_t luckyEggMessagePendingPercent = 0U;
+bool goldenBallRewardMessagePending = false;
 // The reward is committed with the victory. This transient flag merely gives
 // the unique Mega Stone its own acknowledged FireRed-style result dialogue.
 bool megaStoneMessagePending = false;
@@ -1553,8 +1599,57 @@ constexpr int16_t kInventoryActionW = 101;
 constexpr int16_t kInventoryUseY = 174;
 constexpr int16_t kInventoryCancelY = 206;
 constexpr int16_t kInventoryActionH = 28;
+enum class KeyItemSelection : uint8_t { TrainerCard = 0, DnaSplicers = 1 };
+constexpr int16_t kKeyItemPanelX = 114;
+constexpr int16_t kKeyItemPanelW = 188;
+constexpr int16_t kTrainerCardWithSplicersY = 19;
+constexpr int16_t kTrainerCardOnlyY = 35;
+constexpr int16_t kDnaSplicersY = 62;
+constexpr int16_t kKeyItemCompactH = 39;
+constexpr char kTrainerCardPocketDescription[] =
+    "CHECK BADGES AND LEAGUE PROGRESS.";
+constexpr char kDnaSplicersPocketDescription[] =
+    "FUSE OR SEPARATE KYUREM WITH RESHIRAM OR ZEKROM.";
+constexpr char kTrainerCardIconPath[] =
+    "/pokegochi/assets/firered/trainer_card/badge_0.pkg";
+constexpr char kDnaSplicersIconPath[] =
+    "/pokegochi/assets/unova/key_items/dna_splicers.pkg";
+
+bool dnaSplicersSelected() {
+  return bagPage == kKeyItemsPage &&
+      UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems) &&
+      inventorySelection == static_cast<uint8_t>(KeyItemSelection::DnaSplicers);
+}
+
+const char* selectedKeyItemDescription() {
+  return dnaSplicersSelected() ? kDnaSplicersPocketDescription
+                               : kTrainerCardPocketDescription;
+}
+
+const char* selectedKeyItemIconPath() {
+  return dnaSplicersSelected() ? kDnaSplicersIconPath : kTrainerCardIconPath;
+}
 bool heldInventoryPage(){return bagPage==kHeldPocket;}
 bool heldConsumablePage(){return heldInventoryPage();}
+
+bool goldenBallOwned() {
+  return SinnohExpedition::goldenBallUnlocked(
+      gameSave.gymProgress, gameSave.sinnoh);
+}
+
+uint8_t activeUiThemeId() {
+  return static_cast<uint8_t>(gameSaveStorage &&
+      UnovaAdventure::white2ThemeSelected(gameSave.unova)
+          ? UiColorTheme::White2
+          : gameSaveStorage ? gameSave.settings.colorTheme()
+                            : UiColorTheme::Sapphire);
+}
+
+uint16_t pokeBallQuantity(PokeBallType ball) {
+  if (isInfinitePokeBall(ball)) return goldenBallOwned() ? 1U : 0U;
+  const uint8_t id = static_cast<uint8_t>(ball);
+  return isStoredPokeBall(ball) ? gameSave.inventory.balls[id] : 0U;
+}
 
 uint16_t battleItemQuantity(BattleItem item) {
   const uint8_t id=static_cast<uint8_t>(item);
@@ -1615,7 +1710,8 @@ uint8_t inventoryEntries(InventoryEntry* entries, uint8_t capacity) {
   };
   if (bagPage == kBallPocket) {
     for (uint8_t id = 0; id < static_cast<uint8_t>(PokeBallType::Count); ++id)
-      if (gameSave.inventory.balls[id]) add(InventoryEntryKind::Ball, id);
+      if (pokeBallQuantity(static_cast<PokeBallType>(id)))
+        add(InventoryEntryKind::Ball, id);
   } else if (bagPage == kMedicinePocket) {
     for (uint8_t id = 0; id < static_cast<uint8_t>(BattleItem::Count); ++id)
       if (battleItemQuantity(static_cast<BattleItem>(id)) &&
@@ -1635,6 +1731,10 @@ uint8_t inventoryEntries(InventoryEntry* entries, uint8_t capacity) {
         id<=static_cast<uint8_t>(kLastGen4UniqueItem);++id)
       if(gen4UniqueItemQuantity(gameSave.gen4UniqueItems,static_cast<HeldItem>(id)))
         add(InventoryEntryKind::Held,id);
+    for(uint8_t id=static_cast<uint8_t>(kFirstGen5Drive);
+        id<=static_cast<uint8_t>(kLastGen5Drive);++id)
+      if(gen5DriveQuantity(gameSave.gen5UniqueItems,static_cast<HeldItem>(id)))
+        add(InventoryEntryKind::Held,id);
   } else if (bagPage == kMachinePocket) {
     for (uint8_t id = 0; id < kMachineCount; ++id)
       if (ownsMachine(id)) add(InventoryEntryKind::Machine, id);
@@ -1648,7 +1748,8 @@ uint8_t inventoryEntries(InventoryEntry* entries, uint8_t capacity) {
 uint8_t inventoryTotalEntries() {
   uint8_t total = 0;
   if (bagPage == kBallPocket) {
-    for (uint8_t id=0;id<static_cast<uint8_t>(PokeBallType::Count);++id) if(gameSave.inventory.balls[id]) ++total;
+    for (uint8_t id=0;id<static_cast<uint8_t>(PokeBallType::Count);++id)
+      if(pokeBallQuantity(static_cast<PokeBallType>(id)))++total;
   } else if (bagPage == kMedicinePocket) {
     for (uint8_t id=0;id<static_cast<uint8_t>(BattleItem::Count);++id)
       if(battleItemQuantity(static_cast<BattleItem>(id))&&
@@ -1663,6 +1764,9 @@ uint8_t inventoryTotalEntries() {
     for(uint8_t id=static_cast<uint8_t>(kFirstGen4UniqueItem);
         id<=static_cast<uint8_t>(kLastGen4UniqueItem);++id)
       if(gen4UniqueItemQuantity(gameSave.gen4UniqueItems,static_cast<HeldItem>(id)))++total;
+    for(uint8_t id=static_cast<uint8_t>(kFirstGen5Drive);
+        id<=static_cast<uint8_t>(kLastGen5Drive);++id)
+      if(gen5DriveQuantity(gameSave.gen5UniqueItems,static_cast<HeldItem>(id)))++total;
   } else if (bagPage == kMachinePocket) {
     for (uint8_t id=0;id<kMachineCount;++id) if(ownsMachine(id)) ++total;
   } else if (bagPage == kEggPocket) {
@@ -1740,6 +1844,8 @@ void normalizeSettings() {
   if (gameSave.settings.colorTheme() == UiColorTheme::Platinum &&
       !SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh))
     gameSave.settings.setColorTheme(UiColorTheme::Sapphire);
+  if (!UnovaAdventure::white2ThemeUnlocked(gameSave.unova))
+    UnovaAdventure::setWhite2ThemeSelected(gameSave.unova, false);
   gameSave.settings.setTouchInputMode(gameSave.settings.touchInputMode());
   if (gameSave.settings.brightnessPercent < 20 || gameSave.settings.brightnessPercent > 100)
     gameSave.settings.brightnessPercent = 80;
@@ -1966,6 +2072,29 @@ void pokemonAssetPath(char* path, size_t size, const OwnedPokemon& pokemon,
   if (species == 351 && view != PokemonAssetView::Icon && pokemon.form) {
     const uint8_t form = std::min<uint8_t>(pokemon.form, 3U);
     std::snprintf(path, size, "/pokegochi/assets/pokemon/forms/castform/%u/%s%s.pkg",
+                  form, shiny, view == PokemonAssetView::Back ? "back" : "front");
+    return;
+  }
+  if (species == 550U || species == 555U || species == 585U ||
+      species == 586U || species == 641U || species == 642U ||
+      species == 645U || species == 646U || species == 647U ||
+      species == 648U || species == 649U) {
+    const uint8_t form = CollectionLogic::resolvedForm(pokemon);
+    if (view == PokemonAssetView::Icon)
+      std::snprintf(path, size,
+                    "/pokegochi/assets/pokemon/forms/unova/%03u/%u/%sicons/%u.pkg",
+                    species, static_cast<unsigned>(form), shiny,
+                    static_cast<unsigned>(frame & 1U));
+    else
+      std::snprintf(path, size,
+                    "/pokegochi/assets/pokemon/forms/unova/%03u/%u/%s%s.pkg",
+                    species, static_cast<unsigned>(form), shiny,
+                    view == PokemonAssetView::Back ? "back" : "front");
+    return;
+  }
+  if (species == 421 && view != PokemonAssetView::Icon) {
+    const uint8_t form = std::min<uint8_t>(pokemon.form, 1U);
+    std::snprintf(path, size, "/pokegochi/assets/pokemon/forms/cherrim/%u/%s%s.pkg",
                   form, shiny, view == PokemonAssetView::Back ? "back" : "front");
     return;
   }
@@ -4925,6 +5054,12 @@ void spawnBattleAnimationParticle(const BattleAnimationCommand& command,
           battleAnimationArgument(slot->arguments, slot->argumentCount, 4, 24) + 1,
           4, 200));
       break;
+    case BattleAnimationMotion::LockingJaw:
+      slot->lifetime = static_cast<uint8_t>(std::clamp<int16_t>(
+          battleAnimationArgument(slot->arguments, slot->argumentCount, 5, 10) +
+              battleAnimationArgument(slot->arguments, slot->argumentCount, 6, 30),
+          4, 200));
+      break;
     case BattleAnimationMotion::HyperVoiceRing:
       // FireRed intentionally reuses argument 0 as both the signed start-X
       // distance and the linear translation duration for these expanding
@@ -5317,6 +5452,9 @@ void spawnBattleAnimationTask(const BattleAnimationCommand& command) {
       break;
     }
     case BattleAnimationTaskMotion::DoubleTeam: boundedLifetime(131); break;
+    case BattleAnimationTaskMotion::BestowItemThrow:
+      boundedLifetime(std::max<int16_t>(1, arg(4, 40)) + 1);
+      break;
     case BattleAnimationTaskMotion::ExtremeSpeedImpact: boundedLifetime(44); break;
     case BattleAnimationTaskMotion::ExtremeSpeedMonReappear: boundedLifetime(70); break;
     case BattleAnimationTaskMotion::FlailMovement: boundedLifetime(298); break;
@@ -7673,6 +7811,29 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
         }
         break;
       }
+      case BattleAnimationTaskMotion::BestowItemThrow: {
+        const uint16_t duration = static_cast<uint16_t>(std::max<int16_t>(
+            1, battleAnimationArgument(task.arguments, task.argumentCount, 4, 40)));
+        const uint16_t local = std::min<uint16_t>(duration, task.age);
+        const int16_t startX = static_cast<int16_t>(taskAttackerX +
+            battleAnimationArgument(task.arguments, task.argumentCount, 0, 20));
+        const int16_t startY = static_cast<int16_t>(taskAttackerY +
+            battleAnimationArgument(task.arguments, task.argumentCount, 1, 0));
+        const int16_t endX = static_cast<int16_t>(taskTargetX +
+            battleAnimationArgument(task.arguments, task.argumentCount, 2, 0));
+        const int16_t endY = static_cast<int16_t>(taskTargetY +
+            battleAnimationArgument(task.arguments, task.argumentCount, 3, 0));
+        const int16_t arc = battleAnimationArgument(
+            task.arguments, task.argumentCount, 5, -25);
+        const int16_t px = static_cast<int16_t>(startX +
+            static_cast<int32_t>(endX - startX) * local / duration);
+        const int16_t py = static_cast<int16_t>(startY +
+            static_cast<int32_t>(endY - startY) * local / duration +
+            (4L * arc * local * (duration - local)) /
+                std::max<int32_t>(1, duration * duration));
+        drawTaskSprite(0U, local, px, py);
+        break;
+      }
       case BattleAnimationTaskMotion::DestinyBondShadow: {
         const uint16_t travel = static_cast<uint16_t>(std::max<int16_t>(1,
             battleAnimationArgument(task.arguments, task.argumentCount, 1, 48)));
@@ -7932,6 +8093,12 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
         break;
       }
       case BattleAnimationTaskMotion::GrudgeFlames: {
+        const bool aroundTarget = task.resource->target ==
+            BattleAnimationTaskTarget::Target;
+        const int16_t centerX = aroundTarget ? taskTargetX : taskAttackerX;
+        const int16_t centerY = aroundTarget ? taskTargetY : taskAttackerY;
+        const bool centerOpponent = aroundTarget ? targetOpponent
+                                                  : attackerOpponent;
         uint8_t opacity = task.age < 28U
             ? static_cast<uint8_t>(std::min<uint16_t>(14U, task.age / 2U))
             : task.age < 59U ? 14U
@@ -7939,10 +8106,10 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
                 0, 14 - static_cast<int16_t>((task.age - 59U) / 2U)));
         for (uint8_t flame = 0; flame < 6U && opacity; ++flame) {
           const uint8_t angle = static_cast<uint8_t>(
-              flame * 42U + (enemyAttacking ? -2 : 2) * task.age);
+              flame * 42U + (centerOpponent ? -2 : 2) * task.age);
           drawTaskSprite(0U, task.age,
-              static_cast<int16_t>(taskAttackerX + battleAnimationSin(angle, 40)),
-              static_cast<int16_t>(taskAttackerY + battleAnimationCos(angle, 18)),
+              static_cast<int16_t>(centerX + battleAnimationSin(angle, 40)),
+              static_cast<int16_t>(centerY + battleAnimationCos(angle, 18)),
               angle >= 65U && angle <= 191U, opacity);
         }
         break;
@@ -9024,6 +9191,23 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
         y = static_cast<int16_t>(anchorY + offsetY +
             (static_cast<int32_t>(battleAnimationArgument(
                 particle.arguments, particle.argumentCount, 3)) * particle.age >> 8));
+        break;
+      }
+      case BattleAnimationMotion::LockingJaw: {
+        // SpriteCB_LockingJaw moves each Shell Smash half for arg5 frames,
+        // then leaves it locked in place for arg6 frames.  arg2 selects the
+        // affine cel in the GBA source and is deliberately not an owner flag.
+        const int16_t direction = targetX >= attackerX ? 1 : -1;
+        const uint16_t travelFrames = static_cast<uint16_t>(std::max<int16_t>(
+            1, battleAnimationArgument(
+                   particle.arguments, particle.argumentCount, 5, 10)));
+        const uint16_t travelAge = std::min<uint16_t>(particle.age, travelFrames);
+        x = static_cast<int16_t>(anchorX + direction * offsetX +
+            (static_cast<int32_t>(direction) * battleAnimationArgument(
+                particle.arguments, particle.argumentCount, 3) * travelAge >> 8));
+        y = static_cast<int16_t>(anchorY + offsetY +
+            (static_cast<int32_t>(battleAnimationArgument(
+                particle.arguments, particle.argumentCount, 4)) * travelAge >> 8));
         break;
       }
       case BattleAnimationMotion::OffscreenFly: {
@@ -13997,7 +14181,42 @@ void prepareCurrentBattleAnimation() {
                 static_cast<unsigned long>(AssetRenderer::sdOpenCount() - opensBefore));
 }
 
-const char* ballAsset(PokeBallType ball){switch(ball){case PokeBallType::GreatBall:return "great_ball";case PokeBallType::UltraBall:return "ultra_ball";case PokeBallType::MasterBall:return "master_ball";default:return "poke_ball";}}
+const char* ballAsset(PokeBallType ball){
+  switch(ball){
+    case PokeBallType::PokeBall:return "poke_ball";
+    case PokeBallType::GreatBall:return "great_ball";
+    case PokeBallType::UltraBall:return "ultra_ball";
+    case PokeBallType::MasterBall:return "master_ball";
+    case PokeBallType::GoldenBall:return "golden_ball";
+    case PokeBallType::Count:return "poke_ball";
+  }
+  return "poke_ball";
+}
+
+bool unovaUnlocked() {
+  return UnovaAdventure::available(gameSave.sinnoh) &&
+         gameSave.unova.unlockedAreas != 0U;
+}
+
+uint8_t unlockedContentGeneration() {
+  if (unovaUnlocked()) return 5U;
+  if (SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh))
+    return 4U;
+  return std::min<uint8_t>(3U, gameSave.gymProgress.unlockedGeneration);
+}
+
+bool reconcileUnovaContent() {
+  bool changed = UnovaAdventure::reconcile(gameSave.unova, gameSave.sinnoh);
+  if (!unovaUnlocked()) return changed;
+  CollectionLogic::applyGenerationContent(gameSave.collection, 5U);
+  if (CollectionLogic::applyUnovaSeason(gameSave.collection,
+                                        currentUnovaSeason()))
+    changed = true;
+  if (UnovaForms::reconcileUniqueItems(gameSave.collection,
+                                       gameSave.gen5UniqueItems, true))
+    changed = true;
+  return changed;
+}
 
 void battleBallAssetPath(char* destination,size_t size,PokeBallType ball,uint8_t frame){
   std::snprintf(destination,size,"/pokegochi/assets/firered/battle_items/ball_%s_%02u.pkg",
@@ -14029,7 +14248,10 @@ void drawBattleBall(PokeBallType ball,uint8_t frame,int16_t centerX,int16_t cent
   if(AssetRenderer::draw(display,path,centerX-12,centerY-12))return;
   // A card read failure must not turn a throw into an invisible, stuck
   // animation. This compact Pokeball fallback only appears during recovery.
-  const uint16_t top=ball==PokeBallType::GreatBall?TFT_CYAN:ball==PokeBallType::UltraBall?TFT_YELLOW:ball==PokeBallType::MasterBall?TFT_MAGENTA:TFT_RED;
+  const uint16_t top=ball==PokeBallType::GreatBall?TFT_CYAN:
+      ball==PokeBallType::UltraBall?TFT_YELLOW:
+      ball==PokeBallType::MasterBall?TFT_MAGENTA:
+      ball==PokeBallType::GoldenBall?TFT_ORANGE:TFT_RED;
   display.fillCircle(centerX,centerY,10,TFT_DARKGREY);display.fillCircle(centerX,centerY,8,top);
   display.fillRect(centerX-8,centerY-1,17,3,TFT_WHITE);display.fillCircle(centerX,centerY,3,TFT_WHITE);
   if(frame==1)display.drawCircle(centerX,centerY,12,TFT_WHITE);
@@ -14188,7 +14410,8 @@ const char* heldItemDisplayName(const OwnedPokemon& pokemon){
 
 uint16_t inventoryEntryQuantity(InventoryEntry entry) {
   switch (entry.kind) {
-    case InventoryEntryKind::Ball: return gameSave.inventory.balls[entry.id];
+    case InventoryEntryKind::Ball:
+      return pokeBallQuantity(static_cast<PokeBallType>(entry.id));
     case InventoryEntryKind::Medicine: return battleItemQuantity(static_cast<BattleItem>(entry.id));
     case InventoryEntryKind::Held:
       if(specialHeldItemIndex(static_cast<HeldItem>(entry.id))>=0)
@@ -14197,6 +14420,9 @@ uint16_t inventoryEntryQuantity(InventoryEntry entry) {
       if(gen4UniqueItemIndex(static_cast<HeldItem>(entry.id))>=0)
         return gen4UniqueItemQuantity(gameSave.gen4UniqueItems,
                                       static_cast<HeldItem>(entry.id));
+      if(gen5DriveIndex(static_cast<HeldItem>(entry.id))>=0)
+        return gen5DriveQuantity(gameSave.gen5UniqueItems,
+                                 static_cast<HeldItem>(entry.id));
       if (const uint64_t bit=uniqueHeldItemOwnershipBit(static_cast<HeldItem>(entry.id)))
         return (gameSave.ownedMachines&bit)?1U:0U;
       return entry.id<kHeldItemInventorySlots?gameSave.inventory.heldItems[entry.id]:0U;
@@ -14217,6 +14443,9 @@ void inventoryEntryIconPath(InventoryEntry entry, char* path, size_t size) {
         // Rewards and the exceptionally rare Mart offer share the authentic
         // regular Ball asset, so no separate `mart_` duplicate is needed.
         std::snprintf(path, size, "/pokegochi/assets/firered/items/master_ball.pkg");
+        return;
+      case PokeBallType::GoldenBall:
+        std::snprintf(path, size, "/pokegochi/assets/firered/items/golden_ball.pkg");
         return;
       default: break;
     }
@@ -14249,6 +14478,9 @@ void inventoryEntryIconPath(InventoryEntry entry, char* path, size_t size) {
 }
 
 const char* inventoryEntryDescription(InventoryEntry entry) {
+  if (entry.kind == InventoryEntryKind::Ball &&
+      static_cast<PokeBallType>(entry.id) == PokeBallType::GoldenBall)
+    return "AN INFINITE BALL. IT CATCHES LIKE A POKE BALL.";
   if (entry.kind == InventoryEntryKind::Ball)
     return "A BALL USED TO CATCH WILD POKEMON.";
   if (entry.kind == InventoryEntryKind::Held)
@@ -14304,8 +14536,9 @@ bool applyInventoryItem(InventoryEntry entry, OwnedPokemon& pokemon) {
     const HeldItem selected=static_cast<HeldItem>(entry.id);
     if(selected==HeldItem::MegaStone&&!MegaEvolution::canTransform(pokemon.speciesId))return false;
     const bool changed=equipHeldItem(pokemon,selected,gameSave.inventory.heldItems,
-        gameSave.specialHeldItems,gameSave.gen4UniqueItems,gameSave.ownedMachines);
-    if(changed){CollectionLogic::refreshAbility(pokemon);CollectionLogic::refreshDerivedStats(pokemon,true);}
+        gameSave.specialHeldItems,gameSave.gen4UniqueItems,
+        gameSave.gen5UniqueItems,gameSave.ownedMachines);
+    if(changed){CollectionLogic::refreshAbility(pokemon,unlockedContentGeneration());CollectionLogic::refreshDerivedStats(pokemon,true);}
     return changed;
   }
   if (entry.kind == InventoryEntryKind::Machine) {
@@ -14745,6 +14978,11 @@ void presentTradeCinematic(uint16_t waitMs) {
   invalidatePixels(0, 0, 320, 240);
   requestRetainedFrame();
   presentRetainedFrame();
+#if defined(POKEGOCHI_ANDROID)
+  // Trade playback is synchronous, so publish every completed native frame
+  // before waiting for the next authored cel.
+  pokegochi_android_frame_presented();
+#endif
   if (waitMs) delay(waitMs);
 }
 
@@ -14916,11 +15154,15 @@ bool testSd(uint8_t maximumAttempts = 8) {
   // Qualify fastest-first. The CYD socket/card combination varies more than
   // the ESP32 controller itself, so a fixed 2 MHz cap punished healthy cards
   // while still failing to protect marginal ones. A production boot tests
-  // 10/8/4/2 MHz with a sustained PGA1 read, then retains 1 MHz/400 kHz as
-  // recovery fallbacks. A periodic one-shot remount reuses the last proven
-  // rate instead of sweeping while the player is waiting at diagnostics.
+  // 20/16/10/8/4/2 MHz with a sustained PGA3 read, then retains 1 MHz/400 kHz
+  // as recovery fallbacks. The connected production card passed 216 mixed
+  // scene opens and 288 TFT-interleaved opens at 20 MHz with matching hashes;
+  // every boot still qualifies its own card and falls back automatically.
+  // A periodic one-shot remount reuses the last proven rate instead of
+  // sweeping while the player is waiting at diagnostics.
   constexpr uint32_t kFrequencies[] = {
-      10000000UL, 8000000UL, 4000000UL, 2000000UL, 1000000UL, 400000UL};
+      20000000UL, 16000000UL, 10000000UL, 8000000UL,
+      4000000UL, 2000000UL, 1000000UL, 400000UL};
   const bool oneShot = maximumAttempts == 1U;
   const uint8_t attemptCount = oneShot ? 1U :
       std::max<uint8_t>(1U, std::min<uint8_t>(maximumAttempts,
@@ -15028,7 +15270,10 @@ void runSdStressSuite() {
 #ifndef SD_TFT_INTERLEAVE_ONLY
   for (uint32_t rate : kRates) {
     SD.end();
+    sdSpi.end();
     delay(180);
+    sdSpi.begin(board::kSdSckPin, board::kSdMisoPin,
+                board::kSdMosiPin, board::kSdCsPin);
     digitalWrite(board::kSdCsPin, HIGH);
     const uint32_t mountStarted = millis();
     const bool mounted = SD.begin(board::kSdCsPin, sdSpi, rate, "/sd", 1, false) &&
@@ -15073,7 +15318,10 @@ void runSdStressSuite() {
   constexpr uint32_t kSustainedRates[] = {4000000UL, 10000000UL, 20000000UL};
   constexpr uint8_t kSceneLoops = 36;
   for (uint32_t rate : kSustainedRates) {
-    SD.end(); delay(180); digitalWrite(board::kSdCsPin, HIGH);
+    SD.end(); sdSpi.end(); delay(180);
+    sdSpi.begin(board::kSdSckPin, board::kSdMisoPin,
+                board::kSdMosiPin, board::kSdCsPin);
+    digitalWrite(board::kSdCsPin, HIGH);
     const bool mounted = SD.begin(board::kSdCsPin, sdSpi, rate, "/sd", 1, false) &&
                          SD.cardType() != CARD_NONE;
     if (!mounted) {
@@ -15119,41 +15367,55 @@ void runSdStressSuite() {
   // Also remove the display backlight load for the identification phase. If
   // this is the difference between a failed and a successful mount, the
   // board's 3.3-V rail—not the card format or asset renderer—is the culprit.
-  backlight.setEnabled(false);
-  delay(180);
-  const bool displayMounted = testSd();
-  backlight.setEnabled(true);
-  bool displayGood = displayMounted;
-  uint32_t displayBytes = 0, displayChecksum = 2166136261UL;
-  const uint32_t displayStarted = millis();
-  for (uint16_t iteration = 0; iteration < 48U && displayGood; ++iteration) {
-    // Comparable to a complete menu repaint: a full screen plus the framed
-    // playfield and several coloured controls.
-    display.fillScreen((iteration & 1U) ? themePrimary() : TFT_DARKGREEN);
-    display.fillRoundRect(4, 4, 312, 232, 7, TFT_ORANGE);
-    display.fillRect(8, 49, 304, 134, (iteration & 2U) ? themePale() : TFT_GREEN);
-    display.fillRoundRect(9, 190, 57, 40, 4, TFT_WHITE);
-    display.fillRoundRect(71, 190, 57, 40, 4, TFT_WHITE);
-    for (const char* path : kSceneFiles) {
-      File file = SD.open(path, FILE_READ);
-      if (!file) { displayGood = false; break; }
-      while (file.available()) {
-        const size_t want = std::min<size_t>(sizeof(buffer), static_cast<size_t>(file.available()));
-        const size_t count = file.read(buffer, want);
-        if (!count) { displayGood = false; break; }
-        displayBytes += static_cast<uint32_t>(count);
-        for (size_t index = 0; index < count; ++index) displayChecksum = (displayChecksum ^ buffer[index]) * 16777619UL;
+  constexpr uint32_t kDisplayRates[] = {10000000UL, 20000000UL};
+  for (uint32_t rate : kDisplayRates) {
+    backlight.setEnabled(false);
+    SD.end();
+    sdSpi.end();
+    delay(180);
+    sdSpi.begin(board::kSdSckPin, board::kSdMisoPin,
+                board::kSdMosiPin, board::kSdCsPin);
+    digitalWrite(board::kSdCsPin, HIGH);
+    const bool displayMounted =
+        SD.begin(board::kSdCsPin, sdSpi, rate, "/sd", 1, false) &&
+        SD.cardType() != CARD_NONE;
+    backlight.setEnabled(true);
+    bool displayGood = displayMounted;
+    uint32_t displayBytes = 0, displayChecksum = 2166136261UL;
+    const uint32_t displayStarted = millis();
+    for (uint16_t iteration = 0; iteration < 48U && displayGood; ++iteration) {
+      // Comparable to a complete menu repaint: a full screen plus the framed
+      // playfield and several coloured controls.
+      display.fillScreen((iteration & 1U) ? themePrimary() : TFT_DARKGREEN);
+      display.fillRoundRect(4, 4, 312, 232, 7, TFT_ORANGE);
+      display.fillRect(8, 49, 304, 134, (iteration & 2U) ? themePale() : TFT_GREEN);
+      display.fillRoundRect(9, 190, 57, 40, 4, TFT_WHITE);
+      display.fillRoundRect(71, 190, 57, 40, 4, TFT_WHITE);
+      for (const char* path : kSceneFiles) {
+        File file = SD.open(path, FILE_READ);
+        if (!file) { displayGood = false; break; }
+        while (file.available()) {
+          const size_t want = std::min<size_t>(sizeof(buffer), static_cast<size_t>(file.available()));
+          const size_t count = file.read(buffer, want);
+          if (!count) { displayGood = false; break; }
+          displayBytes += static_cast<uint32_t>(count);
+          for (size_t index = 0; index < count; ++index)
+            displayChecksum = (displayChecksum ^ buffer[index]) * 16777619UL;
+        }
+        file.close();
+        if (!displayGood) break;
       }
-      file.close();
-      if (!displayGood) break;
+      yield();
     }
-    yield();
+    const uint32_t displayElapsed = millis() - displayStarted;
+    Serial.printf("[SDTEST] tft-interleave rate=%lu mount=%s result=%s "
+                  "opens=%u bytes=%lu ms=%lu hash=%08lX\n",
+                  static_cast<unsigned long>(rate), displayMounted ? "OK" : "FAIL",
+                  displayGood ? "OK" : "FAIL", 48U * 6U,
+                  static_cast<unsigned long>(displayBytes),
+                  static_cast<unsigned long>(displayElapsed),
+                  static_cast<unsigned long>(displayChecksum));
   }
-  const uint32_t displayElapsed = millis() - displayStarted;
-  Serial.printf("[SDTEST] tft-interleave mount=%s result=%s opens=%u bytes=%lu ms=%lu hash=%08lX\n",
-                displayMounted ? "OK" : "FAIL", displayGood ? "OK" : "FAIL", 48U * 6U,
-                static_cast<unsigned long>(displayBytes), static_cast<unsigned long>(displayElapsed),
-                static_cast<unsigned long>(displayChecksum));
   SD.end();
   Serial.println("[SDTEST] END -- reset board to run again");
 }
@@ -15797,8 +16059,9 @@ uint16_t pokedexSpeciesLimit() {
   // Sinnoh is a post-Hoenn National Dex expansion. The save and generated
   // Pokédex data already contain entries 001-493; the old UI limit of 386
   // accidentally hid every Sinnoh page after the region was unlocked.
+  if (unovaUnlocked()) return kPokedexSpeciesCount;
   if (SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh))
-    return kPokedexSpeciesCount;
+    return kPokedexSpeciesCountV45;
   return gameSave.gymProgress.unlockedGeneration == 1 ? 151U :
          gameSave.gymProgress.unlockedGeneration == 2 ? 251U : 386U;
 }
@@ -15962,7 +16225,12 @@ bool prepareUiScene(uint32_t key, const char* const* assets, uint8_t count) {
     // updated assets from being shadowed by old loose PKG development files
     // that remain on cards written before the archive format existed.
     ScopedAssetPreloadBatch preloadBatch;
+    // Resolve the complete manifest while the archive head is hot, then read
+    // its image payloads. Interleaving one binary index search with one far-
+    // away pixel read per asset caused hundreds of long seeks on a cold Home.
+    ready = AssetRenderer::primePreloads(assets, count);
     for (uint8_t item = 0; item < count; ++item) {
+      if (!ready) break;
       if (!assets[item] || !assets[item][0]) continue;
       // Do not turn one unavailable visual into a queue of twelve more SD
       // reads while the previous screen remains visible.  The caller can draw
@@ -16038,7 +16306,15 @@ bool beginScreenPresentation(Screen target, uint16_t clearColor) {
   const bool battleOverlay =
       (target == Screen::Battle && presentedScreen == Screen::MoveSelect) ||
       (target == Screen::MoveSelect && presentedScreen == Screen::Battle);
-  const bool entering = !battleOverlay && presentedScreen != target;
+  // Restoring the arena after a pressure save invalidates every renderer
+  // descriptor even though the physical screen enum did not change. Consume
+  // that latch here so screen-specific resident markers (notably Home's
+  // layered background) cannot suppress the required out-of-composition
+  // manifest rebuild.
+  const bool forcedWorkspaceRebuild = rendererSceneRewarmPending;
+  if (forcedWorkspaceRebuild) rendererSceneRewarmPending = false;
+  const bool entering = forcedWorkspaceRebuild ||
+      (!battleOverlay && presentedScreen != target);
 #if defined(POKEGOCHI_ANDROID)
   const Screen previousPresentedScreen = presentedScreen;
 #endif
@@ -16055,17 +16331,14 @@ bool beginScreenPresentation(Screen target, uint16_t clearColor) {
     std::memset(retainedTileHash, 0, sizeof(retainedTileHash));
     if (target != Screen::Battle && target != Screen::MoveSelect)
       clearBattleAnimationPresentationState();
-#if defined(POKEGOCHI_ANDROID)
     if (target == Screen::Home) {
-      // Battle effects can leave a right-sized terrain plane in the shared
-      // arena. Home needs the normal bank again before its large background
-      // is preloaded; otherwise only the scenery falls through to TFT_GREEN
-      // while the cached Pokemon and chrome still render normally.
+      // Battle effects can promote the shared scene arena to a smaller
+      // terrain workspace. Restore the normal bank before the first Home
+      // manifest on both renderers.
       const bool restoredHomeWorkspace = AssetRenderer::restoreSceneWorkspace(false);
       if (!restoredHomeWorkspace)
-        Serial.println("[GFX] Android Home workspace restore failed");
+        Serial.println("[GFX] Home workspace restore failed");
     }
-#endif
   }
   if (!battleOverlay) {
     presentedScreen = target;
@@ -16260,9 +16533,13 @@ void homeLockButton() {
 
 uint8_t martRotationProgressSlices() {
   constexpr uint8_t kSlices = 12;
-  const uint32_t elapsed = std::min(gameSave.mart.elapsedSeconds, Economy::kRotationSeconds);
+  const bool endgame = SinnohExpedition::available(gameSave.gymProgress,
+                                                   gameSave.sinnoh);
+  const uint32_t rotationSeconds = endgame ? Economy::kEndgameRotationSeconds :
+                                             Economy::kRotationSeconds;
+  const uint32_t elapsed = std::min(gameSave.mart.elapsedSeconds, rotationSeconds);
   return static_cast<uint8_t>(std::min<uint32_t>(
-      kSlices, (elapsed * kSlices) / Economy::kRotationSeconds));
+      kSlices, (elapsed * kSlices) / rotationSeconds));
 }
 
 void drawMartRotationProgress() {
@@ -16308,15 +16585,17 @@ bool sinnohDiscoveryNotificationPending() {
       gameSave.gymProgress, gameSave.sinnoh);
 }
 
-void drawHomeNewContentBadge(int16_t buttonX, int16_t buttonY) {
-  const int16_t badgeX = buttonX + kHomeButtonWidth - 5;
-  const int16_t badgeY = buttonY + 7;
+void drawNewContentBadge(int16_t badgeX, int16_t badgeY) {
   display.fillCircle(badgeX, badgeY, 7, TFT_RED);
   display.drawCircle(badgeX, badgeY, 7, TFT_WHITE);
   fireRedText.setTextColor(TFT_WHITE, TFT_RED);
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.drawString("!", badgeX, badgeY + 1, 1);
   fireRedText.setTextDatum(TL_DATUM);
+}
+
+void drawHomeNewContentBadge(int16_t buttonX, int16_t buttonY) {
+  drawNewContentBadge(buttonX + kHomeButtonWidth - 5, buttonY + 7);
 }
 
 uint8_t batteryPercentFromMillivolts(uint16_t millivolts) {
@@ -16491,16 +16770,91 @@ void homeChargeButton(int16_t x, const char* asset, const char* fallback,
   fireRedText.setTextDatum(TL_DATUM);
 }
 
-bool towerOccupiesVsSeekerSlot() {
-  return BattleTowerSystem::replacesVsSeeker(gameSave.gymProgress);
+constexpr const char* kChallengeHubHomeIcon =
+    "/pokegochi/assets/emerald/challenge_hub/home_icon.pkg";
+constexpr const char* kRegionHubHomeIcon =
+    "/pokegochi/assets/platinum/region_hub/home_icon.pkg";
+constexpr const char* kSinnohRegionIcon =
+    "/pokegochi/assets/platinum/region_hub/sinnoh_adamant_orb.pkg";
+constexpr const char* kUnovaRegionIcon =
+    "/pokegochi/assets/unova/region_hub/unova_light_stone.pkg";
+
+enum class RegionHubDestination : uint8_t { Sinnoh, Unova };
+
+struct RegionHubDefinition {
+  RegionHubDestination destination;
+  const char* name;
+  const char* descriptionLine1;
+  const char* descriptionLine2;
+  const char* iconPath;
+};
+
+constexpr RegionHubDefinition kRegionHubDefinitions[] = {{
+    RegionHubDestination::Sinnoh,
+    "SINNOH",
+    "RESEARCH SITES",
+    "EXPLORE THE REGION",
+    kSinnohRegionIcon,
+}, {
+    RegionHubDestination::Unova,
+    "UNOVA",
+    "BRANCHING AREAS",
+    "FIND THE GATE",
+    kUnovaRegionIcon,
+}};
+constexpr uint8_t kRegionHubDestinationsPerPage = 2U;
+
+bool regionHubDestinationAvailable(RegionHubDestination destination) {
+  switch (destination) {
+    case RegionHubDestination::Sinnoh:
+      return SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh);
+    case RegionHubDestination::Unova:
+      return UnovaAdventure::available(gameSave.sinnoh);
+  }
+  return false;
+}
+
+uint8_t regionHubAvailableDestinationCount() {
+  uint8_t count = 0;
+  for (const RegionHubDefinition& definition : kRegionHubDefinitions)
+    if (regionHubDestinationAvailable(definition.destination)) ++count;
+  return count;
+}
+
+const RegionHubDefinition* regionHubVisibleDestination(uint8_t visibleIndex) {
+  uint8_t current = 0;
+  for (const RegionHubDefinition& definition : kRegionHubDefinitions) {
+    if (!regionHubDestinationAvailable(definition.destination)) continue;
+    if (current++ == visibleIndex) return &definition;
+  }
+  return nullptr;
+}
+
+uint8_t regionHubPageCount() {
+  const uint8_t count = regionHubAvailableDestinationCount();
+  return std::max<uint8_t>(1U, static_cast<uint8_t>(
+      (count + kRegionHubDestinationsPerPage - 1U) /
+      kRegionHubDestinationsPerPage));
+}
+
+bool regionHubAvailable() {
+  return regionHubAvailableDestinationCount() != 0U;
+}
+
+bool challengeHubAvailable() {
+  // Both activities currently share the completed Mega Stone trial as their
+  // permanent unlock. Keep the two checks explicit so a future progression
+  // split cannot expose a selector containing an unavailable destination.
+  return BattleTowerSystem::available(gameSave.gymProgress) &&
+         BossSystem::available(gameSave.gymProgress);
 }
 
 void homeTowerButton(int16_t x) {
   constexpr int16_t y = kHomeTopY;
   homeFrame(x, y, kHomeButtonWidth, kHomeButtonHeight);
-  // The unlocked facility replaces VS Seeker in this slot. Keep the original
-  // Emerald facade and deliberately omit a charge badge: Tower runs remain
-  // permanently available and never have a cooldown.
+  // Retain a direct-Tower fallback if its progression ever diverges from the
+  // Boss gate. Normal endgame saves paint the shared Battle Fist here instead.
+  // Tower runs remain permanently available and never have a cooldown.
   const int16_t iconX=x+(kHomeButtonWidth-kHomeIconSize)/2;
   const int16_t iconY=y+(kHomeButtonHeight-kHomeIconSize)/2;
   if(!sdReady||!AssetRenderer::draw(display,
@@ -16512,8 +16866,52 @@ void homeTowerButton(int16_t x) {
   }
 }
 
-void homeVsSeekerOrTowerButton() {
-  if (towerOccupiesVsSeekerSlot()) {
+void homeChallengeHubButton(int16_t x) {
+  constexpr int16_t y = kHomeTopY;
+  homeFrame(x, y, kHomeButtonWidth, kHomeButtonHeight);
+  const int16_t iconX=x+(kHomeButtonWidth-kHomeIconSize)/2;
+  const int16_t iconY=y+(kHomeButtonHeight-kHomeIconSize)/2;
+  if(sdReady&&AssetRenderer::draw(display,kChallengeHubHomeIcon,iconX,iconY))return;
+
+  // SD recovery fallback: retain the selected fist silhouette instead of
+  // turning the challenge hub into an unrelated text abbreviation.
+  const uint16_t outline=TFT_DARKGREY;
+  display.fillRoundRect(iconX+5,iconY+10,15,9,3,outline);
+  display.fillRoundRect(iconX+6,iconY+9,13,9,3,TFT_ORANGE);
+  for(uint8_t finger=0;finger<4U;++finger){
+    const int16_t fingerX=iconX+5+finger*4;
+    display.fillRoundRect(fingerX,iconY+4-(finger&1U),5,8,2,outline);
+    display.fillRoundRect(fingerX+1,iconY+5-(finger&1U),3,6,1,TFT_ORANGE);
+  }
+  display.fillTriangle(iconX+6,iconY+12,iconX+2,iconY+15,
+                       iconX+8,iconY+19,outline);
+  display.fillTriangle(iconX+6,iconY+13,iconX+4,iconY+15,
+                       iconX+8,iconY+17,TFT_ORANGE);
+}
+
+void homeRegionHubButton(int16_t x) {
+  constexpr int16_t y = kHomeTopY;
+  homeFrame(x, y, kHomeButtonWidth, kHomeButtonHeight);
+  const int16_t iconX=x+(kHomeButtonWidth-kHomeIconSize)/2;
+  const int16_t iconY=y+(kHomeButtonHeight-kHomeIconSize)/2;
+  if(!sdReady||!AssetRenderer::draw(display,kRegionHubHomeIcon,iconX,iconY)){
+    // SD-recovery fallback keeps the control identifiable without replacing
+    // the approved Town Map during normal operation.
+    display.fillRect(iconX+4,iconY+5,15,16,TFT_WHITE);
+    display.drawRect(iconX+4,iconY+5,15,16,TFT_DARKGREY);
+    display.drawFastVLine(iconX+9,iconY+6,14,TFT_ORANGE);
+    display.drawFastVLine(iconX+14,iconY+6,14,TFT_ORANGE);
+  }
+  if(sinnohDiscoveryNotificationPending())
+    drawHomeNewContentBadge(x,y);
+}
+
+void homeVsSeekerOrChallengeButton() {
+  if (challengeHubAvailable()) {
+    homeChallengeHubButton(kHomeTopX[1]);
+    return;
+  }
+  if (BattleTowerSystem::replacesVsSeeker(gameSave.gymProgress)) {
     homeTowerButton(kHomeTopX[1]);
     return;
   }
@@ -16522,6 +16920,13 @@ void homeVsSeekerOrTowerButton() {
 }
 
 void homeGymButton() {
+  // Once both endgame activities are available they live behind the Battle
+  // Fist in the old Tower slot. The former Gym slot stays empty until the
+  // first postgame region is unlocked, then becomes the extensible region hub.
+  if (challengeHubAvailable()) {
+    if (regionHubAvailable()) homeRegionHubButton(kHomeTopX[2]);
+    return;
+  }
   const bool leagueReady = GymSystem::leagueAvailable(gameSave.gymProgress);
   const bool megaChallengeReady = MegaChallengeSystem::available(gameSave.gymProgress);
   const bool bossReady = BossSystem::available(gameSave.gymProgress);
@@ -16617,7 +17022,7 @@ void drawHomeTopToolbar() {
   display.fillRect(8, 8, 304, 41, themePrimary());
   homeIconButton(kHomeTopX[0], kHomeTopY, kHomeButtonWidth, kHomeButtonHeight,
                  "/pokegochi/assets/firered/ui/home_wild.pkg", "WILD");
-  homeVsSeekerOrTowerButton();
+  homeVsSeekerOrChallengeButton();
   homeGymButton();
   homeSettingsButton();
 #if !defined(POKEGOCHI_ANDROID)
@@ -16747,7 +17152,7 @@ void refreshHomeTimedIndicators() {
   }
   homeIconButton(kHomeTopX[0], kHomeTopY, kHomeButtonWidth, kHomeButtonHeight,
                  "/pokegochi/assets/firered/ui/home_wild.pkg", "WILD");
-  homeVsSeekerOrTowerButton();
+  homeVsSeekerOrChallengeButton();
   homePokecenterButton(kHomeBottomX[2], kHomeBottomY);
   homeGymButton();
   drawHomeStatusLine();
@@ -16762,21 +17167,51 @@ constexpr uint8_t kHomePetMinimumGridY = 2;
 constexpr uint8_t kHomePetMaximumGridY = HomeBackgrounds::kGridHeight - 1U;
 constexpr int16_t kHomePetMinimumSeparation = 36;
 
+uint32_t currentWorldClockSeconds(){
+  const uint32_t clockSeconds=gameSave.clockLocalEpochSeconds;
+#if defined(POKEGOCHI_ANDROID)
+  if(clockSeconds){
+    const int64_t localSeconds=static_cast<int64_t>(clockSeconds)+
+                               androidPhoneUtcOffsetSeconds;
+    return localSeconds>0?static_cast<uint32_t>(localSeconds):0U;
+  }
+#endif
+  return clockSeconds;
+}
+
 uint16_t currentWorldMinute(){
-  return WorldClock::minuteOfDay(gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds);
+  return WorldClock::minuteOfDay(gameSave.playTimeSeconds,currentWorldClockSeconds());
 }
 
 uint32_t currentWorldDay(){
-  return WorldClock::day(gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds);
+  return WorldClock::day(gameSave.playTimeSeconds,currentWorldClockSeconds());
+}
+
+uint8_t currentUnovaSeasonImpl(){
+  const uint32_t day=currentWorldDay();
+  // Before phone-clock synchronization, use a deterministic 30-day cycle.
+  // Afterwards convert Unix days to the local calendar month: Black/White
+  // advances Spring/Summer/Autumn/Winter once per month.
+  if(!gameSave.clockLocalEpochSeconds)
+    return static_cast<uint8_t>((day/30U)%4U);
+  const int64_t z=static_cast<int64_t>(day)+719468LL;
+  const int64_t era=z/146097LL;
+  const uint32_t doe=static_cast<uint32_t>(z-era*146097LL);
+  const uint32_t yoe=(doe-doe/1460U+doe/36524U-doe/146096U)/365U;
+  const uint32_t doy=doe-(365U*yoe+yoe/4U-yoe/100U);
+  const uint32_t monthPhase=(5U*doy+2U)/153U;
+  const int32_t month=static_cast<int32_t>(monthPhase)+
+      (monthPhase<10U?3:-9);
+  return static_cast<uint8_t>((month-1)%4);
 }
 
 WorldTimePeriod currentWorldPeriod(){
-  return WorldClock::period(gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds);
+  return WorldClock::period(gameSave.playTimeSeconds,currentWorldClockSeconds());
 }
 
 HomeWeatherSample currentHomeWeather(){
   return HomeWeather::sample(WorldClock::effectiveSeconds(
-      gameSave.playTimeSeconds,gameSave.clockLocalEpochSeconds));
+      gameSave.playTimeSeconds,currentWorldClockSeconds()));
 }
 
 struct AmbientWeatherBounds {
@@ -17137,6 +17572,10 @@ bool placeHomePetAt(uint8_t slot, uint8_t gridX, uint8_t gridY) {
 
 }  // namespace
 
+uint8_t currentUnovaSeason(){
+  return currentUnovaSeasonImpl();
+}
+
 void homePetPosition(uint8_t slot, int16_t& x, int16_t& y) {
   synchronizeHomePetMotions();
   if (slot >= kPartyCapacity || homePetMotion[slot].uid == kEmptyPokemonUid) {
@@ -17416,37 +17855,32 @@ void drawHomeScene() {
   // been evicted even though the scene manifest was prepared successfully.
   // Re-promote the selected background before falling back to solid green;
   // otherwise one Haze animation can make the next Home screen look broken.
-#if defined(POKEGOCHI_ANDROID)
-  // Android keeps the last complete Home frame in its real framebuffer.  A
-  // retained repaint may briefly fail to find the decoded large background
-  // while another scene is releasing its workspace; never replace that valid
-  // frame with the diagnostic green fill in that case.
+  // Never commit a fallback colour from an incomplete retained repaint. Both
+  // renderers can preserve their last complete physical frame.
   const bool hadResidentHomeBackground = homeLayeredBackground;
-#endif
   homeLayeredBackground=false;
   if(sdReady){
-    if(!AssetRenderer::isPreloaded(backgroundPath))
+    if(!AssetRenderer::isPreloaded(backgroundPath) && !renderingRetainedFrame)
       AssetRenderer::preload(backgroundPath);
     if(AssetRenderer::isPreloaded(backgroundPath))
       homeLayeredBackground=drawHomeBackground(backgroundPath,8,49);
-    if(!homeLayeredBackground)
+    if(!homeLayeredBackground && !renderingRetainedFrame)
       homeLayeredBackground=AssetRenderer::draw(display,backgroundPath,8,49);
   }
   if(!homeLayeredBackground) {
-#if defined(POKEGOCHI_ANDROID)
-    if (hadResidentHomeBackground && renderingRetainedFrame) {
-      // presentAndroidFullFrame() preserves this rectangle for exactly this
-      // recovery path, so the previous scenery remains visible and atomic.
-      homeLayeredBackground = true;
+    if (renderingRetainedFrame) {
       static uint32_t lastHomeBackgroundMissLogMs = 0;
       const uint32_t now = millis();
       if (now - lastHomeBackgroundMissLogMs >= 1000U) {
         lastHomeBackgroundMissLogMs = now;
-        Serial.printf("[HOME] retained background miss kept path=%s\n", backgroundPath);
+        Serial.printf("[HOME] retained background miss cancelled path=%s resident=%u\n",
+                      backgroundPath, hadResidentHomeBackground ? 1U : 0U);
       }
-    } else
-#endif
-      display.fillRect(8,49,304,134,TFT_GREEN);
+      battleFrameCompositionFailed = true;
+      homeLayeredBackground = hadResidentHomeBackground;
+      return;
+    }
+    display.fillRect(8,49,304,134,TFT_GREEN);
   }
 
   drawHomeTimedNpc();
@@ -17618,6 +18052,14 @@ bool showHomePokemonInfoBubble(uint32_t uid) {
 }
 
 void drawHome() {
+  // An area is one continuous expedition. After a reboot or an accidental
+  // navigation return, resume its room selector before Home can expose the
+  // Center, Bag or Box and bypass persistent HP/PP/status attrition.
+  if(UnovaAdventure::active(gameSave.unova)&&!gameSave.battle.active){
+    screen=Screen::UnovaAdventure;
+    drawUnovaAdventure();
+    return;
+  }
   // Completion is reconciled at the safe return-to-Home boundary. Captures,
   // trades, hatches and evolutions may each finish on their own presentation
   // flow; none of them should be interrupted mid-animation. A pending reward
@@ -17628,7 +18070,7 @@ void drawHome() {
   if (sinnohRewardNotice && !homeNoticeAwaitingTap) {
     if (sinnohRewardNotice == 0x03U)
       std::snprintf(homeNotice, sizeof(homeNotice),
-                    "ALL SITES COMPLETE! PLATINUM + MASTER BALL!");
+                    "ALL GYMS! PLATINUM + MASTER BALL!");
     else if (sinnohRewardNotice & 0x01U)
       std::snprintf(homeNotice, sizeof(homeNotice),
                     "PLATINUM UNLOCKED! MASTER BALL PENDING.");
@@ -17657,10 +18099,12 @@ void drawHome() {
                     heldItemName(gen4Item));
     homeNoticeAwaitingTap=true;saveDirty=true;
   }
-  if (luckyEggMessagePending && !homeNoticeAwaitingTap) {
-    std::snprintf(homeNotice, sizeof(homeNotice), "LUCKY EGG: PERMANENT 2X EXP ACTIVE!");
+  if (luckyEggMessagePendingPercent && !homeNoticeAwaitingTap) {
+    std::snprintf(homeNotice, sizeof(homeNotice),
+                  "LUCKY EGG: +%u%% PARTY EXP ACTIVE!",
+                  static_cast<unsigned>(luckyEggMessagePendingPercent));
     homeNoticeAwaitingTap = true;
-    luckyEggMessagePending = false;
+    luckyEggMessagePendingPercent = 0U;
   }
   // Home and battle intentionally use different cache working sets. Returning
   // here marks the next battle as a new scene so its terrain is preloaded.
@@ -17730,12 +18174,16 @@ void drawHome() {
   const bool towerIconReady = BattleTowerSystem::available(gameSave.gymProgress);
   const bool leagueIconReady = GymSystem::leagueAvailable(gameSave.gymProgress);
   const bool bossIconReady = BossSystem::available(gameSave.gymProgress);
+  const bool challengeHubReady = challengeHubAvailable();
+  const bool regionHubReady = regionHubAvailable();
   if (levelGymReady)
     homeKey ^= 0x47594D00UL | static_cast<uint8_t>(GymSystem::next(gameSave.gymProgress));
-  if (towerIconReady) homeKey ^= 0x544F5745UL;
+  if (challengeHubReady) homeKey ^= 0x46495354UL;
+  else if (towerIconReady) homeKey ^= 0x544F5745UL;
+  if (regionHubReady) homeKey ^= 0x5245474EUL;
   if (leagueIconReady)
     homeKey ^= 0x4C454147UL ^ gameSave.gymProgress.unlockedGeneration;
-  if (bossIconReady) homeKey ^= 0x424F5353UL;
+  if (bossIconReady && !challengeHubReady) homeKey ^= 0x424F5353UL;
   // The scenery is the only indispensable Home asset and must be loaded
   // before every optional icon. `prepareUiScene()` intentionally stops after
   // the first failed read; the old icon-first order therefore left the whole
@@ -17787,15 +18235,19 @@ void drawHome() {
                   static_cast<unsigned>(typeIndex));
     homeAssets[homeAssetCount++] = effectPaths[effectPathCount++];
   }
-  if (towerIconReady)
+  if (challengeHubReady)
+    homeAssets[homeAssetCount++] = kChallengeHubHomeIcon;
+  else if (towerIconReady)
     homeAssets[homeAssetCount++] = "/pokegochi/assets/emerald/battle_tower/home_icon.pkg";
   else
     homeAssets[homeAssetCount++] = "/pokegochi/assets/firered/ui/home_battle.pkg";
-  if (leagueIconReady)
+  if (regionHubReady)
+    homeAssets[homeAssetCount++] = kRegionHubHomeIcon;
+  if (leagueIconReady && !challengeHubReady)
     homeAssets[homeAssetCount++] = gameSave.gymProgress.unlockedGeneration >= 3U
         ? "/pokegochi/assets/emerald/pokemon_league/home_icon.pkg"
         : "/pokegochi/assets/firered/pokemon_league/home_icon.pkg";
-  if (bossIconReady)
+  if (bossIconReady && !challengeHubReady)
     homeAssets[homeAssetCount++] = "/pokegochi/assets/emerald/boss/home_icon.pkg";
   if (levelGymReady) {
     std::snprintf(gymBadgePath, sizeof(gymBadgePath),
@@ -17850,9 +18302,9 @@ void drawHome() {
   display.fillRoundRect(7, 7, 306, 226, 5, themePrimary());
 
   // The two encounter systems live together in the header: grass for Wild
-  // battles and VS Seeker for Trainer charges. After the Mega Stone boss, the
-  // permanent Battle Tower replaces VS Seeker in-place. MOVE may temporarily
-  // replace this whole rail with a compact prompt without touching the scene.
+  // battles and VS Seeker for Trainer charges. After the Mega Stone trial, a
+  // single Battle Fist replaces VS Seeker and opens Tower/Boss selection; the
+  // old Boss slot stays free. MOVE may temporarily replace this whole rail.
   drawHomeTopToolbar();
 
   // Clear the playfield independently on a real Home composition. During an
@@ -17873,8 +18325,6 @@ void drawHome() {
   homePokecenterButton(kHomeBottomX[2], kHomeBottomY);
   homeIconButton(kHomeBottomX[3], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight,
                  "/pokegochi/assets/firered/ui/pokedex_icon.pkg", "DEX");
-  if (sinnohDiscoveryNotificationPending())
-    drawHomeNewContentBadge(kHomeBottomX[3], kHomeBottomY);
   homeIconButton(kHomeBottomX[4], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight,
                  "/pokegochi/assets/firered/ui/box_icon_v2.pkg", "BOX");
   homeMoneyButton();
@@ -18249,18 +18699,21 @@ void drawSettings() {
       fireRedText.drawString("COLOR THEME",23,160,1);
       const bool platinumUnlocked=
           SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh);
-      constexpr int16_t choiceX[4]={14,88,162,236};
-      constexpr const char* choiceLabel[4]={
-          "SAPPHIRE","RUBY","EMERALD","PLATINUM"};
-      const uint8_t choiceCount=platinumUnlocked?4U:3U;
-      const int16_t choiceWidth=platinumUnlocked?70:94;
-      const UiColorTheme selectedTheme=gameSave.settings.colorTheme();
+      const bool white2Unlocked=UnovaAdventure::white2ThemeUnlocked(gameSave.unova);
+      constexpr const char* choiceLabel[5]={
+          "SAPPHIRE","RUBY","EMERALD","PLATINUM","BLACK"};
+      const uint8_t choiceCount=white2Unlocked?5U:platinumUnlocked?4U:3U;
+      const int16_t choiceStep=static_cast<int16_t>(288/choiceCount);
+      const int16_t choiceWidth=static_cast<int16_t>(choiceStep-2);
+      const UiColorTheme selectedTheme=UnovaAdventure::white2ThemeSelected(gameSave.unova)
+          ?UiColorTheme::White2:gameSave.settings.colorTheme();
       for(uint8_t index=0;index<choiceCount;++index){
         const UiColorTheme candidate=static_cast<UiColorTheme>(index);
-        button(choiceX[index],kSettingsGameThemeButtonY,choiceWidth,21,
+        const int16_t choiceX=static_cast<int16_t>(14+index*choiceStep);
+        button(choiceX,kSettingsGameThemeButtonY,choiceWidth,21,
                choiceLabel[index],uiThemePaletteFor(candidate).primary);
         if(candidate==selectedTheme)
-          display.drawRoundRect(choiceX[index]-1,
+          display.drawRoundRect(choiceX-1,
                                 kSettingsGameThemeButtonY-1,
                                 choiceWidth+2,23,6,TFT_YELLOW);
       }
@@ -18309,7 +18762,7 @@ void drawSettings() {
       fireRedText.setTextColor(kBattleInk,kSettingsWell);
       fireRedText.drawString("APP VERSION",23,73,2);
       fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);
-      fireRedText.drawStringFitted("APP 1.0 RELEASE",23,98,270,2);
+      fireRedText.drawStringFitted("APP 2.0 RELEASE",23,98,270,2);
 #else
       drawGbaInsetPanel(13,kSettingsMoreKidsY,294,kSettingsMoreCardHeight,7,
                         kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
@@ -18325,7 +18778,7 @@ void drawSettings() {
 #endif
 #if !defined(POKEGOCHI_ANDROID)
       // The firmware keeps its hardware/build metadata in this footer. The
-       // Android replica has its own 1.0 release identity and must not expose the
+      // Android replica has its own release identity and must not expose the
       // ESP32 firmware label in the mobile Settings screen.
       char buildInfo[48];std::snprintf(buildInfo,sizeof(buildInfo),"ID:%05lu  FW:%s  ASSETS:%u",
           static_cast<unsigned long>(multiplayer.playerId()),kGameVersion,
@@ -20047,6 +20500,233 @@ void drawLeagueInvite(){
   button(166,194,136,34,"LATER",TFT_RED);
 }
 
+void drawChallengeHub(){
+  if(!challengeHubAvailable()){
+    screen=Screen::Home;
+    drawHome();
+    return;
+  }
+  beginScreenPresentation(Screen::ChallengeHub,themeDark());
+  static constexpr const char* kTowerIcon=
+      "/pokegochi/assets/emerald/battle_tower/home_icon.pkg";
+  static constexpr const char* kBossIcon=
+      "/pokegochi/assets/emerald/boss/home_icon.pkg";
+  static constexpr const char* kRoyalIcon=
+      "/pokegochi/assets/unova/royal_unova/home_icon.pkg";
+  const bool royalUnlocked=UnovaAdventure::royalUnovaUnlocked(gameSave.unova);
+  if(!royalUnlocked)challengeHubPage=0U;
+  else challengeHubPage=std::min<uint8_t>(challengeHubPage,1U);
+  const char* kAssets[]={kTowerIcon,kBossIcon,kRoyalIcon};
+  const uint32_t sceneKey=0x43485542UL^
+      (static_cast<uint32_t>(activeUiThemeId())<<24U)^challengeHubPage;
+  prepareUiScene(sceneKey,kAssets,
+      royalUnlocked?3U:2U);
+
+  display.fillRect(0,0,320,240,themeDark());
+  for(int16_t y=7;y<234;y+=14)
+    display.drawFastHLine(7,y,306,(y/14)&1U?themePrimary():themeAccent());
+  drawFireRedBattleWindow(3,3,314,234,kBattleFrameGold,themePale());
+  drawFireRedBattleWindow(9,9,302,38,kBattleFrameGold,themePrimary());
+  fireRedText.setTextColor(TFT_WHITE,themePrimary());
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawStringFitted("BATTLE CHALLENGES",160,28,278,2);
+
+  if(challengeHubPage==1U&&royalUnlocked){
+    drawFireRedBattleWindow(34,51,252,137,kBattleFrameGold,TFT_WHITE);
+    display.fillCircle(160,82,28,themePale());
+    display.drawCircle(160,82,28,themeAccent());
+    if(!sdReady||!AssetRenderer::draw(display,kRoyalIcon,144,66)){
+      display.fillRect(145,76,30,12,TFT_WHITE);
+      display.fillTriangle(145,88,175,88,160,99,TFT_DARKGREY);
+      display.fillRect(157,61,5,16,kBattleFrameGold);
+      display.fillTriangle(162,62,162,76,176,76,TFT_WHITE);
+    }
+    fireRedText.setTextColor(themeDark(),TFT_WHITE);
+    fireRedText.drawStringFitted("ROYAL UNOVA",160,116,220,2);
+    fireRedText.setTextColor(kBattleInk,TFT_WHITE);
+    char royalLine[48];
+    std::snprintf(royalLine,sizeof(royalLine),"%u TRAINERS TODAY - NO BAG",
+                  static_cast<unsigned>(
+                      UnovaAdventure::royalTrainerCount(currentWorldDay())));
+    fireRedText.drawStringFitted(royalLine,160,139,220,1);
+    const bool ready=UnovaAdventure::royalAvailableToday(
+        gameSave.unova,currentWorldDay());
+    button(82,158,156,24,ready?"BOARD SHIP":"COMPLETED TODAY",
+           ready?TFT_DARKGREEN:TFT_DARKGREY);
+    button(18,199,42,30,"<",themeAccent());
+    button(105,199,110,30,"BACK",TFT_RED);
+    button(260,199,42,30,">",themeAccent());
+    fireRedText.setTextDatum(TL_DATUM);
+    return;
+  }
+
+  constexpr int16_t cardY=51,cardW=148,cardH=137;
+  constexpr int16_t towerX=9,bossX=163;
+  drawFireRedBattleWindow(towerX,cardY,cardW,cardH,kBattleFrameGold,TFT_WHITE);
+  drawFireRedBattleWindow(bossX,cardY,cardW,cardH,kBattleFrameGold,TFT_WHITE);
+
+  display.fillCircle(towerX+cardW/2,79,24,themePale());
+  display.drawCircle(towerX+cardW/2,79,24,themeAccent());
+  if(!sdReady||!AssetRenderer::draw(display,kTowerIcon,towerX+(cardW-24)/2,67)){
+    const int16_t iconX=towerX+(cardW-24)/2;
+    display.fillRect(iconX+4,70,16,18,0x5B5F);
+    display.fillRect(iconX+7,68,10,20,0xA514);
+    display.fillRect(iconX+10,82,4,6,TFT_DARKGREY);
+    display.drawRect(iconX+4,70,16,18,TFT_DARKGREY);
+  }
+  fireRedText.setTextColor(themeDark(),TFT_WHITE);
+  fireRedText.drawStringFitted("BATTLE TOWER",towerX+cardW/2,111,132,1);
+  fireRedText.setTextColor(kBattleInk,TFT_WHITE);
+  fireRedText.drawStringFitted("3 TRAINERS IN A ROW",towerX+cardW/2,129,132,1);
+  fireRedText.drawStringFitted("NO COOLDOWN",towerX+cardW/2,143,132,1);
+  button(towerX+16,158,cardW-32,24,"ENTER",TFT_DARKGREEN);
+
+  fireRedText.setTextDatum(MC_DATUM);
+  display.fillCircle(bossX+cardW/2,79,24,themePale());
+  display.drawCircle(bossX+cardW/2,79,24,themeAccent());
+  if(!sdReady||!AssetRenderer::draw(display,kBossIcon,bossX+(cardW-32)/2,63)){
+    display.fillCircle(bossX+cardW/2,79,12,TFT_RED);
+    display.fillCircle(bossX+cardW/2,79,6,TFT_WHITE);
+    fireRedText.setTextColor(TFT_BLACK,TFT_WHITE);
+    fireRedText.drawString("B",bossX+cardW/2,81,1);
+  }
+  fireRedText.setTextColor(themeDark(),TFT_WHITE);
+  fireRedText.drawStringFitted("BOSS BATTLE",bossX+cardW/2,111,132,1);
+  fireRedText.setTextColor(kBattleInk,TFT_WHITE);
+  fireRedText.drawStringFitted("LEVEL 100",bossX+cardW/2,129,132,1);
+  fireRedText.drawStringFitted("200000 TOTAL HP",bossX+cardW/2,143,132,1);
+  const bool bossReady=BossSystem::ready(gameSave.gymProgress,
+                                         gameSave.bossCooldownSecondsRemaining);
+  if(bossReady){
+    button(bossX+16,158,cardW-32,24,"ENTER",TFT_DARKGREEN);
+  }else{
+    const uint32_t totalMinutes=
+        (gameSave.bossCooldownSecondsRemaining+59U)/60U;
+    char cooldown[28];
+    if(totalMinutes>=60U)
+      std::snprintf(cooldown,sizeof(cooldown),"READY %luH %02luM",
+          static_cast<unsigned long>(totalMinutes/60U),
+          static_cast<unsigned long>(totalMinutes%60U));
+    else
+      std::snprintf(cooldown,sizeof(cooldown),"READY IN %luM",
+          static_cast<unsigned long>(totalMinutes));
+    button(bossX+12,158,cardW-24,24,cooldown,TFT_DARKGREY);
+  }
+
+  if(royalUnlocked)button(18,199,42,30,"<",themeAccent());
+  button(105,199,110,30,"BACK",TFT_RED);
+  if(royalUnlocked)button(260,199,42,30,">",themeAccent());
+  fireRedText.setTextDatum(TL_DATUM);
+}
+
+void openRegionHubDestination(RegionHubDestination destination) {
+  if (!regionHubDestinationAvailable(destination)) return;
+  switch (destination) {
+    case RegionHubDestination::Sinnoh:
+      SinnohExpedition::reconcile(gameSave.sinnoh, gameSave.gymProgress);
+      if (SinnohExpedition::acknowledgeDiscovery(gameSave.sinnoh)) {
+        saveDirty = true;
+        saveNow();
+      }
+      std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                    "SELECT A RESEARCH SITE.");
+      screen = Screen::SinnohExpedition;
+      drawSinnohExpedition();
+      return;
+    case RegionHubDestination::Unova:
+      UnovaAdventure::reconcile(gameSave.unova, gameSave.sinnoh);
+      unovaAreaCursor = std::min<uint8_t>(gameSave.unova.run.area,
+                                          UnovaAdventure::kAreaCount - 1U);
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    UnovaAdventure::active(gameSave.unova)
+                        ? "THE AREA RUN IS STILL IN PROGRESS."
+                        : "CHOOSE AN AREA. YOUR PARTY OF THREE ENTERS TOGETHER.");
+      screen = Screen::UnovaAdventure;
+      drawUnovaAdventure();
+      return;
+  }
+}
+
+void drawRegionHub(){
+  if(!regionHubAvailable()){
+    screen=Screen::Home;
+    drawHome();
+    return;
+  }
+  const uint8_t pageCount=regionHubPageCount();
+  if(regionHubPage>=pageCount)regionHubPage=static_cast<uint8_t>(pageCount-1U);
+  const uint8_t firstVisible=static_cast<uint8_t>(
+      regionHubPage*kRegionHubDestinationsPerPage);
+  const uint8_t availableCount=regionHubAvailableDestinationCount();
+  const uint8_t visibleCount=std::min<uint8_t>(
+      kRegionHubDestinationsPerPage,
+      static_cast<uint8_t>(availableCount-firstVisible));
+
+  beginScreenPresentation(Screen::RegionHub,themeDark());
+  const char* assets[kRegionHubDestinationsPerPage]{};
+  uint8_t assetCount=0;
+  uint32_t sceneKey=0x5245474EUL^
+      (static_cast<uint32_t>(activeUiThemeId())<<24U)^
+      regionHubPage;
+  for(uint8_t slot=0;slot<visibleCount;++slot){
+    const RegionHubDefinition* definition=
+        regionHubVisibleDestination(static_cast<uint8_t>(firstVisible+slot));
+    if(!definition)continue;
+    assets[assetCount++]=definition->iconPath;
+    sceneKey=(sceneKey*16777619UL)^static_cast<uint8_t>(definition->destination);
+  }
+  prepareUiScene(sceneKey,assets,assetCount);
+
+  display.fillRect(0,0,320,240,themeDark());
+  for(int16_t y=7;y<234;y+=14)
+    display.drawFastHLine(7,y,306,(y/14)&1U?themePrimary():themeAccent());
+  drawFireRedBattleWindow(3,3,314,234,kBattleFrameGold,themePale());
+  drawFireRedBattleWindow(9,9,302,38,kBattleFrameGold,themePrimary());
+  fireRedText.setTextColor(TFT_WHITE,themePrimary());
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawStringFitted("REGIONS",160,28,278,2);
+
+  constexpr int16_t cardY=51,cardW=148,cardH=137;
+  for(uint8_t slot=0;slot<visibleCount;++slot){
+    const RegionHubDefinition* definition=
+        regionHubVisibleDestination(static_cast<uint8_t>(firstVisible+slot));
+    if(!definition)continue;
+    const int16_t cardX=visibleCount==1U?86:static_cast<int16_t>(9+slot*154);
+    const int16_t cardCenterX=static_cast<int16_t>(cardX+cardW/2);
+    drawFireRedBattleWindow(cardX,cardY,cardW,cardH,kBattleFrameGold,TFT_WHITE);
+    display.fillCircle(cardCenterX,79,24,themePale());
+    display.drawCircle(cardCenterX,79,24,themeAccent());
+    AssetRenderer::draw(display,definition->iconPath,cardCenterX-16,63);
+    // button() restores TL_DATUM after drawing. Reassert centering for every
+    // card so the second region cannot inherit the first card's button state.
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.setTextColor(themeDark(),TFT_WHITE);
+    fireRedText.drawStringFitted(definition->name,cardCenterX,111,132,2);
+    fireRedText.setTextColor(kBattleInk,TFT_WHITE);
+    fireRedText.drawStringFitted(definition->descriptionLine1,
+                                 cardCenterX,132,132,1);
+    fireRedText.drawStringFitted(definition->descriptionLine2,
+                                 cardCenterX,145,132,1);
+    button(cardX+16,158,cardW-32,24,"ENTER",TFT_DARKGREEN);
+    if(definition->destination==RegionHubDestination::Sinnoh&&
+       sinnohDiscoveryNotificationPending())
+      drawNewContentBadge(cardX+cardW-12,cardY+12);
+  }
+
+  if(pageCount>1U){
+    button(18,199,42,30,"<",themePrimary());
+    button(260,199,42,30,">",themePrimary());
+    char pageLabel[12];
+    std::snprintf(pageLabel,sizeof(pageLabel),"%u/%u",
+        static_cast<unsigned>(regionHubPage+1U),
+        static_cast<unsigned>(pageCount));
+    fireRedText.setTextColor(themeDark(),themePale());
+    fireRedText.drawStringFitted(pageLabel,160,191,90,1);
+  }
+  button(105,199,110,30,"BACK",TFT_RED);
+  fireRedText.setTextDatum(TL_DATUM);
+}
+
 void drawTowerInvite(){
   beginScreenPresentation(Screen::TowerInvite,themePale());
   static constexpr const char* kTowerIcon =
@@ -20055,7 +20735,7 @@ void drawTowerInvite(){
       "/pokegochi/assets/emerald/battle_tower/facade.pkg";
   static constexpr const char* kTowerAssets[] = {kTowerIcon, kTowerFacade};
   const uint32_t sceneKey = 0x54575249UL ^
-      (static_cast<uint32_t>(gameSave.settings.colorTheme()) << 24U);
+      (static_cast<uint32_t>(activeUiThemeId()) << 24U);
   const bool assetsReady = prepareUiScene(
       sceneKey, kTowerAssets,
       static_cast<uint8_t>(sizeof(kTowerAssets) / sizeof(kTowerAssets[0])));
@@ -20140,7 +20820,7 @@ void drawMegaChallengeInvite(){
       kStoneAsset, kRedAsset, kTeamAssets[0], kTeamAssets[1], kTeamAssets[2]
   };
   const uint32_t sceneKey = 0x4D454741UL ^
-      (static_cast<uint32_t>(gameSave.settings.colorTheme()) << 24U);
+      (static_cast<uint32_t>(activeUiThemeId()) << 24U);
   prepareUiScene(sceneKey, sceneAssets,
                  static_cast<uint8_t>(sizeof(sceneAssets) / sizeof(sceneAssets[0])));
   display.fillRect(0,0,320,240,themeDark());
@@ -20247,7 +20927,7 @@ void drawBossInvite(){
                      PokemonAssetView::Front);
   const char* assets[]={kBossIcon,bossFront};
   prepareUiScene(0x424F5353UL^
-      (static_cast<uint32_t>(gameSave.settings.colorTheme())<<24U)^
+      (static_cast<uint32_t>(activeUiThemeId())<<24U)^
       (static_cast<uint32_t>(gameSave.bossEncounter.speciesId)<<4U)^
       static_cast<uint32_t>(gameSave.bossEncounter.megaVariant),assets,2U);
   display.fillRect(0,0,320,240,themeDark());
@@ -20357,8 +21037,9 @@ void drawLeagueComplete(){
 
   drawFireRedBattleWindow(10,158,300,42,themeAccent(),kBattlePaper);
   fireRedText.setTextColor(themeDark(),kBattlePaper);
-  fireRedText.drawStringFitted(region==1?"MASTER BALL + LUCKY EGG!":"MASTER BALL RECEIVED!",160,171,284,1);
-  fireRedText.drawStringFitted(region<3?"A NEW ADVENTURE AWAITS!":"A SPECIAL CHALLENGE AWAITS!",160,188,284,1);
+  fireRedText.drawStringFitted("MASTER BALL RECEIVED!",160,171,284,1);
+  fireRedText.drawStringFitted(region==1?"LUCKY EGG BOOST: +100%!":
+      region<3?"A NEW ADVENTURE AWAITS!":"A SPECIAL CHALLENGE AWAITS!",160,188,284,1);
   button(105,204,110,28,"CONTINUE",TFT_DARKGREEN);
   fireRedText.setTextDatum(TL_DATUM);
 }
@@ -20374,8 +21055,41 @@ void playBadgeAward(GymId id){
   fireRedText.drawString("ADDED TO TRAINER CARD",160,197,1);fireRedText.setTextDatum(TL_DATUM);delay(1200);
 }
 
+void playSinnohBadgeAward(SinnohSite site) {
+  battleArenaVisible = false;
+  presentedScreen = Screen::Diagnostic;
+  const SinnohGymDefinition* gym = SinnohExpedition::gymDefinition(site);
+  display.fillScreen(0x2945);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(TFT_YELLOW, 0x2945);
+  fireRedText.drawString("SINNOH BADGE GET!", 160, 35, 3);
+  for (uint8_t radius = 12U; radius < 49U; radius += 6U) {
+    display.drawCircle(160, 112, radius, TFT_WHITE);
+    delay(45);
+  }
+  char path[88];
+  std::snprintf(path, sizeof(path),
+                "/pokegochi/assets/platinum/trainer_card/badge_%u.pkg",
+                static_cast<unsigned>(site));
+  if (!AssetRenderer::draw(display, path, 128, 80)) {
+    display.fillCircle(160, 112, 23, TFT_LIGHTGREY);
+    display.drawCircle(160, 112, 19, TFT_WHITE);
+  }
+  fireRedText.setTextColor(TFT_WHITE, 0x2945);
+  char label[40];
+  std::snprintf(label, sizeof(label), "%s BADGE", gym ? gym->badge : "SINNOH");
+  fireRedText.drawStringFitted(label, 160, 169, 300, 2);
+  char progress[32];
+  std::snprintf(progress, sizeof(progress), "%u / 8 SINNOH GYMS",
+                static_cast<unsigned>(
+                    SinnohExpedition::gymVictoryCount(gameSave.sinnoh)));
+  fireRedText.drawString(progress, 160, 197, 1);
+  fireRedText.setTextDatum(TL_DATUM);
+  delay(1200);
+}
+
 bool wildChainUnlocked() {
-  return MegaChallengeSystem::completed(gameSave.gymProgress);
+  return WildChainSystem::isUnlocked(gameSave.gymProgress);
 }
 
 void drawWildChainSelect() {
@@ -20386,9 +21100,18 @@ void drawWildChainSelect() {
   drawFireRedBattleWindow(5, 5, 310, 42, kBattleFrameGold, themePrimary());
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.setTextColor(TFT_YELLOW, themePrimary());
-  fireRedText.drawString("WILD ENCOUNTER CHAIN", 160, 19, 2);
+  fireRedText.drawString(sinnohEncounterPending ? "SINNOH EXPLORE" :
+                         "WILD ENCOUNTER CHAIN", 160, 19, 2);
   fireRedText.setTextColor(TFT_WHITE, themePrimary());
-  fireRedText.drawString("CHOOSE 1 TO 50 SEPARATE BATTLES", 160, 36, 1);
+  if (sinnohEncounterPending) {
+    char subtitle[48];
+    std::snprintf(subtitle, sizeof(subtitle), "%s - CHOOSE 1 TO 50",
+                  SinnohExpedition::siteName(
+                      static_cast<SinnohSite>(sinnohEncounterSite)));
+    fireRedText.drawStringFitted(subtitle, 160, 36, 300, 1);
+  } else {
+    fireRedText.drawString("CHOOSE 1 TO 50 SEPARATE BATTLES", 160, 36, 1);
+  }
 
   button(18, 57, 55, 58, "-", themePrimary());
   button(247, 57, 55, 58, "+", themePrimary());
@@ -20423,8 +21146,7 @@ bool launchWildEncounter(uint32_t playerUid) {
       gameSave.wildEncounterClock, multiplayer.playerId(), micros());
   if (!BattleEngine::startWild(
           gameSave.battle, gameSave.collection, playerUid, encounterSeed,
-          SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh) ? 4U :
-              gameSave.gymProgress.unlockedGeneration, beginnerProtectionActive(),
+          unlockedContentGeneration(), beginnerProtectionActive(),
           static_cast<uint8_t>(currentWorldPeriod()))) return false;
   if (BattleEnvironment::applyHomeWeather(gameSave.battle,
                                            startingWorldWeather.kind))
@@ -20501,9 +21223,98 @@ bool launchSinnohEncounter(uint32_t playerUid, SinnohSite site) {
     std::snprintf(battleEntryFollowupMessage, sizeof(battleEntryFollowupMessage), "%s",
                   entryWeatherMessage);
   const SpeciesData* opponentSpecies = opponent ? findSpecies(opponent->speciesId) : nullptr;
-  std::snprintf(message, sizeof(message), "A WILD %s APPEARED!",
-                opponentSpecies ? opponentSpecies->name : "POKEMON");
+  const char* opponentName = opponentSpecies ? opponentSpecies->name : "POKEMON";
+  if (wildChain.active)
+    std::snprintf(message, sizeof(message),
+                  "A WILD %s APPEARED! (%u/%u)", opponentName,
+                  wildChain.current, wildChain.total);
+  else
+    std::snprintf(message, sizeof(message), "A WILD %s APPEARED!",
+                  opponentName);
   runConfirmVisible = false;
+  saveDirty = true;
+  saveNow();
+  screen = Screen::Battle;
+  drawBattle();
+  return true;
+}
+
+uint32_t firstReadyPartyUid(bool requireReady = true) {
+  for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
+    const OwnedPokemon* pokemon = CollectionLogic::active(gameSave.collection, slot);
+    if (!pokemon) continue;
+    if (!requireReady || (pokemon->currentHp && !pokemon->recoverySecondsRemaining))
+      return pokemon->uid;
+  }
+  return 0U;
+}
+
+bool unovaAreaBattleInProgress() {
+  return gameSave.battle.active && UnovaAdventure::active(gameSave.unova) &&
+      gameSave.unova.run.pendingBattle != UnovaBattleRole::None &&
+      (gameSave.battle.kind == BattleKind::Wild ||
+       gameSave.battle.kind == BattleKind::Trainer);
+}
+
+bool unovaTournamentBattleInProgress() {
+  return gameSave.battle.active && UnovaTournament::active(gameSave.unova) &&
+      (gameSave.battle.kind == BattleKind::Pwt ||
+       gameSave.battle.kind == BattleKind::RoyalUnova);
+}
+
+void prepareFreshBattlePresentation() {
+  pendingBattleKind = BattleKind::None;
+  battleEntryAnimationPending = true;
+  selectedBattleTerrainSceneKey = 0;
+  battlePresentationPlayerHidden = false;
+  battlePresentationOpponentHidden = false;
+  battleCaptureOpponentHidden = false;
+  resetBattleVisualOverlay();
+  battleArenaVisible = false;
+  presentedPlayerHp = presentedOpponentHp = -1;
+  presentedPlayerHpBarPixels = presentedOpponentHpBarPixels = -1;
+  battleEntryFollowupMessage[0] = 0;
+  runConfirmVisible = false;
+}
+
+bool launchUnovaAreaBattle() {
+  const uint32_t playerUid = firstReadyPartyUid();
+  if (!playerUid || !UnovaAdventure::startPendingBattle(
+          gameSave.unova, gameSave.battle, gameSave.collection, playerUid))
+    return false;
+  OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle);
+  if (opponent) {
+    PokedexLogic::markSeen(gameSave.pokedex, opponent->speciesId);
+    if (gameSave.battle.kind == BattleKind::Wild)
+      recordWildEncounterStatistics(*opponent);
+  }
+  prepareFreshBattlePresentation();
+  const SpeciesData* species = opponent ? findSpecies(opponent->speciesId) : nullptr;
+  if (gameSave.battle.kind == BattleKind::Wild)
+    std::snprintf(message, sizeof(message), "A WILD %s APPEARED!",
+                  species ? species->name : "POKEMON");
+  else
+    std::snprintf(message, sizeof(message), "%s BLOCKS THE PATH!",
+                  gameSave.unova.run.pendingBattle == UnovaBattleRole::Boss
+                      ? UnovaAdventure::bossName(
+                            static_cast<UnovaArea>(gameSave.unova.run.area))
+                      : gameSave.unova.run.pendingBattle == UnovaBattleRole::GateTrainer
+                          ? "THE GATE TRAINER" : "A TRAINER");
+  saveDirty = true;
+  saveNow();
+  screen = Screen::Battle;
+  drawBattle();
+  return true;
+}
+
+bool launchUnovaTournamentBattle() {
+  const uint32_t playerUid = firstReadyPartyUid(false);
+  if (!playerUid || !UnovaTournament::startBattle(
+          gameSave.unova, gameSave.battle, gameSave.collection, playerUid))
+    return false;
+  prepareFreshBattlePresentation();
+  std::snprintf(message, sizeof(message), "%s WANTS TO BATTLE!",
+                UnovaTournament::opponentName(gameSave.unova));
   saveDirty = true;
   saveNow();
   screen = Screen::Battle;
@@ -20573,11 +21384,14 @@ void drawChooseBattler() {
   fireRedText.setTextColor(TFT_YELLOW, themePrimary());
   char wildHeading[44]{};
   if (pendingBattleKind == BattleKind::Wild && pendingWildEncounterCount > 1U)
-    std::snprintf(wildHeading, sizeof(wildHeading), "WILD CHAIN: %u ENCOUNTERS",
+    std::snprintf(wildHeading, sizeof(wildHeading),
+                  sinnohEncounterPending ? "SINNOH EXPLORE: %u ENCOUNTERS" :
+                                            "WILD CHAIN: %u ENCOUNTERS",
                   pendingWildEncounterCount);
   const char* heading = pendingBattleKind == BattleKind::Wild
                             ? (wildHeading[0] ? wildHeading : "A WILD POKEMON APPEARED!") :
                         pendingBattleKind == BattleKind::Gym ? "GYM CHALLENGE" :
+                        pendingBattleKind == BattleKind::SinnohGym ? "SINNOH GYM CHALLENGE" :
                         pendingBattleKind == BattleKind::League ? "POKEMON LEAGUE" :
                         pendingBattleKind == BattleKind::MegaChallenge ? "SPECIAL CHALLENGE" :
                         pendingBattleKind == BattleKind::Boss ? "BOSS CHALLENGE" :
@@ -20647,6 +21461,9 @@ void drawTrainerIntro() {
   const TrainerProfile* profile = trainerProfile(gameSave.battle.trainerProfileId);
   const GymDefinition* gym = gameSave.battle.kind == BattleKind::Gym
       ? GymSystem::definition(static_cast<GymId>(gameSave.battle.gymId)) : nullptr;
+  const SinnohGymDefinition* sinnohGym = gameSave.battle.kind == BattleKind::SinnohGym
+      ? SinnohExpedition::gymDefinition(
+            static_cast<SinnohSite>(gameSave.battle.gymId)) : nullptr;
   const LeagueMemberDefinition* league = gameSave.battle.kind == BattleKind::League
       ? LeagueSystem::definition(gameSave.battle.leagueRegion,gameSave.battle.leagueStage) : nullptr;
   const BattleTowerTrainerDefinition* tower = BattleTowerSystem::trainer(gameSave.battle);
@@ -20657,7 +21474,11 @@ void drawTrainerIntro() {
   const char* line1 = "LET'S BATTLE!";
   const char* line2 = "";
   const char* asset = nullptr;
-  if (mega) {
+  if (sinnohGym) {
+    trainerClass = "LEADER"; trainerName = sinnohGym->leader;
+    line1 = sinnohGym->introLine1; line2 = sinnohGym->introLine2;
+    asset = sinnohGym->frontAsset;
+  } else if (mega) {
     trainerClass = mega->trainerClass; trainerName = mega->name;
     line1 = mega->introLine1; line2 = mega->introLine2; asset = mega->frontAsset;
   } else if (tower) {
@@ -20705,7 +21526,8 @@ void drawTrainerIntro() {
   display.fillRoundRect(115, 110, 90, 9, 4, themeDark());
   display.fillRoundRect(120, 111, 80, 5, 2, themeAccent());
 
-  const char* challenge = gameSave.battle.kind == BattleKind::Gym ? "GYM BATTLE" :
+  const char* challenge = (gameSave.battle.kind == BattleKind::Gym ||
+                           gameSave.battle.kind == BattleKind::SinnohGym) ? "GYM BATTLE" :
       gameSave.battle.kind == BattleKind::League ? "POKEMON LEAGUE" :
       gameSave.battle.kind == BattleKind::Tower ? "BATTLE TOWER" :
       gameSave.battle.kind == BattleKind::MegaChallenge ? "SPECIAL BATTLE" : "TRAINER BATTLE";
@@ -20718,7 +21540,9 @@ void drawTrainerIntro() {
   if (asset && asset[0]) {
     char path[96];
     std::snprintf(path, sizeof(path), "/pokegochi/assets/trainers/%s.pkg", asset);
-    if (!AssetRenderer::draw(display, path, 128, 43)) {
+    const int16_t portraitX = sinnohGym ? 120 : 128;
+    const int16_t portraitY = sinnohGym ? 40 : 43;
+    if (!AssetRenderer::draw(display, path, portraitX, portraitY)) {
       // A missing portrait must remain recognisable without leaving an empty
       // hole in the composition while the SD diagnostic catches the failure.
       display.fillCircle(160, 69, 20, themeDark());
@@ -20847,6 +21671,8 @@ const char* chooseBattleTerrain(const OwnedPokemon* opponent) {
     terrain = (roll & 0x100U) ? "building" : "indoor";
   else if (gameSave.battle.kind == BattleKind::Gym)
     terrain = gameSave.battle.gymStage >= 2U ? "leader" : "gym";
+  else if (gameSave.battle.kind == BattleKind::SinnohGym)
+    terrain = "leader";
   else if (gameSave.battle.kind == BattleKind::League) {
     static const char* const kLeagueTerrains[] = {
       "lorelei", "bruno", "agatha", "lance", "champion"
@@ -22649,9 +23475,7 @@ void resolvePendingEvolution(uint8_t choiceIndex) {
   if(completed){
     uint32_t bonusUid=0;
     if(CollectionLogic::evolve(gameSave.collection,pending.pokemonUid,newSpecies,&bonusUid,
-                               SinnohExpedition::available(gameSave.gymProgress,
-                                                           gameSave.sinnoh)
-                                   ? 4U : gameSave.battle.unlockedGeneration)){
+                               unlockedContentGeneration())){
       PokedexLogic::markCaught(gameSave.pokedex,newSpecies);
       if(bonusUid)PokedexLogic::markCaught(gameSave.pokedex,292U);
     }
@@ -22812,6 +23636,10 @@ bool prepareSummarySceneAssets(const OwnedPokemon& pokemon, uint8_t page) {
   static char background[96]{};
   static char frontPath[112]{};
   static const char* assets[2]{};
+  // EDIT MOVESET and EV TRAINING paint an opaque procedural body plus their
+  // own header. Loading the Moves tilemap for those pages only to cover every
+  // pixel immediately caused an avoidable SD transaction on each visit.
+  if (page >= 3U) return true;
   const char* name = page == 0U ? "info" : page == 1U ? "skills" : "moves";
   std::snprintf(background, sizeof(background),
                 "/pokegochi/assets/firered/summary_screen/%s_page.pkg", name);
@@ -22830,13 +23658,20 @@ bool prepareSummarySceneAssets(const OwnedPokemon& pokemon, uint8_t page) {
   std::strncpy(requestedFrontPath, frontPath,
                sizeof(requestedFrontPath) - 1U);
   assets[0] = background;
-  assets[1] = frontPath;
-  uint32_t sceneKey = 0x53554D00UL ^ page ^ pokemon.uid;
-  sceneKey = (sceneKey * 16777619UL) ^ pokemon.speciesId;
-  sceneKey = (sceneKey * 16777619UL) ^ resolvedForm;
-  sceneKey = (sceneKey * 16777619UL) ^ (pokemon.shiny ? 0x5348494EUL : 0U);
-  bool ready = prepareUiScene(sceneKey, assets, 2U);
-  if (!ready && !AssetRenderer::isPreloaded(frontPath)) {
+  // Only Info draws the front card. Skills and Moves used to evict/reload it
+  // despite never painting it, increasing both SD latency and cache pressure.
+  const bool needsFront = page == 0U;
+  assets[1] = needsFront ? frontPath : nullptr;
+  uint32_t sceneKey = 0x53554D00UL ^ page;
+  if (needsFront) {
+    sceneKey ^= pokemon.uid;
+    sceneKey = (sceneKey * 16777619UL) ^ pokemon.speciesId;
+    sceneKey = (sceneKey * 16777619UL) ^ resolvedForm;
+    sceneKey = (sceneKey * 16777619UL) ^ (pokemon.shiny ? 0x5348494EUL : 0U);
+  }
+  const uint8_t assetCount = needsFront ? 2U : 1U;
+  bool ready = prepareUiScene(sceneKey, assets, assetCount);
+  if (needsFront && !ready && !AssetRenderer::isPreloaded(frontPath)) {
     // Dedicated form cards were added after the original pack. Retry with
     // the canonical species front card before exposing the old silhouette;
     // the background remains the same FireRed Summary scene. Reusing the
@@ -22848,7 +23683,7 @@ bool prepareSummarySceneAssets(const OwnedPokemon& pokemon, uint8_t page) {
     if (std::strcmp(frontPath, requestedFrontPath) != 0) {
       preparedUiSceneKey = 0;
       preparedUiSceneComplete = false;
-      ready = prepareUiScene(sceneKey, assets, 2U);
+      ready = prepareUiScene(sceneKey, assets, assetCount);
     }
     if (!ready && pokemon.shiny) {
       std::snprintf(frontPath, sizeof(frontPath),
@@ -22856,10 +23691,10 @@ bool prepareSummarySceneAssets(const OwnedPokemon& pokemon, uint8_t page) {
                     static_cast<unsigned>(pokemon.speciesId));
       preparedUiSceneKey = 0;
       preparedUiSceneComplete = false;
-      ready = prepareUiScene(sceneKey, assets, 2U);
+      ready = prepareUiScene(sceneKey, assets, assetCount);
     }
   }
-  if (ready || AssetRenderer::isPreloaded(frontPath)) {
+  if (needsFront && (ready || AssetRenderer::isPreloaded(frontPath))) {
     std::strncpy(summaryResidentFrontPath, frontPath,
                  sizeof(summaryResidentFrontPath) - 1U);
     summaryResidentFrontPath[sizeof(summaryResidentFrontPath) - 1U] = 0;
@@ -23022,6 +23857,7 @@ void openPokemonSummary(uint32_t uid, SummaryOrigin origin) {
   summaryTextScroll = 0;
   summaryMovePoolOffset = 0;
   summaryMovePoolSelection = -1;
+  summaryMovePoolCacheValid = false;
   summaryEvDraftUid = 0;
   summaryEvApplyConfirm = false;
   renderedSummaryPage = 0xFF;
@@ -23285,6 +24121,14 @@ void drawFireRedSummaryHeader(uint8_t page, uint8_t pageCount) {
 }
 
 bool drawFireRedSummaryBackground(uint8_t page, uint8_t pageCount) {
+  if (page >= 3U) {
+    // Both Pokegochi-only pages are fully opaque below the shared header.
+    // Keep this branch RAM-only; their painters replace the body immediately.
+    display.fillRect(0, 0, 320, 213, 0xFFDF);
+    drawFireRedSummaryHeader(page, pageCount);
+    renderedSummaryPage = page;
+    return true;
+  }
   const char* name = page == 0 ? "info" : page == 1 ? "skills" : "moves";
   char path[88];
   std::snprintf(path, sizeof(path), "/pokegochi/assets/firered/summary_screen/%s_page.pkg", name);
@@ -23310,10 +24154,22 @@ bool drawFireRedSummaryBackground(uint8_t page, uint8_t pageCount) {
 }
 
 void rebuildSummaryMovePool(const OwnedPokemon& pokemon) {
+  const uint8_t unlockedGeneration = unlockedContentGeneration();
+  const uint8_t resolvedForm = CollectionLogic::resolvedForm(pokemon);
+  uint32_t cacheKey = 2166136261UL;
+  cacheKey = (cacheKey ^ pokemon.uid) * 16777619UL;
+  cacheKey = (cacheKey ^ pokemon.speciesId) * 16777619UL;
+  cacheKey = (cacheKey ^ resolvedForm) * 16777619UL;
+  cacheKey = (cacheKey ^ pokemon.level) * 16777619UL;
+  cacheKey = (cacheKey ^ unlockedGeneration) * 16777619UL;
+  if (summaryMovePoolCacheValid && summaryMovePoolCacheKey == cacheKey) return;
+  const uint32_t started = millis();
   summaryMovePoolCount = relearnableMovesForForm(
-      pokemon.speciesId, pokemon.form, pokemon.level,
+      pokemon.speciesId, resolvedForm, pokemon.level,
       summaryMovePool, kSummaryMovePoolCapacity,
-      SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh) ? 4U : 1U);
+      unlockedGeneration);
+  summaryMovePoolCacheKey = cacheKey;
+  summaryMovePoolCacheValid = true;
   if (!summaryMovePoolCount) {
     summaryMovePoolOffset = 0;
     summaryMovePoolSelection = -1;
@@ -23324,6 +24180,12 @@ void rebuildSummaryMovePool(const OwnedPokemon& pokemon) {
         ((summaryMovePoolCount - 1U) / kSummaryMovePoolRows) * kSummaryMovePoolRows);
   if (summaryMovePoolSelection >= static_cast<int8_t>(summaryMovePoolCount))
     summaryMovePoolSelection = -1;
+  const uint32_t elapsed = millis() - started;
+  if (elapsed >= 4U)
+    Serial.printf("[PERF] Summary move pool uid=%lu moves=%u %lums\n",
+                  static_cast<unsigned long>(pokemon.uid),
+                  static_cast<unsigned>(summaryMovePoolCount),
+                  static_cast<unsigned long>(elapsed));
 }
 
 uint8_t drawSummaryScrollableText(const char* text, int16_t x, int16_t y,
@@ -23980,10 +24842,16 @@ void drawBag() {
   if (bagPage == 0) {
     uint8_t visible = 0;
     for (uint8_t i = 0; i < static_cast<uint8_t>(PokeBallType::Count); ++i) {
-      if (!gameSave.inventory.balls[i]) continue;
-      const PokeBallType type = static_cast<PokeBallType>(i); const int16_t y = 36 + visible++ * 34;
-      char label[32]; std::snprintf(label, sizeof(label), "%s  x%u", BattleEngine::ballName(type), gameSave.inventory.balls[i]);
-      const bool usable = gameSave.battle.kind == BattleKind::Wild && gameSave.inventory.balls[i];
+      const PokeBallType type = static_cast<PokeBallType>(i);
+      const uint16_t quantity = pokeBallQuantity(type);
+      if (!quantity) continue;
+      const int16_t y = 36 + visible++ * 34;
+      char label[32];
+      if (isInfinitePokeBall(type))
+        std::snprintf(label, sizeof(label), "%s  xINF", BattleEngine::ballName(type));
+      else
+        std::snprintf(label, sizeof(label), "%s  x%u", BattleEngine::ballName(type), quantity);
+      const bool usable = gameSave.battle.kind == BattleKind::Wild;
       button(25, y, 270, 27, label, usable ? themeAccent() : TFT_DARKGREY);
     } if (!visible) fireRedText.drawString("EMPTY", 130, 88, 2);
   } else {
@@ -24011,10 +24879,16 @@ void refreshBattleBagPocket() {
   if (bagPage == 0) {
     uint8_t visible = 0;
     for (uint8_t i = 0; i < static_cast<uint8_t>(PokeBallType::Count); ++i) {
-      if (!gameSave.inventory.balls[i]) continue;
-      const PokeBallType type = static_cast<PokeBallType>(i); const int16_t y = 36 + visible++ * 34;
-      char label[32]; std::snprintf(label, sizeof(label), "%s  x%u", BattleEngine::ballName(type), gameSave.inventory.balls[i]);
-      const bool usable = gameSave.battle.kind == BattleKind::Wild && gameSave.inventory.balls[i];
+      const PokeBallType type = static_cast<PokeBallType>(i);
+      const uint16_t quantity = pokeBallQuantity(type);
+      if (!quantity) continue;
+      const int16_t y = 36 + visible++ * 34;
+      char label[32];
+      if (isInfinitePokeBall(type))
+        std::snprintf(label, sizeof(label), "%s  xINF", BattleEngine::ballName(type));
+      else
+        std::snprintf(label, sizeof(label), "%s  x%u", BattleEngine::ballName(type), quantity);
+      const bool usable = gameSave.battle.kind == BattleKind::Wild;
       button(25, y, 270, 27, label, usable ? themeAccent() : TFT_DARKGREY);
     }
     if (!visible) { fireRedText.setTextColor(TFT_YELLOW, TFT_BLACK); fireRedText.drawString("EMPTY", 130, 88, 2); }
@@ -24075,11 +24949,15 @@ bool prepareInventoryBrowseScene() {
   inventoryEntryIconPath(entry, itemPath, sizeof(itemPath));
   const char* inventoryAssets[] = {
       "/pokegochi/assets/firered/item_menu/bg.pkg", bagFramePath,
-      itemPath, "/pokegochi/assets/firered/trainer_card/badge_0.pkg"};
+      itemPath, kTrainerCardIconPath, kDnaSplicersIconPath};
+  const bool showDnaSplicers = bagPage == kKeyItemsPage &&
+      UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems);
   const uint32_t sceneKey =
       0x42414700UL ^ (static_cast<uint32_t>(bagPage) << 16U) ^
-      (static_cast<uint32_t>(entry.kind) << 8U) ^ entry.id;
-  return prepareUiScene(sceneKey, inventoryAssets, 4);
+      (static_cast<uint32_t>(entry.kind) << 8U) ^ entry.id ^
+      (showDnaSplicers ? 0x004B5900UL : 0U);
+  return prepareUiScene(sceneKey, inventoryAssets,
+                        bagPage == kKeyItemsPage ? (showDnaSplicers ? 5U : 4U) : 4U);
 }
 
 void inventoryWindow(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t fill) {
@@ -24097,6 +24975,66 @@ uint8_t drawInventoryMessage(const char* text, int16_t x, int16_t y, uint16_t wi
                              uint8_t rows, uint8_t scrollLines = 0) {
   return fireRedText.drawTextBox(text ? text : "", x, y, width,
                                  static_cast<int16_t>(rows) * 16, scrollLines);
+}
+
+void drawTrainerCardPocketContents() {
+  const bool showDnaSplicers =
+      UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems);
+  if (!showDnaSplicers) {
+    inventorySelection = static_cast<uint8_t>(KeyItemSelection::TrainerCard);
+  }
+  const int16_t trainerY = showDnaSplicers ? kTrainerCardWithSplicersY
+                                          : kTrainerCardOnlyY;
+  const int16_t trainerHeight = showDnaSplicers ? kKeyItemCompactH : 47;
+  const int16_t trainerIconY = showDnaSplicers ? 31 : 47;
+
+  inventoryWindow(kKeyItemPanelX, trainerY, kKeyItemPanelW,
+                  trainerHeight, TFT_LIGHTGREY);
+  if (!dnaSplicersSelected())
+    display.fillTriangle(105, trainerY + trainerHeight / 2 - 5,
+                         105, trainerY + trainerHeight / 2 + 5,
+                         112, trainerY + trainerHeight / 2,
+                         TFT_DARKGREY);
+  AssetRenderer::draw(display, kTrainerCardIconPath, 123, trainerIconY);
+  fireRedText.setTextColor(TFT_DARKGREY, TFT_LIGHTGREY);
+  fireRedText.drawString("TRAINER CARD", 153, trainerIconY, 2);
+
+  if (showDnaSplicers) {
+    inventoryWindow(kKeyItemPanelX, kDnaSplicersY, kKeyItemPanelW,
+                    kKeyItemCompactH, TFT_LIGHTGREY);
+    if (dnaSplicersSelected())
+      display.fillTriangle(105, kDnaSplicersY + kKeyItemCompactH / 2 - 5,
+                           105, kDnaSplicersY + kKeyItemCompactH / 2 + 5,
+                           112, kDnaSplicersY + kKeyItemCompactH / 2,
+                           TFT_DARKGREY);
+    AssetRenderer::draw(display, kDnaSplicersIconPath, 123,
+                        kDnaSplicersY + 6);
+    fireRedText.setTextColor(TFT_DARKGREY, TFT_LIGHTGREY);
+    fireRedText.drawStringFitted("DNA SPLICERS", 153,
+                                 kDnaSplicersY + 12, 136, 1);
+  } else {
+    fireRedText.setTextColor(TFT_DARKGREY, 0xFFF6);
+    drawInventoryMessage(kTrainerCardPocketDescription, 118, 98, 175, 3);
+  }
+  fireRedText.setTextColor(TFT_DARKGREY, 0xFFF6);
+}
+
+void drawSelectedKeyItemIcon() {
+  if (bagPage != kKeyItemsPage) return;
+  AssetRenderer::draw(display, selectedKeyItemIconPath(), 27, 188);
+}
+
+void drawInventoryBrowseActionLabels(uint16_t paper) {
+  fireRedText.setTextColor(TFT_DARKGREY, paper);
+  const char* primary = bagPage == kKeyItemsPage
+      ? (dnaSplicersSelected() ? "USE" : "OPEN")
+      : "USE";
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawString(primary, kInventoryActionX + kInventoryActionW / 2,
+                        kInventoryUseY + kInventoryActionH / 2, 2);
+  fireRedText.drawString("CANCEL", kInventoryActionX + kInventoryActionW / 2,
+                        kInventoryCancelY + kInventoryActionH / 2, 2);
+  fireRedText.setTextDatum(TL_DATUM);
 }
 
 // Draw one of the five visible Bag rows.  TM/HM rows mirror the Generation III
@@ -24126,7 +25064,11 @@ void drawInventoryEntryRow(InventoryEntry entry, uint8_t row, bool selected) {
   } else {
     fireRedText.drawStringAuto(inventoryEntryName(entry), 126, y + 4, 130);
     char quantity[12];
-    std::snprintf(quantity, sizeof(quantity), "x %u", inventoryEntryQuantity(entry));
+    if (entry.kind == InventoryEntryKind::Ball &&
+        static_cast<PokeBallType>(entry.id) == PokeBallType::GoldenBall)
+      std::snprintf(quantity, sizeof(quantity), "x INF");
+    else
+      std::snprintf(quantity, sizeof(quantity), "x %u", inventoryEntryQuantity(entry));
     fireRedText.setTextDatum(TR_DATUM);
     fireRedText.drawStringFitted(quantity, 296, y + 4, 43, 2);
     fireRedText.setTextDatum(TL_DATUM);
@@ -24233,7 +25175,8 @@ void drawMegaFormSelect(){
     display.drawRoundRect(x,61,143,130,8,themeDark());
     if(!form)continue;
     OwnedPokemon preview=*target;preview.heldItem=HeldItem::MegaStone;
-    MegaEvolution::setVariantChoice(preview,variant);CollectionLogic::refreshAbility(preview);
+    MegaEvolution::setVariantChoice(preview,variant);
+    CollectionLogic::refreshAbility(preview,unlockedContentGeneration());
     char path[112];pokemonAssetPath(path,sizeof(path),preview,PokemonAssetView::Front);
     if(!sdReady||!drawCenteredPokemonAsset(path,x+71,100,64U,64U))creature(x+71,100,preview);
     fireRedText.setTextColor(themeDark(),index?0xD7FF:0xFFF0);
@@ -24566,12 +25509,7 @@ void drawInventory() {
   display.fillTriangle(81, 144, 68, 137, 68, 151, nextPocketColor);
 
   if (bagPage == kKeyItemsPage) {
-    inventoryWindow(114, 35, 188, 47, TFT_LIGHTGREY);
-    AssetRenderer::draw(display, "/pokegochi/assets/firered/trainer_card/badge_0.pkg", 123, 47);
-    fireRedText.setTextColor(TFT_DARKGREY, TFT_LIGHTGREY);
-    fireRedText.drawString("TRAINER CARD", 153, 47, 2);
-    fireRedText.setTextColor(TFT_DARKGREY, 0xFFF6);
-    drawInventoryMessage("CHECK BADGES AND LEAGUE PROGRESS.", 118, 98, 175, 3);
+    drawTrainerCardPocketContents();
   } else {
     InventoryEntry entries[5]{};
     const uint8_t count = inventoryEntries(entries, 5);
@@ -24592,13 +25530,16 @@ void drawInventory() {
 
   drawFireRedBattleWindow(3, 166, 314, 72, kBattleFrameGold, themePrimary());
   inventoryWindow(10, 174, 58, 60, TFT_WHITE);
-  if (itemPath[0]) AssetRenderer::draw(display, itemPath, 27, 188);
+  if (bagPage == kKeyItemsPage) drawSelectedKeyItemIcon();
+  else if (itemPath[0]) AssetRenderer::draw(display, itemPath, 27, 188);
   inventoryWindow(kInventoryDescriptionPanelX, kInventoryDescriptionPanelY,
                   kInventoryDescriptionPanelW, kInventoryDescriptionPanelH, TFT_WHITE);
   fireRedText.setTextColor(TFT_DARKGREY, TFT_WHITE);
   const char* description = nullptr;
   if (inventoryNotice[0]) description = inventoryNotice;
   else if (entry.kind != InventoryEntryKind::None) description = inventoryEntryDescription(entry);
+  else if (bagPage == kKeyItemsPage)
+    description = selectedKeyItemDescription();
   else description = "SELECT AN ITEM.";
   if (description)
     inventoryDescriptionLineCount = drawInventoryMessage(description, 79, 180, 108, 3,
@@ -24613,14 +25554,7 @@ void drawInventory() {
                   kInventoryActionW, kInventoryActionH, paper);
   inventoryWindow(kInventoryActionX, kInventoryCancelY,
                   kInventoryActionW, kInventoryActionH, paper);
-  fireRedText.setTextColor(TFT_DARKGREY, paper);
-  if (bagPage == kKeyItemsPage) {
-    fireRedText.drawString("OPEN", 233, 180, 2);
-    fireRedText.drawString("CANCEL", 226, 212, 2);
-  } else {
-    fireRedText.drawString("USE", 236, 180, 2);
-    fireRedText.drawString("CANCEL", 226, 212, 2);
-  }
+  drawInventoryBrowseActionLabels(paper);
 }
 
 void disableMultiplayerRadioAfterBagClose() {
@@ -24686,12 +25620,7 @@ void refreshInventoryPanels(bool refreshPocket) {
 
   inventoryWindow(102, 7, 211, 156, 0xFFF6);
   if (bagPage == kKeyItemsPage) {
-    inventoryWindow(114, 35, 188, 47, TFT_LIGHTGREY);
-    AssetRenderer::draw(display, "/pokegochi/assets/firered/trainer_card/badge_0.pkg", 123, 47);
-    fireRedText.setTextColor(TFT_DARKGREY, TFT_LIGHTGREY);
-    fireRedText.drawString("TRAINER CARD", 153, 47, 2);
-    fireRedText.setTextColor(TFT_DARKGREY, 0xFFF6);
-    drawInventoryMessage("CHECK BADGES AND LEAGUE PROGRESS.", 118, 98, 175, 3);
+    drawTrainerCardPocketContents();
   } else {
     InventoryEntry entries[5]{};
     const uint8_t count = inventoryEntries(entries, 5);
@@ -24712,13 +25641,15 @@ void refreshInventoryPanels(bool refreshPocket) {
 
   drawFireRedBattleWindow(3, 166, 314, 72, kBattleFrameGold, themePrimary());
   inventoryWindow(10, 174, 58, 60, TFT_WHITE);
-  if (itemPath[0]) AssetRenderer::draw(display, itemPath, 27, 188);
+  if (bagPage == kKeyItemsPage) drawSelectedKeyItemIcon();
+  else if (itemPath[0]) AssetRenderer::draw(display, itemPath, 27, 188);
   inventoryWindow(kInventoryDescriptionPanelX, kInventoryDescriptionPanelY,
                   kInventoryDescriptionPanelW, kInventoryDescriptionPanelH, TFT_WHITE);
   fireRedText.setTextColor(TFT_DARKGREY, TFT_WHITE);
   const char* description = nullptr;
   if (inventoryNotice[0]) description = inventoryNotice;
   else if (entry.kind != InventoryEntryKind::None) description = inventoryEntryDescription(entry);
+  else if (bagPage == kKeyItemsPage) description = selectedKeyItemDescription();
   else description = "SELECT AN ITEM.";
   if (description) inventoryDescriptionLineCount = drawInventoryMessage(
       description, 79, 180, 108, 3, inventoryDescriptionScroll);
@@ -24728,12 +25659,7 @@ void refreshInventoryPanels(bool refreshPocket) {
                   kInventoryActionW, kInventoryActionH, paper);
   inventoryWindow(kInventoryActionX, kInventoryCancelY,
                   kInventoryActionW, kInventoryActionH, paper);
-  fireRedText.setTextColor(TFT_DARKGREY, paper);
-  if (bagPage == kKeyItemsPage) {
-    fireRedText.drawString("OPEN", 233, 180, 2); fireRedText.drawString("CANCEL", 226, 212, 2);
-  } else {
-    fireRedText.drawString("USE", 236, 180, 2); fireRedText.drawString("CANCEL", 226, 212, 2);
-  }
+  drawInventoryBrowseActionLabels(paper);
 
   // This painter is called directly from the touch handler while the ESP32
   // is using an 8-row retained canvas.  Drawing the changed panels here is
@@ -24950,6 +25876,29 @@ constexpr int16_t kBoxActionInset = 4;
 constexpr uint8_t kBoxActionColumns = 2;
 constexpr int16_t kBoxActionInnerW = kBoxActionMenuW - 2 * kBoxActionInset;
 constexpr int16_t kBoxActionCellW = kBoxActionInnerW / kBoxActionColumns;
+constexpr uint16_t kBoxPageSize = 30U;
+constexpr uint8_t kBoxPageCount = static_cast<uint8_t>(
+    (kBoxCapacity + kBoxPageSize - 1U) / kBoxPageSize);
+constexpr uint8_t kBoxLastPage = static_cast<uint8_t>(kBoxPageCount - 1U);
+
+constexpr uint8_t normalizeBoxPage(uint8_t page) {
+  return page < kBoxPageCount ? page : 0U;
+}
+
+constexpr uint8_t previousBoxPage(uint8_t page) {
+  page = normalizeBoxPage(page);
+  return page ? static_cast<uint8_t>(page - 1U) : kBoxLastPage;
+}
+
+constexpr uint8_t nextBoxPage(uint8_t page) {
+  page = normalizeBoxPage(page);
+  return page < kBoxLastPage ? static_cast<uint8_t>(page + 1U) : 0U;
+}
+
+static_assert(previousBoxPage(0U) == kBoxLastPage,
+              "The first Box must wrap backwards to the last Box");
+static_assert(nextBoxPage(kBoxLastPage) == 0U,
+              "The last Box must wrap forwards to the first Box");
 
 struct BoxPalette { uint16_t field, border, dot, ribbon; };
 static constexpr BoxPalette kBoxPalettes[] = {
@@ -24975,6 +25924,70 @@ enum class BoxContextAction : uint8_t {
   None, Move, Summary, Transfer, Form, TakeItem, Release, Cancel
 };
 
+bool boxFormActionAvailable(const OwnedPokemon& pokemon) {
+  if (pokemon.speciesId == 646U) {
+    if (!UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems)) return false;
+    if (gameSave.unovaForms.fusedKyuremUid == pokemon.uid) return true;
+    for (const OwnedPokemon& candidate : gameSave.collection.box)
+      if (candidate.uid != kEmptyPokemonUid &&
+          (candidate.speciesId == 643U || candidate.speciesId == 644U))
+        return true;
+    return false;
+  }
+  return CollectionLogic::canChangeForm(pokemon);
+}
+
+uint32_t unovaFusionDonorUid(uint16_t speciesId) {
+  for (const OwnedPokemon& pokemon : gameSave.collection.box)
+    if (pokemon.uid != kEmptyPokemonUid && pokemon.speciesId == speciesId)
+      return pokemon.uid;
+  return 0U;
+}
+
+bool openDnaSplicersFromInventory() {
+  if (!UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems)) {
+    std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                  "THE DNA SPLICERS ARE NOT AVAILABLE.");
+    inventoryDescriptionScroll = 0;
+    refreshInventoryPanels(false);
+    return false;
+  }
+
+  uint16_t kyuremIndex = kBoxCapacity;
+  for (uint16_t index = 0; index < kBoxCapacity; ++index) {
+    const OwnedPokemon& candidate = gameSave.collection.box[index];
+    if (candidate.uid == kEmptyPokemonUid || candidate.speciesId != 646U) continue;
+    kyuremIndex = index;
+    break;
+  }
+  if (kyuremIndex == kBoxCapacity) {
+    std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                  "KYUREM IS NOT IN THE BOX.");
+    inventoryDescriptionScroll = 0;
+    refreshInventoryPanels(false);
+    return false;
+  }
+
+  const OwnedPokemon& kyurem = gameSave.collection.box[kyuremIndex];
+  if (!boxFormActionAvailable(kyurem)) {
+    std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                  "RESHIRAM OR ZEKROM IS REQUIRED.");
+    inventoryDescriptionScroll = 0;
+    refreshInventoryPanels(false);
+    return false;
+  }
+
+  inventoryNotice[0] = 0;
+  selectedUid = kyurem.uid;
+  boxPage = static_cast<uint8_t>(kyuremIndex / kBoxPageSize);
+  boxPartyView = false;
+  boxNotice[0] = 0;
+  boxOverlay = BoxOverlay::FormSelect;
+  screen = Screen::Box;
+  drawBox();
+  return true;
+}
+
 struct BoxContextEntry {
   BoxContextAction action = BoxContextAction::None;
   const char* label = nullptr;
@@ -24989,7 +26002,7 @@ uint8_t buildBoxContextEntries(const OwnedPokemon* selected,
       BoxContextAction::Transfer,
       selected && CollectionLogic::isInParty(gameSave.collection, selected->uid)
           ? "DEPOSIT" : "WITHDRAW"};
-  if (selected && CollectionLogic::canChangeForm(*selected))
+  if (selected && boxFormActionAvailable(*selected))
     entries[count++] = {BoxContextAction::Form, "FORM"};
   if (selected && selected->heldItem != HeldItem::None)
     entries[count++] = {BoxContextAction::TakeItem, "TAKE ITEM"};
@@ -25255,8 +26268,8 @@ bool prepareBoxSceneAssets() {
       if (member) addIcon(*member);
     }
   } else {
-    const uint16_t first = static_cast<uint16_t>(boxPage) * 30U;
-    const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + 30U);
+    const uint16_t first = static_cast<uint16_t>(boxPage) * kBoxPageSize;
+    const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + kBoxPageSize);
     for (uint16_t index = first; index < last; ++index)
       if (gameSave.collection.box[index].uid) addIcon(gameSave.collection.box[index]);
   }
@@ -25408,6 +26421,7 @@ void drawBox() {
   constexpr uint16_t kChromeDark = 0x4228;
   constexpr uint16_t kPaper = 0xFFDF;
   const uint16_t kPreviewBlue = themePale();
+  boxPage = normalizeBoxPage(boxPage);
   const BoxPalette& boxPalette = currentBoxPalette();
 
   if (!selectedUid) {
@@ -25533,8 +26547,8 @@ void drawBox() {
     // Storage positions are physical: blank cells stay blank, and MOVE can
     // therefore put a Pokémon in any visible cell (or in another Box) just
     // like FireRed rather than silently repacking the collection.
-    const uint16_t first = static_cast<uint16_t>(boxPage) * 30U;
-    const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + 30U);
+    const uint16_t first = static_cast<uint16_t>(boxPage) * kBoxPageSize;
+    const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + kBoxPageSize);
     for (uint16_t index = first; index < last; ++index) {
       const OwnedPokemon& pokemon = gameSave.collection.box[index];
       const uint8_t cell = static_cast<uint8_t>(index - first);
@@ -25628,8 +26642,8 @@ void redrawBoxStorageField() {
       display.fillRect(x, y, 2, 2, palette.dot);
   display.drawRoundRect(kBoxGridX - 1, kBoxGridY - 1,
                         kBoxGridW + 2, kBoxGridH + 2, 5, palette.border);
-  const uint16_t first = static_cast<uint16_t>(boxPage) * 30U;
-  const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + 30U);
+  const uint16_t first = static_cast<uint16_t>(boxPage) * kBoxPageSize;
+  const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + kBoxPageSize);
   for (uint16_t index = first; index < last; ++index) {
     const OwnedPokemon& pokemon = gameSave.collection.box[index];
     if (!pokemon.uid) continue;
@@ -25787,7 +26801,11 @@ void refreshBoxSurface(bool refreshPreview) {
 bool prepareSinnohExpeditionAssets(SinnohSite site) {
   constexpr uint8_t kMaxIconCount = 32U;
   static uint16_t species[kMaxIconCount]{};
-  static char iconPaths[kMaxIconCount][112]{};
+  // pokemonAssetPath's longest form-aware icon path fits in the same
+  // 72-byte storage already used by the Box manifest.  The previous generic
+  // 112-byte battle-path allowance wasted 1,280 bytes of permanent DRAM here
+  // even though this screen requests icons only.
+  static char iconPaths[kMaxIconCount][72]{};
   static const char* assets[kMaxIconCount + 1U]{};
   const uint8_t iconCount = SinnohExpedition::availableSpecies(
       site, species, kMaxIconCount);
@@ -25812,7 +26830,7 @@ void drawSinnohExpedition() {
   if (sinnohRewardNotice) {
     if (sinnohRewardNotice == 0x03U)
       std::snprintf(sinnohNotice, sizeof(sinnohNotice),
-                    "ALL SITES COMPLETE! PLATINUM + MASTER BALL!");
+                    "ALL GYMS! PLATINUM + MASTER BALL!");
     else if (sinnohRewardNotice & 0x01U)
       std::snprintf(sinnohNotice, sizeof(sinnohNotice),
                     "PLATINUM UNLOCKED! MASTER BALL PENDING.");
@@ -25822,8 +26840,8 @@ void drawSinnohExpedition() {
     sinnohNotice[55] = 0;
   }
   if (!SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh)) {
-    screen = Screen::Pokedex;
-    drawPokedex();
+    screen = Screen::Home;
+    drawHome();
     return;
   }
   if (sinnohSiteCursor >= SinnohExpedition::kSiteCount)
@@ -25839,9 +26857,11 @@ void drawSinnohExpedition() {
   fireRedText.setTextColor(TFT_WHITE, 0x2945);
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.drawStringFitted("SINNOH EXPEDITIONS", 160, 15, 184, 2);
-  char research[40];
-  std::snprintf(research, sizeof(research), "RESEARCH %u", gameSave.sinnoh.research);
-  fireRedText.drawStringFitted(research, 160, 30, 170, 1);
+  char research[48];
+  std::snprintf(research, sizeof(research), "RESEARCH %u - GYMS %u/8",
+                gameSave.sinnoh.research,
+                SinnohExpedition::gymVictoryCount(gameSave.sinnoh));
+  fireRedText.drawStringFitted(research, 160, 30, 190, 1);
   fireRedText.setTextDatum(TL_DATUM);
 
   const bool unlocked = SinnohExpedition::isUnlocked(gameSave.sinnoh, site);
@@ -25863,9 +26883,19 @@ void drawSinnohExpedition() {
   fireRedText.drawStringFitted(locationLine, 160, 61, 226, 1);
   if (!unlocked) {
     fireRedText.setTextColor(TFT_RED, paper);
-    char unlock[32];
-    std::snprintf(unlock, sizeof(unlock), "LOCKED - NEED %u RESEARCH",
-                  SinnohExpedition::unlockCost(site));
+    char unlock[48];
+    const uint8_t siteIndex = static_cast<uint8_t>(site);
+    if (siteIndex && !SinnohExpedition::hasGymVictory(
+                         gameSave.sinnoh,
+                         static_cast<SinnohSite>(siteIndex - 1U))) {
+      const SinnohGymDefinition* previous = SinnohExpedition::gymDefinition(
+          static_cast<SinnohSite>(siteIndex - 1U));
+      std::snprintf(unlock, sizeof(unlock), "LOCKED - BEAT %s FIRST",
+                    previous ? previous->leader : "PREVIOUS GYM");
+    } else {
+      std::snprintf(unlock, sizeof(unlock), "LOCKED - NEED %u RESEARCH",
+                    SinnohExpedition::unlockCost(site));
+    }
     fireRedText.drawStringFitted(unlock, 160, 111, 226, 1);
   } else if (site == SinnohSite::DistortionRift) {
     fireRedText.setTextColor(TFT_DARKGREEN, paper);
@@ -25900,11 +26930,293 @@ void drawSinnohExpedition() {
   fireRedText.setTextColor(TFT_DARKGREY, 0xE73C);
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.drawStringFitted(sinnohNotice, 160, 169, 228, 1);
-  const char* actionHint = "WIN BATTLES TO EARN RESEARCH";
+  const SinnohGymDefinition* gym = SinnohExpedition::gymDefinition(site);
+  char actionHint[56];
+  if (!unlocked)
+    std::snprintf(actionHint, sizeof(actionHint), "UNLOCK THIS SITE TO REACH ITS GYM");
+  else if (SinnohExpedition::hasGymVictory(gameSave.sinnoh, site))
+    std::snprintf(actionHint, sizeof(actionHint), "%s - %s BADGE WON",
+                  gym ? gym->leader : "LEADER", gym ? gym->badge : "GYM");
+  else if (SinnohExpedition::gymChallengeAvailable(gameSave.sinnoh, site))
+    std::snprintf(actionHint, sizeof(actionHint), "LEADER %s - %s BADGE",
+                  gym ? gym->leader : "UNKNOWN", gym ? gym->badge : "GYM");
+  else
+    std::snprintf(actionHint, sizeof(actionHint), "DEFEAT THE PREVIOUS SINNOH LEADER");
   fireRedText.drawStringFitted(actionHint, 160, 183, 228, 1);
   fireRedText.setTextDatum(TL_DATUM);
 
-  button(48, 204, 224, 31, "EXPLORE", unlocked ? TFT_DARKGREEN : TFT_DARKGREY);
+  button(18, 204, 136, 31, "EXPLORE", unlocked ? TFT_DARKGREEN : TFT_DARKGREY);
+  const bool gymReady = SinnohExpedition::gymChallengeAvailable(
+      gameSave.sinnoh, site);
+  const bool badgeWon = SinnohExpedition::hasGymVictory(gameSave.sinnoh, site);
+  button(166, 204, 136, 31, badgeWon ? "BADGE WON" : "GYM",
+         gymReady ? 0xA145 : TFT_DARKGREY);
+}
+
+const char* unovaRoomName(UnovaRoomKind kind) {
+  switch (kind) {
+    case UnovaRoomKind::Trainer: return "TRAINER";
+    case UnovaRoomKind::ShakingGrass: return "SHAKING GRASS";
+    case UnovaRoomKind::DustCloud: return "DUST CLOUD";
+    case UnovaRoomKind::GroundShadow: return "GROUND SHADOW";
+    case UnovaRoomKind::BubblingWater: return "BUBBLING WATER";
+    case UnovaRoomKind::HiddenGrotto: return "HIDDEN GROTTO";
+    case UnovaRoomKind::ClueNpc: return "CLUE NPC";
+    case UnovaRoomKind::Healing: return "REST STOP";
+    case UnovaRoomKind::GateTrainer: return "GATE TRAINER";
+    case UnovaRoomKind::Boss: return "AREA BOSS";
+  }
+  return "PATH";
+}
+
+void unovaRoomIconPath(char* path, size_t size, UnovaRoomKind kind) {
+  std::snprintf(path, size, "/pokegochi/assets/unova/rooms/kind_%02u.pkg",
+                static_cast<unsigned>(kind));
+}
+
+void awardUnovaRoomItem(uint8_t rewardKind) {
+  if (rewardKind == 1U) {
+    uint16_t& quantity = gameSave.inventory.medicine[
+        static_cast<uint8_t>(BattleItem::HyperPotion)];
+    if (quantity < kInventoryStackLimit) ++quantity;
+    std::snprintf(unovaNotice, sizeof(unovaNotice), "FOUND A HYPER POTION!");
+  } else if (rewardKind == 2U) {
+    uint16_t& quantity = gameSave.ppItems.quantities[
+        ppInventoryIndex(BattleItem::MaxEther)];
+    if (quantity < kInventoryStackLimit) ++quantity;
+    std::snprintf(unovaNotice, sizeof(unovaNotice), "FOUND A MAX ETHER!");
+  } else {
+    uint16_t& quantity = gameSave.inventory.heldItems[
+        static_cast<uint8_t>(HeldItem::SitrusBerry)];
+    if (quantity < kInventoryStackLimit) ++quantity;
+    std::snprintf(unovaNotice, sizeof(unovaNotice), "FOUND A SITRUS BERRY!");
+  }
+}
+
+void drawUnovaRun() {
+  const UnovaArea area = static_cast<UnovaArea>(std::min<uint8_t>(
+      gameSave.unova.run.area, UnovaAdventure::kAreaCount - 1U));
+  UnovaRoomChoice choices[3]{};
+  const uint8_t choiceCount = UnovaAdventure::choices(gameSave.unova, choices);
+  char backgroundPath[88];
+  std::snprintf(backgroundPath, sizeof(backgroundPath),
+                "/pokegochi/assets/unova/rooms/area_%02u.pkg",
+                static_cast<unsigned>(gameSave.unova.run.area));
+  char iconPaths[3][72]{};
+  const char* assets[4] = {backgroundPath, nullptr, nullptr, nullptr};
+  for (uint8_t index = 0; index < choiceCount; ++index) {
+    unovaRoomIconPath(iconPaths[index], sizeof(iconPaths[index]),
+                      choices[index].kind);
+    assets[index + 1U] = iconPaths[index];
+  }
+  uint32_t sceneKey = 0x554E5255UL ^ gameSave.unova.run.seed ^
+      (static_cast<uint32_t>(gameSave.unova.run.depth) << 24U);
+  prepareUiScene(sceneKey, assets, static_cast<uint8_t>(choiceCount + 1U));
+
+  display.fillRect(0, 0, 320, 240, 0x18C3);
+  if (!AssetRenderer::draw(display, backgroundPath, 0, 39)) {
+    display.fillRect(0, 39, 320, 93, 0x52AA);
+    for (int16_t x = 8; x < 320; x += 24)
+      display.fillTriangle(x, 132, x + 12, 58, x + 24, 132,
+                           (x / 24) & 1 ? 0x2C47 : 0x4549);
+  }
+  display.fillRect(0, 0, 320, 39, 0x2104);
+  display.drawFastHLine(0, 38, 320, TFT_WHITE);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(TFT_WHITE, 0x2104);
+  fireRedText.drawStringFitted(UnovaAdventure::areaName(area), 160, 13, 238, 2);
+  char progress[48];
+  std::snprintf(progress, sizeof(progress), "ROOM %u/%u  HEAL %s",
+                static_cast<unsigned>(std::min<uint8_t>(
+                    gameSave.unova.run.depth + 1U,
+                    UnovaAdventure::kRoomsPerArea)),
+                static_cast<unsigned>(UnovaAdventure::kRoomsPerArea),
+                (gameSave.unova.run.flags & (1U << 1U)) ? "USED" : "READY");
+  fireRedText.drawStringFitted(progress, 160, 29, 270, 1);
+  fireRedText.setTextDatum(TL_DATUM);
+
+  drawFireRedBattleWindow(8, 103, 304, 31, kBattleFrameGold, kBattlePaper);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(themeDark(), kBattlePaper);
+  fireRedText.drawStringFitted(unovaNotice, 160, 119, 288, 1);
+
+  const int16_t cardWidth = choiceCount == 1U ? 172 : 100;
+  for (uint8_t index = 0; index < choiceCount; ++index) {
+    const int16_t x = choiceCount == 1U ? 74 : static_cast<int16_t>(5 + index * 105);
+    const uint16_t paper = choices[index].recommended ? 0xFFF2 : TFT_WHITE;
+    drawFireRedBattleWindow(x, 137, cardWidth, 61,
+                            choices[index].recommended ? TFT_YELLOW : kBattleFrameGold,
+                            paper);
+    AssetRenderer::draw(display, iconPaths[index], x + 5, 146);
+    fireRedText.setTextColor(themeDark(), paper);
+    fireRedText.drawStringFitted(unovaRoomName(choices[index].kind),
+                                 x + cardWidth / 2 + 13, 153,
+                                 cardWidth - 38, 1);
+    char route[20];
+    if (choices[index].kind == UnovaRoomKind::HiddenGrotto)
+      std::snprintf(route, sizeof(route), "GEN %u H.A.",
+                    static_cast<unsigned>(
+                        UnovaAdventure::hiddenGrottoGeneration(area)));
+    else
+      std::snprintf(route, sizeof(route), choices[index].recommended
+          ? "CLUE: ROUTE %u" : "ROUTE %u", index + 1U);
+    fireRedText.drawStringFitted(route, x + cardWidth / 2 + 13, 178,
+                                 cardWidth - 38, 1);
+  }
+  fireRedText.setTextDatum(TL_DATUM);
+  button(8, 205, 304, 29, "ABANDON AREA", TFT_RED);
+}
+
+void drawUnovaAreaSelect() {
+  if (unovaAreaCursor >= UnovaAdventure::kAreaCount)
+    unovaAreaCursor = static_cast<uint8_t>(UnovaAdventure::kAreaCount - 1U);
+  const UnovaArea area = static_cast<UnovaArea>(unovaAreaCursor);
+  const bool unlocked = UnovaAdventure::isAreaUnlocked(gameSave.unova, area);
+  const bool complete = (gameSave.unova.defeatedBosses &
+                         (1U << unovaAreaCursor)) != 0U;
+  char backgroundPath[88];
+  std::snprintf(backgroundPath, sizeof(backgroundPath),
+                "/pokegochi/assets/unova/rooms/area_%02u.pkg",
+                static_cast<unsigned>(unovaAreaCursor));
+  const char* assets[] = {backgroundPath, kUnovaRegionIcon};
+  prepareUiScene(0x554E4F56UL ^ unovaAreaCursor, assets, 2U);
+
+  display.fillRect(0, 0, 320, 240, 0x18C3);
+  if (!AssetRenderer::draw(display, backgroundPath, 0, 40))
+    display.fillRect(0, 40, 320, 114, 0x52AA);
+  display.fillRect(0, 0, 320, 40, 0x2104);
+  button(7, 8, 52, 24, "BACK", TFT_DARKGREY);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(TFT_WHITE, 0x2104);
+  fireRedText.drawStringFitted("UNOVA ADVENTURE", 160, 16, 190, 2);
+  fireRedText.drawStringFitted("FIND THE GATE TRAINER, THEN THE BOSS",
+                               160, 31, 260, 1);
+  drawFireRedBattleWindow(35, 50, 250, 99,
+                          unlocked ? kBattleFrameGold : TFT_DARKGREY,
+                          unlocked ? kBattlePaper : 0xBDF7);
+  button(5, 76, 28, 48, "<", themePrimary());
+  button(287, 76, 28, 48, ">", themePrimary());
+  fireRedText.setTextColor(unlocked ? themeDark() : TFT_DARKGREY,
+                           unlocked ? kBattlePaper : 0xBDF7);
+  fireRedText.drawStringFitted(UnovaAdventure::areaName(area), 160, 67, 230, 2);
+  fireRedText.drawStringFitted(UnovaAdventure::areaSubtitle(area), 160, 92, 230, 1);
+  char grottoHint[32];
+  std::snprintf(grottoHint, sizeof(grottoHint), "HIDDEN GROTTO: GEN %u H.A.",
+                static_cast<unsigned>(
+                    UnovaAdventure::hiddenGrottoGeneration(area)));
+  fireRedText.drawStringFitted(grottoHint, 160, 108, 230, 1);
+  fireRedText.setTextColor(complete ? TFT_DARKGREEN : unlocked ? TFT_RED : TFT_DARKGREY,
+                           unlocked ? kBattlePaper : 0xBDF7);
+  fireRedText.drawStringFitted(complete ? "BOSS DEFEATED" :
+      unlocked ? "BOSS AWAITS" : "LOCKED - DEFEAT THE PREVIOUS BOSS",
+      160, 126, 230, 1);
+  fireRedText.setTextDatum(TL_DATUM);
+
+  drawFireRedBattleWindow(20, 156, 280, 38, kBattleFrameGold, TFT_WHITE);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(themeDark(), TFT_WHITE);
+  fireRedText.drawStringFitted(unovaNotice, 160, 169, 262, 1);
+  fireRedText.drawStringFitted("HP / PP / STATUS STAY. ONE HEAL. NO ITEMS.",
+                               160, 184, 262, 1);
+  fireRedText.setTextDatum(TL_DATUM);
+  const bool pwtReady = UnovaAdventure::pwtTierUnlocked(gameSave.unova, 0U);
+  button(7, 204, 72, 31, "PWT", pwtReady ? themePrimary() : TFT_DARKGREY);
+  button(85, 204, 84, 31, "PARTY", themePrimary());
+  button(175, 204, 138, 31, complete ? "REPLAY" : "ENTER AREA",
+         unlocked ? TFT_DARKGREEN : TFT_DARKGREY);
+}
+
+void drawUnovaAdventure() {
+  if (!UnovaAdventure::available(gameSave.sinnoh)) {
+    screen = Screen::RegionHub;
+    drawRegionHub();
+    return;
+  }
+  if (reconcileUnovaContent()) {
+    gameSave.mart.elapsedSeconds = Economy::kEndgameRotationSeconds;
+    saveDirty = true;
+    saveNow();
+  }
+  beginScreenPresentation(Screen::UnovaAdventure, 0x18C3);
+  if (UnovaAdventure::active(gameSave.unova)) drawUnovaRun();
+  else drawUnovaAreaSelect();
+}
+
+void drawUnovaTournament() {
+  if (!unovaUnlocked()) {
+    screen = Screen::UnovaAdventure;
+    drawUnovaAdventure();
+    return;
+  }
+  beginScreenPresentation(Screen::UnovaTournament, 0x2104);
+  display.fillRect(0, 0, 320, 240, 0x2104);
+  for (int16_t y = 4; y < 240; y += 12)
+    display.drawFastHLine(0, y, 320, (y / 12) & 1U ? 0x39E7 : 0x1082);
+  drawFireRedBattleWindow(5, 5, 310, 38, kBattleFrameGold, themePrimary());
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(TFT_WHITE, themePrimary());
+  fireRedText.drawStringFitted("POKEMON WORLD TOURNAMENT", 160, 24, 286, 2);
+
+  if (UnovaTournament::active(gameSave.unova)) {
+    const UnovaTournamentRunState& run = gameSave.unova.tournament;
+    const char* title = run.mode == UnovaTournamentMode::Pwt
+        ? UnovaTournament::tierName(run.tier)
+        : run.mode == UnovaTournamentMode::Champions
+            ? "CHAMPIONS TOURNAMENT" : "ROYAL UNOVA";
+    drawFireRedBattleWindow(28, 52, 264, 127, kBattleFrameGold, TFT_WHITE);
+    fireRedText.setTextColor(themeDark(), TFT_WHITE);
+    fireRedText.drawStringFitted(title, 160, 74, 240, 2);
+    char round[36];
+    std::snprintf(round, sizeof(round), "BATTLE %u OF %u",
+                  static_cast<unsigned>(run.round + 1U),
+                  static_cast<unsigned>(run.rounds));
+    fireRedText.drawStringFitted(round, 160, 103, 220, 2);
+    fireRedText.setTextColor(TFT_RED, TFT_WHITE);
+    fireRedText.drawStringFitted(UnovaTournament::opponentName(gameSave.unova),
+                                 160, 134, 220, 2);
+    fireRedText.setTextColor(TFT_DARKGREY, TFT_WHITE);
+    fireRedText.drawStringFitted("PARTY IS RESTORED BEFORE EACH MATCH",
+                                 160, 158, 240, 1);
+    button(20, 194, 184, 36, "START BATTLE", TFT_DARKGREEN);
+    button(212, 194, 88, 36, "QUIT", TFT_RED);
+    fireRedText.setTextDatum(TL_DATUM);
+    return;
+  }
+
+  unovaTournamentCursor = std::min<uint8_t>(unovaTournamentCursor, 6U);
+  const bool royal = unovaTournamentCursor == 6U;
+  const bool champions = unovaTournamentCursor == 5U;
+  const uint8_t tier = std::min<uint8_t>(unovaTournamentCursor, 4U);
+  const bool unlocked = royal
+      ? UnovaAdventure::royalAvailableToday(gameSave.unova, currentWorldDay())
+      : champions
+          ? UnovaTournament::championsUnlocked(gameSave.unova)
+          : UnovaAdventure::pwtTierUnlocked(gameSave.unova, tier);
+  const bool complete = champions
+      ? UnovaAdventure::championsCompleted(gameSave.unova)
+      : !royal && (gameSave.unova.pwtCompletedTiers & (1U << tier));
+  const char* title = royal ? "ROYAL UNOVA" : champions
+      ? "CHAMPIONS TOURNAMENT" : UnovaTournament::tierName(tier);
+  drawFireRedBattleWindow(38, 54, 244, 122, kBattleFrameGold,
+                          unlocked ? TFT_WHITE : 0xBDF7);
+  button(5, 84, 28, 48, "<", themePrimary());
+  button(287, 84, 28, 48, ">", themePrimary());
+  fireRedText.setTextColor(unlocked ? themeDark() : TFT_DARKGREY,
+                           unlocked ? TFT_WHITE : 0xBDF7);
+  fireRedText.drawStringFitted(title, 160, 78, 220, 2);
+  fireRedText.drawStringFitted(royal ? "3-7 TRAINERS - ONCE PER DAY" :
+      champions ? "FIVE REGION CHAMPIONS" : "THREE LEADERS IN A ROW",
+      160, 108, 220, 1);
+  fireRedText.setTextColor(complete ? TFT_DARKGREEN : unlocked ? TFT_RED : TFT_DARKGREY,
+                           unlocked ? TFT_WHITE : 0xBDF7);
+  fireRedText.drawStringFitted(complete ? "COMPLETED" : unlocked ? "READY" :
+      royal && UnovaAdventure::royalUnovaUnlocked(gameSave.unova)
+          ? "COMPLETED TODAY" : "LOCKED",
+      160, 144, 220, 2);
+  button(34, 193, 174, 37, royal ? "BOARD SHIP" : "ENTER",
+         unlocked ? TFT_DARKGREEN : TFT_DARKGREY);
+  button(216, 193, 70, 37, "BACK", TFT_RED);
+  fireRedText.setTextDatum(TL_DATUM);
 }
 
 // A screen is split into immutable chrome and dynamic panels.  The helpers
@@ -25915,12 +27227,13 @@ void drawPokedexHeader() {
   const uint16_t limit = pokedexSpeciesLimit();
   const bool sinnoh = SinnohExpedition::available(gameSave.gymProgress,
                                                    gameSave.sinnoh);
+  const bool unova = unovaUnlocked();
   // The counters can reach three digits after Sinnoh unlocks. Give the
   // header the full inner width and render them one notch smaller so the
   // final digit of CAUGHT stays visible on the 320px display.
   display.fillRect(15, 10, 290, 19, themePrimary());
   fireRedText.setTextColor(TFT_WHITE, themePrimary());
-  fireRedText.drawStringFitted(sinnoh ? "SINNOH POKEDEX" :
+  fireRedText.drawStringFitted(unova ? "UNOVA POKEDEX" : sinnoh ? "SINNOH POKEDEX" :
                      gameSave.gymProgress.unlockedGeneration == 1 ? "KANTO POKEDEX" :
                      gameSave.gymProgress.unlockedGeneration == 2 ? "JOHTO POKEDEX" : "NATIONAL POKEDEX", 18, 13, 142, 2);
   char totals[32];
@@ -26021,13 +27334,9 @@ void drawPokedex() {
   drawPokedexListPanel();
   drawPokedexPreviewPanel();
   drawPokedexNavigation();
-  // Keep CAUGHT and the preview card unobstructed. BACK now lives in the
-  // bottom action rail beside SINNOH, matching the touch hitboxes below.
-  const bool sinnohAvailable = SinnohExpedition::available(
-      gameSave.gymProgress, gameSave.sinnoh);
-  button(sinnohAvailable ? 190 : 250, 202, 55, 22, "BACK", TFT_DARKGREY);
-  if (sinnohAvailable)
-    button(250, 202, 55, 22, "SINNOH", 0x8750);
+  // Regional activities live behind the dedicated Home hub.  The Pokedex
+  // keeps one stable BACK target regardless of progression.
+  button(250, 202, 55, 22, "BACK", TFT_DARKGREY);
 }
 
 constexpr uint8_t kPokedexDescriptionLineChars = 26;
@@ -26338,6 +27647,7 @@ void drawMartActionPanels() {
   const uint8_t maximum = Economy::maximumPurchasable(gameSave.mart, martSelection, gameSave.money,
                                                        gameSave.inventory, gameSave.ownedMachines,
                                                        ownedSinnohMachines,
+                                                       gameSave.unova.unovaMachineOwnership,
                                                        &gameSave.ppItems);
   if (!maximum) martPurchaseQuantity = 0;
   else martPurchaseQuantity = std::max<uint8_t>(1U, std::min<uint8_t>(martPurchaseQuantity, maximum));
@@ -26523,14 +27833,63 @@ void drawRecovery() {
   fireRedText.drawString("NO NEW GAME WAS CREATED", 160, 125, 2); fireRedText.setTextDatum(TL_DATUM);
 }
 
+bool saveCheckpointDue(uint32_t sampledNow) {
+  if (!saveDirty) return false;
+  const uint32_t elapsed = sampledNow - lastSaveMs;
+  // A long synchronous touch handler can commit a save after loop() sampled
+  // `now`.  Treating that older sample as unsigned elapsed time immediately
+  // triggered a second 48 KiB commit.  Values in the upper half of the
+  // uint32_t range are an older sample, while genuine millis() rollover still
+  // produces the expected small positive interval.
+  return elapsed < 0x80000000UL && elapsed >= 60000U;
+}
+
 void saveNow() {
   if (!saveReady || !saveDirty) return;
   // A link battle is a temporary copy of the Party's combat state. Never
   // serialize its HP/PP/status or a half-finished BLE session.
   if (pvpSessionActive && gameSave.battle.kind == BattleKind::Pvp) return;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  // On the no-PSRAM board a pressure save temporarily lends the renderer's
+  // large contiguous arena to SPIFFS.  That is safe between frames, but never
+  // while a retained frame or the ordered battle journal still owns it.  Keep
+  // saveDirty set so the next shallow idle loop commits the same state.
+  if (renderingRetainedFrame || battleAnimationAtomicCommitActive ||
+      battleFlow.phase != BattleFlowPhase::Idle) return;
+#endif
   assertHeapIntegrity("save entry");
+  // A V46 record is about 48 KiB. SPIFFS streams that payload, but opening and
+  // replacing the temporary file still needs a contiguous allocator block.
+  // With the full Gen-I--V save plus the resident 57 KiB scene bank, the
+  // no-PSRAM ESP32 can have plenty of aggregate free bytes split into blocks
+  // too small for that operation. Lend the scene bank only under real memory
+  // pressure; the panel keeps the already-presented frame while the same bank
+  // is restored before returning to the UI.
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  constexpr size_t kSaveMinimumContiguousHeap = 4096U;
+  const bool lentSceneWorkspace =
+      heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) <
+      kSaveMinimumContiguousHeap;
+  const bool rendererRadioActive = multiplayer.enabled() ||
+      wirelessUpdate.active() || wirelessUpdate.liveLogActive();
+  if (lentSceneWorkspace) AssetRenderer::releaseSceneWorkspaceForStorage();
+#endif
   saves.setSinnohMachineOwnership(ownedSinnohMachines);
-  if (saves.commit(gameSave)) { saveDirty = false; lastSaveMs = millis(); }
+  const bool committed = saves.commit(gameSave);
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  if (lentSceneWorkspace) {
+    const bool restored = AssetRenderer::restoreSceneWorkspace(rendererRadioActive);
+    // Every descriptor into the old arena was invalidated by the loan. Never
+    // let a matching scene key suppress the preload which rebuilds them.
+    preparedUiSceneKey = 0U;
+    preparedUiSceneComplete = false;
+    preparedBattleGraphicsKey = 0U;
+    battleArenaVisible = false;
+    rendererSceneRewarmPending = restored;
+    if (!restored) Serial.println("[SAVE] renderer workspace restore failed");
+  }
+#endif
+  if (committed) { saveDirty = false; lastSaveMs = millis(); }
   assertHeapIntegrity("save commit");
 }
 
@@ -26647,7 +28006,7 @@ bool prepareAndroidBattleRender(const char* phase) {
   const bool duringBoot = phase && std::strcmp(phase, "boot") == 0;
   BattleState& battle = gameSave.battle;
   bool repaired = false;
-  if (battle.kind > BattleKind::Boss) {
+  if (battle.kind > BattleKind::SinnohGym) {
     clearAndroidBattleCheckpoint("kind");
     if (!duringBoot) { screen = Screen::Home; drawHome(); }
     return false;
@@ -26879,7 +28238,8 @@ void battleResultMessage(const BattleActionResult& result) {
   else if (result.outcome == BattleOutcome::Escaped) {
     if (gameSave.battle.kind == BattleKind::Wild)
       std::snprintf(message, sizeof(message), "GOT AWAY SAFELY");
-    else if (gameSave.battle.kind == BattleKind::Gym)
+    else if (gameSave.battle.kind == BattleKind::Gym ||
+             gameSave.battle.kind == BattleKind::SinnohGym)
       std::snprintf(message, sizeof(message), "GYM CHALLENGE ABANDONED");
     else if (gameSave.battle.kind == BattleKind::League)
       std::snprintf(message, sizeof(message), "POKEMON LEAGUE ABANDONED");
@@ -26907,11 +28267,14 @@ void battleResultMessage(const BattleActionResult& result) {
 struct SeriesProgressResult {
   bool nextOpponent = false;
   bool badgeAwarded = false;
+  bool sinnohBadgeAwarded = false;
   bool leagueCompleted = false;
   bool towerCompleted = false;
   bool megaChallengeCompleted = false;
   bool bossDefeated = false;
+  uint16_t sinnohResearchGained = 0U;
   GymId awardedGym = GymId::Count;
+  SinnohSite awardedSinnohSite = SinnohSite::Count;
 };
 
 SeriesProgressResult advanceSeries(const BattleActionResult& result) {
@@ -26922,6 +28285,16 @@ SeriesProgressResult advanceSeries(const BattleActionResult& result) {
     if (!progress.nextOpponent) {
       progress.awardedGym = static_cast<GymId>(gameSave.battle.gymId);
       progress.badgeAwarded = GymSystem::recordVictory(gameSave.gymProgress, progress.awardedGym);
+    }
+  } else if (gameSave.battle.kind == BattleKind::SinnohGym) {
+    const SinnohSite site = static_cast<SinnohSite>(gameSave.battle.gymId);
+    const uint16_t researchBefore = gameSave.sinnoh.research;
+    progress.sinnohBadgeAwarded =
+        SinnohExpedition::recordGymVictory(gameSave.sinnoh, site);
+    if (progress.sinnohBadgeAwarded) {
+      progress.awardedSinnohSite = site;
+      progress.sinnohResearchGained = static_cast<uint16_t>(
+          gameSave.sinnoh.research - researchBefore);
     }
   } else if (gameSave.battle.kind == BattleKind::League) {
     const uint8_t region = gameSave.battle.leagueRegion;
@@ -26951,14 +28324,21 @@ void awardLeagueRewards(const SeriesProgressResult& progress) {
   uint16_t& masterBalls =
       gameSave.inventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)];
   if (masterBalls < kInventoryStackLimit) ++masterBalls;
-  // The first League alone awards Lucky Egg. Later League clears retain their
-  // existing Master Ball reward without creating another Egg.
-  if (gameSave.battle.leagueRegion == 1U&&
-     LeagueSystem::reconcileKantoLuckyEggReward(
-        gameSave.gymProgress, gameSave.collection, gameSave.ownedMachines)){
-    BattleEngine::setPermanentExperienceBoost(true);
-    luckyEggMessagePending=true;
-  }
+}
+
+void reconcileLuckyEggExperienceReward(bool announceProgressionReward) {
+  const uint8_t previousPercent=
+      BattleEngine::permanentExperienceBoostPercent();
+  const bool inventoryChanged=LeagueSystem::reconcileKantoLuckyEggReward(
+      gameSave.gymProgress,gameSave.collection,gameSave.ownedMachines);
+  const uint8_t activePercent=
+      LeagueSystem::luckyEggExperienceBonusPercent(
+          gameSave.gymProgress,
+          SinnohExpedition::available(gameSave.gymProgress,gameSave.sinnoh));
+  BattleEngine::setPermanentExperienceBoostPercent(activePercent);
+  if(activePercent&&((announceProgressionReward&&activePercent>previousPercent)||
+                     (!announceProgressionReward&&inventoryChanged)))
+    luckyEggMessagePendingPercent=activePercent;
 }
 
 BattleTowerRewardResult awardTowerReward(const SeriesProgressResult& progress) {
@@ -26966,7 +28346,8 @@ BattleTowerRewardResult awardTowerReward(const SeriesProgressResult& progress) {
   const uint32_t seed=gameSave.battle.rngState^gameSave.playTimeSeconds^
       (gameSave.bootCount*0x9E3779B9UL);
   return BattleTowerSystem::awardCompletionReward(
-      gameSave.inventory,gameSave.eggInventory,gameSave.pokedex,seed);
+      gameSave.inventory,gameSave.eggInventory,gameSave.pokedex,
+      unlockedContentGeneration(),seed);
 }
 
 BossRewardResult awardBossReward(const SeriesProgressResult& progress) {
@@ -26974,7 +28355,8 @@ BossRewardResult awardBossReward(const SeriesProgressResult& progress) {
   const uint32_t seed = gameSave.battle.rngState ^ gameSave.playTimeSeconds ^
       (gameSave.bootCount * 0x85EBCA6BUL);
   return BossSystem::awardVictoryReward(
-      gameSave.inventory,gameSave.eggInventory,gameSave.pokedex,seed);
+      gameSave.inventory,gameSave.eggInventory,gameSave.pokedex,
+      unlockedContentGeneration(),seed);
 }
 
 uint32_t currentSeriesIntroKey() {
@@ -27090,6 +28472,13 @@ void finishPendingBattleFlow() {
   const BattleKind completedKind=gameSave.battle.kind;
   const bool completedSinnohBattle = sinnohBattleActive &&
       completedKind == BattleKind::Wild;
+  const bool completedUnovaAreaBattle =
+      UnovaAdventure::active(gameSave.unova) &&
+      gameSave.unova.run.pendingBattle != UnovaBattleRole::None &&
+      (completedKind == BattleKind::Wild || completedKind == BattleKind::Trainer);
+  const bool completedUnovaTournamentBattle =
+      UnovaTournament::active(gameSave.unova) &&
+      (completedKind == BattleKind::Pwt || completedKind == BattleKind::RoyalUnova);
   Serial.printf("[BATTLE] finish events=%u stack-free=%u\n",
                 static_cast<unsigned>(result.eventCount),
                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -27110,6 +28499,10 @@ void finishPendingBattleFlow() {
   // makes a reset during the animation safely retry the pending evolution.
   assertHeapIntegrity("battle finish evolution", result.pendingEvolutionCount);
   if(result.opponentDefeated && completedKind != BattleKind::Pvp)++gameSave.statistics.pokemonDefeated;
+  if (result.outcome == BattleOutcome::Captured && unovaUnlocked() &&
+      UnovaForms::reconcileUniqueItems(gameSave.collection,
+                                       gameSave.gen5UniqueItems, true))
+    saveDirty = true;
   if (completedSinnohBattle) {
     const bool successful = result.outcome == BattleOutcome::Victory ||
         result.outcome == BattleOutcome::Captured;
@@ -27122,6 +28515,62 @@ void finishPendingBattleFlow() {
       std::snprintf(sinnohNotice, sizeof(sinnohNotice),
                     "EXPLORE FAILED - HEAL YOUR POKEMON.");
   }
+  if (completedKind == BattleKind::SinnohGym &&
+      result.outcome != BattleOutcome::Victory)
+    std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                  "GYM CHALLENGE FAILED - THE LEADER AWAITS.");
+  if (completedUnovaAreaBattle) {
+    const UnovaBattleRole role = gameSave.unova.run.pendingBattle;
+    const uint8_t completedArea = gameSave.unova.run.area;
+    const bool successful = result.outcome == BattleOutcome::Victory ||
+        result.outcome == BattleOutcome::Captured;
+    UnovaAdventure::recordBattle(gameSave.unova, result.outcome);
+    unovaAreaBattleResultPending = true;
+    if (!successful) {
+      unovaAreaCursor = completedArea;
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "THE AREA RUN ENDED. START THIS AREA AGAIN.");
+    } else if (role == UnovaBattleRole::Boss) {
+      unovaAreaCursor = static_cast<uint8_t>(std::min<unsigned>(
+          completedArea + 1U, UnovaAdventure::kAreaCount - 1U));
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "%s DEFEATED! THE NEXT AREA IS OPEN.",
+                    UnovaAdventure::bossName(static_cast<UnovaArea>(completedArea)));
+    } else if (role == UnovaBattleRole::GateTrainer) {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "GATE TRAINER DEFEATED! THE BOSS PATH IS OPEN.");
+    } else if (result.outcome == BattleOutcome::Captured) {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "POKEMON CAUGHT. THE EXPEDITION CONTINUES.");
+    } else {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "PATH CLEARED. HP, PP AND STATUS WERE KEPT.");
+    }
+  }
+  if (completedUnovaTournamentBattle) {
+    const UnovaTournamentMode mode = gameSave.unova.tournament.mode;
+    const uint8_t tier = gameSave.unova.tournament.tier;
+    bool completedChallenge = false;
+    UnovaTournament::recordBattle(gameSave.unova, result.outcome,
+                                  completedChallenge);
+    unovaTournamentBattleResultPending = true;
+    if (result.outcome != BattleOutcome::Victory) {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "THE TOURNAMENT RUN ENDED.");
+    } else if (!completedChallenge) {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "MATCH WON! THE NEXT OPPONENT IS READY.");
+    } else if (mode == UnovaTournamentMode::Champions) {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "UNOVA COMPLETE! BLACK THEME + ROYAL UNOVA!");
+    } else if (mode == UnovaTournamentMode::RoyalUnova) {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "ROYAL UNOVA CLEARED FOR TODAY!");
+    } else {
+      std::snprintf(unovaNotice, sizeof(unovaNotice),
+                    "%s COMPLETED!", UnovaTournament::tierName(tier));
+    }
+  }
   if(result.outcome==BattleOutcome::Victory&&completedKind!=BattleKind::Wild&&
      completedKind!=BattleKind::None&&completedKind!=BattleKind::Pvp&&
      completedKind!=BattleKind::Boss)
@@ -27129,6 +28578,25 @@ void finishPendingBattleFlow() {
   const bool sinnohAvailableBefore = SinnohExpedition::available(
       gameSave.gymProgress, gameSave.sinnoh);
   const SeriesProgressResult series = advanceSeries(result);
+  if (series.sinnohBadgeAwarded) {
+    const SinnohGymDefinition* gym =
+        SinnohExpedition::gymDefinition(series.awardedSinnohSite);
+    if (series.sinnohResearchGained) {
+      std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                    "%s BADGE! +%u RESEARCH - %u/8.",
+                    gym ? gym->badge : "SINNOH",
+                    static_cast<unsigned>(series.sinnohResearchGained),
+                    static_cast<unsigned>(
+                        SinnohExpedition::gymVictoryCount(gameSave.sinnoh)));
+    } else {
+      std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                    "%s BADGE! RESEARCH MAX - %u/8.",
+                    gym ? gym->badge : "SINNOH",
+                    static_cast<unsigned>(
+                        SinnohExpedition::gymVictoryCount(gameSave.sinnoh)));
+    }
+    reconcileSinnohCompletionReward();
+  }
   const bool sinnohUnlockedNow = !sinnohAvailableBefore &&
       SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh);
   if (sinnohUnlockedNow) {
@@ -27137,7 +28605,7 @@ void finishPendingBattleFlow() {
     // Pokemon and force the next Mart rotation at that exact transition.
     SinnohExpedition::reconcile(gameSave.sinnoh, gameSave.gymProgress);
     CollectionLogic::applyGenerationContent(gameSave.collection, 4U);
-    gameSave.mart.elapsedSeconds = Economy::kRotationSeconds;
+    gameSave.mart.elapsedSeconds = Economy::kEndgameRotationSeconds;
     saveDirty = true;
   }
   if(completedKind==BattleKind::Boss){
@@ -27165,6 +28633,8 @@ void finishPendingBattleFlow() {
     presentedPlayerHp = presentedOpponentHp = -1;
     presentedPlayerHpBarPixels = presentedOpponentHpBarPixels = -1;
   }
+  reconcileLuckyEggExperienceReward(
+      series.badgeAwarded||series.leagueCompleted||sinnohUnlockedNow);
   awardLeagueRewards(series);
   const BattleTowerRewardResult towerReward=awardTowerReward(series);
   const BossRewardResult bossReward=awardBossReward(series);
@@ -27179,6 +28649,7 @@ void finishPendingBattleFlow() {
   bossRewardStorageFullMessagePending=
       bossReward.kind==BossRewardKind::StorageFull;
   megaStoneMessagePending=series.megaChallengeCompleted;
+  goldenBallRewardMessagePending=sinnohUnlockedNow;
   gameSave.money += result.moneyGained;
   bool oakRescueTriggered=false;
   if(result.outcome==BattleOutcome::Defeat&&completedKind!=BattleKind::Pvp&&
@@ -27204,9 +28675,13 @@ void finishPendingBattleFlow() {
   assertHeapIntegrity("battle finish bookkeeping", static_cast<int>(result.outcome));
   if (completedKind != BattleKind::Pvp) { saveDirty = true; saveNow(); }
   if (series.badgeAwarded) playBadgeAward(series.awardedGym);
+  if (series.sinnohBadgeAwarded)
+    playSinnohBadgeAward(series.awardedSinnohSite);
   const bool needsBatonPassSwitch = result.batonPassSwitchRequired &&
       gameSave.battle.active && completedKind != BattleKind::Pvp;
   const uint8_t queuedBatonPassMove = result.batonPassOpponentMoveSlot;
+  const uint8_t replacementReason=static_cast<uint8_t>(
+      gameSave.battle.pendingPlayerReplacement&0x0FU);
   // Everything below depends on persistent game state and the compact series
   // result only.  The large event journal can now be released in place.
   clearBattleFlowState();
@@ -27217,7 +28692,8 @@ void finishPendingBattleFlow() {
     batonPassOpponentMoveSlot = queuedBatonPassMove;
     forcedBattleSwitch = true;
     battlePartySelection = -1;
-    std::snprintf(message, sizeof(message), "CHOOSE A POKEMON TO PASS TO.");
+    std::snprintf(message, sizeof(message), replacementReason==2U?
+        "CHOOSE A POKEMON TO SWITCH IN.":"CHOOSE A POKEMON TO PASS TO.");
     screen = Screen::BattleParty;
     drawBattleParty();
   } else if (completedKind == BattleKind::Pvp && gameSave.battle.active &&
@@ -27238,7 +28714,16 @@ void finishPendingBattleFlow() {
   } else if (seriesIntroPending()) {
     screen = Screen::TrainerIntro; drawTrainerIntro();
   } else {
-    screen = Screen::Battle; refreshBattleHud();
+    screen = Screen::Battle;
+    refreshBattleHud();
+    // finishPendingBattleFlow() runs from a shallow deferred loop, outside
+    // handleTap(). Unlike a normal tap, that path did not own a retained-frame
+    // request. The logical battle was therefore already inactive (and the
+    // CONTINUE hitbox worked), while the LCD could keep the last journal text
+    // indefinitely. Make the result panel an explicit presentation boundary;
+    // it is committed before the loop is allowed to poll another rapid tap.
+    invalidatePixels(0, 160, 320, 80);
+    requestRetainedFrame();
   }
 }
 
@@ -27995,7 +29480,115 @@ void showCurrentBattleEvent() {
                 std::snprintf(message,sizeof(message),"The weather returned to normal."); break;
             }
             break;
-          case BattleMoveEffect::Failed: default: std::snprintf(message, sizeof(message), "But it failed!"); break;
+          case BattleMoveEffect::GravitySet:
+            std::snprintf(message,sizeof(message),"Gravity intensified!"); break;
+          case BattleMoveEffect::GravityEnded:
+            std::snprintf(message,sizeof(message),"Gravity returned to normal."); break;
+          case BattleMoveEffect::Roosted:
+            std::snprintf(message,sizeof(message),"%s landed and rested!",name); break;
+          case BattleMoveEffect::MiracleEyeSet:
+            std::snprintf(message,sizeof(message),"%s was identified!",name); break;
+          case BattleMoveEffect::TailwindSet:
+            std::snprintf(message,sizeof(message),"A tailwind blew behind %s!",name); break;
+          case BattleMoveEffect::TailwindEnded:
+            std::snprintf(message,sizeof(message),"The tailwind petered out."); break;
+          case BattleMoveEffect::LuckyChantSet:
+            std::snprintf(message,sizeof(message),"The lucky chant shielded %s!",name); break;
+          case BattleMoveEffect::LuckyChantEnded:
+            std::snprintf(message,sizeof(message),"The lucky chant wore off."); break;
+          case BattleMoveEffect::Embargoed:
+            std::snprintf(message,sizeof(message),"%s can no longer use items!",name); break;
+          case BattleMoveEffect::EmbargoEnded:
+            std::snprintf(message,sizeof(message),"%s can use items again!",name); break;
+          case BattleMoveEffect::HealBlocked:
+            std::snprintf(message,sizeof(message),"%s was prevented from healing!",name); break;
+          case BattleMoveEffect::HealBlockEnded:
+            std::snprintf(message,sizeof(message),"%s's Heal Block wore off!",name); break;
+          case BattleMoveEffect::AquaRingSet:
+            std::snprintf(message,sizeof(message),"%s surrounded itself with water!",name); break;
+          case BattleMoveEffect::AquaRingHeal:
+            std::snprintf(message,sizeof(message),"Aqua Ring restored %s's HP!",name); break;
+          case BattleMoveEffect::MagnetRiseSet:
+            std::snprintf(message,sizeof(message),"%s levitated with electromagnetism!",name); break;
+          case BattleMoveEffect::MagnetRiseEnded:
+            std::snprintf(message,sizeof(message),"%s's electromagnetism wore off!",name); break;
+          case BattleMoveEffect::ToxicSpikesSet:
+            std::snprintf(message,sizeof(message),"Poison spikes were scattered!"); break;
+          case BattleMoveEffect::ToxicSpikesAbsorbed:
+            std::snprintf(message,sizeof(message),"%s absorbed the poison spikes!",name); break;
+          case BattleMoveEffect::StealthRockSet:
+            std::snprintf(message,sizeof(message),"Pointed stones float in the air!"); break;
+          case BattleMoveEffect::AbilitySuppressed:
+            std::snprintf(message,sizeof(message),"%s's Ability was suppressed!",name); break;
+          case BattleMoveEffect::AbilityChanged:
+            std::snprintf(message,sizeof(message),"%s acquired INSOMNIA!",name); break;
+          case BattleMoveEffect::TrickRoomSet:
+            std::snprintf(message,sizeof(message),"The dimensions were twisted!"); break;
+          case BattleMoveEffect::TrickRoomEnded:
+            std::snprintf(message,sizeof(message),"The twisted dimensions returned to normal."); break;
+          case BattleMoveEffect::HazardsCleared:
+            std::snprintf(message,sizeof(message),"The barriers and hazards disappeared!"); break;
+          case BattleMoveEffect::ProtectBroken:
+            std::snprintf(message,sizeof(message),"%s's protection was broken!",name); break;
+          case BattleMoveEffect::ReplacementRequested:
+            std::snprintf(message,sizeof(message),"Choose a replacement!"); break;
+          case BattleMoveEffect::PowerTricked:
+            std::snprintf(message,sizeof(message),"%s switched its Attack and Defense!",name); break;
+          case BattleMoveEffect::StatsSwapped:
+            std::snprintf(message,sizeof(message),"The battlers swapped stat changes!"); break;
+          case BattleMoveEffect::StatusTransferred:
+            std::snprintf(message,sizeof(message),"%s received the status condition!",name); break;
+          case BattleMoveEffect::BerryConsumed: {
+            const HeldItem item=static_cast<HeldItem>(event.after);
+            std::snprintf(message,sizeof(message),"%s used the %s!",name,heldItemName(item));
+            break;
+          }
+          case BattleMoveEffect::ItemFlung: {
+            const HeldItem item=static_cast<HeldItem>(event.after);
+            std::snprintf(message,sizeof(message),"%s flung its %s!",name,heldItemName(item));
+            break;
+          }
+          case BattleMoveEffect::HealingWishSet:
+            std::snprintf(message,sizeof(message),"%s made a healing wish!",name); break;
+          case BattleMoveEffect::LunarDanceSet:
+            std::snprintf(message,sizeof(message),"%s performed a lunar dance!",name); break;
+          case BattleMoveEffect::UTurnSwitch:
+            std::snprintf(message,sizeof(message),"%s went back to its Trainer!",name); break;
+          case BattleMoveEffect::WideGuardSet:
+            std::snprintf(message,sizeof(message),"WIDE GUARD protected %s's side!",name); break;
+          case BattleMoveEffect::QuickGuardSet:
+            std::snprintf(message,sizeof(message),"QUICK GUARD protected %s's side!",name); break;
+          case BattleMoveEffect::WonderRoomSet:
+            std::snprintf(message,sizeof(message),"The area became bizarre!"); break;
+          case BattleMoveEffect::WonderRoomEnded:
+            std::snprintf(message,sizeof(message),"WONDER ROOM wore off!"); break;
+          case BattleMoveEffect::MagicRoomSet:
+            std::snprintf(message,sizeof(message),"Held items lost their effects!"); break;
+          case BattleMoveEffect::MagicRoomEnded:
+            std::snprintf(message,sizeof(message),"MAGIC ROOM wore off!"); break;
+          case BattleMoveEffect::TelekinesisSet:
+            std::snprintf(message,sizeof(message),"%s was hurled into the air!",name); break;
+          case BattleMoveEffect::SmackedDown:
+            std::snprintf(message,sizeof(message),"%s fell straight down!",name); break;
+          case BattleMoveEffect::AbilityChangedGen5:
+            std::snprintf(message,sizeof(message),"%s's Ability changed!",name); break;
+          case BattleMoveEffect::ItemBestowed:
+            std::snprintf(message,sizeof(message),"%s received the %s!",name,
+                          heldItemName(static_cast<HeldItem>(event.after))); break;
+          case BattleMoveEffect::StatsAveraged:
+            std::snprintf(message,sizeof(message),
+                event.move==static_cast<MoveId>(470U)
+                    ? "The battlers shared their defenses!"
+                    : "The battlers shared their power!"); break;
+          case BattleMoveEffect::TurnOrderAdjusted:
+            std::snprintf(message,sizeof(message),
+                event.move==static_cast<MoveId>(495U)
+                    ? "%s accepted the kind offer!"
+                    : "%s's move was postponed!",name); break;
+          case BattleMoveEffect::Failed:
+            std::snprintf(message, sizeof(message), "But it failed!"); break;
+          default:
+            std::snprintf(message, sizeof(message), "The move took effect!"); break;
         }
         break;
       case BattleEventType::DelayedAttackHit:
@@ -28019,8 +29612,9 @@ void showCurrentBattleEvent() {
           "hurt itself in confusion!", "move is disabled!", "must repeat another move!",
           "is fast asleep!", "is frozen solid!", "is paralyzed! It can't move!",
           "is loafing around!", "can't use the sealed move!", "can't use status moves after the TAUNT!",
-          "can't use the same move due to TORMENT!", "is immobilized by love!"};
-        const uint16_t reason = std::min<uint16_t>(event.value, 13U);
+          "can't use the same move due to TORMENT!", "is immobilized by love!",
+          "was carried into the sky!"};
+        const uint16_t reason = std::min<uint16_t>(event.value, 14U);
         std::snprintf(message, sizeof(message), "%s %s", name, reasons[reason]); break;
       }
       case BattleEventType::ItemUsed:
@@ -28624,7 +30218,28 @@ void startPvpBattle(const Multiplayer::BattleLaunch& launch) {
   gameSave.battle.outcome = BattleOutcome::Ongoing;
   gameSave.battle.playerUid = launch.local.members[launch.localLeadSlot].uid;
   gameSave.battle.rngState = launch.seed ? launch.seed : 1U;
-  gameSave.battle.unlockedGeneration = gameSave.gymProgress.unlockedGeneration;
+  // Region locks control acquisition, not legality after a link transfer. A
+  // player who has not opened Unova can still receive and battle a Gen-V
+  // Pokemon/move; both peers therefore derive one shared rules generation
+  // from the actual two rosters as well as their local progression.
+  uint8_t linkGeneration = unlockedContentGeneration();
+  const auto includeRosterGeneration = [&](const Multiplayer::BattleRoster& roster) {
+    for (uint8_t member = 0; member < roster.count; ++member) {
+      const OwnedPokemon& pokemon = roster.members[member];
+      if (pokemon.speciesId >= 494U) linkGeneration = 5U;
+      else if (pokemon.speciesId >= 387U)
+        linkGeneration = std::max<uint8_t>(linkGeneration, 4U);
+      for (MoveId move : pokemon.moves) {
+        const uint16_t id = static_cast<uint16_t>(move);
+        if (id >= 468U) linkGeneration = 5U;
+        else if (id >= 355U)
+          linkGeneration = std::max<uint8_t>(linkGeneration, 4U);
+      }
+    }
+  };
+  includeRosterGeneration(launch.local);
+  includeRosterGeneration(launch.remote);
+  gameSave.battle.unlockedGeneration = linkGeneration;
   gameSave.battle.opponentCount = std::min<uint8_t>(
       launch.remote.count, kOpponentTeamCapacity);
   gameSave.battle.opponentIndex = 0;
@@ -28800,6 +30415,7 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
     gameSave.battle.opponents[index].uid = uid;
     gameSave.battle.opponentVolatiles[index] = sync.hostVolatiles[slot];
     gameSave.battle.opponentMoveEffects[index] = sync.hostMoveEffects[slot];
+    gameSave.battle.opponentGen4Effects[index] = sync.hostGen4Effects[slot];
   }
 
   std::memset(gameSave.battle.playerHeldItems, 0, sizeof(gameSave.battle.playerHeldItems));
@@ -28813,6 +30429,7 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
   gameSave.battle.playerUid = localRoster.members[sync.guestActiveRosterSlot].uid;
   gameSave.battle.playerVolatile = sync.guestVolatiles[sync.guestActiveRosterSlot];
   gameSave.battle.playerMoveEffects = sync.guestMoveEffects[sync.guestActiveRosterSlot];
+  gameSave.battle.playerGen4Effects = sync.guestGen4Effects[sync.guestActiveRosterSlot];
   const uint8_t opponentIndex = pvpOpponentIndexForRosterSlot(sync.hostActiveRosterSlot);
   if (opponentIndex >= gameSave.battle.opponentCount) return false;
   gameSave.battle.opponentIndex = opponentIndex;
@@ -28838,6 +30455,17 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
   gameSave.battle.opponentNightmares[gameSave.battle.opponentIndex] = sync.hostNightmare;
   gameSave.battle.playerSpikesLayers = sync.guestSpikesLayers;
   gameSave.battle.opponentSpikesLayers = sync.hostSpikesLayers;
+  gameSave.battle.playerToxicSpikesLayers = sync.guestToxicSpikesLayers;
+  gameSave.battle.opponentToxicSpikesLayers = sync.hostToxicSpikesLayers;
+  gameSave.battle.playerStealthRock = sync.guestStealthRock;
+  gameSave.battle.opponentStealthRock = sync.hostStealthRock;
+  gameSave.battle.playerTailwindTurns = sync.guestTailwindTurns;
+  gameSave.battle.opponentTailwindTurns = sync.hostTailwindTurns;
+  gameSave.battle.playerLuckyChantTurns = sync.guestLuckyChantTurns;
+  gameSave.battle.opponentLuckyChantTurns = sync.hostLuckyChantTurns;
+  gameSave.battle.gravityTurns = sync.gravityTurns;
+  gameSave.battle.trickRoomTurns = sync.trickRoomTurns;
+  gameSave.battle.lastMoveUsedGlobally = sync.lastMoveUsedGlobally;
   gameSave.battle.delayedToPlayer = sync.delayedToGuest;
   gameSave.battle.delayedToOpponent = sync.delayedToHost;
   gameSave.battle.active = sync.active;
@@ -28863,53 +30491,48 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
 bool useRareCandyOutsideBattle(OwnedPokemon& target) {
   uint16_t& quantity=gameSave.inventory.heldItems[kRareCandyInventorySlot];
   const SpeciesData* species=findSpecies(target.speciesId);
-  if(!quantity||!species||target.level>=100U)return false;
+  if(!quantity||!species)return false;
 
-  const uint16_t speciesBefore=target.speciesId;
-  const uint8_t newLevel=static_cast<uint8_t>(target.level+1U);
-  const MoveId learnedMove=moveLearnedAtLevel(
-      speciesBefore,newLevel,
-      SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh) ? 4U : 1U);
-  target.level=newLevel;
-  target.experience=std::max<uint32_t>(target.experience,
-      experienceForLevel(species->growthRate,newLevel));
-  CollectionLogic::refreshDerivedStats(target,true);
+  const RareCandyProgression progression=CollectionLogic::applyRareCandy(
+      target,unlockedContentGeneration());
+  if(!progression.applied)return false;
   --quantity;
 
   // The existing Move Learn and Evolution screens are also used here. Their
   // inventory-origin marker returns to the Bag after all required choices.
   gameSave.moveLearning=MoveLearningQueue{};
   gameSave.moveLearning.origin=kMoveLearningOriginInventory;
-  if(learnedMove!=MoveId::None){
+  if(progression.learnedMove!=MoveId::None){
     bool known=false;uint8_t empty=kMoveSlots;
     for(uint8_t slot=0;slot<kMoveSlots;++slot){
-      known|=target.moves[slot]==learnedMove;
+      known|=target.moves[slot]==progression.learnedMove;
       if(empty==kMoveSlots&&target.moves[slot]==MoveId::None)empty=slot;
     }
     if(!known&&empty<kMoveSlots){
-      target.moves[empty]=learnedMove;CollectionLogic::clearMovePpUps(target,empty);
-      const FullMoveData* move=findFullMove(learnedMove);target.movePp[empty]=move?move->pp:0;
+      target.moves[empty]=progression.learnedMove;CollectionLogic::clearMovePpUps(target,empty);
+      const FullMoveData* move=findFullMove(progression.learnedMove);target.movePp[empty]=move?move->pp:0;
     }else if(!known){
-      gameSave.moveLearning.entries[0]={target.uid,learnedMove};
+      gameSave.moveLearning.entries[0]={target.uid,progression.learnedMove};
       gameSave.moveLearning.count=1;gameSave.moveLearning.index=0;
     }
   }
 
   gameSave.evolutionQueue=EvolutionQueue{};
-  uint16_t choices[kEvolutionChoiceCapacity]{};
-  const uint8_t choiceCount=evolutionChoices(target.speciesId,target.level,
-      CollectionLogic::calculatedStat(target,PokemonStat::Attack),
-      CollectionLogic::calculatedStat(target,PokemonStat::Defense),
-      gameSave.gymProgress.unlockedGeneration,choices,kEvolutionChoiceCapacity);
-  if(choiceCount){
+  if(progression.evolutionChoiceCount){
     PendingEvolution& pending=gameSave.evolutionQueue.entries[0];
-    pending.pokemonUid=target.uid;pending.choiceCount=choiceCount;
-    for(uint8_t choice=0;choice<choiceCount;++choice)pending.choices[choice]=choices[choice];
+    pending.pokemonUid=target.uid;
+    pending.choiceCount=progression.evolutionChoiceCount;
+    for(uint8_t choice=0;choice<progression.evolutionChoiceCount;++choice)
+      pending.choices[choice]=progression.evolutionChoices[choice];
     gameSave.evolutionQueue.count=1;gameSave.evolutionQueue.index=0;
   }
 
-  std::snprintf(inventoryNotice,sizeof(inventoryNotice),"%s GREW TO LV. %u!",
-                species->name,newLevel);
+  if(progression.levelIncreased)
+    std::snprintf(inventoryNotice,sizeof(inventoryNotice),"%s GREW TO LV. %u!",
+                  species->name,target.level);
+  else
+    std::snprintf(inventoryNotice,sizeof(inventoryNotice),
+                  "%s REACTED TO THE RARE CANDY!",species->name);
   inventoryDescriptionScroll=0;inventoryMode=InventoryMode::Browse;
   inventoryBattleContext=false;boxOverlay=BoxOverlay::None;
   saveDirty=true;saveNow();
@@ -29000,9 +30623,10 @@ void useSelectedPpMoveItem(OwnedPokemon& target,uint8_t moveSlot){
                               pvpResolvedAction,target.uid,&gameSave.ppItems,moveSlot);
     if(pvpResolvedAction.accepted){
       inventoryMode=InventoryMode::Browse;inventoryMoveTargetUid=0;inventoryBattleContext=false;
-      saveDirty=true;saveNow();screen=Screen::Battle;
+      screen=Screen::Battle;
       beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,playerHpBefore,opponentHpBefore,
                            playerStatusBefore,opponentStatusBefore,playerSpeciesBefore,opponentSpeciesBefore);
+      saveDirty=true;saveNow();
       return;
     }
   }else{
@@ -29071,8 +30695,11 @@ __attribute__((noinline)) void executeBattleRunAttempt() {
   BattleEngine::runInto(gameSave.battle, gameSave.collection, pvpResolvedAction);
   if (!pvpResolvedAction.accepted) return;
   saveDirty = true;
-  saveNow();
   beginBattleEventFlow(pvpResolvedAction, snapshot);
+  // beginBattleEventFlow() makes saveNow() defer until the complete journal
+  // has reached the panel.  Releasing the shared scene arena between command
+  // resolution and the first move frame caused a visible cache rebuild.
+  saveNow();
 }
 
 __attribute__((noinline)) void executeStruggleBattleMove() {
@@ -29081,8 +30708,8 @@ __attribute__((noinline)) void executeStruggleBattleMove() {
   BattleEngine::fightInto(gameSave.battle, gameSave.collection, kMoveSlots, pvpResolvedAction);
   if (!pvpResolvedAction.accepted) return;
   saveDirty = true;
-  saveNow();
   beginBattleEventFlow(pvpResolvedAction, snapshot);
+  saveNow();
 }
 
 __attribute__((noinline)) void executeSelectedBattleSwitch(OwnedPokemon* target, bool wasForced) {
@@ -29102,10 +30729,10 @@ __attribute__((noinline)) void executeSelectedBattleSwitch(OwnedPokemon* target,
   batonPassBattleSwitch = false;
   batonPassOpponentMoveSlot = 0xFF;
   saveDirty = true;
-  saveNow();
   battlePartySelection = -1;
   screen = Screen::Battle;
   beginBattleEventFlow(result, snapshot);
+  saveNow();
 }
 
 __attribute__((noinline)) bool executeBattleBall(PokeBallType ball) {
@@ -29113,16 +30740,16 @@ __attribute__((noinline)) bool executeBattleBall(PokeBallType ball) {
   const OwnedPokemon* opponentBefore = BattleEngine::currentOpponent(gameSave.battle);
   playBallAnimation(ball);
   BattleEngine::throwBallInto(gameSave.battle, gameSave.collection, gameSave.inventory,
-                              ball, pvpResolvedAction);
+                              ball, pvpResolvedAction, goldenBallOwned());
   if (!pvpResolvedAction.accepted) return false;
   playBallResult(ball, pvpResolvedAction.captureShakes, pvpResolvedAction.caught);
   recordBallStatistics(pvpResolvedAction, opponentBefore);
   if (pvpResolvedAction.caught && opponentBefore)
     PokedexLogic::markCaught(gameSave.pokedex, opponentBefore->speciesId);
   saveDirty = true;
-  saveNow();
   screen = Screen::Battle;
   beginBattleEventFlow(pvpResolvedAction, snapshot);
+  saveNow();
   return true;
 }
 
@@ -29351,7 +30978,14 @@ void handleTap(const TouchPoint& p) {
     }
     // A screen-changing control paints over the old balloon anyway. Do not
     // let a cosmetic cache restore swallow the actual button press.
-    if(inside(p,kHomeTopX[2],kHomeTopY,kHomeButtonWidth,kHomeButtonHeight)){
+    if(challengeHubAvailable()&&regionHubAvailable()&&
+       inside(p,kHomeTopX[2],kHomeTopY,kHomeButtonWidth,kHomeButtonHeight)){
+      homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;
+      regionHubPage=0;
+      screen=Screen::RegionHub;drawRegionHub();return;
+    }
+    if(!challengeHubAvailable()&&
+       inside(p,kHomeTopX[2],kHomeTopY,kHomeButtonWidth,kHomeButtonHeight)){
       homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;
       if(BossSystem::available(gameSave.gymProgress)){
         if(!BossSystem::ready(gameSave.gymProgress,
@@ -29378,6 +31012,7 @@ void handleTap(const TouchPoint& p) {
     }
     if (inside(p, kHomeTopX[0], kHomeTopY, kHomeButtonWidth, kHomeButtonHeight)) {
       homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;
+      sinnohEncounterPending = false;
       WildChainSystem::cancel(wildChain);
       pendingWildEncounterCount = 1U;
       if (wildChainUnlocked()) {
@@ -29394,7 +31029,11 @@ void handleTap(const TouchPoint& p) {
       return;
     }
     if (inside(p, kHomeTopX[1], kHomeTopY, kHomeButtonWidth, kHomeButtonHeight)) {
-      if (towerOccupiesVsSeekerSlot()) {
+      if (challengeHubAvailable()) {
+        homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;
+        screen=Screen::ChallengeHub;drawChallengeHub();
+      }
+      else if (BattleTowerSystem::replacesVsSeeker(gameSave.gymProgress)) {
         homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;
         screen=Screen::TowerInvite;drawTowerInvite();
       }
@@ -29444,7 +31083,25 @@ void handleTap(const TouchPoint& p) {
     }
     if (inside(p, kHomeBottomX[3], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); screen = Screen::Pokedex; drawPokedex(); Serial.printf("[UI] Pokedex draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
     if (inside(p, kHomeBottomX[4], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); selectedUid = currentPet() ? currentPet()->uid : 0; screen = Screen::Box; drawBox(); Serial.printf("[UI] Box draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
-    if (inside(p, kHomeBottomX[5], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) { homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;const uint32_t started = millis(); Economy::refreshIfDue(gameSave.mart,GymSystem::badgeCount(gameSave.gymProgress),gameSave.ownedMachines,ownedSinnohMachines,SinnohExpedition::available(gameSave.gymProgress,gameSave.sinnoh));setMartSeenDay(gameSave.mart.day);saveDirty=true;saveNow(); martSelection=0;martListOffset=0;martPurchaseQuantity=1;martSelectionArmed=false;martNotice[0]=0;screen=Screen::Mart; drawMart(); Serial.printf("[UI] Mart draw %lu ms\n", static_cast<unsigned long>(millis() - started)); return; }
+    if (inside(p, kHomeBottomX[5], kHomeBottomY, kHomeButtonWidth, kHomeButtonHeight)) {
+      homeInfoPokemonUid=kEmptyPokemonUid;homeInfoBubbleVisible=false;
+      const uint32_t started = millis();
+      const bool rotationChanged = Economy::refreshIfDue(
+          gameSave.mart, GymSystem::badgeCount(gameSave.gymProgress),
+          gameSave.ownedMachines, ownedSinnohMachines,
+          SinnohExpedition::available(gameSave.gymProgress,gameSave.sinnoh),
+          gameSave.unova.unovaMachineOwnership, unovaUnlocked());
+      const bool seenDayChanged = visibleMartSeenDay() != gameSave.mart.day;
+      if (seenDayChanged) setMartSeenDay(gameSave.mart.day);
+      // Entering an unchanged Mart is read-only. Avoid rewriting the complete
+      // SPIFFS save on every visit; persist only a new rotation or seen marker.
+      if (rotationChanged || seenDayChanged) { saveDirty=true;saveNow(); }
+      martSelection=0;martListOffset=0;martPurchaseQuantity=1;
+      martSelectionArmed=false;martNotice[0]=0;screen=Screen::Mart;drawMart();
+      Serial.printf("[UI] Mart draw %lu ms\n",
+                    static_cast<unsigned long>(millis() - started));
+      return;
+    }
     // Restore only the local balloon area; never redraw the full Home screen.
     if (!dismissHomePokemonInfoBubble()) { homeInfoPokemonUid=kEmptyPokemonUid; homeInfoBubbleVisible=false; }
     return;
@@ -29547,12 +31204,19 @@ void handleTap(const TouchPoint& p) {
         reconcileSinnohCompletionReward();
         const bool platinumUnlocked=
             SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh);
-        constexpr int16_t choiceX[4]={14,88,162,236};
-        const uint8_t choiceCount=platinumUnlocked?4U:3U;
-        const int16_t choiceWidth=platinumUnlocked?70:94;
+        const bool white2Unlocked=UnovaAdventure::white2ThemeUnlocked(gameSave.unova);
+        const uint8_t choiceCount=white2Unlocked?5U:platinumUnlocked?4U:3U;
+        const int16_t choiceStep=static_cast<int16_t>(288/choiceCount);
+        const int16_t choiceWidth=static_cast<int16_t>(choiceStep-2);
         for(uint8_t index=0;index<choiceCount;++index)
-          if(inside(p,choiceX[index],kSettingsGameThemeButtonY,choiceWidth,21)){
-            gameSave.settings.setColorTheme(static_cast<UiColorTheme>(index));
+          if(inside(p,static_cast<int16_t>(14+index*choiceStep),
+                    kSettingsGameThemeButtonY,choiceWidth,21)){
+            if(index==static_cast<uint8_t>(UiColorTheme::White2))
+              UnovaAdventure::setWhite2ThemeSelected(gameSave.unova,true);
+            else {
+              UnovaAdventure::setWhite2ThemeSelected(gameSave.unova,false);
+              gameSave.settings.setColorTheme(static_cast<UiColorTheme>(index));
+            }
             saveDirty=true;saveNow();drawSettings();return;
           }
       }
@@ -29865,6 +31529,78 @@ void handleTap(const TouchPoint& p) {
     // closes only the panel; the Mega Stone alert remains until victory.
     if(inside(p,166,194,136,34)){screen=Screen::Home;drawHome();return;}return;
   }
+  if(screen==Screen::ChallengeHub){
+    const bool royalUnlocked=UnovaAdventure::royalUnovaUnlocked(gameSave.unova);
+    if(royalUnlocked&&inside(p,18,199,42,30)){
+      challengeHubPage=challengeHubPage?0U:1U;drawChallengeHub();return;
+    }
+    if(royalUnlocked&&inside(p,260,199,42,30)){
+      challengeHubPage=challengeHubPage?0U:1U;drawChallengeHub();return;
+    }
+    if(challengeHubPage==1U&&royalUnlocked){
+      if(inside(p,82,158,156,24)&&UnovaAdventure::royalAvailableToday(
+          gameSave.unova,currentWorldDay())){
+        unovaTournamentCursor=6U;
+        screen=Screen::UnovaTournament;drawUnovaTournament();return;
+      }
+      if(inside(p,105,199,110,30)){
+        screen=Screen::Home;drawHome();return;
+      }
+      return;
+    }
+    if(inside(p,9,51,148,137)){
+      screen=Screen::TowerInvite;drawTowerInvite();return;
+    }
+    if(inside(p,163,51,148,137)){
+      if(!BossSystem::ready(gameSave.gymProgress,
+                            gameSave.bossCooldownSecondsRemaining)){
+        // The disabled card already carries the live countdown. Re-present it
+        // so a tap during the exact minute rollover cannot leave stale text.
+        invalidatePixels(163,51,148,137);requestRetainedFrame();return;
+      }
+      BossSystem::ensureEncounter(gameSave.bossEncounter,
+          gameSave.battle.rngState^gameSave.playTimeSeconds^
+          (gameSave.bootCount*0x9E3779B9UL)^micros());
+      saveDirty=true;saveNow();
+      screen=Screen::BossInvite;drawBossInvite();return;
+    }
+    if(inside(p,105,199,110,30)){
+      screen=Screen::Home;drawHome();return;
+    }
+    return;
+  }
+  if(screen==Screen::RegionHub){
+    const uint8_t pageCount=regionHubPageCount();
+    if(regionHubPage>=pageCount)regionHubPage=static_cast<uint8_t>(pageCount-1U);
+    const uint8_t firstVisible=static_cast<uint8_t>(
+        regionHubPage*kRegionHubDestinationsPerPage);
+    const uint8_t availableCount=regionHubAvailableDestinationCount();
+    const uint8_t visibleCount=std::min<uint8_t>(
+        kRegionHubDestinationsPerPage,
+        static_cast<uint8_t>(availableCount-firstVisible));
+    for(uint8_t slot=0;slot<visibleCount;++slot){
+      const int16_t cardX=visibleCount==1U?86:static_cast<int16_t>(9+slot*154);
+      if(!inside(p,cardX,51,148,137))continue;
+      const RegionHubDefinition* definition=
+          regionHubVisibleDestination(static_cast<uint8_t>(firstVisible+slot));
+      if(definition)openRegionHubDestination(definition->destination);
+      return;
+    }
+    if(pageCount>1U&&inside(p,18,199,42,30)){
+      regionHubPage=regionHubPage
+          ?static_cast<uint8_t>(regionHubPage-1U)
+          :static_cast<uint8_t>(pageCount-1U);
+      drawRegionHub();return;
+    }
+    if(pageCount>1U&&inside(p,260,199,42,30)){
+      regionHubPage=static_cast<uint8_t>((regionHubPage+1U)%pageCount);
+      drawRegionHub();return;
+    }
+    if(inside(p,105,199,110,30)){
+      screen=Screen::Home;drawHome();return;
+    }
+    return;
+  }
   if(screen==Screen::TowerInvite){
     if(inside(p,18,194,136,34)){pendingBattleKind=BattleKind::Tower;screen=Screen::ChooseBattler;drawChooseBattler();return;}
     // LATER only closes the panel. Once unlocked, the Tower remains available
@@ -29913,10 +31649,19 @@ void handleTap(const TouchPoint& p) {
       screen = Screen::ChooseBattler; drawChooseBattler(); return;
     }
     if (inside(p, 168, 195, 120, 34)) {
+      const bool returnToSinnoh = sinnohEncounterPending;
       WildChainSystem::cancel(wildChain);
       pendingWildEncounterCount = 1U;
       pendingBattleKind = BattleKind::None;
-      screen = Screen::Home; drawHome(); return;
+      sinnohEncounterPending = false;
+      if (returnToSinnoh) {
+        screen = Screen::SinnohExpedition;
+        drawSinnohExpedition();
+      } else {
+        screen = Screen::Home;
+        drawHome();
+      }
+      return;
     }
     return;
   }
@@ -29924,48 +31669,69 @@ void handleTap(const TouchPoint& p) {
     // BACK/IGNORE is universal.  In particular, do not leave Gym or League
     // selection without an exit when the complete party is fainted.
     if (inside(p, 110, 214, 100, 25)) {
+      const bool returnToSinnoh = sinnohEncounterPending ||
+          pendingBattleKind == BattleKind::SinnohGym;
       if (pendingBattleKind == BattleKind::Wild) {
-        if (sinnohEncounterPending) sinnohEncounterPending = false;
-        else {
-          WildChainSystem::cancel(wildChain);
-          pendingWildEncounterCount = 1U;
-        }
+        sinnohEncounterPending = false;
+        WildChainSystem::cancel(wildChain);
+        pendingWildEncounterCount = 1U;
       }
-      pendingBattleKind = BattleKind::None; saveDirty = true; saveNow(); screen = Screen::Home; drawHome(); return;
+      pendingBattleKind = BattleKind::None;
+      saveDirty = true;
+      saveNow();
+      if (returnToSinnoh) {
+        screen = Screen::SinnohExpedition;
+        drawSinnohExpedition();
+      } else {
+        screen = Screen::Home;
+        drawHome();
+      }
+      return;
     }
     for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
       if (!inside(p, 13 + slot * 105, 169, 84, 34)) continue;
       OwnedPokemon* pokemon = CollectionLogic::active(gameSave.collection, slot);
       if (!pokemon || pokemon->currentHp == 0 || pokemon->recoverySecondsRemaining) return;
       if (pendingBattleKind == BattleKind::Wild) {
-        if (sinnohEncounterPending) {
-          if (!launchSinnohEncounter(
-                  pokemon->uid, static_cast<SinnohSite>(sinnohSiteCursor)))
-            sinnohEncounterPending = false;
-          return;
-        }
+        const bool launchInSinnoh = sinnohEncounterPending;
         if (pendingWildEncounterCount > 1U) {
           if (!WildChainSystem::begin(wildChain, pendingWildEncounterCount,
                                       pokemon->uid)) return;
         } else WildChainSystem::cancel(wildChain);
         pendingWildEncounterCount = 1U;
-        if (!launchWildEncounter(pokemon->uid))
+        const bool started = launchInSinnoh
+            ? launchSinnohEncounter(
+                  pokemon->uid, static_cast<SinnohSite>(sinnohEncounterSite))
+            : launchWildEncounter(pokemon->uid);
+        if (!started) {
+          sinnohEncounterPending = false;
           WildChainSystem::cancel(wildChain);
+          if (launchInSinnoh) {
+            pendingBattleKind = BattleKind::None;
+            std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                          "COULD NOT START THIS EXPLORE.");
+            screen = Screen::SinnohExpedition;
+            drawSinnohExpedition();
+          }
+        }
         return;
       }
       const HomeWeatherSample startingWorldWeather=currentHomeWeather();
       bool started=false;
       if(pendingBattleKind==BattleKind::Gym)started=GymSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,GymSystem::next(gameSave.gymProgress),micros());
+      else if(pendingBattleKind==BattleKind::SinnohGym)started=SinnohExpedition::startGym(
+          gameSave.sinnoh,gameSave.battle,gameSave.collection,pokemon->uid,
+          static_cast<SinnohSite>(sinnohSiteCursor),micros());
       else if(pendingBattleKind==BattleKind::League)started=LeagueSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,micros());
       else if(pendingBattleKind==BattleKind::MegaChallenge)started=MegaChallengeSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,micros());
       else if(pendingBattleKind==BattleKind::Tower)started=BattleTowerSystem::start(gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,micros());
       else if(pendingBattleKind==BattleKind::Boss)started=BossSystem::start(
           gameSave.battle,gameSave.collection,pokemon->uid,gameSave.gymProgress,
           gameSave.bossCooldownSecondsRemaining,gameSave.bossEncounter,micros());
-      else started=BattleEngine::startTrainer(gameSave.battle,gameSave.encounterCharges,gameSave.collection,pokemon->uid,micros(),gameSave.gymProgress.unlockedGeneration);
+      else started=BattleEngine::startTrainer(gameSave.battle,gameSave.encounterCharges,
+          gameSave.collection,pokemon->uid,micros(),unlockedContentGeneration());
       if (!started) return;
-      if (SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh))
-        gameSave.battle.unlockedGeneration = 4U;
+      gameSave.battle.unlockedGeneration = unlockedContentGeneration();
       if(BattleEnvironment::applyHomeWeather(gameSave.battle,startingWorldWeather.kind))
         BattleEngine::synchronizeWeatherForms(gameSave.battle,gameSave.collection);
       selectedBattleTerrainSceneKey = 0;
@@ -29980,6 +31746,7 @@ void handleTap(const TouchPoint& p) {
       else message[0]=0;
       runConfirmVisible = false; saveDirty = true; saveNow();
       if (gameSave.battle.kind == BattleKind::Trainer || gameSave.battle.kind == BattleKind::Gym ||
+          gameSave.battle.kind == BattleKind::SinnohGym ||
           gameSave.battle.kind == BattleKind::League || gameSave.battle.kind == BattleKind::Tower ||
           gameSave.battle.kind == BattleKind::MegaChallenge) {
         screen = Screen::TrainerIntro; drawTrainerIntro();
@@ -30044,6 +31811,11 @@ void handleTap(const TouchPoint& p) {
         std::snprintf(message,sizeof(message),"PLAYER RECEIVED THE MEGA STONE!");
         battlePromptScroll=0;refreshBattleHud();return;
       }
+      if(goldenBallRewardMessagePending){
+        goldenBallRewardMessagePending=false;
+        std::snprintf(message,sizeof(message),"PLAYER RECEIVED THE GOLDEN BALL!");
+        battlePromptScroll=0;refreshBattleHud();return;
+      }
       if(rareCandyRewardMessagePending){
         rareCandyRewardMessagePending=false;
         std::snprintf(message,sizeof(message),"PLAYER RECEIVED A RARE CANDY!");
@@ -30078,10 +31850,19 @@ void handleTap(const TouchPoint& p) {
       resetBattleVisualOverlay(); battleCaptureOpponentHidden = false;
       const bool completedPvp = gameSave.battle.kind == BattleKind::Pvp;
       const bool completedSinnoh = sinnohBattleActive;
+      const bool completedSinnohGym =
+          gameSave.battle.kind == BattleKind::SinnohGym;
+      const bool completedUnovaArea = unovaAreaBattleResultPending;
+      const bool completedUnovaTournament = unovaTournamentBattleResultPending;
       if (completedPvp) { restorePartyAfterPvp(); multiplayer.clearActivity(); }
       BattleEngine::clear(gameSave.battle);
       if (wildChainDecision == WildChainDecision::StartNext) {
-        if (launchWildEncounter(wildChain.battlerUid)) return;
+        const bool startedNext = completedSinnoh
+            ? launchSinnohEncounter(
+                  wildChain.battlerUid,
+                  static_cast<SinnohSite>(sinnohEncounterSite))
+            : launchWildEncounter(wildChain.battlerUid);
+        if (startedNext) return;
         WildChainSystem::cancel(wildChain);
       }
       saveDirty = true; saveNow();
@@ -30090,6 +31871,20 @@ void handleTap(const TouchPoint& p) {
         sinnohEncounterPending = false;
         screen = Screen::SinnohExpedition;
         drawSinnohExpedition();
+      }
+      else if (completedSinnohGym) {
+        screen = Screen::SinnohExpedition;
+        drawSinnohExpedition();
+      }
+      else if (completedUnovaArea) {
+        unovaAreaBattleResultPending = false;
+        screen = Screen::UnovaAdventure;
+        drawUnovaAdventure();
+      }
+      else if (completedUnovaTournament) {
+        unovaTournamentBattleResultPending = false;
+        screen = Screen::UnovaTournament;
+        drawUnovaTournament();
       }
       else if(leagueWon){screen=Screen::LeagueComplete;drawLeagueComplete();}
       else if (GymSystem::needsRegionalStarter(gameSave.gymProgress)) {
@@ -30128,7 +31923,14 @@ void handleTap(const TouchPoint& p) {
         std::snprintf(message, sizeof(message), "ITEMS CAN'T BE USED IN LINK BATTLES.");
         refreshBattleHud(); return;
       }
-      bagPage=0;inventoryBattleContext=true;resetInventorySelection();screen=Screen::Inventory;drawInventory();return;
+      if (unovaTournamentBattleInProgress() ||
+          (unovaAreaBattleInProgress() && gameSave.battle.kind != BattleKind::Wild)) {
+        std::snprintf(message, sizeof(message), "THE BAG IS SEALED IN THIS AREA.");
+        refreshBattleHud(); return;
+      }
+      // Phenomenon encounters are capturable, but the expedition rule still
+      // seals medicine and every other pocket. Only the Ball pocket opens.
+      bagPage=kBallPocket;inventoryBattleContext=true;resetInventorySelection();screen=Screen::Inventory;drawInventory();return;
     }
     else if (inside(p, 153, 201, 80, 35)) { forcedBattleSwitch = false; batonPassBattleSwitch = false; battlePartySelection = -1; screen = Screen::BattleParty; drawBattleParty(); return; }
     else if (inside(p, 235, 201, 80, 35)) {
@@ -30315,7 +32117,8 @@ void handleTap(const TouchPoint& p) {
     // indicator. This makes their state obvious and avoids a hidden control.
     const int16_t firstDotHit=pageCount>4U?135:142;
     for(uint8_t page=0;page<pageCount;++page) if(inside(p,firstDotHit+page*18,0,18,24)){
-      summaryPage=page;summaryTextScroll=0;drawBattleSummary();return;
+      if(summaryPage!=page){summaryPage=page;summaryTextScroll=0;drawBattleSummary();}
+      return;
     }
     if(inside(p,254,0,28,31)){summaryPage=static_cast<uint8_t>((summaryPage+pageCount-1U)%pageCount);summaryTextScroll=0;drawBattleSummary();return;}
     if(inside(p,294,0,26,31)){summaryPage=static_cast<uint8_t>((summaryPage+1U)%pageCount);summaryTextScroll=0;drawBattleSummary();return;}
@@ -30327,29 +32130,52 @@ void handleTap(const TouchPoint& p) {
         screen=Screen::Box;drawBox();return;
       }
     }
-    if(summaryPage==2)for(uint8_t slot=0;slot<kMoveSlots;++slot)if(inside(p,159,29+slot*43,157,40)){summaryMoveSlot=slot;summaryTextScroll=0;drawBattleSummary();return;}
+    if(summaryPage==2)for(uint8_t slot=0;slot<kMoveSlots;++slot)if(inside(p,159,29+slot*43,157,40)){
+      if(summaryMoveSlot!=slot){
+        summaryMoveSlot=slot;summaryTextScroll=0;
+        // Move focus changes only the two data panes. Keep the cached header,
+        // footer and page background on the TFT instead of scheduling all 30
+        // retained stripes again.
+        invalidatePixels(7,27,309,180);requestRetainedFrame();
+      }
+      return;
+    }
     if(summaryPage==3){
       OwnedPokemon* pokemon=summaryPokemon;
       rebuildSummaryMovePool(*pokemon);
       for(uint8_t row=0;row<kSummaryMovePoolRows;++row){
         const uint8_t index=static_cast<uint8_t>(summaryMovePoolOffset+row);
         if(index<summaryMovePoolCount&&inside(p,9,49+row*24,184,22)){
-          summaryMovePoolSelection=static_cast<int8_t>(index);drawBattleSummary();return;
+          if(summaryMovePoolSelection!=static_cast<int8_t>(index)){
+            summaryMovePoolSelection=static_cast<int8_t>(index);
+            invalidatePixels(9,48,184,160);
+            invalidatePixels(207,190,105,18);
+            requestRetainedFrame();
+          }
+          return;
         }
       }
       if(inside(p,9,184,48,24)){
         const uint8_t pageCount=summaryMovePoolCount
             ? static_cast<uint8_t>((summaryMovePoolCount+kSummaryMovePoolRows-1U)/kSummaryMovePoolRows):1U;
         const uint8_t current=static_cast<uint8_t>(summaryMovePoolOffset/kSummaryMovePoolRows);
-        summaryMovePoolOffset=static_cast<uint8_t>(((current+pageCount-1U)%pageCount)*kSummaryMovePoolRows);
-        drawBattleSummary();return;
+        const uint8_t nextOffset=static_cast<uint8_t>(((current+pageCount-1U)%pageCount)*kSummaryMovePoolRows);
+        if(nextOffset!=summaryMovePoolOffset){
+          summaryMovePoolOffset=nextOffset;
+          invalidatePixels(9,48,184,160);requestRetainedFrame();
+        }
+        return;
       }
       if(inside(p,145,184,48,24)){
         const uint8_t pageCount=summaryMovePoolCount
             ? static_cast<uint8_t>((summaryMovePoolCount+kSummaryMovePoolRows-1U)/kSummaryMovePoolRows):1U;
         const uint8_t current=static_cast<uint8_t>(summaryMovePoolOffset/kSummaryMovePoolRows);
-        summaryMovePoolOffset=static_cast<uint8_t>(((current+1U)%pageCount)*kSummaryMovePoolRows);
-        drawBattleSummary();return;
+        const uint8_t nextOffset=static_cast<uint8_t>(((current+1U)%pageCount)*kSummaryMovePoolRows);
+        if(nextOffset!=summaryMovePoolOffset){
+          summaryMovePoolOffset=nextOffset;
+          invalidatePixels(9,48,184,160);requestRetainedFrame();
+        }
+        return;
       }
       if(!gameSave.battle.active&&summaryMovePoolSelection>=0&&
           summaryMovePoolSelection<static_cast<int8_t>(summaryMovePoolCount)){
@@ -30441,11 +32267,13 @@ void handleTap(const TouchPoint& p) {
   if (screen == Screen::Bag) {
     if (inside(p, 213, 207, 102, 28)) { screen = Screen::Battle; drawBattle(); return; }
     if (inside(p, 5, 207, 64, 28)) {
+      if (unovaAreaBattleInProgress()) return;
       const uint8_t previous = previousBattleBagPage(bagPage);
       if (previous != bagPage) { bagPage = previous; refreshBattleBagPocket(); }
       return;
     }
     if (inside(p, 77, 207, 64, 28)) {
+      if (unovaAreaBattleInProgress()) return;
       const uint8_t next = nextBattleBagPage(bagPage);
       if (next != bagPage) { bagPage = next; refreshBattleBagPocket(); }
       return;
@@ -30453,16 +32281,17 @@ void handleTap(const TouchPoint& p) {
     if (bagPage == 0) {
       uint8_t row = 0;
       for (uint8_t i = 0; i < static_cast<uint8_t>(PokeBallType::Count); ++i) {
-        if (!gameSave.inventory.balls[i]) continue;
+        const PokeBallType ball=static_cast<PokeBallType>(i);
+        if (!pokeBallQuantity(ball)) continue;
         if (!inside(p, 25, 36 + row * 34, 270, 27)) { ++row; continue; }
         if (gameSave.battle.kind != BattleKind::Wild ||
           CollectionLogic::count(gameSave.collection) >= kBoxCapacity) return;
-      const PokeBallType ball=static_cast<PokeBallType>(i);
       executeBattleBall(ball);
       return;
       }
     }
     if (bagPage > 0) {
+      if (unovaAreaBattleInProgress()) return;
       const uint8_t first = static_cast<uint8_t>((bagPage - 1U) * 5U);
       uint8_t row = 0;
       for (uint8_t i = first; i < static_cast<uint8_t>(BattleItem::Count) && i < first + 5U; ++i) {
@@ -30478,7 +32307,7 @@ void handleTap(const TouchPoint& p) {
       const StatusCondition playerStatusBefore=player?player->status:StatusCondition::None,opponentStatusBefore=opponent?opponent->status:StatusCondition::None;
       BattleEngine::useItemInto(gameSave.battle, gameSave.collection, gameSave.inventory,
                                 item, pvpResolvedAction,0,&gameSave.ppItems);
-      if (pvpResolvedAction.accepted) { saveDirty=true;saveNow();screen=Screen::Battle;beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,playerHpBefore,opponentHpBefore,playerStatusBefore,opponentStatusBefore,playerSpeciesBefore,opponentSpeciesBefore); }
+      if (pvpResolvedAction.accepted) { screen=Screen::Battle;beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,playerHpBefore,opponentHpBefore,playerStatusBefore,opponentStatusBefore,playerSpeciesBefore,opponentSpeciesBefore);saveDirty=true;saveNow(); }
       return;
       }
     }
@@ -30523,7 +32352,7 @@ void handleTap(const TouchPoint& p) {
           const StatusCondition playerStatusBefore=active?active->status:StatusCondition::None,opponentStatusBefore=opponent?opponent->status:StatusCondition::None;
           BattleEngine::useItemInto(gameSave.battle, gameSave.collection, gameSave.inventory,
               static_cast<BattleItem>(entry.id), pvpResolvedAction, target->uid,&gameSave.ppItems);
-          if(pvpResolvedAction.accepted){inventoryMode=InventoryMode::Browse;inventoryBattleContext=false;saveDirty=true;saveNow();screen=Screen::Battle;beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,playerHpBefore,opponentHpBefore,playerStatusBefore,opponentStatusBefore,playerSpeciesBefore,opponentSpeciesBefore);return;}
+          if(pvpResolvedAction.accepted){inventoryMode=InventoryMode::Browse;inventoryBattleContext=false;screen=Screen::Battle;beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,playerHpBefore,opponentHpBefore,playerStatusBefore,opponentStatusBefore,playerSpeciesBefore,opponentSpeciesBefore);saveDirty=true;saveNow();return;}
           std::snprintf(inventoryNotice,sizeof(inventoryNotice),"IT WON'T HAVE ANY EFFECT.");
           inventoryDescriptionScroll=0;inventoryMode=InventoryMode::Browse;drawInventory();return;
         }
@@ -30637,19 +32466,51 @@ void handleTap(const TouchPoint& p) {
       return;
     }
     if (inside(p, 10, 133, 38, 23)) {
+      if (inventoryBattleContext && unovaAreaBattleInProgress()) return;
       const uint8_t previous = inventoryBattleContext ? previousBattleBagPage(bagPage) : previousInventoryPage(bagPage);
       if (previous != bagPage) { bagPage = previous; resetInventorySelection(); refreshInventoryPanels(true); }
       return;
     }
     if (inside(p, 51, 133, 38, 23)) {
+      if (inventoryBattleContext && unovaAreaBattleInProgress()) return;
       const uint8_t next = inventoryBattleContext ? nextBattleBagPage(bagPage) : nextInventoryPage(bagPage);
       if (next != bagPage) { bagPage = next; resetInventorySelection(); refreshInventoryPanels(true); }
       return;
     }
-    if (bagPage == kKeyItemsPage && inside(p, kInventoryActionX, kInventoryUseY,
-                                           kInventoryActionW, kInventoryActionH)) {
-      trainerCardRegion = gameSave.gymProgress.unlockedGeneration;
-      screen = Screen::TrainerCard; drawTrainerCard(); return;
+    if (bagPage == kKeyItemsPage) {
+      const bool showDnaSplicers =
+          UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems);
+      const int16_t trainerY = showDnaSplicers ? kTrainerCardWithSplicersY
+                                              : kTrainerCardOnlyY;
+      const int16_t trainerHeight = showDnaSplicers ? kKeyItemCompactH : 47;
+      if (inside(p, 106, trainerY, 203, trainerHeight)) {
+        inventorySelection = static_cast<uint8_t>(KeyItemSelection::TrainerCard);
+        inventoryNotice[0] = 0;
+        inventoryDescriptionScroll = 0;
+        trainerCardRegion = gameSave.gymProgress.unlockedGeneration;
+        screen = Screen::TrainerCard;
+        drawTrainerCard();
+        return;
+      }
+      if (showDnaSplicers &&
+          inside(p, 106, kDnaSplicersY, 203, kKeyItemCompactH)) {
+        inventorySelection = static_cast<uint8_t>(KeyItemSelection::DnaSplicers);
+        inventoryNotice[0] = 0;
+        inventoryDescriptionScroll = 0;
+        openDnaSplicersFromInventory();
+        return;
+      }
+      if (inside(p, kInventoryActionX, kInventoryUseY,
+                 kInventoryActionW, kInventoryActionH)) {
+        if (dnaSplicersSelected()) {
+          openDnaSplicersFromInventory();
+        } else {
+          trainerCardRegion = gameSave.gymProgress.unlockedGeneration;
+          screen = Screen::TrainerCard;
+          drawTrainerCard();
+        }
+        return;
+      }
     }
     if (bagPage != kKeyItemsPage && inside(p, 286, 11, 23, 31)) {
       const uint8_t total=inventoryTotalEntries();
@@ -30708,6 +32569,13 @@ void handleTap(const TouchPoint& p) {
             return;
           }
           if (entry.kind == InventoryEntryKind::Medicine) {
+            if (unovaAreaBattleInProgress()) {
+              std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                            "THE BAG IS SEALED IN THIS AREA.");
+              inventoryDescriptionScroll = 0;
+              refreshInventoryPanels(false);
+              return;
+            }
             inventoryMode=InventoryMode::ChooseTarget;drawInventory();return;
           }
           std::snprintf(inventoryNotice,sizeof(inventoryNotice),"THAT ITEM CAN'T BE USED NOW.");
@@ -30810,18 +32678,54 @@ void handleTap(const TouchPoint& p) {
     }
 
     if (boxOverlay == BoxOverlay::FormSelect) {
-      if (selected && CollectionLogic::canChangeForm(*selected)) {
+      if (selected && boxFormActionAvailable(*selected)) {
         for (uint8_t form = 0; form < CollectionLogic::formCount(selected->speciesId); ++form) {
           if (!inside(p, kBoxMenuX, kBoxMenuY + form * kBoxMenuRowH,
                       kBoxMenuW, kBoxMenuRowH)) continue;
           OwnedPokemon* mutablePokemon = CollectionLogic::find(gameSave.collection, selectedUid);
-          if (mutablePokemon && CollectionLogic::setForm(*mutablePokemon, form)) {
+          bool changed = false;
+          bool formFailureExplained = false;
+          if (mutablePokemon && mutablePokemon->speciesId == 646U) {
+            const uint8_t currentForm = CollectionLogic::resolvedForm(*mutablePokemon);
+            if (form != currentForm) {
+              uint32_t donorUid = 0U;
+              if (form != 0U) {
+                const uint16_t donorSpecies = form == 1U ? 644U : 643U;
+                donorUid = unovaFusionDonorUid(donorSpecies);
+              }
+              // Validate the requested donor before separating the current
+              // fusion. Otherwise asking for a missing opposite dragon would
+              // silently unfuse Kyurem and then report that nothing changed.
+              if (form != 0U && !donorUid) {
+                std::snprintf(boxNotice, sizeof(boxNotice), "%s IS REQUIRED.",
+                              form == 1U ? "ZEKROM" : "RESHIRAM");
+                formFailureExplained = true;
+              } else {
+                const bool separated = currentForm == 0U ||
+                    UnovaForms::unfuse(gameSave.collection,
+                                       gameSave.unovaForms);
+                if (!separated) {
+                  std::snprintf(boxNotice, sizeof(boxNotice),
+                                "MAKE ROOM IN THE BOX TO SEPARATE KYUREM.");
+                  formFailureExplained = true;
+                } else
+                  changed = form == 0U || UnovaForms::fuse(
+                      gameSave.collection, gameSave.unovaForms,
+                      gameSave.gen5UniqueItems, selectedUid, donorUid);
+              }
+            }
+          } else if (mutablePokemon) {
+            changed = CollectionLogic::setForm(*mutablePokemon, form);
+          }
+          mutablePokemon = CollectionLogic::find(gameSave.collection, selectedUid);
+          if (changed && mutablePokemon) {
             std::snprintf(boxNotice, sizeof(boxNotice), "%s changed to %s FORM.",
                           selectedData ? selectedData->name : "POKEMON",
-                          CollectionLogic::formName(mutablePokemon->speciesId, form));
+                          CollectionLogic::formName(mutablePokemon->speciesId,
+                              CollectionLogic::resolvedForm(*mutablePokemon)));
             saveDirty = true;
             saveNow();
-          } else {
+          } else if (!formFailureExplained) {
             std::snprintf(boxNotice, sizeof(boxNotice), "%s FORM is already active.",
                           CollectionLogic::formName(selected->speciesId, form));
           }
@@ -30851,7 +32755,7 @@ void handleTap(const TouchPoint& p) {
           // storage slot moves, instead of unexpectedly jumping to Box 1.
           for (uint16_t index = 0; index < kBoxCapacity; ++index) {
             if (gameSave.collection.box[index].uid != selectedUid) continue;
-            boxPage = static_cast<uint8_t>(index / 30U);
+            boxPage = static_cast<uint8_t>(index / kBoxPageSize);
             break;
           }
           const char* notice = row == 0U ? "SORTED BY DEX NUMBER."
@@ -30876,6 +32780,13 @@ void handleTap(const TouchPoint& p) {
     if (boxOverlay == BoxOverlay::Actions) {
       if (multiplayerTradeSelectionActive()) {
         if (inside(p, kBoxMenuX, kBoxMenuY, kBoxMenuW, kBoxMenuRowH) && selected) {
+          if (gameSave.unovaForms.fusedKyuremUid == selected->uid) {
+            std::snprintf(boxNotice, sizeof(boxNotice),
+                          "SEPARATE KYUREM BEFORE TRADING.");
+            boxOverlay = BoxOverlay::None;
+            refreshBoxSurface(true);
+            return;
+          }
           multiplayer.submitTradeOffer(*selected);
           boxOverlay = BoxOverlay::None; boxPartyView = false; boxNotice[0] = 0;
           bagPage = kMultiplayerPage; inventoryBattleContext = false;
@@ -30925,8 +32836,10 @@ void handleTap(const TouchPoint& p) {
         if(mutablePokemon&&unequipHeldItem(*mutablePokemon,gameSave.inventory.heldItems,
                                             gameSave.specialHeldItems,
                                             gameSave.gen4UniqueItems,
+                                            gameSave.gen5UniqueItems,
                                             gameSave.ownedMachines)){
-          CollectionLogic::refreshAbility(*mutablePokemon);
+          CollectionLogic::refreshAbility(
+              *mutablePokemon,unlockedContentGeneration());
           CollectionLogic::refreshDerivedStats(*mutablePokemon,true);
           std::snprintf(boxNotice,sizeof(boxNotice),"TOOK %s.",heldItemName(removed));
           saveDirty=true;saveNow();preparedUiSceneKey=0;preparedUiSceneComplete=false;
@@ -30934,6 +32847,13 @@ void handleTap(const TouchPoint& p) {
         boxOverlay=BoxOverlay::None;refreshBoxSurface(true);return;
       }
       if (contextAction == BoxContextAction::Release) {
+        if (selected && gameSave.unovaForms.fusedKyuremUid == selected->uid) {
+          std::snprintf(boxNotice, sizeof(boxNotice),
+                        "SEPARATE KYUREM BEFORE RELEASING.");
+          boxOverlay = BoxOverlay::None;
+          refreshBoxSurface(true);
+          return;
+        }
         boxOverlay = BoxOverlay::ReleaseConfirm; refreshBoxSurface(false); return;
       }
       // CANCEL, or a touch anywhere outside the menu, just dismisses it.
@@ -30997,14 +32917,14 @@ void handleTap(const TouchPoint& p) {
       if (inside(p, kBoxPartyButtonX, 4, kBoxPartyButtonW, 27)) {
         boxOverlay = BoxOverlay::None; boxPartyView = false; refreshBoxSurface(true); return;
       }
-      if (inside(p, 101, 34, 25, 30) && boxPage > 0) {
-        --boxPage; refreshBoxStorageSurface(true); return;
+      if (inside(p, 101, 34, 25, 30)) {
+        boxPage = previousBoxPage(boxPage); refreshBoxStorageSurface(true); return;
       }
-      if (inside(p, 290, 34, 25, 30) && boxPage < (kBoxCapacity - 1U) / 30U) {
-        ++boxPage; refreshBoxStorageSurface(true); return;
+      if (inside(p, 290, 34, 25, 30)) {
+        boxPage = nextBoxPage(boxPage); refreshBoxStorageSurface(true); return;
       }
-      const uint16_t first = static_cast<uint16_t>(boxPage) * 30U;
-      const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + 30U);
+      const uint16_t first = static_cast<uint16_t>(boxPage) * kBoxPageSize;
+      const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + kBoxPageSize);
       for (uint16_t index = first; index < last; ++index) {
         const uint8_t cell = static_cast<uint8_t>(index - first);
         const int16_t x = kBoxGridX + 2 + (cell % 6) * kBoxCellW;
@@ -31026,15 +32946,15 @@ void handleTap(const TouchPoint& p) {
     if(boxOverlay==BoxOverlay::InventoryTarget){
       // PARTY returns to the original three-card target picker; CLOSE BOX is
       // handled above and does the same. Page arrows remain available so every
-      // one of the 386 storage slots can be targeted directly from the Bag.
+      // storage slot can be targeted directly from the Bag.
       if(inside(p,kBoxPartyButtonX,4,kBoxPartyButtonW,27)){
         boxOverlay=BoxOverlay::None;boxPartyView=false;screen=Screen::Inventory;
         inventoryMode=InventoryMode::ChooseTarget;drawInventory();return;
       }
-      if(inside(p,101,34,25,30)&&boxPage>0){--boxPage;refreshBoxStorageSurface(true);return;}
-      if(inside(p,290,34,25,30)&&boxPage<(kBoxCapacity-1U)/30U){++boxPage;refreshBoxStorageSurface(true);return;}
-      const uint16_t first=static_cast<uint16_t>(boxPage)*30U;
-      const uint16_t last=std::min<uint16_t>(kBoxCapacity,first+30U);
+      if(inside(p,101,34,25,30)){boxPage=previousBoxPage(boxPage);refreshBoxStorageSurface(true);return;}
+      if(inside(p,290,34,25,30)){boxPage=nextBoxPage(boxPage);refreshBoxStorageSurface(true);return;}
+      const uint16_t first=static_cast<uint16_t>(boxPage)*kBoxPageSize;
+      const uint16_t last=std::min<uint16_t>(kBoxCapacity,first+kBoxPageSize);
       for(uint16_t index=first;index<last;++index){
         const uint8_t cell=static_cast<uint8_t>(index-first);
         const int16_t x=kBoxGridX+2+(cell%6)*kBoxCellW;
@@ -31065,10 +32985,10 @@ void handleTap(const TouchPoint& p) {
       return;
     }
     if (!showingParty) {
-      if (inside(p, 101, 34, 25, 30) && boxPage > 0) { --boxPage; boxNotice[0] = 0; refreshBoxStorageSurface(true); return; }
-      if (inside(p, 290, 34, 25, 30) && boxPage < (kBoxCapacity - 1U) / 30U) { ++boxPage; boxNotice[0] = 0; refreshBoxStorageSurface(true); return; }
-      const uint16_t first = static_cast<uint16_t>(boxPage) * 30U;
-      const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + 30U);
+      if (inside(p, 101, 34, 25, 30)) { boxPage = previousBoxPage(boxPage); boxNotice[0] = 0; refreshBoxStorageSurface(true); return; }
+      if (inside(p, 290, 34, 25, 30)) { boxPage = nextBoxPage(boxPage); boxNotice[0] = 0; refreshBoxStorageSurface(true); return; }
+      const uint16_t first = static_cast<uint16_t>(boxPage) * kBoxPageSize;
+      const uint16_t last = std::min<uint16_t>(kBoxCapacity, first + kBoxPageSize);
       for (uint16_t index = first; index < last; ++index) {
         const uint8_t cell = static_cast<uint8_t>(index - first);
         const int16_t x = kBoxGridX + 2 + (cell % 6) * kBoxCellW;
@@ -31093,8 +33013,8 @@ void handleTap(const TouchPoint& p) {
   }
   if (screen == Screen::SinnohExpedition) {
     if (inside(p, 7, 8, 52, 24)) {
-      screen = Screen::Pokedex;
-      drawPokedex();
+      screen = Screen::RegionHub;
+      drawRegionHub();
       return;
     }
     if (inside(p, 6, 82, 28, 48)) {
@@ -31123,25 +33043,236 @@ void handleTap(const TouchPoint& p) {
           saveDirty = true;
           saveNow();
         } else {
-          const uint16_t cost = SinnohExpedition::unlockCost(site);
-          std::snprintf(sinnohNotice, sizeof(sinnohNotice),
-                        "NEED %u RESEARCH OR PREVIOUS SITE.", cost);
+          const uint8_t siteIndex = static_cast<uint8_t>(site);
+          if (siteIndex && !SinnohExpedition::hasGymVictory(
+                               gameSave.sinnoh,
+                               static_cast<SinnohSite>(siteIndex - 1U)))
+            std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                          "DEFEAT THE PREVIOUS SITE'S LEADER FIRST.");
+          else
+            std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                          "NEED %u RESEARCH TO UNLOCK THIS SITE.",
+                          SinnohExpedition::unlockCost(site));
         }
       }
       drawSinnohExpedition();
       return;
     }
-    if (inside(p, 48, 204, 224, 31)) {
+    if (inside(p, 18, 204, 136, 31)) {
       if (!SinnohExpedition::isUnlocked(gameSave.sinnoh,
                                         static_cast<SinnohSite>(sinnohSiteCursor))) {
         std::snprintf(sinnohNotice, sizeof(sinnohNotice), "UNLOCK A SITE FIRST.");
         drawSinnohExpedition();
         return;
       }
+      WildChainSystem::cancel(wildChain);
+      pendingWildEncounterCount = 1U;
+      wildChainSelection = std::max<uint8_t>(WildChainSystem::kMinimumEncounters,
+          std::min<uint8_t>(WildChainSystem::kMaximumEncounters,
+                            wildChainSelection));
+      sinnohEncounterSite = sinnohSiteCursor;
       sinnohEncounterPending = true;
-      pendingBattleKind = BattleKind::Wild;
+      pendingBattleKind = BattleKind::None;
+      screen = Screen::WildChainSelect;
+      drawWildChainSelect();
+      return;
+    }
+    if (inside(p, 166, 204, 136, 31)) {
+      const SinnohSite site = static_cast<SinnohSite>(sinnohSiteCursor);
+      const SinnohGymDefinition* gym = SinnohExpedition::gymDefinition(site);
+      if (SinnohExpedition::hasGymVictory(gameSave.sinnoh, site)) {
+        std::snprintf(sinnohNotice, sizeof(sinnohNotice), "%s BADGE ALREADY WON.",
+                      gym ? gym->badge : "GYM");
+        drawSinnohExpedition();
+        return;
+      }
+      if (!SinnohExpedition::gymChallengeAvailable(gameSave.sinnoh, site)) {
+        std::snprintf(sinnohNotice, sizeof(sinnohNotice),
+                      SinnohExpedition::isUnlocked(gameSave.sinnoh, site)
+                          ? "DEFEAT THE PREVIOUS SINNOH LEADER FIRST."
+                          : "UNLOCK THIS SITE FIRST.");
+        drawSinnohExpedition();
+        return;
+      }
+      pendingBattleKind = BattleKind::SinnohGym;
       screen = Screen::ChooseBattler;
       drawChooseBattler();
+      return;
+    }
+    return;
+  }
+  if (screen == Screen::UnovaAdventure) {
+    if (UnovaAdventure::active(gameSave.unova)) {
+      UnovaRoomChoice choices[3]{};
+      const uint8_t choiceCount = UnovaAdventure::choices(gameSave.unova, choices);
+      const int16_t cardWidth = choiceCount == 1U ? 172 : 100;
+      for (uint8_t index = 0; index < choiceCount; ++index) {
+        const int16_t x = choiceCount == 1U ? 74 : static_cast<int16_t>(5 + index * 105);
+        if (!inside(p, x, 137, cardWidth, 61)) continue;
+        const UnovaRoomResult result = UnovaAdventure::choose(
+            gameSave.unova, index, gameSave.collection);
+        if (result.foundItem) {
+          awardUnovaRoomItem(result.rewardKind);
+        } else if (result.grantedClue) {
+          std::snprintf(unovaNotice, sizeof(unovaNotice),
+                        "THE NPC MARKED THE SAFEST ROUTE!");
+        } else if (result.healed) {
+          std::snprintf(unovaNotice, sizeof(unovaNotice),
+                        "THE PARTY WAS FULLY RESTORED!");
+        } else if (result.kind == UnovaRoomKind::Healing) {
+          std::snprintf(unovaNotice, sizeof(unovaNotice),
+                        "THE AREA'S ONLY HEAL WAS ALREADY USED.");
+        } else if (result.hiddenAbilityEncounter) {
+          std::snprintf(unovaNotice, sizeof(unovaNotice),
+                        "A GEN %u HIDDEN ABILITY APPEARED!",
+                        static_cast<unsigned>(
+                            UnovaAdventure::hiddenGrottoGeneration(
+                                static_cast<UnovaArea>(gameSave.unova.run.area))));
+        }
+        saveDirty = true;
+        saveNow();
+        if (result.startsBattle) {
+          if (!launchUnovaAreaBattle()) {
+            std::snprintf(unovaNotice, sizeof(unovaNotice),
+                          "NO HEALTHY PARTY POKEMON CAN BATTLE.");
+            drawUnovaAdventure();
+          }
+          return;
+        }
+        drawUnovaAdventure();
+        return;
+      }
+      if (inside(p, 8, 205, 304, 29)) {
+        UnovaAdventure::abandon(gameSave.unova);
+        std::snprintf(unovaNotice, sizeof(unovaNotice),
+                      "AREA ABANDONED. ITS PROGRESS WAS RESET.");
+        saveDirty = true;
+        saveNow();
+        drawUnovaAdventure();
+        return;
+      }
+      return;
+    }
+    if (inside(p, 7, 8, 52, 24)) {
+      screen = Screen::RegionHub;
+      drawRegionHub();
+      return;
+    }
+    if (inside(p, 5, 76, 28, 48)) {
+      unovaAreaCursor = unovaAreaCursor
+          ? static_cast<uint8_t>(unovaAreaCursor - 1U)
+          : static_cast<uint8_t>(UnovaAdventure::kAreaCount - 1U);
+      drawUnovaAdventure();
+      return;
+    }
+    if (inside(p, 287, 76, 28, 48)) {
+      unovaAreaCursor = static_cast<uint8_t>(
+          (unovaAreaCursor + 1U) % UnovaAdventure::kAreaCount);
+      drawUnovaAdventure();
+      return;
+    }
+    if (inside(p, 7, 204, 72, 31)) {
+      if (!UnovaAdventure::pwtTierUnlocked(gameSave.unova, 0U)) {
+        std::snprintf(unovaNotice, sizeof(unovaNotice),
+                      "DEFEAT TWO AREA BOSSES TO OPEN THE PWT.");
+        drawUnovaAdventure();
+        return;
+      }
+      unovaTournamentCursor = 0U;
+      screen = Screen::UnovaTournament;
+      drawUnovaTournament();
+      return;
+    }
+    if (inside(p, 85, 204, 84, 31)) {
+      boxOverlay = BoxOverlay::None;
+      boxPartyView = true;
+      selectedUid = firstReadyPartyUid(false);
+      screen = Screen::Box;
+      drawBox();
+      return;
+    }
+    if (inside(p, 175, 204, 138, 31)) {
+      const UnovaArea area = static_cast<UnovaArea>(unovaAreaCursor);
+      const bool areaUnlocked =
+          UnovaAdventure::isAreaUnlocked(gameSave.unova, area);
+      if (!UnovaAdventure::begin(gameSave.unova, area,
+              micros() ^ gameSave.playTimeSeconds ^ gameSave.bootCount,
+              gameSave.collection,
+              currentUnovaSeason())) {
+        std::snprintf(unovaNotice, sizeof(unovaNotice),
+                      areaUnlocked
+                          ? "CHOOSE AT LEAST ONE HEALTHY PARTY POKEMON."
+                          : "DEFEAT THE PREVIOUS AREA BOSS FIRST.");
+      } else {
+        std::snprintf(unovaNotice, sizeof(unovaNotice),
+                      "CHOOSE A PATH. FIND THE GATE TRAINER.");
+        saveDirty = true;
+        saveNow();
+      }
+      drawUnovaAdventure();
+      return;
+    }
+    return;
+  }
+  if (screen == Screen::UnovaTournament) {
+    if (UnovaTournament::active(gameSave.unova)) {
+      if (inside(p, 20, 194, 184, 36)) {
+        if (!launchUnovaTournamentBattle()) {
+          std::snprintf(unovaNotice, sizeof(unovaNotice),
+                        "ADD A POKEMON TO YOUR PARTY FIRST.");
+          drawUnovaTournament();
+        }
+        return;
+      }
+      if (inside(p, 212, 194, 88, 36)) {
+        UnovaTournament::abandon(gameSave.unova);
+        std::snprintf(unovaNotice, sizeof(unovaNotice),
+                      "TOURNAMENT RUN ABANDONED.");
+        saveDirty = true;
+        saveNow();
+        drawUnovaTournament();
+        return;
+      }
+      return;
+    }
+    if (inside(p, 5, 84, 28, 48)) {
+      unovaTournamentCursor = unovaTournamentCursor
+          ? static_cast<uint8_t>(unovaTournamentCursor - 1U) : 6U;
+      drawUnovaTournament();
+      return;
+    }
+    if (inside(p, 287, 84, 28, 48)) {
+      unovaTournamentCursor = static_cast<uint8_t>((unovaTournamentCursor + 1U) % 7U);
+      drawUnovaTournament();
+      return;
+    }
+    if (inside(p, 34, 193, 174, 37)) {
+      const uint32_t seed = micros() ^ gameSave.playTimeSeconds ^
+          (gameSave.bootCount * 0x9E3779B9UL);
+      bool started = false;
+      if (unovaTournamentCursor < 5U)
+        started = UnovaTournament::beginPwt(gameSave.unova,
+                                             unovaTournamentCursor, seed,
+                                             currentUnovaSeason());
+      else if (unovaTournamentCursor == 5U)
+        started = UnovaTournament::beginChampions(gameSave.unova, seed,
+                                                   currentUnovaSeason());
+      else
+        started = UnovaTournament::beginRoyal(gameSave.unova,
+                                                currentWorldDay(), seed,
+                                                currentUnovaSeason());
+      if (started) {
+        std::snprintf(unovaNotice, sizeof(unovaNotice),
+                      "THE NEXT OPPONENT IS READY.");
+        saveDirty = true;
+        saveNow();
+      }
+      drawUnovaTournament();
+      return;
+    }
+    if (inside(p, 216, 193, 70, 37)) {
+      screen = Screen::UnovaAdventure;
+      drawUnovaAdventure();
       return;
     }
     return;
@@ -31159,23 +33290,8 @@ void handleTap(const TouchPoint& p) {
       selectedDexSpecies = static_cast<uint16_t>(dexPage * 10U + 1U);
       refreshPokedexPanels(true); return;
     }
-    if (inside(p, 190, 202, 55, 22) &&
-        SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh)) {
-      screen = Screen::Home; drawHome(); return;
-    }
     if (inside(p, 250, 202, 55, 22)) {
-      if (SinnohExpedition::available(gameSave.gymProgress, gameSave.sinnoh)) {
-        SinnohExpedition::reconcile(gameSave.sinnoh, gameSave.gymProgress);
-        if (SinnohExpedition::acknowledgeDiscovery(gameSave.sinnoh)) {
-          saveDirty = true;
-          saveNow();
-        }
-        std::snprintf(sinnohNotice, sizeof(sinnohNotice), "SELECT A RESEARCH SITE.");
-        screen = Screen::SinnohExpedition;
-        drawSinnohExpedition();
-      } else {
-        screen = Screen::Home; drawHome();
-      }
+      screen = Screen::Home; drawHome();
       return;
     }
     if (inside(p, 193, 32, 112, 165) && PokedexLogic::hasSeen(gameSave.pokedex, selectedDexSpecies)) {
@@ -31229,6 +33345,7 @@ void handleTap(const TouchPoint& p) {
       const uint8_t maximum=Economy::maximumPurchasable(gameSave.mart,martSelection,gameSave.money,
                                                          gameSave.inventory,gameSave.ownedMachines,
                                                          ownedSinnohMachines,
+                                                         gameSave.unova.unovaMachineOwnership,
                                                          &gameSave.ppItems);
       if(maximum)martPurchaseQuantity=martPurchaseQuantity>=maximum
           ? 1U:static_cast<uint8_t>(martPurchaseQuantity+1U);
@@ -31238,6 +33355,7 @@ void handleTap(const TouchPoint& p) {
       const uint8_t maximum=Economy::maximumPurchasable(gameSave.mart,martSelection,gameSave.money,
                                                          gameSave.inventory,gameSave.ownedMachines,
                                                          ownedSinnohMachines,
+                                                         gameSave.unova.unovaMachineOwnership,
                                                          &gameSave.ppItems);
       if(maximum)martPurchaseQuantity=martPurchaseQuantity<=1U
           ? maximum:static_cast<uint8_t>(martPurchaseQuantity-1U);
@@ -31247,12 +33365,14 @@ void handleTap(const TouchPoint& p) {
       const uint8_t selected=martSelection<kMartOfferCount?martSelection:0;
       const uint8_t quantity=martPurchaseQuantity;
       if(Economy::buyQuantity(gameSave.mart,selected,quantity,gameSave.money,gameSave.inventory,
-                              gameSave.ownedMachines,ownedSinnohMachines,&gameSave.ppItems)){
+                              gameSave.ownedMachines,ownedSinnohMachines,
+                              gameSave.unova.unovaMachineOwnership,&gameSave.ppItems)){
         if(quantity>1U)std::snprintf(martNotice,sizeof(martNotice),"BOUGHT %u %s.",quantity,Economy::name(gameSave.mart.offers[selected]));
         else std::snprintf(martNotice,sizeof(martNotice),"BOUGHT %s.",Economy::name(gameSave.mart.offers[selected]));
         martPurchaseQuantity=Economy::maximumPurchasable(gameSave.mart,selected,gameSave.money,
                                                           gameSave.inventory,gameSave.ownedMachines,
                                                           ownedSinnohMachines,
+                                                          gameSave.unova.unovaMachineOwnership,
                                                           &gameSave.ppItems)?1U:0U;
         // Buying a TM/HM should leave the Bag focused on the pocket that can
         // show it. Otherwise reopening the Bag starts at Poké Balls and a
@@ -31319,6 +33439,8 @@ void redrawCurrentScreen() {
     case Screen::GymInvite: drawGymInvite(); break;
     case Screen::LeagueInvite: drawLeagueInvite(); break;
     case Screen::MegaChallengeInvite: drawMegaChallengeInvite(); break;
+    case Screen::ChallengeHub: drawChallengeHub(); break;
+    case Screen::RegionHub: drawRegionHub(); break;
     case Screen::TowerInvite: drawTowerInvite(); break;
     case Screen::BossInvite: drawBossInvite(); break;
     case Screen::LeagueComplete: drawLeagueComplete(); break;
@@ -31340,6 +33462,8 @@ void redrawCurrentScreen() {
     case Screen::Box: drawBox(); break;
     case Screen::Pokedex: drawPokedex(); break;
     case Screen::SinnohExpedition: drawSinnohExpedition(); break;
+    case Screen::UnovaAdventure: drawUnovaAdventure(); break;
+    case Screen::UnovaTournament: drawUnovaTournament(); break;
     case Screen::PokedexDetail: drawPokedexDetail(); break;
     case Screen::Mart: drawMart(); break;
     case Screen::Recovery: drawRecovery(); break;
@@ -31872,18 +33996,30 @@ void updateWildLedAlert(uint32_t now) {
 
 void applyGameClockSeconds(uint32_t seconds) {
   if (!saveReady || !seconds) return;
+  const uint8_t previousUnovaSeason=currentUnovaSeason();
   const uint32_t previousPlayTime = gameSave.playTimeSeconds;
   gameSave.playTimeSeconds += seconds;
   if(gameSave.clockLocalEpochSeconds)gameSave.clockLocalEpochSeconds+=seconds;
+  if(unovaUnlocked()&&currentUnovaSeason()!=previousUnovaSeason&&
+     CollectionLogic::applyUnovaSeason(gameSave.collection,
+                                       currentUnovaSeason()))
+    saveDirty=true;
   const uint32_t bossMinutesBefore=
       (gameSave.bossCooldownSecondsRemaining+59U)/60U;
   BossSystem::advanceCooldown(gameSave.bossCooldownSecondsRemaining,seconds);
   const uint32_t bossMinutesAfter=
       (gameSave.bossCooldownSecondsRemaining+59U)/60U;
-  if(bossMinutesBefore!=bossMinutesAfter&&screen==Screen::Home){
-    homeGymButton();
-    invalidatePixels(kHomeTopX[2],kHomeTopY,kHomeButtonWidth,kHomeButtonHeight);
-    requestRetainedFrame();
+  if(bossMinutesBefore!=bossMinutesAfter){
+    if(screen==Screen::Home&&!challengeHubAvailable()){
+      homeGymButton();
+      invalidatePixels(kHomeTopX[2],kHomeTopY,kHomeButtonWidth,kHomeButtonHeight);
+      requestRetainedFrame();
+    }else if(screen==Screen::ChallengeHub){
+      // The Boss card owns the cooldown once both activities share one Home
+      // icon. Refresh only that half of the selector at minute boundaries.
+      invalidatePixels(163,51,148,137);
+      requestRetainedFrame();
+    }
   }
   EncounterLogic::advance(gameSave.encounterCharges, seconds);
   BerryGarden::advance(gameSave.berryGarden, seconds);
@@ -31892,7 +34028,8 @@ void applyGameClockSeconds(uint32_t seconds) {
     Economy::advance(gameSave.mart, seconds, GymSystem::badgeCount(gameSave.gymProgress),
                    gameSave.ownedMachines, ownedSinnohMachines,
                    SinnohExpedition::available(gameSave.gymProgress,
-                                               gameSave.sinnoh));
+                                               gameSave.sinnoh),
+                   gameSave.unova.unovaMachineOwnership,unovaUnlocked());
   const uint8_t martProgressAfter=martRotationProgressSlices();
   if((gameSave.mart.day!=martDayBefore||martProgressAfter!=martProgressBefore)&&screen==Screen::Home){
     homeMoneyButton();
@@ -31916,6 +34053,10 @@ void applyGameClockSeconds(uint32_t seconds) {
     for (auto& pokemon : gameSave.collection.box) {
       if (pokemon.uid == kEmptyPokemonUid) continue;
       const bool inParty = CollectionLogic::isInParty(gameSave.collection, pokemon.uid);
+      // An Unova area is one continuous expedition. Its party snapshot is the
+      // real party itself, so background recovery must not silently refill HP
+      // or PP while the player reads a clue or chooses the next room.
+      if (inParty && UnovaAdventure::active(gameSave.unova)) continue;
       if (!inParty || !gameSave.battle.active)
         CollectionLogic::advanceRecovery(pokemon, recoverySeconds, inParty, recoveryWorldTime);
     }
@@ -32069,7 +34210,21 @@ void processSerialTestInput(uint32_t loopNow) {
     line[length] = 0;
     length = 0;
     int x = 0, y = 0, side = 0;
-    if (std::sscanf(line, "TAP %d %d", &x, &y) == 2) {
+    bool tapCommand = false;
+    if (std::strncmp(line, "TAP ", 4U) == 0) {
+      char* afterX = nullptr;
+      char* afterY = nullptr;
+      const long parsedX = std::strtol(line + 4U, &afterX, 10);
+      while (afterX && *afterX == ' ') ++afterX;
+      const long parsedY = afterX ? std::strtol(afterX, &afterY, 10) : 0;
+      while (afterY && *afterY == ' ') ++afterY;
+      tapCommand = afterX != line + 4U && afterY != afterX && afterY && !*afterY;
+      if (tapCommand) {
+        x = static_cast<int>(parsedX);
+        y = static_cast<int>(parsedY);
+      }
+    }
+    if (tapCommand) {
       if (displaySleeping) wakeDisplayFromTouch(loopNow);
       lastInteractionMs = loopNow;
       TouchPoint injected{};
@@ -32091,8 +34246,12 @@ void processSerialTestInput(uint32_t loopNow) {
                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
                     static_cast<unsigned>(ESP.getFreeHeap()),
                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+#if defined(POKEGOCHI_EXTENDED_SERIAL_HARNESS)
     } else if (std::sscanf(line, "ADDMON %d %d", &x, &y) == 2) {
-      const uint16_t speciesId=static_cast<uint16_t>(std::clamp(x,1,386));
+      // The extended harness follows the currently implemented National Dex;
+      // keeping the old Hoenn cap silently turned every Gen-IV/V fixture into
+      // Deoxys and made cable-assisted save preparation misleading.
+      const uint16_t speciesId=static_cast<uint16_t>(std::clamp(x,1,649));
       const uint8_t level=static_cast<uint8_t>(std::clamp(y,1,100));
       const uint32_t seed=micros()^gameSave.collection.nextUid^
           (static_cast<uint32_t>(speciesId)<<16U)^level;
@@ -32123,7 +34282,7 @@ void processSerialTestInput(uint32_t loopNow) {
         pokemon.heldItem=HeldItem::MegaStone;
         MegaEvolution::setVariantChoice(
             pokemon,megaY?MegaVariant::MegaY:MegaVariant::MegaX);
-        CollectionLogic::refreshAbility(pokemon);
+        CollectionLogic::refreshAbility(pokemon,unlockedContentGeneration());
         CollectionLogic::refreshDerivedStats(pokemon,false);
         uint32_t assignedUid=0;
         if(!CollectionLogic::add(gameSave.collection,pokemon,&assignedUid))return false;
@@ -32146,7 +34305,7 @@ void processSerialTestInput(uint32_t loopNow) {
                     static_cast<unsigned>(CollectionLogic::count(gameSave.collection)));
     } else if (std::sscanf(line, "SETBALL %d %d", &x, &y) == 2) {
       const uint8_t ball = static_cast<uint8_t>(std::clamp(
-          x, 0, static_cast<int>(PokeBallType::Count) - 1));
+          x, 0, static_cast<int>(kStoredPokeBallTypeCount) - 1));
       const uint16_t quantity = static_cast<uint16_t>(std::clamp(y, 0, 999));
       gameSave.inventory.balls[ball] = quantity;
       saveDirty = true; saveNow();
@@ -32551,7 +34710,8 @@ void processSerialTestInput(uint32_t loopNow) {
       // FireRed animations (Blizzard among them) select a distinct authored
       // background and mirrored trajectory when the enemy is the attacker;
       // testing only ANIM would leave that entire branch unverified.
-      if (!gameSave.battle.active || screen != Screen::Battle || x < 1 || x > 467) {
+      if (!gameSave.battle.active || screen != Screen::Battle || x < 1 ||
+          x > static_cast<int>(battleAnimationCount())) {
         Serial.printf("[TEST] ANIMFOE REJECTED move=%d screen=%u battle=%u\n", x,
                       static_cast<unsigned>(screen), gameSave.battle.active ? 1U : 0U);
       } else {
@@ -32580,7 +34740,9 @@ void processSerialTestInput(uint32_t loopNow) {
       // The parser above stores the third conversion in `side`; keep the
       // command's side selector bounded before it reaches the renderer.
       if (!gameSave.battle.active || screen != Screen::Battle ||
-          start < 1 || finish < start || finish > 467 || side < 0 || side > 1) {
+          start < 1 || finish < start ||
+          finish > static_cast<int>(battleAnimationCount()) ||
+          side < 0 || side > 1) {
         Serial.printf("[TEST] ANIMRANGE REJECTED start=%d end=%d side=%d "
                       "screen=%u battle=%u\n", start, finish, side,
                       static_cast<unsigned>(screen),
@@ -32650,9 +34812,10 @@ void processSerialTestInput(uint32_t loopNow) {
       }
     } else if (std::sscanf(line, "ANIM %d", &x) == 1) {
       // Replay a move visual without consuming PP or changing battle state.
-      // This lets the hardware audit sample the FireRed catalog and the
-      // admitted Sinnoh IDs without constructing a separate moveset for each.
-      if (!gameSave.battle.active || screen != Screen::Battle || x < 1 || x > 467) {
+      // This lets the hardware audit sample the complete authored catalog
+      // without constructing a separate moveset for each.
+      if (!gameSave.battle.active || screen != Screen::Battle || x < 1 ||
+          x > static_cast<int>(battleAnimationCount())) {
         Serial.printf("[TEST] ANIM REJECTED move=%d screen=%u battle=%u\n", x,
                       static_cast<unsigned>(screen), gameSave.battle.active ? 1U : 0U);
       } else {
@@ -32680,6 +34843,7 @@ void processSerialTestInput(uint32_t loopNow) {
       saveNow();
       screen = Screen::Diagnostic;
       Serial.println("[TEST] ABORTBATTLE OK");
+#endif
     } else if (!std::strcmp(line, "STATE")) {
       const OwnedPokemon* statePlayer = CollectionLogic::find(
           gameSave.collection, gameSave.battle.playerUid);
@@ -32774,6 +34938,12 @@ void setup() {
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
   Serial.println("[BOOT] microSD");
+#ifdef SD_STRESS_TEST
+  // The sweep owns the first card-identification sequence. Mounting once here
+  // and immediately calling SD.end() left this Arduino core's disk layer in a
+  // state where every later rate falsely failed, including 400 kHz.
+  sdReady = false;
+#else
   sdReady = testSd();
   if (!wirelessUpdate.recoverAtBoot(sdReady))
     Serial.println("[OTAP] interrupted update recovery failed");
@@ -32781,6 +34951,7 @@ void setup() {
   // only after that decision, never against a transient commit state.
   if (sdReady) AssetRenderer::storageMounted();
   else AssetRenderer::storageUnmounted();
+#endif
   Serial.printf("[BOOT] microSD %s heap=%u largest=%u\n", sdReady ? "OK" : "FAIL",
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
@@ -32824,9 +34995,11 @@ void setup() {
     if (result == SaveLoadResult::Corrupted) screen = Screen::Recovery;
   }
   Serial.printf("[BOOT] Save %s\n", saveReady ? "OK" : "FAIL");
-  Serial.printf("[BOOT] Sinnoh sites=0x%02X all=%u reward=0x%02X platinum=%u master=%u theme=%u\n",
+  Serial.printf("[BOOT] Sinnoh sites=0x%02X gyms=0x%02X badges=%u complete=%u reward=0x%02X platinum=%u master=%u theme=%u\n",
                 static_cast<unsigned>(gameSave.sinnoh.unlockedSites),
-                SinnohExpedition::allSitesUnlocked(gameSave.sinnoh) ? 1U : 0U,
+                static_cast<unsigned>(gameSave.sinnoh.gymVictoryMask),
+                static_cast<unsigned>(SinnohExpedition::gymVictoryCount(gameSave.sinnoh)),
+                SinnohExpedition::completed(gameSave.sinnoh) ? 1U : 0U,
                 static_cast<unsigned>(gameSave.sinnoh.rewardFlags),
                 SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh) ? 1U : 0U,
                 static_cast<unsigned>(gameSave.inventory.balls[
@@ -32863,7 +35036,8 @@ void setup() {
     bool repairedMoves = false;
     for (auto& pokemon : gameSave.collection.box) if(pokemon.uid != kEmptyPokemonUid){
       if(CollectionLogic::ensureUsableMoves(pokemon))repairedMoves=true;
-      CollectionLogic::refreshAbility(pokemon);CollectionLogic::refreshDerivedStats(pokemon,true);
+      CollectionLogic::refreshAbility(pokemon,unlockedContentGeneration());
+      CollectionLogic::refreshDerivedStats(pokemon,true);
     }
     if(MegaChallengeSystem::reconcileStoneGate(gameSave.gymProgress,
         gameSave.collection,gameSave.ownedMachines))
@@ -32882,13 +35056,37 @@ void setup() {
       ownedSinnohMachines = 0;
       Serial.println("[SAVE] removed locked Sinnoh TM ownership");
     }
-    if(LeagueSystem::reconcileKantoLuckyEggReward(gameSave.gymProgress,
-        gameSave.collection,gameSave.ownedMachines)){
-      luckyEggMessagePending=true;
-      Serial.println("[SAVE] reconciled Kanto Lucky Egg reward");
+    const bool unovaStateChanged = UnovaAdventure::reconcile(
+        gameSave.unova, gameSave.sinnoh);
+    const bool unovaContentUnlocked = unovaUnlocked();
+    if (unovaContentUnlocked) {
+      // Generation-V abilities, level-up additions and machine legality are
+      // retroactive from the instant Unova opens, matching the Sinnoh gate.
+      CollectionLogic::applyGenerationContent(gameSave.collection, 5U);
+      const bool seasonalFormsChanged=CollectionLogic::applyUnovaSeason(
+          gameSave.collection,currentUnovaSeason());
+      uint8_t gen5ItemsGranted = 0U;
+      if (UnovaForms::reconcileUniqueItems(gameSave.collection,
+                                           gameSave.gen5UniqueItems, true))
+        ++gen5ItemsGranted;
+      if (unovaStateChanged || gen5ItemsGranted || seasonalFormsChanged)
+        Serial.printf("[SAVE] reconciled Unova content, unique-items=%u season=%u\n",
+                      static_cast<unsigned>(gen5ItemsGranted),
+                      static_cast<unsigned>(currentUnovaSeason()));
+    } else if (gameSave.unova.unovaMachineOwnership) {
+      // A Market rotation from a development build must not leak Gen-V TMs
+      // into an older save before the region gate is met.
+      gameSave.unova.unovaMachineOwnership = 0U;
+      Serial.println("[SAVE] removed locked Unova TM ownership");
     }
-    BattleEngine::setPermanentExperienceBoost(
-        (gameSave.ownedMachines&kLuckyEggOwnershipBit)!=0U);
+    const uint64_t luckyEggOwnershipBefore=
+        gameSave.ownedMachines&kLuckyEggOwnershipBit;
+    reconcileLuckyEggExperienceReward(false);
+    if(!luckyEggOwnershipBefore&&
+       (gameSave.ownedMachines&kLuckyEggOwnershipBit))
+      Serial.printf("[SAVE] reconciled Kanto Lucky Egg reward at +%u%% EXP\n",
+                    static_cast<unsigned>(
+                        BattleEngine::permanentExperienceBoostPercent()));
     const HeldItem speciesItem=SpeciesHeldItems::reconcile(
         gameSave.collection,gameSave.specialHeldItems);
     if(speciesItem!=HeldItem::None)
@@ -32946,6 +35144,125 @@ void setup() {
   Serial.println("[BOOT] Ready");
 }
 
+// Keep the large BLE synchronization records out of loop()'s persistent stack
+// frame.  Battle animations run later from that same loop; retaining a full
+// two-party BattleStateSync beneath every authored frame left under 256 bytes
+// of stack on the physical ESP32 even when no radio session was active.
+__attribute__((noinline)) void serviceMultiplayerConnectionAndLaunch() {
+  multiplayer.update();
+  if (pvpSessionActive && (!multiplayer.connected() ||
+      multiplayer.activity() != Multiplayer::Activity::Battle)) {
+    restorePartyAfterPvp(); BattleEngine::clear(gameSave.battle); clearBattleFlowState();
+    std::snprintf(homeNotice, sizeof(homeNotice), "THE LINK BATTLE ENDED.");
+    homeNoticeAwaitingTap = true; screen = Screen::Home; drawHome();
+  }
+  Multiplayer::BattleLaunch multiplayerBattleLaunch{};
+  if (multiplayer.takeBattleLaunch(multiplayerBattleLaunch))
+    startPvpBattle(multiplayerBattleLaunch);
+}
+
+__attribute__((noinline)) void servicePvpSynchronization(uint32_t now) {
+  uint16_t acknowledgedTurn = 0;
+  if (pvpSessionActive && multiplayer.isBattleHost() &&
+      multiplayer.takeBattleStateAcknowledgement(acknowledgedTurn) &&
+      acknowledgedTurn == gameSave.battle.turn) {
+    pvpStatePublishPending = false;
+    if (message[0] && std::strstr(message, "SYNCING")) message[0] = 0;
+    Serial.printf("[BLE] authoritative turn %u acknowledged\n", acknowledgedTurn);
+  }
+
+  Multiplayer::BattleStateSync authoritativeState{};
+  if (pvpSessionActive && pvpAwaitingAuthoritativeState &&
+      battleFlow.phase == BattleFlowPhase::Idle &&
+      multiplayer.takeBattleState(authoritativeState)) {
+    if (!applyPvpAuthoritativeState(authoritativeState))
+      Serial.printf("[BLE] rejected authoritative turn %u\n", authoritativeState.turn);
+  }
+
+  // Notifications are not acknowledged by the BLE link layer. Keep sending
+  // the complete compact snapshot until the guest explicitly acknowledges
+  // applying it; duplicate packets are idempotent by turn and roster slot.
+  if (pvpSessionActive && pvpStatePublishPending && multiplayer.isBattleHost() &&
+      battleFlow.phase == BattleFlowPhase::Idle &&
+      now - pvpLastStatePublishAttemptMs >= 500U) {
+    pvpLastStatePublishAttemptMs = now;
+    if (!multiplayer.publishBattleState(gameSave.battle, gameSave.collection,
+                                        pvpRemoteRosterSlotAtIndex))
+      Serial.printf("[BLE] authoritative turn %u send failed; retrying\n", gameSave.battle.turn);
+  }
+
+  updatePvpForcedSwitchPhase();
+
+  Multiplayer::BattleCommand localBattleCommand{}, remoteBattleCommand{};
+  if (pvpSessionActive && !pvpStatePublishPending && !pvpAwaitingAuthoritativeState &&
+      battleFlow.phase == BattleFlowPhase::Idle &&
+      multiplayer.takeBattleCommands(localBattleCommand, remoteBattleCommand))
+    resolvePvpCommands(localBattleCommand, remoteBattleCommand);
+}
+
+__attribute__((noinline)) void serviceMultiplayerTradeCommit() {
+  Multiplayer::TradeCommit multiplayerTrade{};
+  if (!multiplayer.takeTradeCommit(multiplayerTrade)) return;
+  bool applied = false;
+  bool playCommittedTrade = false;
+  uint16_t outgoingIndex = kBoxCapacity;
+  for (uint16_t index = 0; index < kBoxCapacity; ++index)
+    if (gameSave.collection.box[index].uid == multiplayerTrade.outgoingUid) {
+      outgoingIndex = index;
+      break;
+    }
+  if (outgoingIndex < kBoxCapacity) {
+    const OwnedPokemon outgoingBackup = gameSave.collection.box[outgoingIndex];
+    const uint32_t nextUidBackup = gameSave.collection.nextUid;
+    const PokedexState pokedexBackup = gameSave.pokedex;
+    uint32_t partyBackup[kPartyCapacity]{};
+    std::memcpy(partyBackup, gameSave.collection.party, sizeof(partyBackup));
+    uint32_t receivedUid = 0;
+    if (CollectionLogic::tradeReplace(gameSave.collection, multiplayerTrade.outgoingUid,
+                                      multiplayerTrade.incoming, &receivedUid)) {
+      PokedexLogic::markCaught(gameSave.pokedex, multiplayerTrade.incoming.speciesId);
+      if (unovaUnlocked())
+        UnovaForms::reconcileUniqueItems(gameSave.collection,
+                                         gameSave.gen5UniqueItems, true);
+      if (saves.commit(gameSave)) {
+        applied = true; saveDirty = false; lastSaveMs = millis();
+        selectedUid = receivedUid;
+        tradeOutgoingVisual = outgoingBackup;
+        tradeIncomingVisual = multiplayerTrade.incoming;
+        playCommittedTrade = true;
+        Serial.printf("[BLE] trade %08lx committed, local UID %lu\n",
+                      static_cast<unsigned long>(multiplayerTrade.transactionId),
+                      static_cast<unsigned long>(receivedUid));
+      } else {
+        gameSave.collection.box[outgoingIndex] = outgoingBackup;
+        gameSave.collection.nextUid = nextUidBackup;
+        std::memcpy(gameSave.collection.party, partyBackup, sizeof(partyBackup));
+        gameSave.pokedex = pokedexBackup;
+      }
+    }
+  }
+  multiplayer.completeTradeCommit(applied);
+  if (playCommittedTrade) playTradeAnimation(tradeOutgoingVisual, tradeIncomingVisual);
+}
+
+__attribute__((noinline)) void serviceMultiplayerScreenUpdates() {
+  if (!multiplayer.takeChanged() || displaySleeping || swipeUnlock.active()) return;
+  const bool needsAnswer = multiplayer.state() == Multiplayer::State::ConfirmIncomingPeer ||
+                           multiplayer.state() == Multiplayer::State::ConfirmIncomingActivity;
+  if (needsAnswer && gameSave.battle.active) {
+    if (multiplayer.state() == Multiplayer::State::ConfirmIncomingPeer)
+      multiplayer.answerPeerInvitation(false);
+    else multiplayer.answerActivity(false);
+  } else if (needsAnswer) {
+    bagPage = kMultiplayerPage; inventoryBattleContext = false;
+    inventoryMode = InventoryMode::Browse;
+    screen = Screen::Inventory; drawMultiplayerPocket();
+  } else if (screen == Screen::Inventory && !inventoryBattleContext &&
+             bagPage == kMultiplayerPage) {
+    drawMultiplayerPocket();
+  }
+}
+
 void loop() {
 #ifdef SD_STRESS_TEST
   // The suite is intentionally one-shot; retain the serial report until the
@@ -32997,10 +35314,14 @@ void loop() {
   }
   uint32_t synchronizedLocalTime=0;
   if(wirelessUpdate.takeSynchronizedTime(synchronizedLocalTime)){
+    const uint8_t previousUnovaSeason=currentUnovaSeason();
     gameSave.clockLocalEpochSeconds=synchronizedLocalTime;
     // The previous fallback clock used a different day domain. Let the first
     // real local day offer its NPC interaction normally.
     gameSave.lastNpcGiftDay=UINT32_MAX;
+    if(unovaUnlocked()&&currentUnovaSeason()!=previousUnovaSeason)
+      CollectionLogic::applyUnovaSeason(gameSave.collection,
+                                        currentUnovaSeason());
     saveDirty=true;
     saveNow();
   }
@@ -33009,105 +35330,10 @@ void loop() {
     lastWirelessUpdateDrawMs = now;
     refreshWirelessUpdate();
   }
-  multiplayer.update();
-  if (pvpSessionActive && (!multiplayer.connected() ||
-      multiplayer.activity() != Multiplayer::Activity::Battle)) {
-    restorePartyAfterPvp(); BattleEngine::clear(gameSave.battle); clearBattleFlowState();
-    std::snprintf(homeNotice, sizeof(homeNotice), "THE LINK BATTLE ENDED.");
-    homeNoticeAwaitingTap = true; screen = Screen::Home; drawHome();
-  }
-  Multiplayer::BattleLaunch multiplayerBattleLaunch{};
-  if (multiplayer.takeBattleLaunch(multiplayerBattleLaunch))
-    startPvpBattle(multiplayerBattleLaunch);
-
-  uint16_t acknowledgedTurn = 0;
-  if (pvpSessionActive && multiplayer.isBattleHost() &&
-      multiplayer.takeBattleStateAcknowledgement(acknowledgedTurn) &&
-      acknowledgedTurn == gameSave.battle.turn) {
-    pvpStatePublishPending = false;
-    if (message[0] && std::strstr(message, "SYNCING")) message[0] = 0;
-    Serial.printf("[BLE] authoritative turn %u acknowledged\n", acknowledgedTurn);
-  }
-
-  Multiplayer::BattleStateSync authoritativeState{};
-  if (pvpSessionActive && pvpAwaitingAuthoritativeState &&
-      battleFlow.phase == BattleFlowPhase::Idle &&
-      multiplayer.takeBattleState(authoritativeState)) {
-    if (!applyPvpAuthoritativeState(authoritativeState))
-      Serial.printf("[BLE] rejected authoritative turn %u\n", authoritativeState.turn);
-  }
-
-  // Notifications are not acknowledged by the BLE link layer. Keep sending
-  // the complete compact snapshot until the guest explicitly acknowledges
-  // applying it; duplicate packets are idempotent by turn and roster slot.
-  if (pvpSessionActive && pvpStatePublishPending && multiplayer.isBattleHost() &&
-      battleFlow.phase == BattleFlowPhase::Idle &&
-      now - pvpLastStatePublishAttemptMs >= 500U) {
-    pvpLastStatePublishAttemptMs = now;
-    if (!multiplayer.publishBattleState(gameSave.battle, gameSave.collection,
-                                        pvpRemoteRosterSlotAtIndex))
-      Serial.printf("[BLE] authoritative turn %u send failed; retrying\n", gameSave.battle.turn);
-  }
-
-  updatePvpForcedSwitchPhase();
-
-  Multiplayer::BattleCommand localBattleCommand{}, remoteBattleCommand{};
-  if (pvpSessionActive && !pvpStatePublishPending && !pvpAwaitingAuthoritativeState &&
-      battleFlow.phase == BattleFlowPhase::Idle &&
-      multiplayer.takeBattleCommands(localBattleCommand, remoteBattleCommand))
-    resolvePvpCommands(localBattleCommand, remoteBattleCommand);
-  Multiplayer::TradeCommit multiplayerTrade{};
-  if (multiplayer.takeTradeCommit(multiplayerTrade)) {
-    bool applied = false;
-    bool playCommittedTrade = false;
-    uint16_t outgoingIndex = kBoxCapacity;
-    for (uint16_t index = 0; index < kBoxCapacity; ++index)
-      if (gameSave.collection.box[index].uid == multiplayerTrade.outgoingUid) { outgoingIndex = index; break; }
-    if (outgoingIndex < kBoxCapacity) {
-      const OwnedPokemon outgoingBackup = gameSave.collection.box[outgoingIndex];
-      const uint32_t nextUidBackup = gameSave.collection.nextUid;
-      const PokedexState pokedexBackup = gameSave.pokedex;
-      uint32_t partyBackup[kPartyCapacity]{};
-      std::memcpy(partyBackup, gameSave.collection.party, sizeof(partyBackup));
-      uint32_t receivedUid = 0;
-      if (CollectionLogic::tradeReplace(gameSave.collection, multiplayerTrade.outgoingUid,
-                                        multiplayerTrade.incoming, &receivedUid)) {
-        PokedexLogic::markCaught(gameSave.pokedex, multiplayerTrade.incoming.speciesId);
-        if (saves.commit(gameSave)) {
-          applied = true; saveDirty = false; lastSaveMs = millis();
-          selectedUid = receivedUid;
-          tradeOutgoingVisual = outgoingBackup;
-          tradeIncomingVisual = multiplayerTrade.incoming;
-          playCommittedTrade = true;
-          Serial.printf("[BLE] trade %08lx committed, local UID %lu\n",
-                        static_cast<unsigned long>(multiplayerTrade.transactionId),
-                        static_cast<unsigned long>(receivedUid));
-        } else {
-          gameSave.collection.box[outgoingIndex] = outgoingBackup;
-          gameSave.collection.nextUid = nextUidBackup;
-          std::memcpy(gameSave.collection.party, partyBackup, sizeof(partyBackup));
-          gameSave.pokedex = pokedexBackup;
-        }
-      }
-    }
-    multiplayer.completeTradeCommit(applied);
-    if (playCommittedTrade) playTradeAnimation(tradeOutgoingVisual, tradeIncomingVisual);
-  }
-  const bool multiplayerChanged = multiplayer.takeChanged();
-  if (multiplayerChanged && !displaySleeping && !swipeUnlock.active()) {
-    const bool needsAnswer = multiplayer.state() == Multiplayer::State::ConfirmIncomingPeer ||
-                             multiplayer.state() == Multiplayer::State::ConfirmIncomingActivity;
-    if (needsAnswer && gameSave.battle.active) {
-      if (multiplayer.state() == Multiplayer::State::ConfirmIncomingPeer)
-        multiplayer.answerPeerInvitation(false);
-      else multiplayer.answerActivity(false);
-    } else if (needsAnswer) {
-      bagPage = kMultiplayerPage; inventoryBattleContext = false; inventoryMode = InventoryMode::Browse;
-      screen = Screen::Inventory; drawMultiplayerPocket();
-    } else if (screen == Screen::Inventory && !inventoryBattleContext && bagPage == kMultiplayerPage) {
-      drawMultiplayerPocket();
-    }
-  }
+  serviceMultiplayerConnectionAndLaunch();
+  servicePvpSynchronization(now);
+  serviceMultiplayerTradeCommit();
+  serviceMultiplayerScreenUpdates();
   if(!batterySampleBurst.active && now-lastBatterySampleMs>=30000U)
     beginBatterySampleBurst(now);
   {
@@ -33254,7 +35480,7 @@ void loop() {
       if (!displayWakeArmed) displayWakeArmed = touchReleased;
       else if (!touchReleased) wakeDisplayFromTouch(now);
       advanceGameClocks(); processTimedEvents(now);
-      if (saveDirty && now - lastSaveMs >= 60000U) saveNow();
+      if (saveCheckpointDue(now)) saveNow();
       delay(20); return;
     }
     const esp_sleep_wakeup_cause_t cause = lightSleepOneSecond(displayWakeArmed); now = millis();
@@ -33262,7 +35488,7 @@ void loop() {
     if (!displayWakeArmed) {
       if (digitalRead(board::kTouchIrqPin) != LOW) displayWakeArmed = true;
     } else if (cause == ESP_SLEEP_WAKEUP_EXT0) wakeDisplayFromTouch(now);
-    if (saveDirty && now - lastSaveMs >= 60000U) saveNow();
+    if (saveCheckpointDue(now)) saveNow();
     return;
   }
 
@@ -33273,7 +35499,7 @@ void loop() {
   if(serviceKidsExitSlider(point)){
     wasTouched=point.touched;
     advanceGameClocks();processTimedEvents(now);
-    if(saveDirty&&now-lastSaveMs>=60000U)saveNow();
+    if(saveCheckpointDue(now))saveNow();
     presentRetainedFrame();
     delay(2);
     return;
@@ -33298,7 +35524,7 @@ void loop() {
     }
     wasTouched = point.touched;
     advanceGameClocks(); processTimedEvents(now);
-    if (saveDirty && now - lastSaveMs >= 60000U) saveNow();
+    if (saveCheckpointDue(now)) saveNow();
     presentRetainedFrame();
     if (swipeUnlock.active() && now - unlockScreenShownMs >= kUnlockScreenTimeoutMs)
       turnDisplayOff();
@@ -33310,7 +35536,7 @@ void loop() {
     if (point.touched) {
       lastInteractionMs = now;
       advanceGameClocks(); processTimedEvents(now);
-      if (saveDirty && now - lastSaveMs >= 60000U) saveNow();
+      if (saveCheckpointDue(now)) saveNow();
       presentRetainedFrame();
       delay(2);
       return;
@@ -33387,7 +35613,7 @@ void loop() {
   // A background selection is committed when DISPLAY closes its browser.
   // Suppress the normal minute checkpoint while it is open, otherwise the
   // first arrow after an idle minute would still pay for a full save write.
-  if (saveDirty && now - lastSaveMs >= 60000U &&
+  if (saveCheckpointDue(now) &&
       !(screen == Screen::Settings && settingsPage == 1)) saveNow();
   serviceAutomaticBattleText(now);
   serviceKidsTowerBattle(now);
@@ -33401,6 +35627,20 @@ void loop() {
     // made a transient read look like a blinking Pokémon.
     iconFrame = 0;
     ++homeAnimationStep; animateHome();
+  }
+  // Never let the first draw after a pressure save discover assets inside a
+  // retained stripe. That path owns the TFT SPI transaction and deliberately
+  // blocks SD preloads. Warming here keeps the old physical frame visible,
+  // resolves the complete current screen while I/O is legal, then lets the
+  // ordinary retained presenter publish it atomically below.
+  if (rendererSceneRewarmPending && !renderingRetainedFrame) {
+    redrawCurrentScreen();
+    // Screens with no beginScreenPresentation() call have no renderer
+    // manifest to rebuild. Do not leak the force flag into a later screen.
+    rendererSceneRewarmPending = false;
+    Serial.printf("[GFX] scene rewarmed after SAVE screen=%u ready=%u\n",
+                  static_cast<unsigned>(screen),
+                  static_cast<unsigned>(preparedUiSceneComplete));
   }
   // This is the only place normal UI state reaches the ILI9341.  Every draw
   // above went to the RAM canvas; unchanged tiles never cross the SPI bus.
@@ -33445,7 +35685,8 @@ extern "C" void pokegochi_android_set_phone_battery_percent(uint8_t percent) {
   }
 }
 
-extern "C" void pokegochi_android_sync_phone_time(uint64_t epochSeconds) {
+extern "C" void pokegochi_android_sync_phone_time(uint64_t utcEpochSeconds,
+                                                   int32_t utcOffsetSeconds) {
   // Android can keep the process suspended or kill it between two loop()
   // iterations. Reconcile the persisted wall-clock anchor before the worker
   // starts advancing the normal monotonic clock again. This applies every
@@ -33453,10 +35694,17 @@ extern "C" void pokegochi_android_sync_phone_time(uint64_t epochSeconds) {
   // rotation, boss cooldowns, recovery and friendship.
   constexpr uint64_t kMinimumEpoch = 1577793600ULL;  // 2020-01-01
   constexpr uint64_t kMaximumEpoch = 4102495200ULL;  // 2100-01-01
-  if (!saveReady || epochSeconds < kMinimumEpoch || epochSeconds > kMaximumEpoch)
+  if (!saveReady || utcEpochSeconds < kMinimumEpoch || utcEpochSeconds > kMaximumEpoch)
     return;
-  const uint32_t nowEpoch = static_cast<uint32_t>(epochSeconds);
+  constexpr int32_t kMaximumUtcOffsetSeconds = 18 * 60 * 60;
+  utcOffsetSeconds = std::max(-kMaximumUtcOffsetSeconds,
+                              std::min(kMaximumUtcOffsetSeconds, utcOffsetSeconds));
+  const int32_t previousUtcOffsetSeconds = androidPhoneUtcOffsetSeconds;
+  androidPhoneUtcOffsetSeconds = utcOffsetSeconds;
+  const uint32_t nowEpoch = static_cast<uint32_t>(utcEpochSeconds);
   const uint32_t savedEpoch = gameSave.clockLocalEpochSeconds;
+  const bool firstPhoneClockSync = savedEpoch == 0U;
+  const bool wallClockChanged = savedEpoch != nowEpoch;
   uint32_t offlineSeconds = 0;
   if (savedEpoch && nowEpoch > savedEpoch)
     offlineSeconds = nowEpoch - savedEpoch;
@@ -33465,16 +35713,20 @@ extern "C" void pokegochi_android_sync_phone_time(uint64_t epochSeconds) {
   // Keep the anchor exact even when Android's wall clock was adjusted while
   // the app was closed. A backwards adjustment changes the displayed period,
   // but must never manufacture negative progression.
-  if (gameSave.clockLocalEpochSeconds != nowEpoch) {
+  if (wallClockChanged) {
     gameSave.clockLocalEpochSeconds = nowEpoch;
-    gameSave.lastNpcGiftDay = UINT32_MAX;
+    // Do not make the daily gift collectible again on every Activity resume.
+    if (firstPhoneClockSync) gameSave.lastNpcGiftDay = UINT32_MAX;
     saveDirty = true;
   }
   lastClockUs = static_cast<uint64_t>(esp_timer_get_time());
+  if (wallClockChanged || previousUtcOffsetSeconds != androidPhoneUtcOffsetSeconds)
+    requestRetainedFrame();
   if (saveDirty) saveNow();
-  Serial.printf("[ANDROID] phone clock sync saved=%lu offline=%lus\n",
+  Serial.printf("[ANDROID] phone clock sync saved=%lu offline=%lus utc_offset=%ld\n",
                 static_cast<unsigned long>(savedEpoch),
-                static_cast<unsigned long>(offlineSeconds));
+                static_cast<unsigned long>(offlineSeconds),
+                static_cast<long>(androidPhoneUtcOffsetSeconds));
 }
 
 extern "C" void pokegochi_android_flush_save() {

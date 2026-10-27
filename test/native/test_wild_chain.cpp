@@ -1,8 +1,18 @@
 #include <cassert>
 
+#include "game/GymSystem.h"
 #include "game/WildChainSystem.h"
 
 int main() {
+  GymProgress progress{};
+  assert(!WildChainSystem::isUnlocked(progress));
+  progress.badgeBits = 1UL << static_cast<uint8_t>(GymId::Pewter);
+  assert(WildChainSystem::isUnlocked(progress));
+
+  // The gate means one completed Gym, not a particular late-game region.
+  progress.badgeBits = 1UL << static_cast<uint8_t>(GymId::Rustboro);
+  assert(WildChainSystem::isUnlocked(progress));
+
   WildChainState state{};
   assert(!WildChainSystem::begin(state, 0U, 42U));
   assert(!WildChainSystem::begin(state, 51U, 42U));

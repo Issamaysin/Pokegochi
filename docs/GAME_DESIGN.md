@@ -6,7 +6,9 @@ This document is the current source of truth. The in-game language is English.
 
 - A device has exactly one game. Production firmware never exposes New Game or Reset.
 - Development-only factory reset remains compile-time gated.
-- The Box stores up to 386 Pokemon and the active Pokegochi team has up to three.
+- The Box stores up to 720 individual Pokemon and the active Pokegochi team has
+  up to three. The capacity supports a full #001-649 living dex plus forms and
+  duplicates without changing the three-member battle-party limit.
 - The player chooses Bulbasaur, Charmander, or Squirtle on the first start.
 - Before the first choice, Professor Oak gives a short FireRed-style introduction. The
   selection then takes place over an enlarged recreation of the real table in Oak's Lab.
@@ -45,10 +47,11 @@ only when the engine state is `Wild`; hiding the Ball button is not the rule.
   player ID, so equal boot timing on different devices cannot mirror encounters.
 - The player chooses any healthy selected-team member before it starts.
 - The Pokemon can be captured and grants experience when defeated.
-- After the one-time Mega Stone challenge, the Home action first offers a
-  sequence of 1 to 50 independent Wild encounters. Victory or capture advances
-  to the next encounter; escape, defeat, or having no usable active battler
-  ends the sequence.
+- After the first Gym victory, the Home action first offers a sequence of 1 to
+  50 independent Wild encounters. Victory or capture advances to the next
+  encounter; escape, defeat, or having no usable active battler ends the
+  sequence. Platinum and the Master Ball remain rewards for defeating all
+  eight Sinnoh site Gyms and are independent from Wild Chain.
 - Sequence encounters retain the party's persistent HP, PP, and major status
   exactly like returning to Home and starting another Wild battle. Battle-local
   stat stages, confusion, traps, volatile effects, and field state are rebuilt
@@ -111,25 +114,34 @@ Gym content and level gating remain separate from the generic battle engine.
 - Losing ends the attempt; the next attempt begins again with the first member.
 - Defeating the Champion is saved permanently and is required before the next
   regional starter can be chosen.
-- The first Kanto League clear also awards the one-and-only Lucky Egg. If any
-  selected party Pokemon holds it, the battle's total XP award is increased by
-  100% and only then divided equally among every selected party member. The
-  holder never receives a larger individual share.
+- Defeating Koga, Kanto's fifth Gym Leader, awards the one-and-only Lucky Egg
+  and permanently increases the battle's total XP award by 50% before it is
+  divided equally among every selected party member. It is account-wide and
+  does not need to be equipped.
+- The first Kanto League clear upgrades that same Lucky Egg bonus from +50% to
+  +100%. It replaces the earlier tier rather than stacking with it.
+- Unlocking Generation IV/Sinnoh adds another 25 percentage points, raising
+  the permanent party-wide bonus from +100% to +125% (2.25x total XP).
 - The Pokedex does not expand when the League is cleared. It expands only after
   the new starter is selected and the Pokedex update message is shown.
 
 ## Battle Tower
 
-- The repeatable Battle Tower unlocks after the Hoenn endgame. From then on its
-  Home icon permanently replaces VS Seeker in the same top-toolbar slot. The
-  former Gym/special slot becomes free after the Mega Stone boss. There is no
-  invitation roll, cooldown, timer, Center dependency, or VS Seeker charge.
-  `Later` merely closes its entrance screen and completing or abandoning a run
-  never removes the icon.
+- The repeatable Battle Tower unlocks after the one-time Mega Stone challenge.
+  From then on, Emerald's red Battle Fist permanently replaces VS Seeker in the
+  same top-toolbar slot and opens the shared endgame challenge selector. The
+  selector reuses the existing Battle Tower and Boss icons as two separate
+  destinations. The former Gym/special slot stays visibly empty and has no
+  hidden touch target.
+- Battle Tower has no invitation roll, cooldown, timer, Center dependency, or
+  VS Seeker charge. `Later` merely returns from its entrance screen and
+  completing or abandoning a run never removes it from the selector.
 - Each run has three consecutive Emerald Battle Tower trainers, with three
   Pokemon per trainer and their authored moves, held items, Natures, IV tiers,
   and EV spreads adapted to Pokegochi's level scaling.
-- The entrance screen and Home icon use the actual Emerald Battle Tower map art.
+- The entrance screen and selector card use the existing Emerald Battle Tower
+  art. The Home-level hub icon is the original red fist from Emerald's battle
+  animation sprites, trimmed and fitted with nearest-neighbor scaling only.
 - Completing the third trainer rolls one prize. Rare Candy is the fallback;
   there is a 0.5% chance for a Special Egg when the Egg Bag has room.
 - A Special Egg chooses uniformly from the nine regional starters the player
@@ -141,9 +153,9 @@ Gym content and level gating remain separate from the generic battle engine.
 
 ## Endgame Boss
 
-- Defeating the one-time Mega Stone challenge permanently unlocks a repeatable
-  Boss battle in the former Gym/special Home slot. Battle Tower simultaneously
-  occupies the old VS Seeker slot, so the two endgame activities remain separate.
+- Defeating the one-time Mega Stone challenge permanently unlocks the repeatable
+  Boss battle together with Battle Tower. Both are selected from the Battle
+  Fist hub in the old VS Seeker slot; the old Gym/special slot remains free.
 - Entering the Boss panel selects one exact species/form and saves that identity.
   The panel uses its real front sprite and name rather than a fixed Mewtwo
   placeholder. The same Boss remains selected across every attempt and reboot.
@@ -152,9 +164,9 @@ Gym content and level gating remain separate from the generic battle engine.
   Only reducing it to zero clears the encounter and allows a different Boss to
   be selected after the cooldown.
 - A victory starts a persistent twelve-hour cooldown. Losing or abandoning an
-  attempt does not start it. The Home slot remains visible, shows the rounded-up
-  time left, and reports the hour/minute countdown when touched; a new Boss can
-  start only after the counter reaches zero.
+  attempt does not start it. The shared Home hub remains visible while the Boss
+  card inside its selector shows the rounded-up hour/minute countdown and stays
+  disabled; a new Boss can start only after the counter reaches zero.
 - Every victory also gives exactly one Boss prize: 90% for the same stored
   Special Egg used by the Battle Tower's 0.5% reward and 10% for a
   Master Ball. With every regional starter already caught, that Special Egg uses
@@ -210,21 +222,23 @@ Gym content and level gating remain separate from the generic battle engine.
   appearing in canonical order, again retaining all previous progress.
 - Unlocks are permanent save milestones and cannot be reset by losing, powering off,
   or changing the active party.
-- Previously unlocked generations remain available. Unlocking Johto or Hoenn expands
-  the encounter pool; it does not remove earlier-generation Pokemon.
+- Previously unlocked generations remain available. Unlocking Johto, Hoenn,
+  Sinnoh or Unova expands the available content; it does not remove species,
+  moves or progression from earlier regions.
 - The Trainer Card presents 24 Badge slots grouped as Kanto, Johto, and Hoenn. Locked
   regions remain hidden or disabled until the previous region is completed.
 - Future Pokedex species and page counts do not appear before the corresponding
-  regional starter has been selected.
-- The Pokédex begins in Kanto mode (001-151), expands to include Johto (001-251), and
-  finally becomes the full Generation III National Pokédex (001-386).
+  regional milestone has been completed.
+- The Pokédex begins in Kanto mode (001-151), expands through Johto (001-251),
+  Hoenn (001-386), Sinnoh (001-493) and finally Unova (001-649).
 - Completing each unlocked generation's visible Pokedex awards exactly one Master Ball:
   Kanto 001-151, Johto 001-251, and Hoenn 001-386. Delivery and acknowledgement are
   persisted separately, so the reward cannot duplicate and its message survives a reboot.
 
-- FireRed remains the single combat-rules authority for every species: base stats,
-  types, abilities, experience curves, learnsets, move effects, damage rules,
-  evolutions, battle sprites, Box icons, cries, and battle animations.
+- FireRed remains the baseline authority for Generation I-III rules and assets.
+  The approved Generation IV/V additions use Pokémon White data plus the
+  matching pokeemerald-expansion implementations and assets, while preserving
+  Pokegochi's single battle engine and explicit per-move behavior audit.
 - Kanto progression, encounters, trainers, Gyms, teams, levels, dialogue, and Badges
   come from FireRed.
 - Gold is a Johto content reference only. It supplies encounter progression,
@@ -239,6 +253,72 @@ Gym content and level gating remain separate from the generic battle engine.
 - Original ROM files are local development inputs only and are excluded from source
   control and every release. The private V2 distribution contains only the generated
   microSD package used by the project, never an original ROM image or save dump.
+
+### Sinnoh campaign
+
+- Sinnoh retains its eight-site exploration carousel. Each successful wild
+  encounter grants one Research point, and the authored Research cost still
+  controls when the next site can be opened.
+- Every site now also contains one canonical Platinum Gym Leader, in order:
+  Roark, Gardenia, Fantina, Maylene, Crasher Wake, Byron, Candice and Volkner.
+  Their species, moves, held items, portraits and Badges come from Platinum;
+  levels are adapted to Pokegochi's postgame curve and each team uses three
+  Pokemon so it fits the existing battle format. The first victory over each
+  leader grants 20 Research points; rematches never repeat that reward.
+- Opening a later site requires both its Research cost and victory over the
+  previous site's leader. The eighth victory completes Sinnoh, grants the
+  one-time Platinum-theme/Master-Ball reward and reveals Unova.
+- Saves which had already opened all eight sites before site Gyms existed keep
+  their completion, rewards and Unova access. Their new Badges remain unclaimed
+  so those players can still challenge all eight leaders.
+
+### Unova campaign
+
+- Defeating all eight Sinnoh site Gyms reveals Unova in the extensible
+  Region Hub. The first reconciliation permanently opens Area 1 and enables
+  Generation V learnsets, evolutions, abilities and the 25 Unova TMs for every
+  compatible old or new species. Market rotation and machine compatibility use
+  the same unlock, so Gen V stock cannot leak into a new save.
+- Unova contains ten replayable areas inspired by White Treehollow. Starting an
+  area snapshots the current Party UIDs; only those up-to-three Pokémon may
+  fight or receive the area's single heal. HP, PP and major status remain on
+  them between rooms, while Bag items are unavailable.
+- Each floor presents up to three route cards over an authentic Gen V room
+  background. Clue NPCs identify the correct Gate route. Defeating its Gate
+  Trainer reveals the Boss; defeating that Boss records the area permanently
+  and opens the next one. A loss or explicit abandon clears only the current
+  run, and revisited decoy trainers cannot be farmed repeatedly.
+- Wild opportunities are room events rather than the area's objective:
+  shaking grass, dust cloud, ground shadow, bubbling water and Hidden Grotto.
+  A Grotto yields either an item or a Pokémon that is guaranteed to carry its
+  Hidden Ability. The ten areas expose two Grottos per National-Dex generation:
+  Areas 1-2 select Gen I, 3-4 Gen II, 5-6 Gen III, 7-8 Gen IV and 9-10 Gen V.
+  Ordinary results select only species with an official Hidden Ability and
+  prioritize variants not yet owned before allowing repeats. The existing
+  1/240 Grotto roll is reserved for that generation's official HA legendaries.
+  Legendary events are never guaranteed: normal locations use
+  the same 1/265 base chance as Sinnoh and the designated special location uses
+  only the approved 1/240 increase.
+- Pokémon World Tournament has five three-round tiers, each unlocked after two
+  additional area Bosses. Area 10 ends with Benga and does not award a Shiny
+  Dratini. Finishing all ten areas and all five PWT tiers enables the five-round
+  Champions Tournament; winning it completes Unova and unlocks the Black
+  theme.
+- Completion adds Royal Unova to the shared Battle Fist Challenge Hub. It may
+  be completed once per local day and uses a stable seven-day schedule of
+  three, four, five, six, seven, five and four consecutive trainers.
+- DNA Splicers fuse Kyurem with an owned Reshiram or Zekrom and preserve the
+  donor plus Kyurem's original moves for lossless unfusing. Tornadus, Thundurus
+  and Landorus use the regular Box `FORM` action. Genesect Drives alter Techno
+  Blast's type.
+  Secret Sword, Relic Song and Zen Mode drive Keldeo, Meloetta and Darmanitan
+  through their authored rules. Every applicable form changes battle data and
+  uses its matching battle sprite and mini-icon in Box, Home and Summary.
+- Save V46 migrates all previous saves without deleting collection, inventory
+  or progress. Bluetooth trade/battle payloads carry Generation V species,
+  forms, moves, ability slot/Hidden Ability provenance and held items; peers
+  that have not unlocked the required generation reject unavailable content by
+  the same regional-compatibility rule used before Unova.
 
 ## Bluetooth multiplayer
 
@@ -322,8 +402,10 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
 - Permanent effects include Leftovers, Shell Bell, Choice Band, Quick Claw, Scope Lens,
   BrightPowder, Focus Band, King's Rock, Amulet Coin, Smoke Ball, and all 17 Generation
   III type-boosting items. Effects follow FireRed values where applicable.
-- Lucky Egg is a unique first-Kanto-League reward. It never enters Mart stock,
-  cannot be duplicated or traded, and gives one party-wide 2x XP multiplier
+- Lucky Egg is a unique Kanto progression reward. Koga grants its permanent
+  party-wide +50% XP tier, and the first Kanto League clear upgrades it to
+  +100%. Unlocking Generation IV raises the same bonus to +125%. It never
+  enters Mart stock, cannot be duplicated, equipped or traded, and applies
   before Pokegochi performs its normal equal XP split.
 - Thief, Covet, Trick and Knock Off use the held-item state during a battle. In
   wild and NPC battles their transfer/removal is deliberately battle-local, so
@@ -333,6 +415,16 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
   every six hours. Random slots modestly favor held items and may contain
   additional unowned TMs/HMs. Better items enter the pool after their required
   Badge count and rare equipment keeps a lower appearance weight.
+- Ball stock now follows progression rather than depending only on a small
+  random offer. Great Ball becomes guaranteed after four Badges (8, then 12,
+  then 16 per rotation). Ultra Ball becomes guaranteed after twelve Badges and
+  rises from 8 to 12, 18 and 24 through the late game; opening Sinnoh raises
+  its six-hour stock to 32. Each remains a single unique Market row.
+- Unlocking Sinnoh also awards the unique Golden Ball. It lives in the Poke
+  Balls pocket, has exactly the regular Poke Ball's 1x catch rate, displays an
+  infinite quantity and is never consumed. Ownership is derived from the
+  existing Sinnoh unlock, so older saves that already reached Sinnoh receive it
+  automatically without changing the persistent Inventory layout.
 - Whenever a random slot would stock Ultra Ball, it has a 0.001% chance to be
   replaced by one Master Ball. That exceptional offer has stock 1 and costs
   99,999; the guaranteed Pokedex and League rewards remain unchanged.
@@ -424,20 +516,20 @@ animation.
 
 - Home, Box, Pokedex, Bag, Mart and battle screens use the approved FireRed-style
   compositions adapted to the 320x240 landscape touchscreen.
-- Before the Mega Stone boss, VS Seeker is reserved for player-initiated trainer
-  encounters. After victory, Battle Tower replaces that control permanently;
-  the newly freed Gym/special control becomes the repeatable Boss battle.
-  Its Home and invitation-header symbol is Emerald's original golden Regi
-  field sprite; the larger invitation illustration remains separate from the
-  random species selected only when the battle begins.
-  Battle commands continue using the original text labels.
+- Before the Mega Stone challenge, VS Seeker is reserved for player-initiated
+  trainer encounters. After victory, Emerald's original red Battle Fist replaces
+  that control permanently and opens one selector with the existing Battle Tower
+  and Boss symbols. The old Gym/special slot is empty and non-interactive. Boss
+  cooldown is shown on its selector card rather than occupying another Home
+  control. Battle commands continue using the original text labels.
 - Trainer and Gym Leader introductions use their original FireRed front sprites and
   encounter dialogue. Trainer identity, sprite, dialogue, and team template are one
   catalog entry and must not be randomized independently.
-- All 354 moves are generated from their original FireRed animation scripts.
-  The ESP32 runtime preserves sprite families, particle counts, cadence, target
-  shake, flashes, battler visibility and background-transition intent without a
-  full-screen framebuffer. Audio-only commands are intentionally omitted.
+- All 559 moves have explicit generated descriptors sourced from FireRed or the
+  matching expansion script. The ESP32 runtime preserves sprite families,
+  particle counts, cadence, target shake, flashes, battler visibility and
+  background-transition intent without a full-screen framebuffer. Audio-only
+  commands are intentionally omitted.
 - Throwing, opening, shaking, breaking free, and successful capture use the original
   Poke Ball animation family, with the correct ball graphic for each ball type.
 - A missing script, untranslated command group, or missing sprite fails generation;

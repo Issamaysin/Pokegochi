@@ -137,6 +137,9 @@ int main() {
   assert(Economy::machineMove(57) == static_cast<MoveId>(291)); // Dive
   assert(Economy::machineMove(58) == static_cast<MoveId>(355)); // TM51 Roost
   assert(Economy::machineMove(99) == static_cast<MoveId>(433)); // TM92 Trick Room
+  assert(Economy::machineMove(100) == static_cast<MoveId>(468)); // BW TM01 Hone Claws
+  assert(Economy::machineMove(124) == static_cast<MoveId>(555)); // BW TM95 Snarl
+  assert(Economy::machineNumber(100)==1U&&Economy::machineNumber(124)==95U);
   assert(!Economy::canLearnMachine(1, 0));   // Bulbasaur / Focus Punch
   assert(Economy::canLearnMachine(1, 5));    // Bulbasaur / Toxic
   assert(Economy::canLearnMachine(1, 50));   // Bulbasaur / Cut
@@ -163,10 +166,23 @@ int main() {
   assert(sinnohCompatibilityCount == 2577U);
   uint16_t platinumNewTmCompatibilityCount = 0;
   for (uint16_t species = 1; species <= 493; ++species)
-    for (uint8_t machine = kLegacyMachineCount; machine < kMachineCount; ++machine)
+    for (uint8_t machine = kLegacyMachineCount;
+         machine < kLegacyMachineCount+kSinnohMachineCount; ++machine)
       platinumNewTmCompatibilityCount += Economy::canLearnMachine(species, machine) ? 1U : 0U;
   assert(platinumNewTmCompatibilityCount == 6074U);
-  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(494, 0) &&
+  uint16_t unovaTmCompatibilityCount=0;
+  for(uint16_t species=1;species<=493U;++species)
+    for(uint8_t machine=kLegacyMachineCount+kSinnohMachineCount;
+        machine<kMachineCount;++machine)
+      unovaTmCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
+  assert(unovaTmCompatibilityCount==1988U);
+  uint16_t unovaSpeciesMachineCompatibilityCount=0;
+  for(uint16_t species=494U;species<=649U;++species)
+    for(uint8_t machine=0;machine<kMachineCount;++machine)
+      unovaSpeciesMachineCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
+  assert(unovaSpeciesMachineCompatibilityCount==4947U);
+  assert(Economy::canLearnMachine(494U,101U)); // Victini learns TM03 Psyshock.
+  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(650, 0) &&
          !Economy::canLearnMachine(1, kMachineCount));
 
   // The Summary move editor exposes the complete level-up pool inherited
@@ -185,8 +201,8 @@ int main() {
 
   static_assert(sizeof(CombatVolatile)==34,
       "stockpileCount must use existing tail padding and keep saves compatible");
-  assert(battleAnimationCount()==467);
-  assert(battleAnimationProgramCount()==467);
+  assert(battleAnimationCount()==559);
+  assert(battleAnimationProgramCount()==559);
   assert(battleAnimationSpriteResourceCount()>=250);
   // Every generated SpriteTemplate variant must remain drawable for its full
   // retained lifetime.  This is deliberately exhaustive rather than a list
@@ -241,7 +257,7 @@ int main() {
     assert(battleAnimationPlaybackKind(move)==BattleAnimationPlaybackKind::Generated);
     assert(findBattleAnimationProgram(move));
   }
-  assert(battleAnimationProgramCount()==467);
+  assert(battleAnimationProgramCount()==559);
   uint16_t userTargetMoveCount = 0;
   for(uint16_t move=1;move<=354;++move){
     const FullMoveData* moveData=findFullMove(static_cast<MoveId>(move));
@@ -596,6 +612,50 @@ int main() {
   assert(choiceCount==0);
   choiceCount=evolutionChoices(233,40,1,1,4,choices,kEvolutionChoiceCapacity);
   assert(choiceCount==1&&choices[0]==474);
+  // Rare Candy must use the complete regional-content gate, not the old
+  // three-Gym-region value. A high-level baby can therefore progress through
+  // a later-generation third form on consecutive Candies.
+  PokemonCollection candyChain{};
+  CollectionLogic::initialize(candyChain);
+  assert(CollectionLogic::chooseStarter(candyChain,1,0xCA110001U));
+  OwnedPokemon* candyPokemon=CollectionLogic::active(candyChain,0);
+  assert(candyPokemon);
+  const uint32_t candyUid=candyPokemon->uid;
+  *candyPokemon=CollectionLogic::createPokemon(
+      candyUid,175,80,false,0xCA110002U,4U);
+  RareCandyProgression candyStep=CollectionLogic::applyRareCandy(*candyPokemon,4U);
+  assert(candyStep.applied&&candyStep.levelIncreased&&candyPokemon->level==81U&&
+         candyStep.evolutionChoiceCount==1U&&candyStep.evolutionChoices[0]==176U);
+  assert(CollectionLogic::evolve(candyChain,candyUid,176U,nullptr,4U));
+  candyPokemon=CollectionLogic::find(candyChain,candyUid);
+  candyStep=CollectionLogic::applyRareCandy(*candyPokemon,4U);
+  assert(candyStep.applied&&candyStep.levelIncreased&&candyPokemon->level==82U&&
+         candyStep.evolutionChoiceCount==1U&&candyStep.evolutionChoices[0]==468U);
+
+  // At Lv.100, a Candy is accepted only to recover an eligible evolution.
+  // This makes a delayed first evolution recoverable without inventing Lv.101.
+  *candyPokemon=CollectionLogic::createPokemon(
+      candyUid,239,100,false,0xCA110003U,4U);
+  candyStep=CollectionLogic::applyRareCandy(*candyPokemon,4U);
+  assert(candyStep.applied&&!candyStep.levelIncreased&&candyPokemon->level==100U&&
+         candyStep.evolutionChoiceCount==1U&&candyStep.evolutionChoices[0]==125U);
+  assert(CollectionLogic::evolve(candyChain,candyUid,125U,nullptr,4U));
+  candyPokemon=CollectionLogic::find(candyChain,candyUid);
+  candyStep=CollectionLogic::applyRareCandy(*candyPokemon,4U);
+  assert(candyStep.applied&&!candyStep.levelIncreased&&
+         candyStep.evolutionChoiceCount==1U&&candyStep.evolutionChoices[0]==466U);
+
+  // The same helper must respect Unova's gate in both directions.
+  OwnedPokemon roggenrola=CollectionLogic::createPokemon(
+      0xCA110004U,524,90,false,0xCA110005U,5U);
+  RareCandyProgression lockedUnova=CollectionLogic::applyRareCandy(roggenrola,4U);
+  assert(lockedUnova.applied&&lockedUnova.levelIncreased&&
+         lockedUnova.evolutionChoiceCount==0U);
+  roggenrola=CollectionLogic::createPokemon(
+      0xCA110004U,524,90,false,0xCA110005U,5U);
+  RareCandyProgression openUnova=CollectionLogic::applyRareCandy(roggenrola,5U);
+  assert(openUnova.applied&&openUnova.evolutionChoiceCount==1U&&
+         openUnova.evolutionChoices[0]==525U);
   choiceCount=evolutionChoices(236,20,15,10,3,choices,kEvolutionChoiceCapacity);assert(choiceCount==1&&choices[0]==106);
   choiceCount=evolutionChoices(236,20,10,15,3,choices,kEvolutionChoiceCapacity);assert(choiceCount==1&&choices[0]==107);
   choiceCount=evolutionChoices(236,20,10,10,3,choices,kEvolutionChoiceCapacity);assert(choiceCount==1&&choices[0]==237);
@@ -784,7 +844,7 @@ int main() {
   assert(CollectionLogic::count(eggBox)==1&&!egg.active);
   assert(eggBox.box[0].level==24);
   EggInventory storedEggs{};PokedexState storedEggDex{};
-  assert(EggSystem::storeBattleTowerSpecial(storedEggs,storedEggDex,0xE661U));
+  assert(EggSystem::storeBattleTowerSpecial(storedEggs,storedEggDex,3U,0xE661U));
   assert(storedEggs.count==1U&&storedEggs.slots[0].speciesId&&
          storedEggs.slots[0].rarity==EggRarity::Special);
   EggState occupiedIncubator{};occupiedIncubator.active=true;
@@ -1174,8 +1234,8 @@ int main() {
   verifyEarlyExperienceMultiplier(9, 2);
   verifyEarlyExperienceMultiplier(10, 1);
 
-  // Lucky Egg is a permanent account-wide Pokegochi bonus. It doubles the
-  // total award before the party split without occupying a held-item slot.
+  // Lucky Egg is a permanent account-wide Pokegochi bonus. Gym 5 grants +50%,
+  // Kanto League grants +100%, and Generation IV grants +125% before splitting.
   PokemonCollection luckyXpCollection;
   CollectionLogic::initialize(luckyXpCollection);
   assert(CollectionLogic::chooseStarter(luckyXpCollection, 1, 0x1E660001U));
@@ -1195,7 +1255,9 @@ int main() {
   assert(CollectionLogic::setPartySlot(luckyXpCollection, 1, luckyPartnerUid));
   OwnedPokemon* luckyPartner = CollectionLogic::find(luckyXpCollection, luckyPartnerUid);
   assert(luckyPartner);
-  BattleEngine::setPermanentExperienceBoost(true);
+  BattleEngine::setPermanentExperienceBoostPercent(50U);
+  assert(BattleEngine::permanentExperienceBoost());
+  assert(BattleEngine::permanentExperienceBoostPercent()==50U);
   const uint32_t luckyLeadXpBefore = luckyLead->experience;
   const uint32_t luckyPartnerXpBefore = luckyPartner->experience;
   BattleState luckyXpBattle{};
@@ -1212,15 +1274,17 @@ int main() {
     luckyXpBattle.opponents[0].moves[slot] = MoveId::None;
   const uint32_t luckyBaseTotal =
       (static_cast<uint32_t>(findSpecies(19)->baseExperience) * 5U) / 7U;
-  const uint32_t luckyExpectedShare = (luckyBaseTotal * 2U) / 2U;
+  const uint32_t luckyExpectedShare50 = (luckyBaseTotal * 150U / 100U) / 2U;
   const BattleActionResult luckyXpResult = BattleEngine::fight(
       luckyXpBattle, luckyXpCollection, 0);
   assert(luckyXpResult.accepted && luckyXpResult.opponentDefeated);
-  assert(luckyXpResult.experienceGained == luckyExpectedShare);
-  assert(luckyLead->experience - luckyLeadXpBefore == luckyExpectedShare);
-  assert(luckyPartner->experience - luckyPartnerXpBefore == luckyExpectedShare);
+  assert(luckyXpResult.experienceGained == luckyExpectedShare50);
+  assert(luckyLead->experience - luckyLeadXpBefore == luckyExpectedShare50);
+  assert(luckyPartner->experience - luckyPartnerXpBefore == luckyExpectedShare50);
 
-  // The permanent modifier is boolean and therefore cannot stack.
+  // The League replaces the +50% tier with +100%; it does not stack to +150%.
+  BattleEngine::setPermanentExperienceBoostPercent(100U);
+  assert(BattleEngine::permanentExperienceBoostPercent()==100U);
   const uint32_t stackedLeadXpBefore = luckyLead->experience;
   const uint32_t stackedPartnerXpBefore = luckyPartner->experience;
   BattleState stackedLuckyBattle{};
@@ -1237,11 +1301,36 @@ int main() {
     stackedLuckyBattle.opponents[0].moves[slot] = MoveId::None;
   const BattleActionResult stackedLuckyResult = BattleEngine::fight(
       stackedLuckyBattle, luckyXpCollection, 0);
+  const uint32_t luckyExpectedShare100 = (luckyBaseTotal * 2U) / 2U;
   assert(stackedLuckyResult.accepted && stackedLuckyResult.opponentDefeated);
-  assert(stackedLuckyResult.experienceGained == luckyExpectedShare);
-  assert(luckyLead->experience - stackedLeadXpBefore == luckyExpectedShare);
-  assert(luckyPartner->experience - stackedPartnerXpBefore == luckyExpectedShare);
-  BattleEngine::setPermanentExperienceBoost(false);
+  assert(stackedLuckyResult.experienceGained == luckyExpectedShare100);
+  assert(luckyLead->experience - stackedLeadXpBefore == luckyExpectedShare100);
+  assert(luckyPartner->experience - stackedPartnerXpBefore == luckyExpectedShare100);
+  BattleEngine::setPermanentExperienceBoostPercent(125U);
+  assert(BattleEngine::permanentExperienceBoostPercent()==125U);
+  const uint32_t gen4LeadXpBefore=luckyLead->experience;
+  const uint32_t gen4PartnerXpBefore=luckyPartner->experience;
+  BattleState gen4LuckyBattle{};
+  gen4LuckyBattle.active=true;
+  gen4LuckyBattle.kind=BattleKind::Wild;
+  gen4LuckyBattle.outcome=BattleOutcome::Ongoing;
+  gen4LuckyBattle.playerUid=luckyLead->uid;
+  gen4LuckyBattle.opponentCount=1;
+  gen4LuckyBattle.rngState=0x1E660009U;
+  gen4LuckyBattle.opponents[0]=CollectionLogic::createPokemon(
+      0x1E66000AU,19,5,false,0x1E66000BU);
+  gen4LuckyBattle.opponents[0].currentHp=1;
+  for(uint8_t slot=0;slot<kMoveSlots;++slot)
+    gen4LuckyBattle.opponents[0].moves[slot]=MoveId::None;
+  const uint32_t luckyExpectedShare125=(luckyBaseTotal*225U/100U)/2U;
+  const BattleActionResult gen4LuckyResult=BattleEngine::fight(
+      gen4LuckyBattle,luckyXpCollection,0);
+  assert(gen4LuckyResult.accepted&&gen4LuckyResult.opponentDefeated);
+  assert(gen4LuckyResult.experienceGained==luckyExpectedShare125);
+  assert(luckyLead->experience-gen4LeadXpBefore==luckyExpectedShare125);
+  assert(luckyPartner->experience-gen4PartnerXpBefore==luckyExpectedShare125);
+  BattleEngine::setPermanentExperienceBoostPercent(0U);
+  assert(!BattleEngine::permanentExperienceBoost());
 
   // Until the strongest active partner passes Lv.20, a Wild Pokemon can
   // never match that partner's level. At Lv.21 the inclusive ceiling resumes.
@@ -1522,6 +1611,66 @@ int main() {
          enemyBatonBattle.opponentMoveEffects[0].ingrained);
   assert((enemyBatonBattle.playerVolatile.sureHitTurns&0x03U)==2U);
 
+  // Pursuit intercepts Baton Pass from either side. The slower opponent must
+  // strike the outgoing player first at doubled power, and must not receive a
+  // second action after the replacement is selected.
+  PokemonCollection pursuitBatonBase;CollectionLogic::initialize(pursuitBatonBase);
+  assert(CollectionLogic::chooseStarter(pursuitBatonBase,1,0x2280U));
+  OwnedPokemon* pursuitPasser=CollectionLogic::active(pursuitBatonBase,0);
+  const uint32_t pursuitPasserUid=pursuitPasser->uid;
+  *pursuitPasser=CollectionLogic::createPokemon(
+      pursuitPasserUid,150,50,false,0x2281U);
+  pursuitPasser->moves[0]=static_cast<MoveId>(226);
+  pursuitPasser->movePp[0]=findFullMove(pursuitPasser->moves[0])->pp;
+  uint32_t pursuitPartnerUid=0;
+  assert(CollectionLogic::add(pursuitBatonBase,
+      CollectionLogic::createPokemon(0,1,50,false,0x2282U),&pursuitPartnerUid));
+  assert(CollectionLogic::setPartySlot(pursuitBatonBase,1,pursuitPartnerUid));
+  BattleState pursuitBatonBaseBattle;BattleEngine::clear(pursuitBatonBaseBattle);
+  pursuitBatonBaseBattle.active=true;pursuitBatonBaseBattle.kind=BattleKind::Trainer;
+  pursuitBatonBaseBattle.outcome=BattleOutcome::Ongoing;
+  pursuitBatonBaseBattle.playerUid=pursuitPasserUid;
+  pursuitBatonBaseBattle.opponentCount=1;pursuitBatonBaseBattle.rngState=0x2283U;
+  pursuitBatonBaseBattle.opponents[0]=CollectionLogic::createPokemon(
+      0xF2280001U,19,30,false,0x2284U);
+  for(uint8_t slot=0;slot<kMoveSlots;++slot){
+    pursuitBatonBaseBattle.opponents[0].moves[slot]=MoveId::None;
+    pursuitBatonBaseBattle.opponents[0].movePp[slot]=0;
+  }
+  pursuitBatonBaseBattle.opponents[0].moves[0]=static_cast<MoveId>(228);
+  pursuitBatonBaseBattle.opponents[0].movePp[0]=
+      findFullMove(pursuitBatonBaseBattle.opponents[0].moves[0])->pp;
+  PokemonCollection pursuitBatonCollection=pursuitBatonBase;
+  BattleState pursuitBatonBattle=pursuitBatonBaseBattle;
+  const BattleActionResult pursuitIntercept=BattleEngine::fight(
+      pursuitBatonBattle,pursuitBatonCollection,0);
+  PokemonCollection ordinaryPursuitCollection=pursuitBatonBase;
+  BattleState ordinaryPursuitBattle=pursuitBatonBaseBattle;
+  OwnedPokemon* ordinaryPursuitUser=CollectionLogic::find(
+      ordinaryPursuitCollection,pursuitPasserUid);
+  ordinaryPursuitUser->moves[0]=static_cast<MoveId>(150); // SPLASH
+  ordinaryPursuitUser->movePp[0]=findFullMove(ordinaryPursuitUser->moves[0])->pp;
+  const BattleActionResult ordinaryPursuit=BattleEngine::fight(
+      ordinaryPursuitBattle,ordinaryPursuitCollection,0);
+  assert(pursuitIntercept.accepted&&pursuitIntercept.enemyActed&&
+         pursuitIntercept.batonPassSwitchRequired&&
+         pursuitIntercept.batonPassOpponentMoveSlot==0xFEU&&
+         pursuitIntercept.damageTaken>ordinaryPursuit.damageTaken);
+  int pursuitMoveIndex=-1,batonMoveIndex=-1;
+  for(uint8_t eventIndex=0;eventIndex<pursuitIntercept.eventCount;++eventIndex){
+    const BattleEvent& event=pursuitIntercept.events[eventIndex];
+    if(event.type==BattleEventType::MoveUsed&&event.side==BattleSide::Opponent&&
+       event.move==static_cast<MoveId>(228))pursuitMoveIndex=eventIndex;
+    if(event.type==BattleEventType::MoveUsed&&event.side==BattleSide::Player&&
+       event.move==static_cast<MoveId>(226))batonMoveIndex=eventIndex;
+  }
+  assert(pursuitMoveIndex>=0&&batonMoveIndex>pursuitMoveIndex);
+  const BattleActionResult pursuitBatonSwitch=BattleEngine::completeBatonPassSwitch(
+      pursuitBatonBattle,pursuitBatonCollection,pursuitPartnerUid,
+      pursuitIntercept.batonPassOpponentMoveSlot);
+  assert(pursuitBatonSwitch.accepted&&!pursuitBatonSwitch.enemyActed&&
+         pursuitBatonBattle.playerUid==pursuitPartnerUid);
+
   // SOFT-BOILED is a self-targeted half-HP recovery move. It must consume PP,
   // emit a visible player HP event and never append the generic failed result
   // when healing actually occurred.
@@ -1795,6 +1944,55 @@ int main() {
   assert(capture.caught && capture.outcome == BattleOutcome::Captured);
   assert(CollectionLogic::count(collection) == before + 1);
 
+  // Golden Ball is an infinite Poke Ball, not a hidden Master Ball. Starting
+  // from the same battle/RNG state must produce the exact same catch roll as
+  // a regular Poke Ball while leaving every persisted ball stack untouched.
+  PokemonCollection regularBallCollection;
+  CollectionLogic::initialize(regularBallCollection);
+  assert(CollectionLogic::chooseStarter(regularBallCollection, 1U, 0x601DB411U));
+  BattleState regularBallBattle{};
+  regularBallBattle.active = true;
+  regularBallBattle.kind = BattleKind::Wild;
+  regularBallBattle.outcome = BattleOutcome::Ongoing;
+  regularBallBattle.playerUid = regularBallCollection.party[0];
+  regularBallBattle.opponentCount = 1;
+  regularBallBattle.rngState = 0x601DC0DEU;
+  regularBallBattle.opponents[0] = CollectionLogic::createPokemon(
+      0xF2000004U, 150U, 50U, false, 0x601DCA7CU);  // MEWTWO, catch rate 3.
+  regularBallBattle.opponents[0].moves[0] = static_cast<MoveId>(150);  // SPLASH
+  regularBallBattle.opponents[0].movePp[0] = 40;
+  for (uint8_t slot = 1; slot < kMoveSlots; ++slot) {
+    regularBallBattle.opponents[0].moves[slot] = MoveId::None;
+    regularBallBattle.opponents[0].movePp[slot] = 0;
+  }
+  PokemonCollection goldenBallCollection = regularBallCollection;
+  BattleState goldenBallBattle = regularBallBattle;
+  PokemonCollection lockedGoldenBallCollection = regularBallCollection;
+  BattleState lockedGoldenBallBattle = regularBallBattle;
+  Inventory regularBallInventory{};
+  regularBallInventory.balls[static_cast<uint8_t>(PokeBallType::PokeBall)] = 1U;
+  Inventory goldenBallInventory{};
+  const Inventory goldenBallInventoryBefore = goldenBallInventory;
+  const BattleActionResult lockedGoldenBallResult = BattleEngine::throwBall(
+      lockedGoldenBallBattle, lockedGoldenBallCollection, goldenBallInventory,
+      PokeBallType::GoldenBall);
+  assert(!lockedGoldenBallResult.accepted && lockedGoldenBallBattle.turn == 0U);
+  const BattleActionResult regularBallResult = BattleEngine::throwBall(
+      regularBallBattle, regularBallCollection, regularBallInventory,
+      PokeBallType::PokeBall);
+  const BattleActionResult goldenBallResult = BattleEngine::throwBall(
+      goldenBallBattle, goldenBallCollection, goldenBallInventory,
+      PokeBallType::GoldenBall, true);
+  assert(regularBallResult.accepted && goldenBallResult.accepted);
+  assert(regularBallResult.captureShakes == goldenBallResult.captureShakes &&
+         regularBallResult.caught == goldenBallResult.caught &&
+         regularBallResult.outcome == goldenBallResult.outcome);
+  assert(regularBallInventory.balls[
+             static_cast<uint8_t>(PokeBallType::PokeBall)] == 0U);
+  assert(std::memcmp(goldenBallInventory.balls,
+                     goldenBallInventoryBefore.balls,
+                     sizeof(goldenBallInventory.balls)) == 0);
+
   // Capturing a wild Ditto after Transform must persist Ditto's original
   // identity, not the temporary target species displayed during battle.
   PokemonCollection transformedDittoCollection;
@@ -2051,6 +2249,47 @@ int main() {
              mart.offers[previous].heldItem!=offer.heldItem);
   }
   assert(pokeBallOffer!=0xFF&&potionOffer!=0xFF&&statusOffer!=0xFF&&machineOffer!=0xFF);
+
+  // Ball supply follows the full three-region progression instead of leaving
+  // Great/Ultra Balls dependent on one 2-8 unit random catalog roll. Each tier
+  // is still represented by one unique offer in the twenty-row Market.
+  const auto ballStock=[](const MartState& state,MartItem ball){
+    uint8_t stock=0U,count=0U;
+    for(const MartOffer& offer:state.offers){
+      if(offer.isHeldItem()||offer.isMachine()||offer.item!=ball)continue;
+      stock=offer.remaining;++count;
+    }
+    assert(count==1U);
+    return stock;
+  };
+  const auto assertUniqueOffers=[](const MartState& state){
+    for(uint8_t offer=0;offer<kMartOfferCount;++offer)
+      for(uint8_t previous=0;previous<offer;++previous)
+        assert(state.offers[previous].item!=state.offers[offer].item||
+               state.offers[previous].heldItem!=state.offers[offer].heldItem);
+  };
+  MartState fourBadgeMart{};Economy::rotate(fourBadgeMart,4U,0U,0U,false);
+  MartState eightBadgeMart{};Economy::rotate(eightBadgeMart,8U,0U,0U,false);
+  MartState twelveBadgeMart{};Economy::rotate(twelveBadgeMart,12U,0U,0U,false);
+  MartState sixteenBadgeMart{};Economy::rotate(sixteenBadgeMart,16U,0U,0U,false);
+  MartState twentyBadgeMart{};Economy::rotate(twentyBadgeMart,20U,0U,0U,false);
+  MartState allBadgeMart{};Economy::rotate(allBadgeMart,24U,0U,0U,false);
+  MartState sinnohMart{};Economy::rotate(sinnohMart,24U,0U,0U,true);
+  assert(ballStock(fourBadgeMart,MartItem::GreatBall)==8U);
+  assert(ballStock(eightBadgeMart,MartItem::GreatBall)==12U);
+  assert(ballStock(twelveBadgeMart,MartItem::GreatBall)==16U);
+  assert(ballStock(sixteenBadgeMart,MartItem::GreatBall)==16U);
+  assert(ballStock(twelveBadgeMart,MartItem::UltraBall)==8U);
+  assert(ballStock(sixteenBadgeMart,MartItem::UltraBall)==12U);
+  assert(ballStock(twentyBadgeMart,MartItem::UltraBall)==18U);
+  assert(ballStock(allBadgeMart,MartItem::UltraBall)==24U);
+  assert(ballStock(sinnohMart,MartItem::UltraBall)==32U);
+  assert(ballStock(sinnohMart,MartItem::PokeBall)==12U);
+  assertUniqueOffers(fourBadgeMart);assertUniqueOffers(eightBadgeMart);
+  assertUniqueOffers(twelveBadgeMart);assertUniqueOffers(sixteenBadgeMart);
+  assertUniqueOffers(twentyBadgeMart);assertUniqueOffers(allBadgeMart);
+  assertUniqueOffers(sinnohMart);
+
   // Sinnoh machines are catalogued in the firmware but cannot leak into a
   // pre-unlock rotation. A stale offer from an older build is also replaced
   // before the Market can display it.
@@ -2176,10 +2415,23 @@ int main() {
   assert(heldRotationOffers>300U&&extraMachineOffers>0U);
   MartState testCadence{};testCadence.elapsedSeconds=0;testCadence.day=0;
   assert(Economy::kRotationSeconds == 6U * 60U * 60U);
+  assert(Economy::kEndgameRotationSeconds == 4U * 60U * 60U);
   Economy::advance(testCadence,Economy::kRotationSeconds-1U,0,everyLegacyMachine,everySinnohMachine);
   assert(testCadence.day==0);
   Economy::advance(testCadence,1U,0,everyLegacyMachine,everySinnohMachine);
   assert(testCadence.day==1);
+  MartState endgameCadence{};endgameCadence.elapsedSeconds=0;
+  Economy::advance(endgameCadence,Economy::kEndgameRotationSeconds-1U,
+                   0,everyLegacyMachine,everySinnohMachine,true);
+  assert(endgameCadence.day==0);
+  Economy::advance(endgameCadence,1U,0,everyLegacyMachine,
+                   everySinnohMachine,true);
+  assert(endgameCadence.day==1);
+  MartState endgameRemainder{};
+  endgameRemainder.elapsedSeconds=Economy::kEndgameRotationSeconds+37U;
+  Economy::refreshIfDue(endgameRemainder,0,everyLegacyMachine,
+                        everySinnohMachine,true);
+  assert(endgameRemainder.elapsedSeconds==37U);
   Economy::rotate(mart,0,everyLegacyMachine,everySinnohMachine);
   for(const MartOffer& offer:mart.offers)assert(!offer.isMachine());
 
@@ -2190,20 +2442,20 @@ int main() {
     if(raw<kHeldItemInventorySlots)assert(data->price&&data->martWeight);
     else assert(data->unlockBadges==255U&&!data->martWeight);
   }
-  assert(MegaEvolution::officialFormCount()==59);
+  assert(MegaEvolution::officialFormCount()==67);
   assert(heldItemIsTransferLocked(HeldItem::MegaStone));
   OwnedPokemon megaCharizard=CollectionLogic::createPokemon(7000,6,50,false,1);
   megaCharizard.heldItem=HeldItem::MegaStone;
   assert(MegaEvolution::variantChoiceCount(megaCharizard.speciesId)==2U);
   assert(MegaEvolution::setVariantChoice(megaCharizard,MegaVariant::MegaX));
-  CollectionLogic::refreshAbility(megaCharizard);CollectionLogic::refreshDerivedStats(megaCharizard,false);
+  CollectionLogic::refreshAbility(megaCharizard,3U);CollectionLogic::refreshDerivedStats(megaCharizard,false);
   assert(MegaEvolution::variantFor(megaCharizard)==MegaVariant::MegaX);
   megaCharizard.personality^=1U;
   assert(MegaEvolution::variantFor(megaCharizard)==MegaVariant::MegaX);
   assert(MegaEvolution::type2(megaCharizard,PokemonType::Flying)==PokemonType::Dragon);
   assert(findAbility(megaCharizard.abilityId)&&std::strcmp(findAbility(megaCharizard.abilityId)->name,"TOUGH CLAWS")==0);
   assert(MegaEvolution::setVariantChoice(megaCharizard,MegaVariant::MegaY));
-  CollectionLogic::refreshAbility(megaCharizard);
+  CollectionLogic::refreshAbility(megaCharizard,3U);
   assert(MegaEvolution::variantFor(megaCharizard)==MegaVariant::MegaY);
   assert(findAbility(megaCharizard.abilityId)&&std::strcmp(findAbility(megaCharizard.abilityId)->name,"DROUGHT")==0);
   for(uint16_t sinnohMega:{428U,445U,448U,460U,475U}){
@@ -2212,9 +2464,75 @@ int main() {
     assert(MegaEvolution::canTransform(sinnohMega));
     assert(MegaEvolution::variantChoiceCount(sinnohMega)==1U);
     assert(MegaEvolution::variantFor(mega)==MegaVariant::Mega);
-    CollectionLogic::refreshAbility(mega);
+    CollectionLogic::refreshAbility(mega,4U);
     assert(MegaEvolution::abilityId(mega,0U)==mega.abilityId);
   }
+  struct ExpectedGen5Mega {
+    uint16_t species;
+    uint8_t hp,attack,defense,spAttack,spDefense,speed;
+    PokemonType type1,type2;
+    const char* ability;
+  };
+  static constexpr ExpectedGen5Mega kGen5Megas[]={
+    {500,110,148,75,110,110,75,PokemonType::Fire,PokemonType::Fighting,"MOLD BREAKER"},
+    {530,110,165,100,65,65,103,PokemonType::Ground,PokemonType::Steel,"PIERCING DRILL"},
+    {531,103,60,126,80,126,50,PokemonType::Normal,PokemonType::Fairy,"HEALER"},
+    {545,60,140,149,75,99,62,PokemonType::Bug,PokemonType::Poison,"SHELL ARMOR"},
+    {560,65,130,135,55,135,68,PokemonType::Dark,PokemonType::Fighting,"INTIMIDATE"},
+    {604,85,145,80,135,90,80,PokemonType::Electric,PokemonType::Electric,"EELEVATE"},
+    {609,60,75,110,175,110,90,PokemonType::Ghost,PokemonType::Fire,"INFILTRATOR"},
+    {623,89,159,105,70,105,55,PokemonType::Ground,PokemonType::Ghost,"UNSEEN FIST"},
+  };
+  for(const ExpectedGen5Mega& expected:kGen5Megas){
+    const MegaFormData* form=MegaEvolution::formData(
+        expected.species,MegaVariant::Mega);
+    assert(form&&form->baseHp==expected.hp&&
+           form->baseAttack==expected.attack&&
+           form->baseDefense==expected.defense&&
+           form->baseSpAttack==expected.spAttack&&
+           form->baseSpDefense==expected.spDefense&&
+           form->baseSpeed==expected.speed&&form->type1==expected.type1&&
+           form->type2==expected.type2);
+    OwnedPokemon mega=CollectionLogic::createPokemon(
+        8000U+expected.species,expected.species,70U,false,expected.species);
+    mega.heldItem=HeldItem::MegaStone;
+    assert(MegaEvolution::canTransform(expected.species)&&
+           MegaEvolution::variantChoiceCount(expected.species)==1U&&
+           MegaEvolution::variantFor(mega)==MegaVariant::Mega);
+    CollectionLogic::refreshAbility(mega,5U);
+    CollectionLogic::refreshDerivedStats(mega,false);
+    const AbilityData* ability=findAbility(mega.abilityId);
+    assert(ability&&std::strcmp(ability->name,expected.ability)==0);
+  }
+
+  // Mega form abilities are temporary. Equipping and taking the stone must
+  // never erase the Hidden Ability provenance or recalculate the base form
+  // with an early-generation ability table.
+  OwnedPokemon hiddenMega=CollectionLogic::createPokemon(
+      7999U,3U,60U,false,0x48494444U,5U);
+  const SpeciesData* hiddenMegaSpecies=findSpecies(hiddenMega.speciesId);
+  assert(hiddenMegaSpecies&&hiddenMegaSpecies->hiddenAbility);
+  assert(CollectionLogic::setHiddenAbility(hiddenMega,true,5U));
+  const uint8_t hiddenAbilityId=hiddenMegaSpecies->hiddenAbility;
+  assert(CollectionLogic::hasHiddenAbility(hiddenMega)&&
+         hiddenMega.abilityId==hiddenAbilityId);
+  uint16_t hiddenMegaInventory[kHeldItemInventorySlots]{};
+  SpecialHeldItemInventory hiddenMegaSpecial{};
+  Gen4UniqueItemInventory hiddenMegaGen4{};
+  Gen5UniqueItemInventory hiddenMegaGen5{};
+  uint64_t hiddenMegaOwned=kMegaStoneOwnershipBit;
+  assert(equipHeldItem(hiddenMega,HeldItem::MegaStone,hiddenMegaInventory,
+                       hiddenMegaSpecial,hiddenMegaGen4,hiddenMegaGen5,
+                       hiddenMegaOwned));
+  CollectionLogic::refreshAbility(hiddenMega,5U);
+  assert(CollectionLogic::hasHiddenAbility(hiddenMega)&&
+         hiddenMega.abilityId!=hiddenAbilityId);
+  assert(unequipHeldItem(hiddenMega,hiddenMegaInventory,hiddenMegaSpecial,
+                         hiddenMegaGen4,hiddenMegaGen5,hiddenMegaOwned));
+  CollectionLogic::refreshAbility(hiddenMega,5U);
+  assert(hiddenMega.heldItem==HeldItem::None&&
+         CollectionLogic::hasHiddenAbility(hiddenMega)&&
+         hiddenMega.abilityId==hiddenAbilityId);
   bool foundHeldOffer=false;
   for(uint16_t day=0;day<100;++day){Economy::rotate(mart,0,ownedMachines);for(uint8_t i=0;i<kMartOfferCount;++i)if(mart.offers[i].isHeldItem()){foundHeldOffer=true;assert(heldItemData(mart.offers[i].heldItem)->unlockBadges==0);}}
   assert(foundHeldOffer);
@@ -2958,6 +3276,247 @@ int main() {
          released.damageTaken>0&&
          stockAiBattle.opponentVolatiles[0].stockpileCount==0);
 
+  // FireRed's Beat Up script deliberately skips typecalc. Even against a
+  // Fighting target, every eligible party strike is typeless for STAB and
+  // effectiveness feedback while retaining its custom base-stat formula.
+  PokemonCollection beatUpCollection;CollectionLogic::initialize(beatUpCollection);
+  assert(CollectionLogic::chooseStarter(beatUpCollection,1,0x2510));
+  OwnedPokemon* beatUpUser=CollectionLogic::active(beatUpCollection,0);
+  beatUpUser->level=50;CollectionLogic::refreshDerivedStats(*beatUpUser,false);
+  beatUpUser->moves[0]=static_cast<MoveId>(251);beatUpUser->movePp[0]=10;
+  BattleState beatUpBattle;BattleEngine::clear(beatUpBattle);beatUpBattle.active=true;
+  beatUpBattle.kind=BattleKind::Trainer;beatUpBattle.outcome=BattleOutcome::Ongoing;
+  beatUpBattle.playerUid=beatUpUser->uid;beatUpBattle.opponentCount=1;
+  beatUpBattle.opponents[0]=CollectionLogic::createPokemon(0,66,50,false,0x2511);
+  beatUpBattle.opponents[0].maximumHp=beatUpBattle.opponents[0].currentHp=5000;
+  for(uint8_t slot=0;slot<kMoveSlots;++slot){
+    beatUpBattle.opponents[0].moves[slot]=MoveId::None;
+    beatUpBattle.opponents[0].movePp[slot]=0;
+  }
+  beatUpBattle.opponents[0].moves[0]=static_cast<MoveId>(150);
+  beatUpBattle.opponents[0].movePp[0]=40;
+  const BattleActionResult beatUpResult=BattleEngine::fight(
+      beatUpBattle,beatUpCollection,0);
+  bool beatUpPrintedEffectiveness=false;
+  for(uint8_t event=0;event<beatUpResult.eventCount;++event)
+    beatUpPrintedEffectiveness|=
+        beatUpResult.events[event].type==BattleEventType::Effectiveness;
+  assert(beatUpResult.accepted&&beatUpResult.hit&&beatUpResult.damageDealt>0&&
+         beatUpResult.effectiveness100==100U&&!beatUpPrintedEffectiveness);
+
+  // tryMemento checks the target's actual Attack/Sp. Atk stages before its
+  // later Substitute branch. At -6/-6 the move fails without sacrificing
+  // the user, even when a Substitute is present.
+  PokemonCollection mementoCollection;CollectionLogic::initialize(mementoCollection);
+  assert(CollectionLogic::chooseStarter(mementoCollection,1,0x2620));
+  OwnedPokemon* mementoUser=CollectionLogic::active(mementoCollection,0);
+  mementoUser->moves[0]=static_cast<MoveId>(262);mementoUser->movePp[0]=10;
+  BattleState mementoBattle;BattleEngine::clear(mementoBattle);mementoBattle.active=true;
+  mementoBattle.kind=BattleKind::Trainer;mementoBattle.outcome=BattleOutcome::Ongoing;
+  mementoBattle.playerUid=mementoUser->uid;mementoBattle.opponentCount=1;
+  mementoBattle.opponents[0]=CollectionLogic::createPokemon(0,66,20,false,0x2621);
+  for(uint8_t slot=0;slot<kMoveSlots;++slot){
+    mementoBattle.opponents[0].moves[slot]=MoveId::None;
+    mementoBattle.opponents[0].movePp[slot]=0;
+  }
+  mementoBattle.opponents[0].moves[0]=static_cast<MoveId>(150);
+  mementoBattle.opponents[0].movePp[0]=40;
+  mementoBattle.opponentVolatiles[0].substituteHp=20;
+  mementoBattle.opponentVolatiles[0].attackStage=kMinimumBattleStatStage;
+  mementoBattle.opponentVolatiles[0].spAttackStage=kMinimumBattleStatStage;
+  const uint16_t mementoHpBefore=mementoUser->currentHp;
+  const BattleActionResult failedMemento=BattleEngine::fight(
+      mementoBattle,mementoCollection,0);
+  bool sawMementoFailure=false;
+  for(uint8_t event=0;event<failedMemento.eventCount;++event)
+    sawMementoFailure|=failedMemento.events[event].type==BattleEventType::MoveEffect&&
+        failedMemento.events[event].side==BattleSide::Player&&
+        failedMemento.events[event].value==static_cast<uint16_t>(BattleMoveEffect::Failed);
+  assert(failedMemento.accepted);
+  assert(sawMementoFailure);
+  assert(mementoUser->currentHp==mementoHpBefore);
+
+  // A Substitute prevents SmellingSalt from seeing or curing paralysis. Its
+  // damage must therefore be identical to the same seeded hit on a healthy
+  // target instead of receiving the erroneous 2x modifier.
+  auto smellingSaltSubstituteDamage=[](StatusCondition targetStatus){
+    PokemonCollection collection;CollectionLogic::initialize(collection);
+    assert(CollectionLogic::chooseStarter(collection,1,0x2650));
+    OwnedPokemon* user=CollectionLogic::active(collection,0);
+    user->level=50;CollectionLogic::refreshDerivedStats(*user,false);
+    user->moves[0]=static_cast<MoveId>(265);user->movePp[0]=10;
+    BattleState battle;BattleEngine::clear(battle);battle.active=true;
+    battle.kind=BattleKind::Trainer;battle.outcome=BattleOutcome::Ongoing;
+    battle.rngState=0x26512651U;battle.playerUid=user->uid;battle.opponentCount=1;
+    battle.opponents[0]=CollectionLogic::createPokemon(0,66,50,false,0x2651);
+    battle.opponents[0].maximumHp=battle.opponents[0].currentHp=5000;
+    battle.opponents[0].status=targetStatus;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      battle.opponents[0].moves[slot]=MoveId::None;
+      battle.opponents[0].movePp[slot]=0;
+    }
+    battle.opponents[0].moves[0]=static_cast<MoveId>(150);
+    battle.opponents[0].movePp[0]=40;
+    battle.opponentVolatiles[0].substituteHp=1000;
+    const BattleActionResult result=BattleEngine::fight(battle,collection,0);
+    assert(result.accepted&&result.hit&&result.damageDealt>0);
+    return result.damageDealt;
+  };
+  assert(smellingSaltSubstituteDamage(StatusCondition::Paralysis)==
+         smellingSaltSubstituteDamage(StatusCondition::None));
+
+  // Flatter fails only when both of its components are already exhausted,
+  // and that combined check occurs after accuracy. A maxed Sp. Atk target
+  // that is not confused must still become confused.
+  PokemonCollection flatterCollection;CollectionLogic::initialize(flatterCollection);
+  assert(CollectionLogic::chooseStarter(flatterCollection,1,0x2600));
+  OwnedPokemon* flatterUser=CollectionLogic::active(flatterCollection,0);
+  flatterUser->moves[0]=static_cast<MoveId>(260);flatterUser->movePp[0]=15;
+  BattleState flatterBattle;BattleEngine::clear(flatterBattle);flatterBattle.active=true;
+  flatterBattle.kind=BattleKind::Pvp;flatterBattle.outcome=BattleOutcome::Ongoing;
+  flatterBattle.playerUid=flatterUser->uid;flatterBattle.opponentCount=1;
+  flatterBattle.playerVolatile.speedStage=kMaximumBattleStatStage;
+  flatterBattle.opponents[0]=CollectionLogic::createPokemon(0,79,20,false,0x2601);
+  flatterBattle.opponents[0].moves[0]=static_cast<MoveId>(150);
+  flatterBattle.opponents[0].movePp[0]=40;
+  flatterBattle.opponentVolatiles[0].speedStage=kMinimumBattleStatStage;
+  flatterBattle.opponentVolatiles[0].spAttackStage=kMaximumBattleStatStage;
+  flatterBattle.opponentVolatiles[0].confusionTurns=3;
+  flatterBattle.opponentVolatiles[0].recharging=true;
+  const BattleActionResult exhaustedFlatter=BattleEngine::fightPvp(
+      flatterBattle,flatterCollection,0,0);
+  bool sawFlatterFailure=false;
+  for(uint8_t event=0;event<exhaustedFlatter.eventCount;++event)
+    sawFlatterFailure|=exhaustedFlatter.events[event].type==BattleEventType::MoveEffect&&
+        exhaustedFlatter.events[event].value==static_cast<uint16_t>(BattleMoveEffect::Failed);
+  assert(exhaustedFlatter.accepted&&!exhaustedFlatter.hit&&sawFlatterFailure&&
+         flatterBattle.opponentVolatiles[0].confusionTurns==3);
+  flatterBattle.opponentVolatiles[0].confusionTurns=0;
+  flatterBattle.opponentVolatiles[0].recharging=true;
+  const BattleActionResult usefulFlatter=BattleEngine::fightPvp(
+      flatterBattle,flatterCollection,0,0);
+  assert(usefulFlatter.accepted&&usefulFlatter.hit&&
+         flatterBattle.opponentVolatiles[0].spAttackStage==kMaximumBattleStatStage&&
+         flatterBattle.opponentVolatiles[0].confusionTurns!=0);
+
+  // Will-O-Wisp checks Fire typing before its 75% accuracy command. A Fire
+  // target therefore rejects the move without consuming the battle RNG.
+  PokemonCollection wispCollection;CollectionLogic::initialize(wispCollection);
+  assert(CollectionLogic::chooseStarter(wispCollection,1,0x2610));
+  OwnedPokemon* wispUser=CollectionLogic::active(wispCollection,0);
+  wispUser->moves[0]=static_cast<MoveId>(261);wispUser->movePp[0]=15;
+  BattleState wispBattle;BattleEngine::clear(wispBattle);wispBattle.active=true;
+  wispBattle.kind=BattleKind::Pvp;wispBattle.outcome=BattleOutcome::Ongoing;
+  wispBattle.playerUid=wispUser->uid;wispBattle.opponentCount=1;
+  wispBattle.opponents[0]=CollectionLogic::createPokemon(0,4,20,false,0x2611);
+  wispBattle.opponents[0].moves[0]=static_cast<MoveId>(150);
+  wispBattle.opponents[0].movePp[0]=40;
+  wispBattle.rngState=0x26102611U;
+  const uint32_t wispRngBefore=wispBattle.rngState;
+  const BattleActionResult fireRejectedWisp=BattleEngine::fightPvp(
+      wispBattle,wispCollection,0,0xFEU);
+  bool sawWispFailure=false;
+  for(uint8_t event=0;event<fireRejectedWisp.eventCount;++event)
+    sawWispFailure|=
+        fireRejectedWisp.events[event].type==BattleEventType::MoveEffect&&
+        fireRejectedWisp.events[event].value==
+            static_cast<uint16_t>(BattleMoveEffect::Failed);
+  assert(fireRejectedWisp.accepted&&!fireRejectedWisp.hit&&sawWispFailure&&
+         wispBattle.opponents[0].status==StatusCondition::None&&
+         wispBattle.rngState==wispRngBefore);
+
+  // Yawn and Teeter Dance likewise perform their Ability checks before the
+  // accuracy command. Besides preserving RNG, these paths must identify the
+  // blocking Ability instead of reporting a generic miss/failure.
+  for(const auto orderedMove : {static_cast<MoveId>(281),static_cast<MoveId>(298)}){
+    PokemonCollection orderedCollection;CollectionLogic::initialize(orderedCollection);
+    assert(CollectionLogic::chooseStarter(orderedCollection,1,
+        static_cast<uint32_t>(0x2700U+static_cast<uint16_t>(orderedMove))));
+    OwnedPokemon* orderedUser=CollectionLogic::active(orderedCollection,0);
+    orderedUser->moves[0]=orderedMove;
+    orderedUser->movePp[0]=findFullMove(orderedMove)->pp;
+    BattleState orderedBattle;BattleEngine::clear(orderedBattle);
+    orderedBattle.active=true;orderedBattle.kind=BattleKind::Pvp;
+    orderedBattle.outcome=BattleOutcome::Ongoing;
+    orderedBattle.playerUid=orderedUser->uid;orderedBattle.opponentCount=1;
+    orderedBattle.opponents[0]=CollectionLogic::createPokemon(
+        0,79,20,false,static_cast<uint32_t>(0x2800U+
+        static_cast<uint16_t>(orderedMove)));
+    orderedBattle.opponents[0].abilityId=
+        orderedMove==static_cast<MoveId>(281)?72U:20U;
+    orderedBattle.opponents[0].moves[0]=static_cast<MoveId>(150);
+    orderedBattle.opponents[0].movePp[0]=40;
+    orderedBattle.rngState=0x28129801U+static_cast<uint16_t>(orderedMove);
+    const uint32_t rngBefore=orderedBattle.rngState;
+    const BattleActionResult blocked=BattleEngine::fightPvp(
+        orderedBattle,orderedCollection,0,0xFEU);
+    bool sawAbility=false;
+    for(uint8_t event=0;event<blocked.eventCount;++event)
+      sawAbility|=blocked.events[event].type==BattleEventType::AbilityActivated&&
+          blocked.events[event].side==BattleSide::Opponent;
+    assert(blocked.accepted&&!blocked.hit&&sawAbility&&
+           orderedBattle.rngState==rngBefore);
+  }
+
+  // Knock Off's post-hit Sticky Hold branch announces the Ability and leaves
+  // the item active. The damage still lands normally.
+  PokemonCollection knockHoldCollection;CollectionLogic::initialize(knockHoldCollection);
+  assert(CollectionLogic::chooseStarter(knockHoldCollection,1,0x2820));
+  OwnedPokemon* knockHoldUser=CollectionLogic::active(knockHoldCollection,0);
+  knockHoldUser->moves[0]=static_cast<MoveId>(282);knockHoldUser->movePp[0]=20;
+  BattleState knockHoldBattle;BattleEngine::clear(knockHoldBattle);
+  knockHoldBattle.active=true;knockHoldBattle.kind=BattleKind::Pvp;
+  knockHoldBattle.outcome=BattleOutcome::Ongoing;
+  knockHoldBattle.playerUid=knockHoldUser->uid;knockHoldBattle.opponentCount=1;
+  knockHoldBattle.opponents[0]=CollectionLogic::createPokemon(0,79,20,false,0x2821);
+  knockHoldBattle.opponents[0].abilityId=60U;
+  knockHoldBattle.opponents[0].heldItem=HeldItem::Leftovers;
+  knockHoldBattle.opponents[0].moves[0]=static_cast<MoveId>(150);
+  knockHoldBattle.opponents[0].movePp[0]=40;
+  const BattleActionResult heldByAbility=BattleEngine::fightPvp(
+      knockHoldBattle,knockHoldCollection,0,0xFEU);
+  bool sawStickyHold=false;
+  for(uint8_t event=0;event<heldByAbility.eventCount;++event)
+    sawStickyHold|=
+        heldByAbility.events[event].type==BattleEventType::AbilityActivated&&
+        heldByAbility.events[event].side==BattleSide::Opponent;
+  assert(heldByAbility.accepted&&heldByAbility.hit&&sawStickyHold&&
+         !heldByAbility.heldItemKnockedOff&&
+         !knockHoldBattle.opponentVolatiles[0].heldItemSuppressed);
+
+  // Snatch must execute the complete stolen move, including the two Gen-IV
+  // snatchable effects that were missing from its shared resolver.
+  auto snatchMove=[](MoveId stolenMove,bool damagePlayer){
+    PokemonCollection collection;CollectionLogic::initialize(collection);
+    assert(CollectionLogic::chooseStarter(collection,1,
+        0x28900000U+static_cast<uint16_t>(stolenMove)));
+    OwnedPokemon* player=CollectionLogic::active(collection,0);
+    player->moves[0]=static_cast<MoveId>(289);player->movePp[0]=10;
+    if(damagePlayer)player->currentHp=static_cast<uint16_t>(player->maximumHp/2U);
+    BattleState battle;BattleEngine::clear(battle);battle.active=true;
+    battle.kind=BattleKind::Pvp;battle.outcome=BattleOutcome::Ongoing;
+    battle.playerUid=player->uid;battle.opponentCount=1;
+    battle.opponents[0]=CollectionLogic::createPokemon(
+        0,79,50,false,0x29000000U+static_cast<uint16_t>(stolenMove));
+    battle.opponents[0].moves[0]=stolenMove;
+    battle.opponents[0].movePp[0]=findFullMove(stolenMove)->pp;
+    const uint16_t hpBefore=player->currentHp;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        battle,collection,0,0);
+    bool sawSnatch=false;
+    for(uint8_t event=0;event<result.eventCount;++event)
+      sawSnatch|=result.events[event].type==BattleEventType::MoveEffect&&
+          result.events[event].value==
+              static_cast<uint16_t>(BattleMoveEffect::MoveSnatched);
+    assert(result.accepted&&sawSnatch);
+    if(stolenMove==static_cast<MoveId>(455))
+      assert(battle.playerVolatile.defenseStage==1&&
+             battle.playerVolatile.spDefenseStage==1);
+    else assert(player->currentHp>hpBefore);
+  };
+  snatchMove(static_cast<MoveId>(455),false); // DEFEND ORDER
+  snatchMove(static_cast<MoveId>(456),true);  // HEAL ORDER
+
   // Automatic and permanent held-item effects are resolved by the battle
   // engine and a consumed Berry does not return to the Bag.
   PokemonCollection heldCollection;CollectionLogic::initialize(heldCollection);assert(CollectionLogic::chooseStarter(heldCollection,4,123));
@@ -3054,8 +3613,24 @@ int main() {
   BattleState trickGiveBattle=itemMoveBattle(static_cast<MoveId>(271),HeldItem::SmokeBall,HeldItem::None);
   assert(BattleEngine::fight(trickGiveBattle,heldCollection,0).heldItemSwapped);
   assert(heldUser->heldItem==HeldItem::None&&trickGiveBattle.opponents[0].heldItem==HeldItem::SmokeBall);
+  BattleState switcherooBattle=itemMoveBattle(static_cast<MoveId>(415),HeldItem::SmokeBall,HeldItem::Leftovers);
+  const BattleActionResult switcherooResult=BattleEngine::fight(switcherooBattle,heldCollection,0);
+  assert(switcherooResult.accepted&&switcherooResult.heldItemSwapped);
+  assert(heldUser->heldItem==HeldItem::Leftovers&&
+         switcherooBattle.opponents[0].heldItem==HeldItem::SmokeBall);
   BattleState emptyTrickBattle=itemMoveBattle(static_cast<MoveId>(271),HeldItem::None,HeldItem::None);
-  assert(!BattleEngine::fight(emptyTrickBattle,heldCollection,0).heldItemSwapped);
+  const BattleActionResult emptyTrick=BattleEngine::fight(emptyTrickBattle,heldCollection,0);
+  bool sawEmptyTrickFailure=false;
+  for(uint8_t event=0;event<emptyTrick.eventCount;++event)
+    sawEmptyTrickFailure|=emptyTrick.events[event].type==BattleEventType::MoveEffect&&
+        emptyTrick.events[event].value==static_cast<uint16_t>(BattleMoveEffect::Failed);
+  assert(!emptyTrick.heldItemSwapped&&sawEmptyTrickFailure);
+  BattleState multitypeSwitchBattle=itemMoveBattle(static_cast<MoveId>(415),HeldItem::SmokeBall,HeldItem::Leftovers);
+  multitypeSwitchBattle.opponents[0].abilityId=122; // MULTITYPE
+  const BattleActionResult multitypeSwitch=BattleEngine::fight(
+      multitypeSwitchBattle,heldCollection,0);
+  assert(!multitypeSwitch.heldItemSwapped&&heldUser->heldItem==HeldItem::SmokeBall&&
+         multitypeSwitchBattle.opponents[0].heldItem==HeldItem::Leftovers);
   BattleState substituteTrickBattle=itemMoveBattle(static_cast<MoveId>(271),HeldItem::SmokeBall,HeldItem::Leftovers);
   substituteTrickBattle.opponentVolatiles[0].substituteHp=10;
   assert(!BattleEngine::fight(substituteTrickBattle,heldCollection,0).heldItemSwapped);
@@ -3093,7 +3668,8 @@ int main() {
   assert(!PokedexLogic::isLegendaryOrMythical(479));
   assert(PokedexLogic::isLegendaryOrMythical(480));
   assert(PokedexLogic::isLegendaryOrMythical(493));
-  assert(!PokedexLogic::isLegendaryOrMythical(494));
+  assert(PokedexLogic::isLegendaryOrMythical(494)); // Victini
+  assert(!PokedexLogic::isLegendaryOrMythical(495));
 
   // Each regional block is completed independently. Reconciliation grants
   // one persistent Master Ball, queues a visible acknowledgement and never
@@ -3104,6 +3680,7 @@ int main() {
   assert(PokedexLogic::generationSpeciesCount(2) == 251);
   assert(PokedexLogic::generationSpeciesCount(3) == 386);
   assert(PokedexLogic::generationSpeciesCount(4) == 493);
+  assert(PokedexLogic::generationSpeciesCount(5) == 649);
   assert(PokedexLogic::generationCaughtCount(completedDex, 1) == 151);
   assert(PokedexLogic::isGenerationComplete(completedDex, 1));
   assert(!PokedexLogic::isGenerationComplete(completedDex, 2));
@@ -3304,13 +3881,28 @@ int main() {
   const GymDefinition* blaine=GymSystem::definition(GymId::Cinnabar);
   assert(koga&&koga->team[2].level==34U&&sabrina&&sabrina->team[2].level==39U&&
          blaine&&blaine->team[2].level==44U);
-  for(uint8_t i=1;i<8;++i)assert(GymSystem::recordVictory(gyms,static_cast<GymId>(i)));
+  PokemonCollection leagueCollection;CollectionLogic::initialize(leagueCollection);
+  assert(CollectionLogic::chooseStarter(leagueCollection,7));
+  uint64_t luckyEggOwnership=0;
+  for(uint8_t i=1;i<4;++i)
+    assert(GymSystem::recordVictory(gyms,static_cast<GymId>(i)));
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==0U);
+  assert(!LeagueSystem::reconcileKantoLuckyEggReward(
+      gyms,leagueCollection,luckyEggOwnership));
+  assert(GymSystem::recordVictory(gyms,GymId::Fuchsia));
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==50U);
+  assert(LeagueSystem::reconcileKantoLuckyEggReward(
+      gyms,leagueCollection,luckyEggOwnership));
+  assert(luckyEggOwnership&kLuckyEggOwnershipBit);
+  assert(!LeagueSystem::reconcileKantoLuckyEggReward(
+      gyms,leagueCollection,luckyEggOwnership));
+  for(uint8_t i=5;i<8;++i)
+    assert(GymSystem::recordVictory(gyms,static_cast<GymId>(i)));
   assert(GymSystem::regionComplete(gyms,1)&&GymSystem::leagueAvailable(gyms));
   assert(!GymSystem::challengeAvailable(gyms,100U));
   assert(!GymSystem::needsRegionalStarter(gyms));
   assert(GymSystem::next(gyms)==GymId::Count);
-  PokemonCollection leagueCollection;CollectionLogic::initialize(leagueCollection);
-  assert(CollectionLogic::chooseStarter(leagueCollection,7));BattleState leagueBattle;
+  BattleState leagueBattle;
   assert(LeagueSystem::start(leagueBattle,leagueCollection,leagueCollection.party[0],gyms,77));
   assert(leagueBattle.kind==BattleKind::League&&leagueBattle.leagueRegion==1&&leagueBattle.leagueStage==0);
   assert(leagueBattle.opponentCount==3&&leagueBattle.opponents[0].speciesId==87&&
@@ -3322,10 +3914,8 @@ int main() {
   assert(!LeagueSystem::advance(leagueBattle,leagueCollection));
   assert(GymSystem::recordLeagueVictory(gyms,1));
   assert(GymSystem::leagueComplete(gyms,1)&&!GymSystem::leagueAvailable(gyms));
-  uint64_t luckyEggOwnership=0;
-  assert(LeagueSystem::reconcileKantoLuckyEggReward(
-      gyms,leagueCollection,luckyEggOwnership));
-  assert(luckyEggOwnership&kLuckyEggOwnershipBit);
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==100U);
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms,true)==125U);
   assert(!LeagueSystem::reconcileKantoLuckyEggReward(
       gyms,leagueCollection,luckyEggOwnership));
   luckyEggOwnership&=~kLuckyEggOwnershipBit;
@@ -3444,6 +4034,40 @@ int main() {
   const SpeciesData* evolvedSpecies=findSpecies(evolving->speciesId);
   assert(evolving->abilityId==(evolvedSpecies->ability2&&(evolving->personality&1U)
       ?evolvedSpecies->ability2:evolvedSpecies->ability1));
+
+  // XP gained at Lv.100 must retry an evolution that became eligible only
+  // after the previous stage was committed. Without this catch-up path a
+  // high-level Porygon could become Porygon2 at 100 and never reach Porygon-Z.
+  PokemonCollection levelCapEvolution{};
+  CollectionLogic::initialize(levelCapEvolution);
+  assert(CollectionLogic::chooseStarter(levelCapEvolution,1,0x100E0001U));
+  OwnedPokemon* cappedEvolver=CollectionLogic::active(levelCapEvolution,0);
+  assert(cappedEvolver);
+  const uint32_t cappedEvolverUid=cappedEvolver->uid;
+  *cappedEvolver=CollectionLogic::createPokemon(
+      cappedEvolverUid,233,100,false,0x100E0002U,4U);
+  cappedEvolver->moves[0]=MoveId::Tackle;
+  cappedEvolver->movePp[0]=findFullMove(MoveId::Tackle)->pp;
+  BattleState levelCapBattle{};
+  levelCapBattle.active=true;
+  levelCapBattle.kind=BattleKind::Trainer;
+  levelCapBattle.outcome=BattleOutcome::Ongoing;
+  levelCapBattle.playerUid=cappedEvolverUid;
+  levelCapBattle.unlockedGeneration=4U;
+  levelCapBattle.opponentCount=1;
+  levelCapBattle.opponents[0]=CollectionLogic::createPokemon(
+      0x100E0003U,10,2,false,0x100E0004U);
+  levelCapBattle.opponents[0].currentHp=1U;
+  for(uint8_t slot=0;slot<kMoveSlots;++slot)
+    levelCapBattle.opponents[0].moves[slot]=MoveId::None;
+  const BattleActionResult levelCapResult=BattleEngine::fight(
+      levelCapBattle,levelCapEvolution,0U);
+  assert(levelCapResult.accepted&&levelCapResult.opponentDefeated&&
+         levelCapResult.experienceGained>0U&&cappedEvolver->level==100U&&
+         levelCapResult.pendingEvolutionCount==1U&&
+         levelCapResult.pendingEvolutionUids[0]==cappedEvolverUid&&
+         levelCapResult.pendingEvolutionChoiceCounts[0]==1U&&
+         levelCapResult.pendingEvolutionChoices[0][0]==474U);
 
   // A branching evolution must stop combat progression with a persistent
   // selection, rather than silently choosing the first generated destination.
@@ -3589,6 +4213,78 @@ int main() {
     futureSightLanded = futureBattle.opponents[0].currentHp < hpBefore;
   }
   assert(futureSightLanded);
+
+  // Future Sight stores the complete base damage at setup. Species-specific
+  // offensive/defensive items therefore have to be captured now, while
+  // Metal Powder must affect only physical Defense after the Gen-IV split.
+  const auto storedFutureDamage=[](uint16_t attackerSpecies,HeldItem attackerItem,
+                                   uint16_t defenderSpecies,HeldItem defenderItem){
+    PokemonCollection collection;CollectionLogic::initialize(collection);
+    assert(CollectionLogic::chooseStarter(collection,1,0xF517U));
+    OwnedPokemon* attacker=CollectionLogic::active(collection,0);
+    const uint32_t attackerUid=attacker->uid;
+    *attacker=CollectionLogic::createPokemon(attackerUid,attackerSpecies,50,false,0xF518U);
+    const MoveId futureSight=static_cast<MoveId>(248);
+    attacker->moves[0]=futureSight;attacker->movePp[0]=findFullMove(futureSight)->pp;
+    attacker->heldItem=attackerItem;
+    BattleState battle;BattleEngine::clear(battle);battle.active=true;
+    battle.kind=BattleKind::Trainer;battle.outcome=BattleOutcome::Ongoing;
+    battle.playerUid=attackerUid;battle.opponentCount=1;battle.rngState=0xF519U;
+    battle.opponents[0]=CollectionLogic::createPokemon(
+        0xF2000001U,defenderSpecies,50,false,0xF51AU);
+    battle.opponents[0].heldItem=defenderItem;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      battle.opponents[0].moves[slot]=MoveId::None;
+      battle.opponents[0].movePp[slot]=0;
+    }
+    const BattleActionResult setup=BattleEngine::fight(battle,collection,0);
+    assert(setup.accepted&&battle.delayedToOpponent.move==futureSight&&
+           battle.delayedToOpponent.baseDamage>0);
+    return battle.delayedToOpponent.baseDamage;
+  };
+  assert(storedFutureDamage(25,HeldItem::LightBall,1,HeldItem::None)>
+         storedFutureDamage(25,HeldItem::None,1,HeldItem::None));
+  assert(storedFutureDamage(366,HeldItem::DeepSeaTooth,1,HeldItem::None)>
+         storedFutureDamage(366,HeldItem::None,1,HeldItem::None));
+  assert(storedFutureDamage(380,HeldItem::SoulDew,1,HeldItem::None)>
+         storedFutureDamage(380,HeldItem::None,1,HeldItem::None));
+  assert(storedFutureDamage(65,HeldItem::None,366,HeldItem::DeepSeaScale)<
+         storedFutureDamage(65,HeldItem::None,366,HeldItem::None));
+  assert(storedFutureDamage(65,HeldItem::None,380,HeldItem::SoulDew)<
+         storedFutureDamage(65,HeldItem::None,380,HeldItem::None));
+  assert(storedFutureDamage(65,HeldItem::None,132,HeldItem::MetalPowder)==
+         storedFutureDamage(65,HeldItem::None,132,HeldItem::None));
+
+  const auto directMoveDamage=[](MoveId move,uint16_t attackerSpecies,
+                                 uint8_t attackerAbility,uint16_t defenderSpecies,
+                                 HeldItem defenderItem){
+    PokemonCollection collection;CollectionLogic::initialize(collection);
+    assert(CollectionLogic::chooseStarter(collection,1,0xD411U));
+    OwnedPokemon* attacker=CollectionLogic::active(collection,0);
+    const uint32_t attackerUid=attacker->uid;
+    *attacker=CollectionLogic::createPokemon(attackerUid,attackerSpecies,50,false,0xD412U);
+    attacker->abilityId=attackerAbility;
+    attacker->moves[0]=move;attacker->movePp[0]=findFullMove(move)->pp;
+    BattleState battle;BattleEngine::clear(battle);battle.active=true;
+    battle.kind=BattleKind::Trainer;battle.outcome=BattleOutcome::Ongoing;
+    battle.playerUid=attackerUid;battle.opponentCount=1;battle.rngState=0xD413U;
+    battle.opponents[0]=CollectionLogic::createPokemon(
+        0xF2000002U,defenderSpecies,50,false,0xD414U);
+    battle.opponents[0].heldItem=defenderItem;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      battle.opponents[0].moves[slot]=MoveId::None;
+      battle.opponents[0].movePp[slot]=0;
+    }
+    const BattleActionResult result=BattleEngine::fight(battle,collection,0);
+    assert(result.accepted&&result.hit&&result.damageDealt>0);
+    return result.damageDealt;
+  };
+  assert(directMoveDamage(static_cast<MoveId>(9),68,90,242,HeldItem::None)>
+         directMoveDamage(static_cast<MoveId>(9),68,0,242,HeldItem::None));
+  assert(directMoveDamage(MoveId::Tackle,68,0,132,HeldItem::MetalPowder)<
+         directMoveDamage(MoveId::Tackle,68,0,132,HeldItem::None));
+  assert(directMoveDamage(static_cast<MoveId>(94),65,0,132,HeldItem::MetalPowder)==
+         directMoveDamage(static_cast<MoveId>(94),65,0,132,HeldItem::None));
 
   // PvP consumes the exact move chosen by the remote peer and never awards
   // XP/EV/money. A peer switch is represented as the opponent's whole turn,
@@ -4088,7 +4784,7 @@ int main() {
   for(uint32_t seed=1U;seed<=20000U;++seed){
     Inventory rewardInventory{};EggInventory rewardEggs{};PokedexState rewardDex{};
     const BossRewardResult reward=BossSystem::awardVictoryReward(
-        rewardInventory,rewardEggs,rewardDex,seed);
+        rewardInventory,rewardEggs,rewardDex,3U,seed);
     if(reward.kind==BossRewardKind::MasterBall){
       ++bossMasterHits;
       if(!bossMasterSeed)bossMasterSeed=seed;
@@ -4111,7 +4807,7 @@ int main() {
   for(uint16_t species:bossStarters)PokedexLogic::markCaught(bossLegendaryDex,species);
   Inventory bossLegendaryInventory{};EggInventory bossLegendaryEggs{};
   const BossRewardResult bossLegendaryReward=BossSystem::awardVictoryReward(
-      bossLegendaryInventory,bossLegendaryEggs,bossLegendaryDex,bossEggSeed);
+      bossLegendaryInventory,bossLegendaryEggs,bossLegendaryDex,3U,bossEggSeed);
   assert(bossLegendaryReward.kind==BossRewardKind::SpecialEgg&&
          BossSystem::isLegendaryOrMythical(bossLegendaryReward.eggSpeciesId));
 
@@ -4122,12 +4818,12 @@ int main() {
       kInventoryStackLimit;
   EggInventory fallbackBossEggs{};
   const BossRewardResult fallbackBossReward=BossSystem::awardVictoryReward(
-      fullBossInventory,fallbackBossEggs,bossLegendaryDex,bossMasterSeed);
+      fullBossInventory,fallbackBossEggs,bossLegendaryDex,3U,bossMasterSeed);
   assert(fallbackBossReward.kind==BossRewardKind::SpecialEgg&&
          fallbackBossEggs.count==1U);
   EggInventory fullBossEggs{};fullBossEggs.count=EggInventory::kCapacity;
   const BossRewardResult fullBossReward=BossSystem::awardVictoryReward(
-      fullBossInventory,fullBossEggs,bossLegendaryDex,bossEggSeed);
+      fullBossInventory,fullBossEggs,bossLegendaryDex,3U,bossEggSeed);
   assert(fullBossReward.kind==BossRewardKind::StorageFull&&
          fullBossInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==
              kInventoryStackLimit&&fullBossEggs.count==EggInventory::kCapacity);
@@ -4304,7 +5000,7 @@ int main() {
   for(uint32_t seed=1;seed<=20000U;++seed){
     Inventory rewardInventory{};EggInventory rewardEggs{};PokedexState rewardDex{};
     const BattleTowerRewardResult reward=BattleTowerSystem::awardCompletionReward(
-        rewardInventory,rewardEggs,rewardDex,seed);
+        rewardInventory,rewardEggs,rewardDex,3U,seed);
     if(reward.kind==BattleTowerRewardKind::MasterBall){
       ++masterRewardHits;
       if(!masterRewardSeed)masterRewardSeed=seed;
@@ -4324,14 +5020,14 @@ int main() {
   assert(specialRewardSeed&&specialRewardHits>=70U&&specialRewardHits<=130U);
   Inventory masterRewardInventory{};EggInventory masterRewardEggs{};PokedexState masterRewardDex{};
   const BattleTowerRewardResult masterReward=BattleTowerSystem::awardCompletionReward(
-      masterRewardInventory,masterRewardEggs,masterRewardDex,masterRewardSeed);
+      masterRewardInventory,masterRewardEggs,masterRewardDex,3U,masterRewardSeed);
   assert(masterReward.kind==BattleTowerRewardKind::MasterBall&&
          masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==1U);
   masterRewardInventory={};
   masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]=
       kInventoryStackLimit;
   const BattleTowerRewardResult fullMasterReward=BattleTowerSystem::awardCompletionReward(
-      masterRewardInventory,masterRewardEggs,masterRewardDex,masterRewardSeed);
+      masterRewardInventory,masterRewardEggs,masterRewardDex,3U,masterRewardSeed);
   assert(fullMasterReward.kind==BattleTowerRewardKind::RareCandy&&
          masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==
              kInventoryStackLimit&&
@@ -4343,14 +5039,14 @@ int main() {
   PokedexLogic::markSeen(oneStarterMissing,258U);
   Inventory specialInventory{};EggInventory specialEggs{};
   const BattleTowerRewardResult starterReward=BattleTowerSystem::awardCompletionReward(
-      specialInventory,specialEggs,oneStarterMissing,specialRewardSeed);
+      specialInventory,specialEggs,oneStarterMissing,5U,specialRewardSeed);
   assert(starterReward.kind==BattleTowerRewardKind::SpecialEgg&&
          starterReward.eggSpeciesId==258U&&specialEggs.count==1U&&
          specialEggs.slots[0].speciesId==258U);
   PokedexLogic::markCaught(oneStarterMissing,258U);
   specialEggs=EggInventory{};
   const BattleTowerRewardResult legendaryReward=BattleTowerSystem::awardCompletionReward(
-      specialInventory,specialEggs,oneStarterMissing,specialRewardSeed);
+      specialInventory,specialEggs,oneStarterMissing,3U,specialRewardSeed);
   const uint16_t legendarySpecies=legendaryReward.eggSpeciesId;
   assert(legendaryReward.kind==BattleTowerRewardKind::SpecialEgg&&
       (legendarySpecies==144U||legendarySpecies==145U||legendarySpecies==146U||
@@ -4360,10 +5056,40 @@ int main() {
        legendarySpecies==378U||legendarySpecies==379U||legendarySpecies==380U||
        legendarySpecies==381U||legendarySpecies==382U||legendarySpecies==383U||
        legendarySpecies==384U||legendarySpecies==385U||legendarySpecies==386U));
+
+  // Later regional starters stay out of Special Eggs even after Sinnoh and
+  // Unova unlock because those starters have normal acquisition paths. Once
+  // the original nine are owned, only legendary/mythical species through the
+  // player's current content generation are eligible.
+  bool sawSinnohLegendary=false,sawUnovaLegendary=false;
+  for(uint32_t seed=1U;seed<=4096U;++seed){
+    EggInventory gen3Eggs{},gen4Eggs{},gen5Eggs{};
+    assert(EggSystem::storeBattleTowerSpecial(
+        gen3Eggs,oneStarterMissing,3U,seed));
+    assert(EggSystem::storeBattleTowerSpecial(
+        gen4Eggs,oneStarterMissing,4U,seed));
+    assert(EggSystem::storeBattleTowerSpecial(
+        gen5Eggs,oneStarterMissing,5U,seed));
+    const uint16_t gen3Species=gen3Eggs.slots[0].speciesId;
+    const uint16_t gen4Species=gen4Eggs.slots[0].speciesId;
+    const uint16_t gen5Species=gen5Eggs.slots[0].speciesId;
+    assert(PokedexLogic::isLegendaryOrMythical(gen3Species)&&gen3Species<=386U&&
+           gen3Eggs.slots[0].region==3U);
+    assert(PokedexLogic::isLegendaryOrMythical(gen4Species)&&gen4Species<=493U&&
+           gen4Eggs.slots[0].region==4U);
+    assert(PokedexLogic::isLegendaryOrMythical(gen5Species)&&gen5Species<=649U&&
+           gen5Eggs.slots[0].region==5U);
+    sawSinnohLegendary|=gen4Species>=480U&&gen4Species<=493U;
+    sawUnovaLegendary|=gen5Species==494U||
+        (gen5Species>=638U&&gen5Species<=649U);
+    assert(gen4Species!=387U&&gen4Species!=390U&&gen4Species!=393U);
+    assert(gen5Species!=495U&&gen5Species!=498U&&gen5Species!=501U);
+  }
+  assert(sawSinnohLegendary&&sawUnovaLegendary);
   EggInventory fullRewardEggs{};fullRewardEggs.count=EggInventory::kCapacity;
   Inventory fullEggRewardInventory{};
   const BattleTowerRewardResult fullEggReward=BattleTowerSystem::awardCompletionReward(
-      fullEggRewardInventory,fullRewardEggs,oneStarterMissing,specialRewardSeed);
+      fullEggRewardInventory,fullRewardEggs,oneStarterMissing,3U,specialRewardSeed);
   assert(fullEggReward.kind==BattleTowerRewardKind::RareCandy&&
          fullEggRewardInventory.heldItems[kRareCandyInventorySlot]==1U&&
          fullRewardEggs.count==EggInventory::kCapacity);
@@ -4565,7 +5291,156 @@ int main() {
   const BattleActionResult protectedTurn=BattleEngine::fightPvp(
       protectBattle,protectCollection,0,0);
   assert(protectedTurn.accepted&&protector->currentHp==protectedHp&&
+         protectBattle.playerVolatile.protectedThisTurn&&
          protectBattle.playerProtectChain==1U);
+
+  // Protect expires at the start of every accepted command turn, not only
+  // when the next command is another move. A rejected Bag action changes
+  // neither the current turn nor the consecutive-Protect chain.
+  PokemonCollection rejectedItemCollection=protectCollection;
+  BattleState rejectedItemBattle=protectBattle;
+  Inventory rejectedItemInventory{};
+  rejectedItemInventory.medicine[static_cast<uint8_t>(BattleItem::Potion)]=1;
+  const BattleActionResult rejectedProtectedItem=BattleEngine::useItem(
+      rejectedItemBattle,rejectedItemCollection,rejectedItemInventory,
+      BattleItem::Potion);
+  assert(!rejectedProtectedItem.accepted&&
+         rejectedItemBattle.playerVolatile.protectedThisTurn&&
+         rejectedItemBattle.playerProtectChain==1U&&
+         rejectedItemInventory.medicine[
+             static_cast<uint8_t>(BattleItem::Potion)]==1U);
+
+  PokemonCollection protectedItemCollection=protectCollection;
+  BattleState protectedItemBattle=protectBattle;
+  protectedItemBattle.kind=BattleKind::Trainer;
+  OwnedPokemon* protectedItemPlayer=CollectionLogic::find(
+      protectedItemCollection,protectedItemBattle.playerUid);
+  assert(protectedItemPlayer);
+  protectedItemPlayer->currentHp=static_cast<uint16_t>(
+      protectedItemPlayer->maximumHp-40U);
+  protectedItemBattle.opponents[0].moves[0]=static_cast<MoveId>(129); // SWIFT
+  protectedItemBattle.opponents[0].movePp[0]=20;
+  for(uint8_t slot=1;slot<kMoveSlots;++slot){
+    protectedItemBattle.opponents[0].moves[slot]=MoveId::None;
+    protectedItemBattle.opponents[0].movePp[slot]=0;
+  }
+  Inventory protectedItemInventory{};
+  protectedItemInventory.medicine[static_cast<uint8_t>(BattleItem::Potion)]=1;
+  const BattleActionResult itemAfterProtect=BattleEngine::useItem(
+      protectedItemBattle,protectedItemCollection,protectedItemInventory,
+      BattleItem::Potion);
+  assert(itemAfterProtect.accepted&&itemAfterProtect.enemyActed&&
+         itemAfterProtect.damageTaken>0U&&
+         !protectedItemBattle.playerVolatile.protectedThisTurn&&
+         protectedItemBattle.playerProtectChain==0U&&
+         protectedItemInventory.medicine[
+             static_cast<uint8_t>(BattleItem::Potion)]==0U);
+
+  // A failed capture is another ordinary command turn. The wild Pokemon must
+  // hit through the previous turn's Protect and the next Protect starts a new
+  // success chain.
+  PokemonCollection protectedBallCollection=protectCollection;
+  BattleState protectedBallBattle=protectBattle;
+  protectedBallBattle.kind=BattleKind::Wild;
+  protectedBallBattle.rngState=0x12345678U;
+  protectedBallBattle.opponents[0]=CollectionLogic::createPokemon(
+      0xF2000003U,150,50,false,0xB411U); // MEWTWO: catch rate 3.
+  protectedBallBattle.opponents[0].moves[0]=static_cast<MoveId>(129); // SWIFT
+  protectedBallBattle.opponents[0].movePp[0]=20;
+  for(uint8_t slot=1;slot<kMoveSlots;++slot){
+    protectedBallBattle.opponents[0].moves[slot]=MoveId::None;
+    protectedBallBattle.opponents[0].movePp[slot]=0;
+  }
+  Inventory protectedBallInventory{};
+  protectedBallInventory.balls[static_cast<uint8_t>(PokeBallType::PokeBall)]=1;
+  const BattleActionResult ballAfterProtect=BattleEngine::throwBall(
+      protectedBallBattle,protectedBallCollection,protectedBallInventory,
+      PokeBallType::PokeBall);
+  assert(ballAfterProtect.accepted&&!ballAfterProtect.caught&&
+         ballAfterProtect.enemyActed&&ballAfterProtect.damageTaken>0U&&
+         !protectedBallBattle.playerVolatile.protectedThisTurn&&
+         protectedBallBattle.playerProtectChain==0U&&
+         protectedBallInventory.balls[
+             static_cast<uint8_t>(PokeBallType::PokeBall)]==0U);
+
+  // Protect/Detect blocks a recharge move's damage, but it is not an
+  // accuracy miss: the attacker has committed the move and must spend its
+  // next action recharging. Verify the reported enemy case and the symmetric
+  // player-controlled path so PvP, trainers and local battles cannot diverge.
+  protector->moves[1]=static_cast<MoveId>(150); // SPLASH
+  protector->movePp[1]=40;
+  protectBattle.opponents[0].moves[0]=static_cast<MoveId>(63); // HYPER BEAM
+  protectBattle.opponents[0].movePp[0]=5;
+  protectBattle.playerProtectChain=0;
+  const uint8_t enemyBeamPpBefore=protectBattle.opponents[0].movePp[0];
+  const BattleActionResult enemyBeamBlocked=BattleEngine::fightPvp(
+      protectBattle,protectCollection,0,0);
+  bool enemyBeamReportedMiss=false,enemyBeamReportedProtect=false;
+  for(uint8_t eventIndex=0;eventIndex<enemyBeamBlocked.eventCount;++eventIndex){
+    const BattleEvent& event=enemyBeamBlocked.events[eventIndex];
+    enemyBeamReportedMiss|=event.type==BattleEventType::MoveMissed&&
+        event.side==BattleSide::Opponent&&event.move==static_cast<MoveId>(63);
+    enemyBeamReportedProtect|=event.type==BattleEventType::MoveEffect&&
+        event.side==BattleSide::Player&&
+        event.move==static_cast<MoveId>(63)&&
+        event.value==static_cast<uint16_t>(BattleMoveEffect::Protected);
+  }
+  assert(enemyBeamBlocked.accepted&&protector->currentHp==protectedHp&&
+         protectBattle.opponentVolatiles[0].recharging&&
+         protectBattle.opponents[0].movePp[0]+1U==enemyBeamPpBefore&&
+         !enemyBeamReportedMiss&&enemyBeamReportedProtect);
+  const BattleActionResult enemyBeamRecharge=BattleEngine::fightPvp(
+      protectBattle,protectCollection,1,0);
+  bool enemySpentRechargeTurn=false;
+  for(uint8_t eventIndex=0;eventIndex<enemyBeamRecharge.eventCount;++eventIndex){
+    const BattleEvent& event=enemyBeamRecharge.events[eventIndex];
+    enemySpentRechargeTurn|=event.type==BattleEventType::CannotMove&&
+        event.side==BattleSide::Opponent&&event.value==1U;
+  }
+  assert(enemyBeamRecharge.accepted&&enemySpentRechargeTurn&&
+         !protectBattle.opponentVolatiles[0].recharging&&
+         protectBattle.opponents[0].movePp[0]+1U==enemyBeamPpBefore);
+
+  *protector=CollectionLogic::createPokemon(protector->uid,143,50,false,942);
+  protector->moves[0]=static_cast<MoveId>(63);protector->movePp[0]=5;
+  protector->moves[1]=static_cast<MoveId>(150);protector->movePp[1]=40;
+  BattleEngine::clear(protectBattle);protectBattle.active=true;
+  protectBattle.kind=BattleKind::Pvp;protectBattle.outcome=BattleOutcome::Ongoing;
+  protectBattle.playerUid=protector->uid;protectBattle.opponentCount=1;
+  protectBattle.rngState=943;
+  protectBattle.opponents[0]=CollectionLogic::createPokemon(
+      0xF2000002U,101,50,false,943);
+  protectBattle.opponents[0].moves[0]=static_cast<MoveId>(182); // PROTECT
+  protectBattle.opponents[0].movePp[0]=10;
+  protectBattle.opponents[0].moves[1]=static_cast<MoveId>(150); // SPLASH
+  protectBattle.opponents[0].movePp[1]=40;
+  const uint16_t enemyHpBeforeBeam=protectBattle.opponents[0].currentHp;
+  const BattleActionResult playerBeamBlocked=BattleEngine::fightPvp(
+      protectBattle,protectCollection,0,0);
+  bool playerBeamReportedMiss=false,playerBeamReportedProtect=false;
+  for(uint8_t eventIndex=0;eventIndex<playerBeamBlocked.eventCount;++eventIndex){
+    const BattleEvent& event=playerBeamBlocked.events[eventIndex];
+    playerBeamReportedMiss|=event.type==BattleEventType::MoveMissed&&
+        event.side==BattleSide::Player&&event.move==static_cast<MoveId>(63);
+    playerBeamReportedProtect|=event.type==BattleEventType::MoveEffect&&
+        event.side==BattleSide::Opponent&&
+        event.move==static_cast<MoveId>(63)&&
+        event.value==static_cast<uint16_t>(BattleMoveEffect::Protected);
+  }
+  assert(playerBeamBlocked.accepted&&
+         protectBattle.opponents[0].currentHp==enemyHpBeforeBeam&&
+         protectBattle.playerVolatile.recharging&&
+         !playerBeamReportedMiss&&playerBeamReportedProtect);
+  const BattleActionResult playerBeamRecharge=BattleEngine::fightPvp(
+      protectBattle,protectCollection,0,1);
+  bool playerSpentRechargeTurn=false;
+  for(uint8_t eventIndex=0;eventIndex<playerBeamRecharge.eventCount;++eventIndex){
+    const BattleEvent& event=playerBeamRecharge.events[eventIndex];
+    playerSpentRechargeTurn|=event.type==BattleEventType::CannotMove&&
+        event.side==BattleSide::Player&&event.value==1U;
+  }
+  assert(playerBeamRecharge.accepted&&playerSpentRechargeTurn&&
+         !protectBattle.playerVolatile.recharging);
 
   // Trainer items are selected before attack order is calculated. Even a
   // much faster player must see the opposing Potion resolve before its move.

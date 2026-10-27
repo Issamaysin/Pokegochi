@@ -7,6 +7,10 @@ enum class PokemonType : uint8_t {
 };
 enum class GrowthRate : uint8_t { MediumFast, Erratic, Fluctuating, MediumSlow, Fast, Slow };
 
+// Maximum number of destinations offered by any authored branching family.
+// Shared by progression, battle results and the persistent evolution picker.
+constexpr uint8_t kEvolutionChoiceCapacity = 5;
+
 struct SpeciesData {
   uint16_t id;
   const char* name;
@@ -19,7 +23,7 @@ struct SpeciesData {
   uint8_t baseSpDefense;
   uint8_t baseSpeed;
   uint8_t catchRate;
-  uint8_t baseExperience;
+  uint16_t baseExperience;
   GrowthRate growthRate;
   // The first pair is the original FireRed/Gen-III identity. The second pair
   // is Platinum's ability pair and is enabled only once Sinnoh is unlocked.
@@ -27,6 +31,12 @@ struct SpeciesData {
   uint8_t ability2;
   uint8_t sinnohAbility1;
   uint8_t sinnohAbility2;
+  // White's normal pair and Hidden Ability. They become active only after
+  // Unova is unlocked; hiddenAbility is selected solely for Pokemon obtained
+  // from an authored Hidden-Ability encounter.
+  uint8_t unovaAbility1;
+  uint8_t unovaAbility2;
+  uint8_t hiddenAbility;
   // Generation-III effort-value yield granted when this species is defeated.
   // These values come directly from FireRed's species_info table.
   uint8_t evYieldHp;
@@ -70,6 +80,9 @@ struct MoveData {
   uint8_t accuracy;
 };
 struct FullMoveData {
+  // Black/White stores 101 for moves whose accuracy is "--": they still
+  // obey target reachability, but never run the ordinary Accuracy/Evasion
+  // roll. Zero remains the equivalent sentinel in the older imported data.
   uint16_t id; const char* name; PokemonType type; uint8_t power; uint8_t accuracy;
   MoveCategory category; uint8_t pp; int8_t priority; uint8_t effectChance; const char* effect;
   MoveTarget target; bool makesContact;
@@ -100,8 +113,8 @@ const char* moveDescription(MoveId id);
 bool isMoveAvailableInSingleBattle(MoveId id);
 uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
                       uint8_t unlockedGeneration = 1);
-// Form-aware level-up table. Platinum keeps the same TM table for the
-// supported alternate forms, but Shaymin-Sky has three level-up replacements.
+// Form-aware level-up table. Most alternate forms share their base table;
+// Shaymin-Sky and Black/White Kyurem have explicit replacements.
 uint8_t movesForForm(uint16_t speciesId, uint8_t form, uint8_t level,
                      MoveId output[4], uint8_t unlockedGeneration = 1);
 // Returns every level-up move available to this species and each of its
@@ -110,7 +123,7 @@ uint8_t relearnableMovesForLine(uint16_t speciesId, uint8_t level,
                                MoveId output[], uint8_t maximum,
                                uint8_t unlockedGeneration = 1);
 // Form-aware Summary/move-reminder pool. This includes Platinum's Rotom
-// appliance move and replaces the normal Shaymin entries with the Sky table.
+// appliance move and the authored Shaymin/Kyurem form replacements.
 uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
                                 uint8_t level, MoveId output[], uint8_t maximum,
                                 uint8_t unlockedGeneration = 1);
@@ -119,6 +132,11 @@ uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
 MoveId formSignatureMove(uint16_t speciesId, uint8_t form);
 MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
                           uint8_t unlockedGeneration = 1);
+// Form-aware counterpart used by battle XP and Rare Candy so a fused Kyurem
+// learns the same move exposed by its Summary pool at levels 43 and 50.
+MoveId moveLearnedAtLevelForForm(uint16_t speciesId, uint8_t form,
+                                 uint8_t level,
+                                 uint8_t unlockedGeneration = 1);
 MoveId defaultMoveForSpecies(uint16_t speciesId);
 uint32_t experienceForLevel(GrowthRate growth, uint8_t level);
 const EvolutionData* evolutionFor(uint16_t speciesId);

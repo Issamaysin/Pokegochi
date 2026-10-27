@@ -4,12 +4,12 @@
 
 namespace {
 enum CustomAbility : uint8_t {
-  ToughClaws=128, MegaLauncher, Adaptability, NoGuard, ParentalBond,
+  ToughClaws=MegaEvolution::kFirstCustomAbilityId, MegaLauncher, Adaptability, NoGuard, ParentalBond,
   Aerilate, MoldBreaker, Steadfast, SandForce, Technician, SkillLink,
   SolarPower, Pixilate, MagicBounce, Filter, StrongJaw, SheerForce,
   Prankster, Refrigerate, PrimordialSea, DesolateLand, DeltaStream,
   Multiscale, InnardsOut, ElectricSurge, Stalwart, Sharpness, Dragonize,
-  MegaSol,
+  MegaSol, PiercingDrill, Eelevate, UnseenFist,
 };
 
 constexpr AbilityData kCustomAbilities[] = {
@@ -41,12 +41,15 @@ constexpr AbilityData kCustomAbilities[] = {
   {Stalwart,"STALWART","IGNORES MOVE REDIRECTION."},
   {Sharpness,"SHARPNESS","BOOSTS SLICING MOVES BY 50%."},
   {Dragonize,"DRAGONIZE","MAKES NORMAL MOVES DRAGON AND BOOSTS THEM."},
-  {MegaSol,"MEGA SOL","THE HOLDER BATTLES AS IF IN SUNLIGHT."},
+  {MegaSol,"MEGA SOL","ONLY THE HOLDER BATTLES AS IF IN SUNLIGHT."},
+  {PiercingDrill,"PIERCING DRILL","CONTACT MOVES BYPASS PROTECTION."},
+  {Eelevate,"EELEVATE","GROUND IMMUNITY; KOS BOOST TOP STAT."},
+  {UnseenFist,"UNSEEN FIST","CONTACT MOVES BYPASS PROTECTION."},
 };
 
 // Official Mega Evolutions in the available National Dex, plus the two
-// official Primal Reversions. Sinnoh's five canonical Mega species use this
-// exact same Mega Stone/selection flow as the older regions.
+// official Primal Reversions. Sinnoh and Unova use this exact same Mega
+// Stone/selection flow as the older regions.
 constexpr MegaFormData kForms[] = {
  {26,MegaVariant::MegaX,60,135,95,90,95,110,PokemonType::Electric,PokemonType::Electric,ElectricSurge,"mega_x","MEGA X"},
  {26,MegaVariant::MegaY,60,100,55,160,80,130,PokemonType::Electric,PokemonType::Electric,NoGuard,"mega_y","MEGA Y"},
@@ -107,6 +110,14 @@ constexpr MegaFormData kForms[] = {
  {448,MegaVariant::Mega,70,145,88,140,70,112,PokemonType::Fighting,PokemonType::Steel,92,"mega","MEGA"},
  {460,MegaVariant::Mega,90,132,105,132,105,30,PokemonType::Grass,PokemonType::Ice,118,"mega","MEGA"},
  {475,MegaVariant::Mega,68,165,95,65,115,110,PokemonType::Psychic,PokemonType::Fighting,39,"mega","MEGA"},
+ {500,MegaVariant::Mega,110,148,75,110,110,75,PokemonType::Fire,PokemonType::Fighting,105,"mega","MEGA"},
+ {530,MegaVariant::Mega,110,165,100,65,65,103,PokemonType::Ground,PokemonType::Steel,PiercingDrill,"mega","MEGA"},
+ {531,MegaVariant::Mega,103,60,126,80,126,50,PokemonType::Normal,PokemonType::Fairy,132,"mega","MEGA"},
+ {545,MegaVariant::Mega,60,140,149,75,99,62,PokemonType::Bug,PokemonType::Poison,75,"mega","MEGA"},
+ {560,MegaVariant::Mega,65,130,135,55,135,68,PokemonType::Dark,PokemonType::Fighting,22,"mega","MEGA"},
+ {604,MegaVariant::Mega,85,145,80,135,90,80,PokemonType::Electric,PokemonType::Electric,Eelevate,"mega","MEGA"},
+ {609,MegaVariant::Mega,60,75,110,175,110,90,PokemonType::Ghost,PokemonType::Fire,152,"mega","MEGA"},
+ {623,MegaVariant::Mega,89,159,105,70,105,55,PokemonType::Ground,PokemonType::Ghost,UnseenFist,"mega","MEGA"},
 };
 }
 
@@ -165,6 +176,32 @@ uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback)
     static constexpr uint8_t kSky[5] = {103,75,127,120,75};
     return statIndex < 5U ? kSky[statIndex] : fallback;
   }
+  if (pokemon.speciesId == 555U && form == 1U) {
+    static constexpr uint8_t kZen[5] = {30,105,55,140,105};
+    return statIndex < 5U ? kZen[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 641U && form == 1U) {
+    static constexpr uint8_t kTherian[5] = {100,80,121,110,90};
+    return statIndex < 5U ? kTherian[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 642U && form == 1U) {
+    static constexpr uint8_t kTherian[5] = {105,70,101,145,80};
+    return statIndex < 5U ? kTherian[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 645U && form == 1U) {
+    static constexpr uint8_t kTherian[5] = {145,90,91,105,80};
+    return statIndex < 5U ? kTherian[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 646U && form > 0U) {
+    static constexpr uint8_t kBlack[5] = {170,100,95,120,90};
+    static constexpr uint8_t kWhite[5] = {120,90,95,170,100};
+    const uint8_t* values=form==1U?kBlack:kWhite;
+    return statIndex < 5U ? values[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 648U && form == 1U) {
+    static constexpr uint8_t kPirouette[5] = {128,90,128,77,77};
+    return statIndex < 5U ? kPirouette[statIndex] : fallback;
+  }
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));
   if(!f)return fallback;
   const uint8_t s[]={f->baseAttack,f->baseDefense,f->baseSpeed,f->baseSpAttack,f->baseSpDefense};
@@ -178,6 +215,8 @@ PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
   if (pokemon.speciesId == 479U && form > 0U) return PokemonType::Electric;
   if (pokemon.speciesId == 492U && form == 1U) return PokemonType::Grass;
+  if (pokemon.speciesId == 555U && form == 1U) return PokemonType::Fire;
+  if (pokemon.speciesId == 648U && form == 1U) return PokemonType::Normal;
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type1:fallback;
 }
 PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){
@@ -191,14 +230,25 @@ PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){
     return kRotomTypes[std::min<uint8_t>(CollectionLogic::resolvedForm(pokemon), 5U)];
   }
   if (pokemon.speciesId == 492U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Flying;
+  if (pokemon.speciesId == 555U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Psychic;
+  if (pokemon.speciesId == 648U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Fighting;
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type2:fallback;
 }
 uint8_t abilityId(const OwnedPokemon& pokemon,uint8_t fallback){
   // Shaymin-Sky uses Serene Grace in Platinum; the other selectable Sinnoh
   // forms retain their species ability (Levitate/Natural Cure).
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
+  // In Generation V the first normal Ability differs by stripe. The second
+  // slot (Adaptability) and Hidden Ability (Mold Breaker) are shared.
+  if (pokemon.speciesId == 550U && form == 1U && fallback == 121U)
+    return 69U; // Blue-Striped: Rock Head instead of Red-Striped Reckless
   if (pokemon.speciesId == 492U && form == 1U) return 32U;
   if (pokemon.speciesId == 487U && form == 1U) return 26U; // Origin: Levitate
+  if (pokemon.speciesId == 641U && form == 1U) return 145U; // Regenerator
+  if (pokemon.speciesId == 642U && form == 1U) return 10U;  // Volt Absorb
+  if (pokemon.speciesId == 645U && form == 1U) return 22U;  // Intimidate
+  if (pokemon.speciesId == 646U && form == 1U) return 165U; // Teravolt
+  if (pokemon.speciesId == 646U && form == 2U) return 164U; // Turboblaze
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->abilityId:fallback;
 }
 const AbilityData* customAbility(uint8_t id){for(const auto& a:kCustomAbilities)if(a.id==id)return &a;return nullptr;}

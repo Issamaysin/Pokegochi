@@ -67,9 +67,9 @@ uint8_t evolutionChoices(uint16_t speciesId,uint8_t level,uint16_t attack,uint16
   // Gen-IV branches are Sinnoh content. Reaching Hoenn must not silently
   // expose them; the expedition raises the content generation to 4 only
   // after the player has opened Sinnoh.
-  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(4U,unlockedGeneration);
+  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(5U,unlockedGeneration);
   const auto generationFor=[](uint16_t id){
-    return id<=151U?1U:id<=251U?2U:id<=386U?3U:4U;
+    return id<=151U?1U:id<=251U?2U:id<=386U?3U:id<=493U?4U:5U;
   };
   uint8_t familyLevel=255;
   for(const auto& evolution:kEvolutions){
@@ -145,12 +145,13 @@ const char* moveDescription(MoveId id) {
 }
 
 bool isMoveAvailableInSingleBattle(MoveId id) {
-  // Follow Me (266) only redirects attacks away from an ally, and Helping
-  // Hand (270) targets that ally. Neither has a useful/legal effect in a
-  // singles battle. Keep both in kFullMoves so imported/link data remains
-  // canonical, while preventing them from occupying a Pokegochi move slot.
+  // These moves require a partner or, for Heal Pulse, can only benefit the
+  // opposing target. None has a useful local role in Pokegochi's 1x1 battles.
+  // Keep them in kFullMoves so imported/link data remains canonical, while
+  // preventing them from occupying a local move slot.
   return id != MoveId::None && id != static_cast<MoveId>(266) &&
-         id != static_cast<MoveId>(270);
+         id != static_cast<MoveId>(270) && id != static_cast<MoveId>(476) &&
+         id != static_cast<MoveId>(502) && id != static_cast<MoveId>(505);
 }
 
 uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
@@ -158,7 +159,7 @@ uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
   uint8_t count = 0;
   // A #387-493 species is intrinsically Platinum content. Older species keep
   // their FireRed learnset until the Sinnoh unlock is explicitly supplied.
-  const uint8_t availableGeneration = std::min<uint8_t>(4U, unlockedGeneration);
+  const uint8_t availableGeneration = std::min<uint8_t>(5U, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
     if (entry.speciesId != speciesId || entry.level > level ||
         entry.generation > availableGeneration) continue;
@@ -181,14 +182,20 @@ struct FormLevelMoveOverride {
   MoveId formMove;
 };
 
-// Directly mirrored from Platinum's res/pokemon/shaymin/forms/sky/data.json.
-// The form files for Giratina and all Rotom appliances keep the same level-up
-// table as their base species; Rotom's appliance move is handled separately by
+// Directly mirrored from the authored form learnsets. The form files for
+// Giratina and the Rotom appliances keep the same level-up table as their base
+// species; Rotom's appliance move is handled separately by
 // formSignatureMove(), exactly like Pokemon_SetRotomForm in the reference ROM.
+// Black/White Kyurem are the only Generation-V forms whose ordinary level-up
+// table changes: B2W2 replaces Scary Face/Glaciate at levels 43/50.
 constexpr FormLevelMoveOverride kFormLevelMoveOverrides[] = {
     {492, 1, 28, static_cast<MoveId>(235), static_cast<MoveId>(98)},  // Synthesis -> Quick Attack
     {492, 1, 64, static_cast<MoveId>(312), static_cast<MoveId>(403)},  // Aromatherapy -> Air Slash
     {492, 1, 91, static_cast<MoveId>(361), static_cast<MoveId>(437)},  // Healing Wish -> Leaf Storm
+    {646, 1, 43, static_cast<MoveId>(184), static_cast<MoveId>(559)},  // Scary Face -> Fusion Bolt
+    {646, 1, 50, static_cast<MoveId>(549), static_cast<MoveId>(553)},  // Glaciate -> Freeze Shock
+    {646, 2, 43, static_cast<MoveId>(184), static_cast<MoveId>(558)},  // Scary Face -> Fusion Flare
+    {646, 2, 50, static_cast<MoveId>(549), static_cast<MoveId>(554)},  // Glaciate -> Ice Burn
 };
 }
 
@@ -244,7 +251,7 @@ void collectRelearnableMoves(uint16_t speciesId, uint8_t level, MoveId output[],
       collectRelearnableMoves(evolution.fromSpeciesId, level, output, maximum,
                               count, visitedSpecies, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
-    const uint8_t availableGeneration = std::min<uint8_t>(4U, unlockedGeneration);
+    const uint8_t availableGeneration = std::min<uint8_t>(5U, unlockedGeneration);
     if (entry.speciesId != speciesId || entry.level > level ||
         entry.generation > availableGeneration) continue;
     const MoveId move = static_cast<MoveId>(entry.moveId);
@@ -283,18 +290,43 @@ uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
   const MoveId signature = formSignatureMove(speciesId, form);
   if (signature != MoveId::None && !hasMove(output, count, signature) && count < maximum)
     output[count++] = signature;
+  // In Black/White 2 these are taught by dedicated NPC events rather than
+  // appearing in either species' ordinary level-up table.  Summary is
+  // Pokegochi's move-relearner/event-tutor surface, so expose them there only
+  // after Unova itself has unlocked.  Keldeo's resolved form then follows
+  // Secret Sword, while Relic Song changes Meloetta only during battle.
+  const MoveId eventMove = unlockedGeneration >= 5U
+      ? speciesId == 647U ? static_cast<MoveId>(548U)   // Secret Sword
+      : speciesId == 648U ? static_cast<MoveId>(547U)  // Relic Song
+                          : MoveId::None
+      : MoveId::None;
+  if (eventMove != MoveId::None && !hasMove(output, count, eventMove) &&
+      count < maximum)
+    output[count++] = eventMove;
   return count;
 }
 
 MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
                           uint8_t unlockedGeneration) {
   MoveId learned = MoveId::None;
-  const uint8_t availableGeneration = std::min<uint8_t>(4U, unlockedGeneration);
+  const uint8_t availableGeneration = std::min<uint8_t>(5U, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (entry.speciesId == speciesId && entry.level == level &&
         entry.generation <= availableGeneration &&
         isMoveAvailableInSingleBattle(move)) learned = move;
+  }
+  return learned;
+}
+
+MoveId moveLearnedAtLevelForForm(uint16_t speciesId, uint8_t form,
+                                 uint8_t level,
+                                 uint8_t unlockedGeneration) {
+  MoveId learned = moveLearnedAtLevel(speciesId, level, unlockedGeneration);
+  for (const auto& override : kFormLevelMoveOverrides) {
+    if (override.speciesId == speciesId && override.form == form &&
+        override.level == level && learned == override.normalMove)
+      return override.formMove;
   }
   return learned;
 }

@@ -43,13 +43,17 @@ class EggSystem{
   static bool offerAfterTrainer(EggState&,const GymProgress&,uint32_t seed);
   // Battle Tower's exceptional prize bypasses the daycare offer screen and
   // starts incubating immediately.  It chooses only starters the player has
-  // never owned; after all nine are registered as caught it uses the complete
-  // Generation-I-to-III legendary/mythical pool instead.
-  static bool grantBattleTowerSpecial(EggState&,const PokedexState&,uint32_t seed);
+  // never owned. The nine Gen-I--III starters remain the complete starter
+  // pool because later starters have normal regional acquisition. After all
+  // nine are registered, legendary/mythical species are selected through the
+  // highest content generation the player has actually unlocked.
+  static bool grantBattleTowerSpecial(EggState&,const PokedexState&,
+                                      uint8_t unlockedGeneration,uint32_t seed);
   // Reward Eggs wait in the dedicated Bag pocket. Their incubation clock
   // starts only when the player explicitly places one in the empty incubator.
   static bool storeBattleTowerSpecial(EggInventory&,const PokedexState&,
-                                      uint32_t seed,uint16_t* speciesId=nullptr);
+                                      uint8_t unlockedGeneration,uint32_t seed,
+                                      uint16_t* speciesId=nullptr);
   static bool incubateStored(EggInventory&,uint8_t index,EggState&);
   static bool accept(EggState&);static void reject(EggState&);
   static void advance(EggState&,uint32_t seconds,

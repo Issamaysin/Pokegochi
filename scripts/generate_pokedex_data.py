@@ -1,10 +1,11 @@
-"""Generate all 493 National Pokedex metadata rows from FireRed + Platinum."""
+"""Generate all 649 National Pokedex rows from FireRed, Platinum and Unova."""
 from __future__ import annotations
 
 import re
 import json
 from pathlib import Path
 from text_normalization import fire_red_ascii
+from unova_rom_data import expansion_text
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / ".downloads/pokefirered-tree/pokefirered-master/src/data/pokemon"
@@ -67,6 +68,46 @@ for species_id in range(387, 494):
 
 if len(rows) != 493:
     raise RuntimeError(f"Expected 493 National Pokedex rows, found {len(rows)}")
+
+gen5_source = expansion_text("src/data/pokemon/species_info/gen_5_families.h")
+expansion_species = expansion_text("include/constants/species.h")
+gen5_symbols = {
+    int(number): symbol
+    for symbol, number in re.findall(
+        r"\bSPECIES_([A-Z0-9_]+)\s*=\s*(\d+)", expansion_species)
+    if 494 <= int(number) <= 649
+}
+for species_id in range(494, 650):
+    symbol = gen5_symbols[species_id]
+    if symbol == "GENESECT":
+        rows.append((
+            "Paleozoic", 15, 825,
+            "Over 300 million years ago, it was feared as the strongest of hunters. "
+            "It has been modified by Team Plasma.",
+        ))
+        continue
+    start_match = re.search(rf"\[SPECIES_{symbol}\]\s*=\s*\{{", gen5_source)
+    if not start_match:
+        raise RuntimeError(f"Missing Gen-V Pokedex source for {symbol}")
+    next_match = re.search(r"\n\s*\[SPECIES_[A-Z0-9_]+\]\s*=", gen5_source[start_match.end():])
+    end = start_match.end() + next_match.start() if next_match else len(gen5_source)
+    body = gen5_source[start_match.end():end]
+    category = re.search(r'\.categoryName\s*=\s*_\("([^"]+)"\)', body)
+    height = re.search(r"\.height\s*=\s*(\d+)", body)
+    weight = re.search(r"\.weight\s*=\s*(\d+)", body)
+    description_block = re.search(r"\.description\s*=\s*COMPOUND_STRING\((.*?)\)\s*,",
+                                  body, re.S)
+    if not all((category, height, weight, description_block)):
+        raise RuntimeError(f"Incomplete Gen-V Pokedex metadata for {symbol}")
+    description = " ".join(
+        piece.replace("\\n", " ")
+        for piece in re.findall(r'"([^"]*)"', description_block.group(1))
+    )
+    rows.append((category.group(1), int(height.group(1)),
+                 int(weight.group(1)), description))
+
+if len(rows) != 649:
+    raise RuntimeError(f"Expected 649 National Pokedex rows, found {len(rows)}")
 
 lines = ["static constexpr PokedexEntryData kPokedexEntries[] = {"]
 for category, height, weight, description in rows:

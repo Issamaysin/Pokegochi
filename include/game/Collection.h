@@ -9,7 +9,11 @@
 // named so PersistentSave can migrate every previously shipped record without
 // ever treating its trailing save bytes as Pokemon data.
 constexpr uint16_t kBoxCapacityV41 = 386;
-constexpr uint16_t kBoxCapacity = 493;
+constexpr uint16_t kBoxCapacityV45 = 493;
+// 649 slots are required for one of every National species through Unova.
+// Keep a modest reserve for forms, shinies and duplicates without pushing the
+// redundant save records near their 16-bit payload limit.
+constexpr uint16_t kBoxCapacity = 720;
 constexpr uint8_t kPartyCapacity = 3;
 constexpr uint8_t kMoveSlots = 4;
 constexpr uint32_t kEmptyPokemonUid = 0;
@@ -90,6 +94,22 @@ struct PokemonCollectionV41 {
   uint32_t nextUid = 1;
 };
 
+// Frozen Sinnoh/V45 collection used only by save migration.
+struct PokemonCollectionV45 {
+  OwnedPokemon box[kBoxCapacityV45]{};
+  uint32_t party[kPartyCapacity]{};
+  uint32_t nextUid = 1;
+
+  PokemonCollectionV45& operator=(const PokemonCollectionV41& legacy) {
+    for (uint16_t index = 0; index < kBoxCapacityV45; ++index)
+      box[index] = index < kBoxCapacityV41 ? legacy.box[index] : OwnedPokemon{};
+    for (uint8_t index = 0; index < kPartyCapacity; ++index)
+      party[index] = legacy.party[index];
+    nextUid = legacy.nextUid;
+    return *this;
+  }
+};
+
 struct PokemonCollection {
   OwnedPokemon box[kBoxCapacity]{};
   uint32_t party[kPartyCapacity]{};
@@ -103,6 +123,23 @@ struct PokemonCollection {
     nextUid = legacy.nextUid;
     return *this;
   }
+
+  PokemonCollection& operator=(const PokemonCollectionV45& legacy) {
+    for (uint16_t index = 0; index < kBoxCapacity; ++index)
+      box[index] = index < kBoxCapacityV45 ? legacy.box[index] : OwnedPokemon{};
+    for (uint8_t index = 0; index < kPartyCapacity; ++index)
+      party[index] = legacy.party[index];
+    nextUid = legacy.nextUid;
+    return *this;
+  }
+};
+
+struct RareCandyProgression {
+  bool applied = false;
+  bool levelIncreased = false;
+  MoveId learnedMove = MoveId::None;
+  uint16_t evolutionChoices[kEvolutionChoiceCapacity]{};
+  uint8_t evolutionChoiceCount = 0;
 };
 
 class CollectionLogic {
@@ -124,6 +161,12 @@ class CollectionLogic {
   static bool applyPpUp(OwnedPokemon& pokemon, uint8_t slot);
   static void clearMovePpUps(OwnedPokemon& pokemon, uint8_t slot);
   static void swapMovePpUps(OwnedPokemon& pokemon, uint8_t first, uint8_t second);
+  // Hidden Ability provenance uses bit 14 of the old care counter. Bits 0-7
+  // are PP Ups, 8-10 Berry quantity and 11-13 Mega choice; keeping this flag
+  // here preserves the compact Pokemon/save ABI.
+  static bool hasHiddenAbility(const OwnedPokemon& pokemon);
+  static bool setHiddenAbility(OwnedPokemon& pokemon, bool enabled,
+                               uint8_t unlockedGeneration = 5);
   // Berries share the otherwise unused upper bits of the old care counter.
   // Old saves therefore read as a one-Berry stack without enlarging all 386
   // Box records. Non-Berry held items always have quantity one.
@@ -152,7 +195,10 @@ class CollectionLogic {
   static uint16_t calculatedMaximumHp(const OwnedPokemon& pokemon);
   static uint16_t calculatedStat(const OwnedPokemon& pokemon, PokemonStat stat);
   static void refreshDerivedStats(OwnedPokemon& pokemon, bool preserveDamage = true);
-  static void refreshAbility(OwnedPokemon& pokemon, uint8_t unlockedGeneration = 3);
+  // The active ability pair changes with content generation. Require every
+  // caller to state its context so a late-game Hidden Ability can never be
+  // silently recalculated with an early-generation default.
+  static void refreshAbility(OwnedPokemon& pokemon, uint8_t unlockedGeneration);
   // Applies the newly unlocked Platinum ability pair to existing records.
   // Level-up moves are intentionally not retroactively injected; they become
   // available to future level-ups and to newly generated Sinnoh encounters.
@@ -168,6 +214,11 @@ class CollectionLogic {
   static bool canChangeForm(const OwnedPokemon& pokemon);
   static bool setForm(OwnedPokemon& pokemon, uint8_t form);
   static bool normalizeForm(OwnedPokemon& pokemon);
+  // Black/White rotate Deerling and Sawsbuck together with the current
+  // season. This updates every stored member without changing individual
+  // identity, damage, moves or provenance.
+  static bool applyUnovaSeason(PokemonCollection& collection, uint8_t season);
+  static bool applyUnovaSeason(OwnedPokemon& pokemon, uint8_t season);
   static bool isShinyRoll(uint32_t roll) { return (roll & 8191U) == 0; }
   static OwnedPokemon* find(PokemonCollection& collection, uint32_t uid);
   static const OwnedPokemon* find(const PokemonCollection& collection, uint32_t uid);
@@ -181,6 +232,13 @@ class CollectionLogic {
   static bool evolve(PokemonCollection& collection, uint32_t uid,
                      uint16_t newSpeciesId, uint32_t* bonusUid = nullptr,
                      uint8_t unlockedGeneration = 3);
+  // Applies the non-inventory part of a Rare Candy. At Lv.100 a Candy may
+  // still trigger an already-eligible evolution, preventing a delayed
+  // three-stage family from becoming permanently stuck after its first form
+  // change. The caller remains responsible for consuming the actual item and
+  // presenting move/evolution choices.
+  static RareCandyProgression applyRareCandy(OwnedPokemon& pokemon,
+                                             uint8_t unlockedGeneration);
   static bool setPartySlot(PokemonCollection& collection, uint8_t slot, uint32_t uid);
   static bool removeFromParty(PokemonCollection& collection, uint32_t uid);
   // Explicitly releases one stored Pokemon after the UI has shown its YES/NO
