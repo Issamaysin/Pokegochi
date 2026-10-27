@@ -15218,9 +15218,15 @@ bool testSd(uint8_t maximumAttempts = 8) {
     }
     File manifest = SD.open("/pokegochi/assets/manifest.json", FILE_READ);
     if (!manifest) {
-      SD.end();
-      delay(220);
-      continue;
+      // The FAT volume itself is healthy but has not been populated yet (or
+      // an interrupted recovery intentionally left it empty). Report the card
+      // as mounted so Diagnostic can launch the signed updater that installs
+      // the complete asset set; testSdAssets() owns version validation.
+      assetPackUpdateRequired = true;
+      selectedSdFrequencyHz = frequency;
+      Serial.printf("[SD] mounted @ %lu Hz; asset manifest missing\n",
+                    static_cast<unsigned long>(frequency));
+      return true;
     }
     uint8_t probe[16]{};
     const size_t read = manifest.read(probe, sizeof(probe));
@@ -19988,7 +19994,12 @@ void serviceSettingsBackgroundPrefetch() {
                 "/pokegochi/assets/firered/ui/home_background_%02u.pkg", background);
   const uint32_t started = millis();
   const bool ready = sdReady && AssetRenderer::preload(path);
-  if (AssetRenderer::takeIoFailure()) storageRecoveryPending = true;
+  const bool rendererIoFailure = AssetRenderer::takeIoFailure();
+  // A mounted but intentionally empty/outdated card is not an electrical I/O
+  // failure. Keep assetPackUpdateRequired latched so Diagnostic remains fully
+  // interactive and can open the updater that will populate the card.
+  if (rendererIoFailure && !(sdReady && assetPackUpdateRequired))
+    storageRecoveryPending = true;
   Serial.printf("[GFX] background preview prefetch %u %s %lums\n",
                 static_cast<unsigned>(background), ready ? "OK" : "FAIL",
                 static_cast<unsigned long>(millis() - started));
@@ -34945,6 +34956,19 @@ void setup() {
   sdReady = false;
 #else
   sdReady = testSd();
+#ifdef POKEGOCHI_SD_FORMAT_RECOVERY
+  if (!sdReady) {
+    // Maintenance builds are flashed only after the normal read-only probe has
+    // proved that no FAT volume exists. Saves are internal; recreate the empty
+    // removable asset volume so the signed updater can repopulate it.
+    SD.end();
+    delay(300);
+    digitalWrite(board::kSdCsPin, HIGH);
+    sdReady = SD.begin(board::kSdCsPin, sdSpi, 2000000UL, "/sd", 1, true) &&
+              SD.cardType() != CARD_NONE;
+    Serial.printf("[SD] FORMAT RECOVERY %s\n", sdReady ? "OK" : "FAIL");
+  }
+#endif
   if (!wirelessUpdate.recoverAtBoot(sdReady))
     Serial.println("[OTAP] interrupted update recovery failed");
   // Recovery may atomically swap or restore pokegochi.pak. Open its index
@@ -35339,8 +35363,12 @@ void loop() {
   {
     const uint8_t previousBars=batteryBars; const bool wasValid=batteryReadingValid;
     const bool batteryUpdated=serviceBatterySampleBurst(now);
+    // Never tear down BLE or deep-sleep while an authenticated updater session
+    // is receiving an object. A low reading is still shown and sampled; normal
+    // battery protection resumes as soon as the updater is closed.
     if(batteryUpdated&&BatteryProtection::shouldEnterDormancy(
-        batteryReadingValid,batteryPercent))enterLowBatteryDormancy();
+        batteryReadingValid,batteryPercent,wirelessUpdate.active()))
+      enterLowBatteryDormancy();
     if(batteryUpdated && screen==Screen::Home&&!displaySleeping&&!swipeUnlock.active()&&
        (previousBars!=batteryBars||wasValid!=batteryReadingValid)){
       if(homeMoveMode){

@@ -1313,13 +1313,24 @@ bool WirelessUpdate::commitAssets(Journal& journal) {
     // combination below is therefore a resumable transaction state, not an
     // error that destroys the only known-good copy.
     if (!hasReady) {
-      if (!hasFinal || !hasBackup) return false;
+      if (!hasFinal || !hasBackup) {
+        Serial.printf("[OTAP] commit missing staged asset id=%u ready=%u final=%u backup=%u\n",
+                      static_cast<unsigned>(paths.id), hasReady ? 1U : 0U,
+                      hasFinal ? 1U : 0U, hasBackup ? 1U : 0U);
+        return false;
+      }
       journal.committedAssetMask |= bit;  // ready -> final already happened.
       if (!saveJournal(journal)) return false;
       continue;
     }
-    if (hasFinal && !hasBackup && !SD.rename(paths.finalPath, paths.backup)) return false;
+    if (hasFinal && !hasBackup && !SD.rename(paths.finalPath, paths.backup)) {
+      Serial.printf("[OTAP] backup rename failed id=%u from=%s to=%s\n",
+                    static_cast<unsigned>(paths.id), paths.finalPath, paths.backup);
+      return false;
+    }
     if (!SD.rename(paths.ready, paths.finalPath)) {
+      Serial.printf("[OTAP] install rename failed id=%u from=%s to=%s\n",
+                    static_cast<unsigned>(paths.id), paths.ready, paths.finalPath);
       if (!SD.exists(paths.finalPath) && SD.exists(paths.backup))
         SD.rename(paths.backup, paths.finalPath);
       return false;
@@ -1520,6 +1531,9 @@ bool WirelessUpdate::ensureUpdateDirectories() {
   return true;
 #else
   if (!SD.exists("/pokegochi") && !SD.mkdir("/pokegochi")) return false;
+  // A freshly formatted card has no asset hierarchy yet. The first signed
+  // update must be able to install metadata as well as the root archive.
+  if (!SD.exists("/pokegochi/assets") && !SD.mkdir("/pokegochi/assets")) return false;
   if (!SD.exists("/pokegochi/update") && !SD.mkdir("/pokegochi/update")) return false;
   if (!SD.exists("/pokegochi/update/backup") && !SD.mkdir("/pokegochi/update/backup")) return false;
   return true;

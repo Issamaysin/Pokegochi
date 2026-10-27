@@ -74,6 +74,7 @@ int main() {
   assert(!BatteryProtection::shouldEnterDormancy(true, 11U));
   assert(BatteryProtection::shouldEnterDormancy(true, 10U));
   assert(BatteryProtection::shouldEnterDormancy(true, 0U));
+  assert(!BatteryProtection::shouldEnterDormancy(true, 0U, true));
   assert(!BatteryProtection::canResume(false, 100U));
   assert(!BatteryProtection::canResume(true, 10U));
   assert(BatteryProtection::canResume(true, 11U));

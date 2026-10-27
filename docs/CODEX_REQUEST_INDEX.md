@@ -6,6 +6,22 @@
 - Em qualquer pedido de leitura, diagnóstico ou atualização da placa, testar `COM6` e `COM7` diretamente e consultar `Get-PnpDevice -PresentOnly -Class Ports` antes de concluir que ela não está conectada. `Win32_SerialPort` pode omitir temporariamente a CH340 e não deve ser usado sozinho.
 - Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
 
+## R20261027-234 - subir APK 2.0 no Drive e gravar firmware 3.0 na placa
+
+```mermaid
+graph TD
+    R20261027_234["R20261027-234: distribuir e instalar release"]
+    R20261027_234 --> D1["Publicar APK 2.0 v78 no Google Drive"]
+    R20261027_234 --> P1["Detectar COM6/COM7 e confirmar o chip"]
+    P1 --> F1["Gravar e validar firmware 3.0 corrigido"]
+    F1 --> V1["Verificar OTA, boot, save e asset pack 41"]
+    V1 --> G1["Atualizar main, tag e release no GitHub"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261027-234 | 2026-10-27 | Subir o APK 2.0 no Drive, gravar o firmware 3.0 na placa conectada e publicar a release 3.0 corrigida | Concluído | Placa ESP32-D0WD-V3 `B4:BF:E9:21:3C:E4` detectada na `COM7`; o firmware 3.0 corrigido foi gravado e depois validado pelo fluxo OTA assinado na partição `app1`, mantendo `Save OK`, aceitando a candidata e carregando o asset pack 41. Corrigidos suspensão por bateria baixa durante OTA, recuperação de FAT já inválido, montagem de cartão saudável sem assets e criação da árvore `/pokegochi/assets` na primeira instalação. Suíte completa: `All native tests passed`. APK 2.0 `versionCode 78` alinhado e assinado, 9.881.386 bytes, SHA-256 `03bd408a8931aed9f7798804bdfc288b2b3bab4305111c29452b835ec5782b95`; Drive: `https://drive.google.com/file/d/184KAdaS5jEE55uQN2yzBvw0DQLgVqaZw/view?usp=drivesdk`. |
+
 ## R20261027-233 - publicar app 2.0 e firmware 3.0 no GitHub
 
 ```mermaid

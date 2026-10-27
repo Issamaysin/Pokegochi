@@ -28,7 +28,7 @@ android {
         applicationId = "com.pokegochi.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 77
+        versionCode = 78
         versionName = "2.0"
     }
 

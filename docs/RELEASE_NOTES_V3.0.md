@@ -17,10 +17,20 @@ the same current gameplay baseline.
   fixes accumulated since app 1.1.
 - Save migrations remain automatic. Installing app 2.0 over the previous APK
   keeps the Android save when the signing certificate is unchanged.
+- Firmware 3.0 corrected: low-battery protection can no longer suspend the
+  ESP32 in the middle of an authenticated wireless update. Protection resumes
+  normally as soon as the updater is closed.
+- Recovery now distinguishes a healthy empty/outdated microSD from an I/O
+  failure, keeps the Diagnostic updater available, creates the complete asset
+  directory tree on first install, and includes a separate one-shot service
+  image for cards whose FAT was already damaged by an interrupted update.
+- The corrected package was exercised end to end on hardware: signed BLE
+  transfer, asset verification, boot into `app1`, `Save OK`, asset pack 41
+  archive probe, candidate acceptance and return to the main screen.
 
 ## Versions
 
-- Android: `2.0` (`versionCode 77`)
+- Android: `2.0` (`versionCode 78`)
 - ESP32 firmware: `3.0 UNOVA`
 - Required asset pack format: `41`
 
@@ -28,7 +38,7 @@ the same current gameplay baseline.
 
 The GitHub release contains:
 
-- `Pokegochi-Android-2.0-v77.apk`
+- `Pokegochi-Android-2.0-v78.apk`
 - `Pokegochi-Firmware-3.0-UNOVA.bin`
 - `Pokegochi-Firmware-3.0-UNOVA.factory.bin`
 - `Pokegochi-Firmware-3.0-UNOVA.pgota`
