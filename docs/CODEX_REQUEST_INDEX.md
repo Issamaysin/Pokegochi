@@ -21,7 +21,7 @@ graph TD
 
 | ID | Data | Pedido | Status | Resultado |
 |---|---|---|---|---|
-| R20261028-236 | 2026-10-28 | Gerar e subir o APK atualizado no Drive e atualizar o GitHub/release com a auditoria das categorias física/especial | Em andamento | Preparando App 2.0 `versionCode 79`, firmware 3.0 e os artefatos verificados. |
+| R20261028-236 | 2026-10-28 | Gerar e subir o APK atualizado no Drive e atualizar o GitHub/release com a auditoria das categorias física/especial | Concluído, validado e publicado | App 2.0 `versionCode 79` recompilado para ARM64/x86-64, alinhado, assinado em v2/v3 com o mesmo certificado `B2923926...1EDCE7D` e validado pelo `aapt`; APK com 9.881.386 bytes e SHA-256 `67CB7C15...8FD4DCF9`. Firmware 3.0 recompilado com 113.272 bytes de RAM e 1.954.476/1.966.080 bytes de flash; binário com SHA-256 `53BC9E71...250F6A91` e pacote OTA P-256/SHA-256 com `F841765B...7A2BC7A7`. A suíte completa confirmou o contrato de categoria 559/559 e terminou em `All native tests passed`. APK enviado e relido no Drive: `https://drive.google.com/file/d/1mEjWoqOvf6AqBNeFMj8lPAhmHzc_ow7X/view?usp=drivesdk`. Código publicado na `main` (`e4193c5`), tag conjunta atualizada e release com os cinco artefatos/novas notas validada por download e hash: `https://github.com/Issamaysin/Pokegochi/releases/tag/app-v2.0-fw-v3.0`; execução: `https://github.com/Issamaysin/Pokegochi/actions/runs/40684713583`. |
 
 ## R20261028-235 - auditar categoria física/especial dos moves e o Summary
 
