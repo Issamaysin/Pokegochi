@@ -67,9 +67,9 @@ enum class MoveTarget : uint8_t {
   OpponentsField = 1U << 6,
 };
 
-// Gen IV introduced the per-move physical/special split.  Older moves retain
-// their original Gen-III category when generated, while Sinnoh moves use the
-// category authored by Platinum instead of inferring it from their type.
+// Gen IV introduced the per-move physical/special split. Every move through
+// Sinnoh uses Platinum's category matched by canonical move ID, while Unova
+// uses White's category byte. Never infer a move's category from its type.
 enum class MoveCategory : uint8_t { Physical, Special, Status };
 
 struct MoveData {

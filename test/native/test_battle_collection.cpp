@@ -79,6 +79,12 @@ int main() {
   assert(!BatteryProtection::canResume(true, 10U));
   assert(BatteryProtection::canResume(true, 11U));
 
+  // The Generation-IV split is per move, not per type. These three rows used
+  // to miss Platinum's table because their display names omit separators.
+  assert(findFullMove(static_cast<MoveId>(9))->category==MoveCategory::Physical);   // Thunder Punch
+  assert(findFullMove(static_cast<MoveId>(49))->category==MoveCategory::Special);  // Sonic Boom
+  assert(findFullMove(static_cast<MoveId>(246))->category==MoveCategory::Special); // Ancient Power
+
   bool sawHomeWeather[5]{};
   uint32_t activeWeatherSamples=0;
   for(uint32_t seconds=0;seconds<HomeWeather::kWindowSeconds*600U;seconds+=30U){
@@ -3092,6 +3098,37 @@ int main() {
   const uint16_t specialWithLightScreen=incomingDamageWithScreen(2);
   assert(specialWithoutScreen>0&&specialWithLightScreen>0&&
          specialWithLightScreen<=static_cast<uint16_t>(specialWithoutScreen/2U+1U));
+
+  auto categoryScreenDamage=[](MoveId move,bool reflect,bool lightScreen)->uint16_t{
+    PokemonCollection c;CollectionLogic::initialize(c);
+    assert(CollectionLogic::chooseStarter(c,7,0x5161));
+    OwnedPokemon* p=CollectionLogic::active(c,0);p->level=50;
+    CollectionLogic::refreshDerivedStats(*p,false);
+    p->moves[0]=static_cast<MoveId>(150);p->movePp[0]=40; // Splash
+    BattleState b;BattleEngine::clear(b);b.active=true;b.kind=BattleKind::Pvp;
+    b.outcome=BattleOutcome::Ongoing;b.playerUid=p->uid;b.opponentCount=1;
+    b.rngState=0x1234BCDEU;
+    b.opponents[0]=CollectionLogic::createPokemon(0,6,50,false,0x5262);
+    b.opponents[0].moves[0]=move;b.opponents[0].movePp[0]=20;
+    if(reflect)b.playerReflectTurns=5;
+    if(lightScreen)b.playerLightScreenTurns=5;
+    const uint16_t before=p->currentHp;
+    const BattleActionResult result=BattleEngine::fightPvp(b,c,0,0);
+    assert(result.accepted);
+    return static_cast<uint16_t>(before-p->currentHp);
+  };
+  const MoveId thunderPunch=static_cast<MoveId>(9);
+  const uint16_t thunderPunchBase=categoryScreenDamage(thunderPunch,false,false);
+  const uint16_t thunderPunchReflect=categoryScreenDamage(thunderPunch,true,false);
+  const uint16_t thunderPunchLightScreen=categoryScreenDamage(thunderPunch,false,true);
+  assert(thunderPunchBase>1U&&thunderPunchReflect<=thunderPunchBase/2U+1U&&
+         thunderPunchLightScreen==thunderPunchBase);
+  const MoveId ancientPower=static_cast<MoveId>(246);
+  const uint16_t ancientPowerBase=categoryScreenDamage(ancientPower,false,false);
+  const uint16_t ancientPowerReflect=categoryScreenDamage(ancientPower,true,false);
+  const uint16_t ancientPowerLightScreen=categoryScreenDamage(ancientPower,false,true);
+  assert(ancientPowerBase>1U&&ancientPowerLightScreen<=ancientPowerBase/2U+1U&&
+         ancientPowerReflect==ancientPowerBase);
 
   PokemonCollection mistCollection;CollectionLogic::initialize(mistCollection);
   assert(CollectionLogic::chooseStarter(mistCollection,1,0x5353));

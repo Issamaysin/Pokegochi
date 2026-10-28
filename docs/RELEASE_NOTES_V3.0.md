@@ -11,6 +11,10 @@ the same current gameplay baseline.
   Kyurem, White Kyurem, Zen Mode, the Therian trio, Keldeo and Meloetta.
 - Generation V move data and battle animations with dedicated regression
   coverage.
+- Physical/special categories are now sourced per move from Platinum and
+  White by canonical ID. This corrects Thunder Punch, Sonic Boom and Ancient
+  Power, keeps Reflect/Light Screen damage routing consistent, and makes the
+  Summary display the same category used by the battle engine.
 - Bluetooth multiplayer interoperability between the Android app and the
   physical Pokegochi, including consecutive battles and trades.
 - Android rendering, battle timing, offline clock progression and mobile input
@@ -30,7 +34,7 @@ the same current gameplay baseline.
 
 ## Versions
 
-- Android: `2.0` (`versionCode 78`)
+- Android: `2.0` (`versionCode 79`)
 - ESP32 firmware: `3.0 UNOVA`
 - Required asset pack format: `41`
 
@@ -38,7 +42,7 @@ the same current gameplay baseline.
 
 The GitHub release contains:
 
-- `Pokegochi-Android-2.0-v78.apk`
+- `Pokegochi-Android-2.0-v79.apk`
 - `Pokegochi-Firmware-3.0-UNOVA.bin`
 - `Pokegochi-Firmware-3.0-UNOVA.factory.bin`
 - `Pokegochi-Firmware-3.0-UNOVA.pgota`

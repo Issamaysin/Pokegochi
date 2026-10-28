@@ -24316,10 +24316,13 @@ void drawSummarySkillLabel(const char* label, int16_t y) {
   fireRedText.drawStringAuto(label, kLabelLeft + 5, y, kLabelWidth - 10);
 }
 
-bool moveUsesSpecialAttack(PokemonType type) {
-  return type == PokemonType::Fire || type == PokemonType::Water || type == PokemonType::Grass ||
-         type == PokemonType::Electric || type == PokemonType::Psychic || type == PokemonType::Ice ||
-         type == PokemonType::Dragon || type == PokemonType::Dark;
+const char* moveCategoryName(MoveCategory category) {
+  switch (category) {
+    case MoveCategory::Physical: return "PHYSICAL";
+    case MoveCategory::Special: return "SPECIAL";
+    case MoveCategory::Status: return "STATUS";
+  }
+  return "STATUS";
 }
 
 const char* moveEffectDescription(const FullMoveData* move) {
@@ -24330,7 +24333,10 @@ const char* moveEffectDescription(const FullMoveData* move) {
   // AGILITY sharply raises SPEED) instead of inferring a vague sentence from
   // a shared battle-effect family.
   const char* base = moveDescription(static_cast<MoveId>(move->id));
-  const char* category = move->power == 0 ? "STATUS" : moveUsesSpecialAttack(move->type) ? "SPECIAL" : "PHYSICAL";
+  // Category is authored per move from Platinum/White. Type inference would
+  // mislabel punches, fangs, Ancient Power and every other post-split
+  // exception even though the battle engine correctly follows this field.
+  const char* category = moveCategoryName(move->category);
   char chance[28]=""; if(move->effectChance)std::snprintf(chance,sizeof(chance)," EFFECT CHANCE: %u%%.",move->effectChance);
   char priority[28]=""; if(move->priority)std::snprintf(priority,sizeof(priority)," PRIORITY: %+d.",move->priority);
   std::snprintf(text,sizeof(text),"%s CATEGORY: %s.%s%s%s",base,category,

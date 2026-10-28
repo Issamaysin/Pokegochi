@@ -81,16 +81,14 @@ def normalized_description(symbol: str) -> str:
     return c_string(text.upper())
 
 
-def symbol_key(value: str) -> str:
-    return re.sub(r"[^A-Z0-9]+", "_", value.upper()).strip("_")
-
-
-platinum_move_data: dict[str, dict] = {}
-for folder in (PLATINUM / "res/moves").iterdir():
-    path = folder / "data.json"
-    if path.is_file():
-        data = json.loads(path.read_text(encoding="utf-8"))
-        platinum_move_data[symbol_key(data["name"])] = data
+platinum_move_data: dict[int, dict] = {}
+for number, symbol in enumerate(platinum_move_symbols[:468]):
+    if number == 0:
+        continue
+    path = PLATINUM / "res/moves" / symbol.lower() / "data.json"
+    if not path.is_file():
+        raise RuntimeError(f"Missing Platinum move data for {number} {symbol}")
+    platinum_move_data[number] = json.loads(path.read_text(encoding="utf-8"))
 
 
 internal_species = {symbol for symbol, _ in re.findall(
@@ -110,10 +108,6 @@ targets = {
     "RANDOM": "Random", "BOTH": "Both", "USER": "User",
     "FOES_AND_ALLY": "FoesAndAlly", "OPPONENTS_FIELD": "OpponentsField",
 }
-physical_types = {"NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND",
-                  "ROCK", "BUG", "GHOST", "STEEL"}
-
-
 def value(block: str, key: str, default: str = "0") -> str:
     found = re.search(rf"\.{key}\s*=\s*([A-Z0-9_\-]+)", block)
     return found.group(1) if found else default
@@ -135,10 +129,14 @@ for number, symbol in moves:
     # battle.  Keep FireRed's pre-split effects and flags, but source each
     # category from Platinum so moves such as Weather Ball and Shadow Ball
     # resolve against the correct offensive/defensive stat.
-    platinum = platinum_move_data.get(symbol)
-    category = (platinum["class"].removeprefix("CLASS_").title()
-                if platinum else ("Status" if power == "0" else
-                ("Physical" if type_symbol in physical_types else "Special")))
+    # Match by canonical move ID, not by the display name. A few Platinum
+    # display names intentionally omit separators (ThunderPunch, SonicBoom,
+    # AncientPower), so normalizing the prose name silently fell back to the
+    # obsolete type-wide split for exactly those moves.
+    platinum = platinum_move_data.get(number)
+    if platinum is None:
+        raise RuntimeError(f"Missing Platinum category for {number} {symbol}")
+    category = platinum["class"].removeprefix("CLASS_").title()
     flags = {
         "contact": "true" if "FLAG_MAKES_CONTACT" in block else "false",
         "magic_coat": "true" if "FLAG_MAGIC_COAT_AFFECTED" in block else "false",
@@ -212,7 +210,7 @@ effect_aliases = {
 for number, symbol in moves:
     if number <= 354 or number > 467:
         continue
-    data = platinum_move_data.get(symbol)
+    data = platinum_move_data.get(number)
     if data is None:
         raise RuntimeError(f"Missing Platinum move data for {number} {symbol}")
     effect = data["effect"]["type"].removeprefix("BATTLE_EFFECT_")
@@ -457,7 +455,7 @@ description_rows = [
 for number, symbol in moves:
     if number <= 354 or number > 467:
         continue
-    description = " ".join(str(line) for line in platinum_move_data[symbol]["description"])
+    description = " ".join(str(line) for line in platinum_move_data[number]["description"])
     description = fire_red_ascii(description, f"Platinum move description {symbol}")
     description = description.replace("\r", " ").replace("\n", " ")
     description = re.sub(r"\s+", " ", description).strip()

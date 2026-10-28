@@ -6,6 +6,39 @@
 - Em qualquer pedido de leitura, diagnóstico ou atualização da placa, testar `COM6` e `COM7` diretamente e consultar `Get-PnpDevice -PresentOnly -Class Ports` antes de concluir que ela não está conectada. `Win32_SerialPort` pode omitir temporariamente a CH340 e não deve ser usado sozinho.
 - Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
 
+## R20261028-236 - distribuir a correção das categorias dos moves
+
+```mermaid
+graph TD
+    R20261028_236["R20261028-236: release corrigida"]
+    R20261028_236 --> A1["App 2.0 / versionCode 79"]
+    R20261028_236 --> F1["Firmware 3.0 corrigido"]
+    A1 --> D1["APK assinado no Google Drive"]
+    F1 --> G1["Código e binários no GitHub"]
+    D1 --> V1["Verificar hashes e metadados"]
+    G1 --> V1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-236 | 2026-10-28 | Gerar e subir o APK atualizado no Drive e atualizar o GitHub/release com a auditoria das categorias física/especial | Em andamento | Preparando App 2.0 `versionCode 79`, firmware 3.0 e os artefatos verificados. |
+
+## R20261028-235 - auditar categoria física/especial dos moves e o Summary
+
+```mermaid
+graph TD
+    R20261028_235["R20261028-235: categoria dos 559 moves"]
+    R20261028_235 --> D1["Comparar Gen 1-4 com Platinum por ID"]
+    R20261028_235 --> D2["Comparar Gen 5 com o byte de categoria de White"]
+    D1 --> B1["Validar ATK/DEF versus SP.ATK/SP.DEF na batalha"]
+    D2 --> B1
+    B1 --> S1["Fazer o Summary exibir a mesma categoria"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-235 | 2026-10-28 | Conferir moves que fogem do padrão do tipo, incluindo golpe de Thunder usando ATK, validar a mecânica e o texto do Summary | Concluído e validado | Os 559 moves foram comparados com Platinum (IDs 1-467) e White (IDs 468-559). O split individual contém legitimamente 62 moves físicos de tipos antes especiais e 54 especiais de tipos antes físicos. Corrigidas três categorias que caíam indevidamente no fallback por nome: `THUNDER PUNCH` Special→Physical, `SONIC BOOM` Physical→Special e `ANCIENT POWER` Physical→Special. O gerador passou a relacionar Platinum pelo ID canônico. O Summary agora lê `move->category`, a mesma fonte usada pelo cálculo de dano, em vez de inferir pelo tipo. Testes confirmam Thunder Punch em ATK/DEF e Reflect, Ancient Power em SP.ATK/SP.DEF e Light Screen, contrato 559/559, `All native tests passed`, build ESP32 3.0 aprovado (1.954.476/1.966.080 bytes) e build Android release aprovado. |
+
 ## R20261027-234 - subir APK 2.0 no Drive e gravar firmware 3.0 na placa
 
 ```mermaid

@@ -13,6 +13,8 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_move_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_move_category_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_pokedex_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_trainer_data.py')
