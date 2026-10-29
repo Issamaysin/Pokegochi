@@ -29,7 +29,7 @@ if (Test-Path -LiteralPath $ndk) {
 }
 Push-Location $appRoot
 try {
-    $task = if ($Release) { ':app:assembleRelease' } else { ':app:assembleDebug' }
+    $task = if ($Release) { ':app:verifyReleaseApkAssetPack' } else { ':app:verifyDebugApkAssetPack' }
     & $wrapper '-p' $appRoot $task
     if ($LASTEXITCODE -ne 0) { throw "Gradle terminou com codigo $LASTEXITCODE." }
 } finally { Pop-Location }

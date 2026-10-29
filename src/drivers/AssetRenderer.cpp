@@ -672,6 +672,80 @@ bool drawIndexed(PixelCanvas& display, const IndexedImage& image, int16_t x, int
   return true;
 }
 
+bool spindaSpotPixel(uint16_t sourceX, uint16_t sourceY,
+                     uint32_t personality) {
+  // These are the four canonical 16x16 masks used by the GBA engine. Rows
+  // are LSB-first, exactly like DrawPokemonSpots' `(row >> column) & 1`.
+  static constexpr uint16_t kMasks[4][16] = {
+    {0x0E00,0x3F80,0x7FC0,0x7FE0,0xFFE0,0xFFF0,0xFFF0,0xFFF0,
+     0x7FE0,0x7FE0,0x3FC0,0x0780,0x0000,0x0000,0x0000,0x0000},
+    {0x0780,0x1FC0,0x3FE0,0x7FF0,0x7FF0,0xFFF8,0xFFF8,0xFFF8,
+     0x7FF0,0x7FF0,0x3FE0,0x1FE0,0x0700,0x0000,0x0000,0x0000},
+    {0x3800,0x7C00,0xFE00,0xFE00,0xFE00,0xFE00,0xFE00,0x7C00,
+     0x3800,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000},
+    {0x3C00,0x7E00,0xFF00,0xFF00,0xFF00,0xFF00,0xFF00,0x7E00,
+     0x3C00,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000},
+  };
+  static constexpr uint8_t kBaseX[4] = {34U,22U,40U,16U};
+  static constexpr uint8_t kBaseY[4] = {26U,27U, 8U, 7U};
+  static constexpr uint8_t kMaskForSpot[4] = {3U,2U,1U,0U};
+  for (uint8_t spot = 0; spot < 4U; ++spot) {
+    const uint8_t pidByte = static_cast<uint8_t>(
+        personality >> (8U * (3U - spot)));
+    const int16_t left = static_cast<int16_t>(kBaseX[spot]) +
+        static_cast<int16_t>(pidByte & 0x0FU) - 8;
+    const int16_t top = static_cast<int16_t>(kBaseY[spot]) +
+        static_cast<int16_t>(pidByte >> 4U) - 8;
+    const int16_t localX = static_cast<int16_t>(sourceX) - left;
+    const int16_t localY = static_cast<int16_t>(sourceY) - top;
+    if (localX >= 0 && localX < 16 && localY >= 0 && localY < 16 &&
+        ((kMasks[kMaskForSpot[spot]][localY] >> localX) & 1U))
+      return true;
+  }
+  return false;
+}
+
+bool drawIndexedSpinda(PixelCanvas& display, const IndexedImage& image,
+                       int16_t x, int16_t y, uint32_t personality) {
+  if (!image.valid || !image.indices) return false;
+  display.damage(x, y, image.header.width, image.header.height);
+  int32_t firstVisibleRow = 0;
+  int32_t lastVisibleRow = 0;
+  visibleRowRange(display, y, image.header.height,
+                  firstVisibleRow, lastVisibleRow);
+  const int32_t firstVisibleColumn = std::max<int32_t>(
+      0, display.logicalClipLeft() - x);
+  const int32_t lastVisibleColumn = std::min<int32_t>(
+      image.header.width, display.logicalClipRight() - x);
+  if (lastVisibleRow <= firstVisibleRow ||
+      lastVisibleColumn <= firstVisibleColumn) return true;
+  const uint16_t visibleWidth = static_cast<uint16_t>(
+      lastVisibleColumn - firstVisibleColumn);
+  const bool transparent = containsTransparency(image);
+  for (uint16_t row = static_cast<uint16_t>(firstVisibleRow);
+       row < static_cast<uint16_t>(lastVisibleRow); ++row) {
+    uint16_t* destination = display.writableRow565(
+        x + firstVisibleColumn, y + row, visibleWidth);
+    if (!destination) return false;
+    const size_t sourceRow = static_cast<size_t>(row) *
+        image.header.width + firstVisibleColumn;
+    for (uint16_t column = 0; column < visibleWidth; ++column) {
+      uint8_t paletteIndex = indexedValue(image, sourceRow + column);
+      const uint16_t sourceX = static_cast<uint16_t>(
+          firstVisibleColumn + column);
+      if (paletteIndex >= 1U && paletteIndex <= 3U &&
+          paletteIndex + 4U < image.paletteCount &&
+          spindaSpotPixel(sourceX, row, personality))
+        paletteIndex = static_cast<uint8_t>(paletteIndex + 4U);
+      const uint16_t pixel = paletteIndex < image.paletteCount
+          ? image.palette[paletteIndex] : image.header.transparent;
+      if (!transparent || pixel != image.header.transparent)
+        destination[column] = PixelCanvas::encoded565(pixel);
+    }
+  }
+  return true;
+}
+
 uint16_t positiveModulo(int32_t value, uint16_t modulus) {
   if (!modulus) return 0U;
   const int32_t result = value % static_cast<int32_t>(modulus);
@@ -1404,6 +1478,11 @@ bool shouldBankLargeAsset(const char* path) {
                   // leaves only the procedural fallback visible.
                   std::strstr(path, "/pokecenter/") ||
                   std::strstr(path, "/summary_screen/") ||
+                  // The Hall of Fame backdrop is a complete 320x240 indexed
+                  // scene. Routing its 57.6 KiB pixel plane through the small
+                  // sprite spill left no reliable margin after a battle had
+                  // promoted the shared workspace to an exact-sized bank.
+                  std::strstr(path, "/pokemon_league/victory_bg.pkg") ||
                   std::strstr(path, "/evolution_scene/scene.pkg") ||
                   std::strstr(path, "/ui/wild_transition.pkg"));
 }
@@ -2245,6 +2324,17 @@ bool AssetRenderer::draw(PixelCanvas& display, const char* path, int16_t x, int1
   const bool okay = file && readAssetInfo(file, info) && drawDirectFile(display, file, info, x, y);
   file.close();
   return okay;
+}
+
+bool AssetRenderer::drawSpinda(PixelCanvas& display, const char* path,
+                               int16_t x, int16_t y,
+                               uint32_t personality) {
+  if (!path || !path[0]) return false;
+  const IndexedImage* image = residentImage(path);
+  if ((!image || !image->valid) && !compositionActive && preload(path))
+    image = residentImage(path);
+  return image && image->valid
+      ? drawIndexedSpinda(display, *image, x, y, personality) : false;
 }
 
 bool AssetRenderer::drawMetallic(PixelCanvas& display, const char* path,

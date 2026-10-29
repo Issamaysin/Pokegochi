@@ -29,6 +29,7 @@ void recordGlobalMove(BattleState& battle,MoveId move);
 void prepareEchoedVoice(Gen5BattlerEffectState& state,const FullMoveData* move);
 void clearGen4EffectsOnSwitch(Gen4BattlerEffectState& state);
 void clearGen5EffectsOnSwitch(Gen5BattlerEffectState& state);
+void clearGen6EffectsOnSwitch(Gen6BattlerEffectState& state);
 void restoreSuppressedAbility(OwnedPokemon& pokemon,
                               Gen4BattlerEffectState& state);
 uint8_t pendingReplacementFor(const BattleState& battle,BattleSide side);
@@ -42,6 +43,9 @@ const Gen4BattlerEffectState& gen4EffectsFor(const BattleState& battle,
                                              BattleSide side);
 Gen5BattlerEffectState& gen5EffectsFor(BattleState& battle,BattleSide side);
 const Gen5BattlerEffectState& gen5EffectsFor(const BattleState& battle,
+                                             BattleSide side);
+Gen6BattlerEffectState& gen6EffectsFor(BattleState& battle,BattleSide side);
+const Gen6BattlerEffectState& gen6EffectsFor(const BattleState& battle,
                                              BattleSide side);
 uint8_t underlyingAbilityId(const BattleState& battle,
                             const OwnedPokemon& pokemon);
@@ -179,7 +183,7 @@ bool quickClawActivated(const BattleState& battle,BattleSide side){
 }
 
 uint8_t battleContentGeneration(const BattleState& battle) {
-  return std::max<uint8_t>(1U, std::min<uint8_t>(5U, battle.unlockedGeneration));
+  return std::max<uint8_t>(1U, std::min<uint8_t>(6U, battle.unlockedGeneration));
 }
 
 // OwnedPokemon intentionally keeps 16-bit HP for all 386 persistent Box
@@ -557,8 +561,9 @@ uint16_t typeMultiplier100(PokemonType attack, const SpeciesData& defender) {
       is(PokemonType::Psychic,PokemonType::Psychic)||is(PokemonType::Psychic,PokemonType::Steel)||is(PokemonType::Bug,PokemonType::Fire)||is(PokemonType::Bug,PokemonType::Fighting)||is(PokemonType::Bug,PokemonType::Poison)||is(PokemonType::Bug,PokemonType::Flying)||is(PokemonType::Bug,PokemonType::Ghost)||is(PokemonType::Bug,PokemonType::Steel)||
       is(PokemonType::Rock,PokemonType::Fighting)||is(PokemonType::Rock,PokemonType::Ground)||is(PokemonType::Rock,PokemonType::Steel)||is(PokemonType::Ghost,PokemonType::Dark)||is(PokemonType::Dragon,PokemonType::Steel)||is(PokemonType::Dark,PokemonType::Fighting)||is(PokemonType::Dark,PokemonType::Dark)||is(PokemonType::Dark,PokemonType::Steel)||
       is(PokemonType::Steel,PokemonType::Fire)||is(PokemonType::Steel,PokemonType::Water)||is(PokemonType::Steel,PokemonType::Electric)||is(PokemonType::Steel,PokemonType::Steel)||
-      is(PokemonType::Fire,PokemonType::Fairy)||is(PokemonType::Poison,PokemonType::Fairy)||
-      is(PokemonType::Steel,PokemonType::Fairy)||is(PokemonType::Fairy,PokemonType::Fire)||
+      is(PokemonType::Fighting,PokemonType::Fairy)||
+      is(PokemonType::Bug,PokemonType::Fairy)||is(PokemonType::Dark,PokemonType::Fairy)||
+      is(PokemonType::Fairy,PokemonType::Fire)||
       is(PokemonType::Fairy,PokemonType::Poison)||is(PokemonType::Fairy,PokemonType::Steel);
     if (resist) value /= 2;
   };
@@ -583,7 +588,8 @@ uint16_t identifiedTypeMultiplier100(PokemonType attack,
                                      const DedicatedMoveEffectState& effects,
                                      bool miracleEye=false,
                                      bool gravity=false,
-                                     bool roosting=false) {
+                                     bool roosting=false,
+                                     bool ignoreFairyImmunity=false) {
 
   const SpeciesData* species = findSpecies(defender.speciesId);
   if (!species) return 100U;
@@ -601,6 +607,8 @@ uint16_t identifiedTypeMultiplier100(PokemonType attack,
   }
   uint16_t value = 100U;
   const auto applyIdentifiedType = [&](PokemonType type) {
+    if(ignoreFairyImmunity&&attack==PokemonType::Dragon&&
+       type==PokemonType::Fairy)return;
     // Gen III's TYPE_FORESIGHT marker is immediately before the two Ghost
     // immunity rows. Identification skips only those rows; matchups already
     // processed for a second type must remain in the result.
@@ -788,6 +796,11 @@ PokemonType effectiveMoveType(const BattleState& battle,const FullMoveData& move
     if(abilityIs(attacker,"REFRIGERATE"))return PokemonType::Ice;
     if(abilityIs(attacker,"DRAGONIZE"))return PokemonType::Dragon;
   }
+  const Gen6BattlerEffectState& gen6=gen6EffectsFor(
+      battle,sideOf(battle,attacker));
+  if(gen6.electrified)return PokemonType::Electric;
+  if(battle.ionDeluge&&move.type==PokemonType::Normal)
+    return PokemonType::Electric;
   return move.type;
 }
 
@@ -883,6 +896,28 @@ void applySpikesOnEntry(BattleState& battle,OwnedPokemon& pokemon,BattleSide sid
     appendHpChange(result,side,pokemon.uid,before,pokemon.currentHp);
     if(!pokemon.currentHp)appendFaintedOnce(result,side,pokemon);
   }
+  const bool stickyWeb=side==BattleSide::Player?battle.playerStickyWeb:
+      battle.opponentStickyWeb;
+  if(stickyWeb&&grounded&&pokemon.currentHp){
+    CombatVolatile& volatileState=side==BattleSide::Player?
+        battle.playerVolatile:battle.opponentVolatiles[battle.opponentIndex];
+    if(abilityIs(pokemon,"CLEAR BODY")||abilityIs(pokemon,"WHITE SMOKE"))
+      appendAbilityActivation(result,side,pokemon);
+    else{
+      const StageSnapshot before=snapshotStages(volatileState);
+      changeStageForHolder(pokemon,volatileState.speedStage,-1);
+      appendStageChanges(result,side,pokemon.uid,before,volatileState);
+      if((abilityIs(pokemon,"DEFIANT")||abilityIs(pokemon,"COMPETITIVE"))&&
+         volatileState.speedStage<before.values[4]){
+        const StageSnapshot reactionBefore=snapshotStages(volatileState);
+        if(abilityIs(pokemon,"DEFIANT"))
+          changeStageForHolder(pokemon,volatileState.attackStage,2);
+        else changeStageForHolder(pokemon,volatileState.spAttackStage,2);
+        appendAbilityActivation(result,side,pokemon);
+        appendStageChanges(result,side,pokemon.uid,reactionBefore,volatileState);
+      }
+    }
+  }
 }
 
 bool hasHealthyOpponentReplacement(const BattleState& battle) {
@@ -952,12 +987,14 @@ void finishOpponentFaint(BattleState& battle, PokemonCollection& collection,
                              battle.opponentGen4Effects[battle.opponentIndex]);
     clearGen4EffectsOnSwitch(battle.opponentGen4Effects[battle.opponentIndex]);
     clearGen5EffectsOnSwitch(battle.opponentGen5Effects[battle.opponentIndex]);
+    clearGen6EffectsOnSwitch(battle.opponentGen6Effects[battle.opponentIndex]);
     // The fainted record is no longer battle-active. Its temporary Transform
     // snapshot must never leak into the next ordered trainer Pokemon.
     battle.opponentTransformSnapshot=TransformBattleSnapshot{};
     ++battle.opponentIndex;
     clearGen4EffectsOnSwitch(battle.opponentGen4Effects[battle.opponentIndex]);
     clearGen5EffectsOnSwitch(battle.opponentGen5Effects[battle.opponentIndex]);
+    clearGen6EffectsOnSwitch(battle.opponentGen6Effects[battle.opponentIndex]);
     OwnedPokemon* next = BattleEngine::currentOpponent(battle);
     battle.opponentMoveEffects[battle.opponentIndex].enteredTurn=battle.turn;
     appendEvent(result, BattleEventType::SwitchedIn, BattleSide::Opponent,
@@ -1261,6 +1298,22 @@ void applyRegeneratorOnSwitch(OwnedPokemon& pokemon,BattleSide side,
   if(result){appendAbilityActivation(*result,side,pokemon);
     appendHpChange(*result,side,pokemon.uid,before,pokemon.currentHp);}
 }
+bool resetBattleTriggeredForms(OwnedPokemon& pokemon,uint8_t unlockedGeneration){
+  if(pokemon.speciesId==384U){
+    if(!MegaEvolution::resetRayquazaBattleMega(pokemon))return false;
+    CollectionLogic::refreshAbility(pokemon,unlockedGeneration);
+    CollectionLogic::refreshDerivedStatsPreservingHpRatio(pokemon);
+    return true;
+  }
+  if(pokemon.speciesId!=718U)return false;
+  const bool formChanged=pokemon.form!=1U;
+  if(formChanged)pokemon.form=1U;
+  const bool moveChanged=MegaEvolution::synchronizeSignatureMove(pokemon);
+  CollectionLogic::refreshAbility(pokemon,unlockedGeneration);
+  if(formChanged)
+    CollectionLogic::refreshDerivedStatsPreservingHpRatio(pokemon);
+  return formChanged||moveChanged;
+}
 void restorePlayerBattleForm(BattleState& battle,PokemonCollection& collection){
   OwnedPokemon* active=CollectionLogic::find(collection,battle.playerUid);
   // Natural Cure checks the Ability the battler actually has while leaving
@@ -1277,6 +1330,7 @@ void restorePlayerBattleForm(BattleState& battle,PokemonCollection& collection){
     CollectionLogic::refreshAbility(*player, battleContentGeneration(battle));
   clearGen4EffectsOnSwitch(battle.playerGen4Effects);
   clearGen5EffectsOnSwitch(battle.playerGen5Effects);
+  clearGen6EffectsOnSwitch(battle.playerGen6Effects);
   // Returning the active Pokemon at the end of a battle counts as switching
   // out for NATURAL CURE in the retail games.  Ordinary switch paths already
   // handled this, but victory/run/defeat previously left the status behind.
@@ -1287,7 +1341,10 @@ void restorePlayerBattleForm(BattleState& battle,PokemonCollection& collection){
   // or the persistent collection after the battler leaves the field.
   if(OwnedPokemon* player=CollectionLogic::find(collection,battle.playerUid))
     if(player->speciesId==351U||player->speciesId==421U||
-       player->speciesId==555U||player->speciesId==648U)player->form=0;
+       player->speciesId==555U||player->speciesId==648U||
+       player->speciesId==681U||player->speciesId==716U)player->form=0;
+  if(OwnedPokemon* player=CollectionLogic::find(collection,battle.playerUid))
+    resetBattleTriggeredForms(*player,battleContentGeneration(battle));
 }
 
 void restoreOpponentTemporaryAbility(OwnedPokemon& pokemon,
@@ -1296,7 +1353,7 @@ void restoreOpponentTemporaryAbility(OwnedPokemon& pokemon,
   // affected battler leaves the field.  Opponent records live in BattleState,
   // so they need the same restoration the collection-backed player receives.
   CollectionLogic::refreshAbility(
-      pokemon, std::max<uint8_t>(1U, std::min<uint8_t>(5U, unlockedGeneration)));
+      pokemon, std::max<uint8_t>(1U, std::min<uint8_t>(6U, unlockedGeneration)));
 }
 DedicatedMoveEffectState& moveEffectsFor(BattleState& battle, BattleSide side) {
   return side == BattleSide::Player ? battle.playerMoveEffects
@@ -1322,6 +1379,38 @@ Gen5BattlerEffectState& gen5EffectsFor(BattleState& battle,BattleSide side){
 const Gen5BattlerEffectState& gen5EffectsFor(const BattleState& battle,BattleSide side){
   return side==BattleSide::Player?battle.playerGen5Effects:
       battle.opponentGen5Effects[battle.opponentIndex];
+}
+Gen6BattlerEffectState& gen6EffectsFor(BattleState& battle,BattleSide side){
+  return side==BattleSide::Player?battle.playerGen6Effects:
+      battle.opponentGen6Effects[battle.opponentIndex];
+}
+const Gen6BattlerEffectState& gen6EffectsFor(const BattleState& battle,
+                                             BattleSide side){
+  return side==BattleSide::Player?battle.playerGen6Effects:
+      battle.opponentGen6Effects[battle.opponentIndex];
+}
+bool battlerIsGrounded(const BattleState& battle,const OwnedPokemon& pokemon,
+                       BattleSide side){
+  if(battle.gravityTurns)return true;
+  const SpeciesData* species=findSpecies(pokemon.speciesId);
+  if(!species)return true;
+  const DedicatedMoveEffectState& effects=moveEffectsFor(battle,side);
+  const Gen4BattlerEffectState& gen4=gen4EffectsFor(battle,side);
+  const Gen5BattlerEffectState& gen5=gen5EffectsFor(battle,side);
+  PokemonType type1=effects.typeOverrideActive?effects.type1:
+      MegaEvolution::type1(pokemon,species->type1);
+  PokemonType type2=effects.typeOverrideActive?effects.type2:
+      MegaEvolution::type2(pokemon,species->type2);
+  if(gen5.grounded||effects.ingrained||gen4.roosting)return true;
+  if(gen5.telekinesisTurns||gen4.magnetRiseTurns)return false;
+  return type1!=PokemonType::Flying&&type2!=PokemonType::Flying&&
+      !hasGroundImmunityAbility(pokemon);
+}
+bool mistyTerrainPreventsConfusion(const BattleState& battle,
+                                   const OwnedPokemon& pokemon,
+                                   BattleSide side){
+  return battle.gen6Terrain==Gen6Terrain::Misty&&
+      battlerIsGrounded(battle,pokemon,side);
 }
 void recordGlobalMove(BattleState& battle,MoveId move){
   battle.previousMoveUsedGlobally=battle.lastMoveUsedGlobally;
@@ -1519,6 +1608,42 @@ bool updateDarmanitanZenMode(OwnedPokemon& pokemon,BattleSide side,
                                      side,pokemon.uid);
     changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
     changed.before=before;changed.after=after;
+  }
+  return true;
+}
+
+bool updateZygardeAssembly(OwnedPokemon& pokemon,BattleSide side,
+                           uint8_t unlockedGeneration,
+                           BattleActionResult* result){
+  if(pokemon.speciesId!=718U||!pokemon.currentHp||!pokemon.maximumHp)return false;
+  const uint8_t before=CollectionLogic::resolvedForm(pokemon);
+  uint8_t after=before;
+  // The stages intentionally advance at most once per completed turn. A 10%
+  // Zygarde already below half first assembles into 50%; only a later turn is
+  // allowed to evaluate the Complete threshold.
+  if(before==1U&&static_cast<uint32_t>(pokemon.currentHp)*10U<=
+                    static_cast<uint32_t>(pokemon.maximumHp)*9U)
+    after=0U;
+  else if(before==0U&&static_cast<uint32_t>(pokemon.currentHp)*2U<=
+                         pokemon.maximumHp)
+    after=2U;
+  if(after==before)return false;
+
+  const uint16_t hpBefore=pokemon.currentHp;
+  pokemon.form=after;
+  // At Complete, variantFor() now resolves the held Mega Stone. That makes
+  // the stat refresh use either normal Complete or Mega Complete and swaps
+  // Core Enforcer/Nihil Light in the exact same transition.
+  MegaEvolution::synchronizeSignatureMove(pokemon);
+  CollectionLogic::refreshAbility(pokemon,unlockedGeneration);
+  CollectionLogic::refreshDerivedStats(pokemon,true);
+  if(result){
+    BattleEvent& changed=appendEvent(*result,BattleEventType::MoveEffect,
+                                     side,pokemon.uid);
+    changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
+    changed.before=before;
+    changed.after=after;
+    appendHpChange(*result,side,pokemon.uid,hpBefore,pokemon.currentHp);
   }
   return true;
 }
@@ -1745,6 +1870,9 @@ void clearGen4EffectsOnSwitch(Gen4BattlerEffectState& state){
 void clearGen5EffectsOnSwitch(Gen5BattlerEffectState& state){
   state=Gen5BattlerEffectState{};
 }
+void clearGen6EffectsOnSwitch(Gen6BattlerEffectState& state){
+  state=Gen6BattlerEffectState{};
+}
 void restoreSuppressedAbility(OwnedPokemon& pokemon,
                               Gen4BattlerEffectState& state){
   if(state.abilitySuppressed&&pokemon.abilityId==0)
@@ -1846,10 +1974,14 @@ bool opponentBatonPass(BattleState& battle, PokemonCollection& collection,
   if (battle.opponents[outgoingIndex].speciesId == 351U ||
       battle.opponents[outgoingIndex].speciesId == 421U ||
       battle.opponents[outgoingIndex].speciesId == 555U ||
-      battle.opponents[outgoingIndex].speciesId == 648U)
+      battle.opponents[outgoingIndex].speciesId == 648U ||
+      battle.opponents[outgoingIndex].speciesId == 681U ||
+      battle.opponents[outgoingIndex].speciesId == 716U)
     battle.opponents[outgoingIndex].form = 0;
   restoreOpponentTemporaryAbility(battle.opponents[outgoingIndex],
                                   battle.unlockedGeneration);
+  resetBattleTriggeredForms(battle.opponents[outgoingIndex],
+                       battle.unlockedGeneration);
 
   std::swap(battle.opponents[outgoingIndex], battle.opponents[incomingIndex]);
   std::swap(battle.opponentVolatiles[outgoingIndex],
@@ -1867,6 +1999,8 @@ bool opponentBatonPass(BattleState& battle, PokemonCollection& collection,
   clearGen4EffectsOnSwitch(battle.opponentGen4Effects[incomingIndex]);
   clearGen5EffectsOnSwitch(battle.opponentGen5Effects[incomingIndex]);
   clearGen5EffectsOnSwitch(battle.opponentGen5Effects[outgoingIndex]);
+  clearGen6EffectsOnSwitch(battle.opponentGen6Effects[incomingIndex]);
+  clearGen6EffectsOnSwitch(battle.opponentGen6Effects[outgoingIndex]);
   applyBatonPassGen4Effects(passedGen4,
                             battle.opponentGen4Effects[outgoingIndex]);
   if(passedGen4.abilitySuppressed){
@@ -2064,6 +2198,13 @@ void triggerHeldItemWithResult(BattleActionResult& result,OwnedPokemon& pokemon,
                                gBattleTransient.opponentBerryBlocked))return;
   const uint16_t hpBefore=pokemon.currentHp;const StatusCondition statusBefore=pokemon.status;
   const HeldItem item=triggerHeldItem(pokemon,volatileState,moveEffects);recordHeldItemActivation(result,pokemon,item,side);
+  if(heldItemIsBerry(item)&&abilityIs(pokemon,"CHEEK POUCH")&&pokemon.currentHp&&
+     pokemon.currentHp<pokemon.maximumHp){
+    appendAbilityActivation(result,side,pokemon);
+    pokemon.currentHp=std::min<uint16_t>(pokemon.maximumHp,
+        static_cast<uint16_t>(pokemon.currentHp+
+        std::max<uint16_t>(1U,pokemon.maximumHp/3U)));
+  }
   if(item!=HeldItem::None&&pokemon.currentHp!=hpBefore){BattleEvent& hp=appendEvent(result,BattleEventType::HpChanged,side,pokemon.uid);hp.before=hpBefore;hp.after=pokemon.currentHp;}
   appendStatusChange(result,side,pokemon.uid,statusBefore,pokemon.status);
 }
@@ -2187,7 +2328,8 @@ void applyImmediateBerryEffect(BattleState& battle,HeldItem berry,
         else if(berry==HeldItem::MagoBerry)dislikedStat=PokemonStat::Speed;
         else if(berry==HeldItem::AguavBerry)dislikedStat=PokemonStat::SpDefense;
         if(CollectionLogic::natureEffect(eater.nature,dislikedStat)<0&&
-           !abilityIs(eater,"OWN TEMPO")&&!volatileState.confusionTurns){
+           !abilityIs(eater,"OWN TEMPO")&&!volatileState.confusionTurns&&
+           !mistyTerrainPreventsConfusion(battle,eater,side)){
           const uint8_t safeguard=side==BattleSide::Player?
               battle.playerSafeguardTurns:battle.opponentSafeguardTurns;
           if(!safeguard)volatileState.confusionTurns=static_cast<uint8_t>(
@@ -2237,7 +2379,8 @@ uint32_t moneyReward(const BattleState& battle,const PokemonCollection& collecti
   // FireRed's moneyMultiplier is applied independently to the trainer prize
   // and to the coins scattered by Pay Day.  Adding Pay Day after doubling the
   // prize made Amulet Coin underpay that second component.
-  const uint32_t multiplier=partyHolds(collection,HeldItem::AmuletCoin)?2U:1U;
+  const uint32_t multiplier=(partyHolds(collection,HeldItem::AmuletCoin)?2U:1U)*
+      (battle.happyHour?2U:1U);
   const uint32_t payDay=battle.kind==BattleKind::Boss?0U:battle.payDayMoney;
   return (battle.rewardMoney+payDay)*multiplier;
 }
@@ -2396,7 +2539,8 @@ void applyContactAbility(BattleState& battle,const FullMoveData* move,
   CombatVolatile& defenderVolatile=sideOf(battle,defender)==BattleSide::Player?
       battle.playerVolatile:battle.opponentVolatiles[battle.opponentIndex];
   if(defenderAbilityApplies(attacker,defender,"CURSED BODY")&&
-     attacker.currentHp&&move->id&&nextBattleRandom(battle)%10U<3U){
+     !abilityIs(attacker,"AROMA VEIL")&&attacker.currentHp&&move->id&&
+     nextBattleRandom(battle)%10U<3U){
     attackerVolatile.disabledMove=static_cast<MoveId>(move->id);
     setDisableTurns(attackerVolatile,4U);
     appendAbilityActivation(result,sideOf(battle,defender),defender);
@@ -2423,7 +2567,21 @@ void applyContactAbility(BattleState& battle,const FullMoveData* move,
       appendStageChanges(result,sideOf(battle,defender),defender.uid,before,
                          defenderVolatile);}
   }
+  if(abilityIs(attacker,"MAGICIAN")&&move->power&&defender.currentHp&&
+     presentBattleHeldItem(attacker,attackerVolatile)==HeldItem::None&&
+     stealBattleHeldItem(attacker,attackerVolatile,defender,defenderVolatile)){
+    appendAbilityActivation(result,sideOf(battle,attacker),attacker);
+    primeUnburdenFromCurrentItem(battle,attacker,attackerVolatile);
+  }
   if(!move->makesContact)return;
+  if(defenderAbilityApplies(attacker,defender,"GOOEY")&&attacker.currentHp){
+    const StageSnapshot before=snapshotStages(attackerVolatile);
+    if(changeStageForHolder(attacker,attackerVolatile.speedStage,-1)){
+      appendAbilityActivation(result,sideOf(battle,defender),defender);
+      appendStageChanges(result,sideOf(battle,attacker),attacker.uid,before,
+                         attackerVolatile);
+    }
+  }
   if(defenderAbilityApplies(attacker,defender,"ROUGH SKIN")||
      defenderAbilityApplies(attacker,defender,"IRON BARBS")){
     // Rough Skin scales from the attacker's maximum HP. A Boss never takes
@@ -2661,7 +2819,8 @@ bool moveConnects(BattleState& battle, const FullMoveData& move,
       gen4EffectsFor(battle,defenderSide).miracleEye;
   const int8_t attackerAccuracyStage=effectiveStage(
       attackerVolatile.accuracyStage,abilityIs(attacker,"SIMPLE"));
-  const int8_t defenderEvasionStage=identified?0:effectiveStage(
+  const int8_t defenderEvasionStage=(identified||effectIs(&move,"NIHIL_LIGHT"))?
+      0:effectiveStage(
       defenderVolatile.evasionStage,
       defenderAbilityApplies(attacker,defender,"SIMPLE"));
   accuracy=accuracyStaged(accuracy,
@@ -2812,7 +2971,8 @@ int8_t pokemonGender(const OwnedPokemon& pokemon){
 }
 
 bool isProtectionMove(const FullMoveData* move) {
-  return effectIs(move,"PROTECT") || effectIs(move,"ENDURE");
+  return effectIs(move,"PROTECT") || effectIs(move,"ENDURE") ||
+      effectIs(move,"KINGS_SHIELD")||effectIs(move,"SPIKY_SHIELD");
 }
 
 void beginCommandTurn(BattleState& battle) {
@@ -2826,6 +2986,12 @@ void beginCommandTurn(BattleState& battle) {
   battle.playerVolatile.protectedThisTurn=false;
   battle.playerGen5Effects.quickGuard=false;
   battle.playerGen5Effects.wideGuard=false;
+  battle.playerGen6Effects.electrified=false;
+  battle.playerGen6Effects.powdered=false;
+  battle.playerGen6Effects.kingsShield=false;
+  battle.playerGen6Effects.spikyShield=false;
+  battle.playerGen6Effects.matBlock=false;
+  battle.playerGen6Effects.craftyShield=false;
   battle.playerGen4Effects.roosting=false;
   battle.playerEndureThisTurn=false;
   if(battle.opponentIndex<battle.opponentCount){
@@ -2837,9 +3003,18 @@ void beginCommandTurn(BattleState& battle) {
     battle.opponentVolatiles[battle.opponentIndex].protectedThisTurn=false;
     battle.opponentGen5Effects[battle.opponentIndex].quickGuard=false;
     battle.opponentGen5Effects[battle.opponentIndex].wideGuard=false;
+    Gen6BattlerEffectState& opponentGen6=
+        battle.opponentGen6Effects[battle.opponentIndex];
+    opponentGen6.electrified=false;
+    opponentGen6.powdered=false;
+    opponentGen6.kingsShield=false;
+    opponentGen6.spikyShield=false;
+    opponentGen6.matBlock=false;
+    opponentGen6.craftyShield=false;
     battle.opponentGen4Effects[battle.opponentIndex].roosting=false;
   }
   battle.opponentEndureThisTurn=false;
+  battle.ionDeluge=false;
   gBattleTransient.playerQuickClaw=false;
   gBattleTransient.opponentQuickClaw=false;
   gBattleTransient.gyroSnapshotValid=false;
@@ -2868,7 +3043,7 @@ bool isChargingMove(const BattleState& battle,const FullMoveData* move,
       effectIs(move,"SOLAR_BEAM")||effectIs(move,"SKULL_BASH")||
       effectIs(move,"SKY_ATTACK")||effectIs(move,"SHADOW_FORCE")||
       effectIs(move,"FREEZE_SHOCK")||effectIs(move,"ICE_BURN")||
-      effectIs(move,"SKY_DROP");
+      effectIs(move,"SKY_DROP")||effectIs(move,"GEOMANCY");
 }
 
 bool isMoveCaller(const FullMoveData* move){
@@ -3504,6 +3679,14 @@ bool moveUserRequirementMet(const BattleState& battle, const FullMoveData* move,
                             const OwnedPokemon& user,
                             const CombatVolatile& userVolatile,
                             const OwnedPokemon& target) {
+  // Hyperspace Fury is executable only by Hoopa Unbound. Keeping the move in
+  // a customized moveset across a manual form change is legal, but attempting
+  // it while Confined (or after another Pokemon copies it) must fail.
+  if (effectIs(move,"HYPERSPACE_FURY"))
+    return user.speciesId==720U&&CollectionLogic::resolvedForm(user)==1U;
+  if(effectIs(move,"NIHIL_LIGHT"))
+    return user.speciesId==718U&&
+        MegaEvolution::variantFor(user)==MegaVariant::Mega;
   // In FireRed SNORE is the explicit exception to the normal sleep action
   // lock. It can execute while the user remains asleep and fails if the user
   // is already awake (including the turn on which the sleep counter expires).
@@ -3527,6 +3710,9 @@ bool moveUserRequirementMet(const BattleState& battle, const FullMoveData* move,
     return user.currentHp>std::max<uint16_t>(1U,user.maximumHp/2U)&&
            userVolatile.attackStage<kMaximumBattleStatStage;
   if(effectIs(move,"ENDEAVOR"))return target.currentHp>user.currentHp;
+  if(effectIs(move,"BELCH"))
+    return heldItemIsBerry(moveEffectsFor(
+        battle,sideOf(battle,user)).recyclableItem);
   if(effectIs(move,"EXPLOSION"))
     return !abilityIs(user,"DAMP")&&
         !defenderAbilityApplies(user,target,"DAMP");
@@ -3579,14 +3765,20 @@ bool gen4MoveRequirementMet(const BattleState& battle,const FullMoveData* move,
 }
 
 bool isHalfDrainEffect(const FullMoveData* move) {
-  return effectIs(move, "ABSORB") || effectIs(move, "DREAM_EATER");
+  return effectIs(move, "ABSORB") || effectIs(move, "DREAM_EATER")||
+      effectIs(move,"PARABOLIC_CHARGE")||effectIs(move,"DRAINING_KISS")||
+      effectIs(move,"OBLIVION_WING");
 }
 
 void applyHalfDrain(BattleState& battle,const FullMoveData* move, uint16_t damage,
                     OwnedPokemon& user, const OwnedPokemon& target,
                     BattleActionResult& result, BattleSide userSide) {
   if (!isHalfDrainEffect(move) || !damage) return;
-  const uint16_t drained = std::max<uint16_t>(1U, damage / 2U);
+  const bool threeQuarters=effectIs(move,"DRAINING_KISS")||
+      effectIs(move,"OBLIVION_WING");
+  const uint16_t drained = std::max<uint16_t>(1U, static_cast<uint16_t>(
+      static_cast<uint32_t>(damage)*(threeQuarters?3U:1U)/
+      (threeQuarters?4U:2U)));
   const uint16_t before=user.currentHp;
   // Liquid Ooze reverses every HP-draining move in FireRed, including
   // Dream Eater; it is not limited to the moves whose effect is ABSORB.
@@ -3599,6 +3791,70 @@ void applyHalfDrain(BattleState& battle,const FullMoveData* move, uint16_t damag
     user.currentHp = std::min<uint16_t>(user.maximumHp,
         static_cast<uint16_t>(user.currentHp + drained));
   appendHpChange(result,userSide,user.uid,before,user.currentHp);
+}
+
+void applyGen6PreMoveAbility(BattleState& battle,const FullMoveData* move,
+                             OwnedPokemon& user,BattleSide side,
+                             BattleActionResult& result){
+  if(!move)return;
+  // Rayquaza rejects the universal Mega Stone. Dragon Ascent is its explicit
+  // in-battle trigger; switching or ending the battle clears this marker.
+  if(user.speciesId==384U&&move->id==620U&&
+     MegaEvolution::activateRayquazaBattleMega(user)){
+    CollectionLogic::refreshAbility(user,battleContentGeneration(battle));
+    CollectionLogic::refreshDerivedStatsPreservingHpRatio(user);
+    BattleEvent& changed=appendEvent(result,BattleEventType::MoveEffect,
+                                      side,user.uid);
+    changed.move=static_cast<MoveId>(move->id);
+    changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
+    changed.before=0U;changed.after=1U;
+    appendAbilityActivation(result,side,user);
+    battle.weather=BattleWeather::StrongWinds;
+    battle.weatherTurns=0xFFU;
+  }
+  DedicatedMoveEffectState& effects=moveEffectsFor(battle,side);
+  const PokemonType resolvedType=effectiveMoveType(battle,*move,user);
+  if(abilityIs(user,"PROTEAN")&&move->id!=static_cast<uint16_t>(MoveId::Struggle)&&
+     !hasBattleType(user,effects,resolvedType)){
+    effects.typeOverrideActive=true;
+    effects.type1=effects.type2=resolvedType;
+    appendAbilityActivation(result,side,user);
+    BattleEvent& changed=appendEvent(result,BattleEventType::MoveEffect,side,user.uid);
+    changed.move=static_cast<MoveId>(move->id);
+    changed.value=static_cast<uint16_t>(BattleMoveEffect::TypeChanged);
+    changed.after=static_cast<uint16_t>(resolvedType);
+  }
+  if(abilityIs(user,"STANCE CHANGE")&&user.speciesId==681U){
+    const uint8_t wanted=effectIs(move,"KINGS_SHIELD")?0U:
+        (move->category!=MoveCategory::Status?1U:user.form);
+    if(wanted!=user.form){
+      const uint8_t before=user.form;user.form=wanted;
+      appendAbilityActivation(result,side,user);
+      BattleEvent& changed=appendEvent(result,BattleEventType::MoveEffect,
+                                        side,user.uid);
+      changed.move=static_cast<MoveId>(move->id);
+      changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
+      changed.before=before;changed.after=wanted;
+    }
+  }
+}
+
+bool powderStopsMove(BattleState& battle,const FullMoveData* move,
+                     OwnedPokemon& user,BattleSide side,
+                     BattleActionResult& result){
+  Gen6BattlerEffectState& state=gen6EffectsFor(battle,side);
+  if(!state.powdered||!move||
+     effectiveMoveType(battle,*move,user)!=PokemonType::Fire)return false;
+  state.powdered=false;
+  appendMoveEffect(result,side,user.uid,static_cast<MoveId>(move->id),
+                   BattleMoveEffect::Powdered);
+  if(!abilityIs(user,"MAGIC GUARD")&&user.currentHp){
+    const uint16_t before=user.currentHp;
+    const uint16_t hurt=std::max<uint16_t>(1U,user.maximumHp/4U);
+    user.currentHp=hurt>=before?0U:static_cast<uint16_t>(before-hurt);
+    appendHpChange(result,side,user.uid,before,user.currentHp);
+  }
+  return true;
 }
 
 uint16_t applyMoveRecoil(const FullMoveData* move, uint16_t damageDealt,
@@ -3707,6 +3963,13 @@ void applyStageEffect(BattleState& battle, const OwnedPokemon& sourcePokemon,
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
     return;
   }
+  if(opposingDrop&&
+     defenderAbilityApplies(sourcePokemon,targetPokemon,"FLOWER VEIL")&&
+     hasBattleType(targetPokemon,moveEffectsFor(
+         battle,sideOf(battle,targetPokemon)),PokemonType::Grass)){
+    if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
+    return;
+  }
   if(opposingDrop&&std::strstr(effect,"ATTACK")&&!std::strstr(effect,"SPECIAL")&&
      defenderAbilityApplies(sourcePokemon,targetPokemon,"HYPER CUTTER")){
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
@@ -3722,6 +3985,7 @@ void applyStageEffect(BattleState& battle, const OwnedPokemon& sourcePokemon,
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
     return;
   }
+  const StageSnapshot beforeDrop=snapshotStages(v);
   bool changed=false;
   if (std::strstr(effect,"SPECIAL_ATTACK") || std::strstr(effect,"SP_ATTACK")) changed=changeStageForHolder(targetPokemon,v.spAttackStage,amount);
   else if (std::strstr(effect,"SPECIAL_DEFENSE") || std::strstr(effect,"SP_DEFENSE")) changed=changeStageForHolder(targetPokemon,v.spDefenseStage,amount);
@@ -3731,9 +3995,17 @@ void applyStageEffect(BattleState& battle, const OwnedPokemon& sourcePokemon,
   else if (std::strstr(effect,"ACCURACY")) changed=changeStageForHolder(targetPokemon,v.accuracyStage,amount);
   else if (std::strstr(effect,"EVASION")||std::strstr(effect,"EVA_DOWN"))
     changed=changeStageForHolder(targetPokemon,v.evasionStage,amount);
-  if(changed&&result&&opposingDrop&&amount<0&&abilityIs(targetPokemon,"DEFIANT")){
+  const StageSnapshot afterDrop=snapshotStages(v);
+  bool actuallyDropped=false;
+  for(uint8_t index=0;index<7U;++index)
+    actuallyDropped=actuallyDropped||afterDrop.values[index]<beforeDrop.values[index];
+  if(changed&&result&&opposingDrop&&actuallyDropped&&
+     (abilityIs(targetPokemon,"DEFIANT")||abilityIs(targetPokemon,"COMPETITIVE"))){
     const StageSnapshot before=snapshotStages(v);
-    if(changeStageForHolder(targetPokemon,v.attackStage,2)){
+    const bool reacted=abilityIs(targetPokemon,"DEFIANT")?
+        changeStageForHolder(targetPokemon,v.attackStage,2):
+        changeStageForHolder(targetPokemon,v.spAttackStage,2);
+    if(reacted){
       appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
       appendStageChanges(*result,sideOf(battle,targetPokemon),targetPokemon.uid,before,v);
     }
@@ -3757,7 +4029,8 @@ bool statusPreventedByTypeAbilityOrField(
   const bool paralysisAbility=condition==StatusCondition::Paralysis&&
       passiveBlocks("LIMBER");
   const bool sleepAbility=condition==StatusCondition::Sleep&&
-      (passiveBlocks("INSOMNIA")||passiveBlocks("VITAL SPIRIT"));
+      (passiveBlocks("INSOMNIA")||passiveBlocks("VITAL SPIRIT")||
+       passiveBlocks("SWEET VEIL"));
   const BattleWeather targetWeather=
       effectiveWeatherForBattler(battle,target,&source);
   const bool leafGuard=passiveBlocks("LEAF GUARD")&&
@@ -3783,6 +4056,11 @@ bool statusPreventedByTypeAbilityOrField(
       ((!abilityIs(target,"SOUNDPROOF")&&!abilityIs(target,"CACOPHONY"))&&
        (battle.playerMoveEffects.uproar||
         battle.opponentMoveEffects[battle.opponentIndex].uproar))))return true;
+  const BattleSide targetSide=sideOf(battle,target);
+  if(battlerIsGrounded(battle,target,targetSide)&&
+     (battle.gen6Terrain==Gen6Terrain::Misty||
+      (battle.gen6Terrain==Gen6Terrain::Electric&&
+       condition==StatusCondition::Sleep)))return true;
   return false;
 }
 uint16_t recoveryMoveAmount(const BattleState& battle, const OwnedPokemon& user,
@@ -3911,8 +4189,10 @@ bool forceOpponentSwitch(BattleState& battle,PokemonCollection& collection,
   restoreSuppressedAbility(outgoing,battle.opponentGen4Effects[active]);
   restoreOpponentTransform(battle);
   if(outgoing.speciesId==351U||outgoing.speciesId==421U||
-     outgoing.speciesId==555U||outgoing.speciesId==648U)outgoing.form=0;
+     outgoing.speciesId==555U||outgoing.speciesId==648U||
+     outgoing.speciesId==681U||outgoing.speciesId==716U)outgoing.form=0;
   restoreOpponentTemporaryAbility(outgoing, battle.unlockedGeneration);
+  resetBattleTriggeredForms(outgoing,battle.unlockedGeneration);
   setEscapePrevented(battle.playerVolatile,false);
   battle.playerVolatile.trappedTurns=0;
   if(sureHitOwner(battle.playerVolatile)==2U)setSureHitOwner(battle.playerVolatile,0);
@@ -3932,6 +4212,8 @@ bool forceOpponentSwitch(BattleState& battle,PokemonCollection& collection,
   clearGen4EffectsOnSwitch(battle.opponentGen4Effects[incoming]);
   clearGen5EffectsOnSwitch(battle.opponentGen5Effects[active]);
   clearGen5EffectsOnSwitch(battle.opponentGen5Effects[incoming]);
+  clearGen6EffectsOnSwitch(battle.opponentGen6Effects[active]);
+  clearGen6EffectsOnSwitch(battle.opponentGen6Effects[incoming]);
   battle.opponentMoveEffects[active].enteredTurn=battle.turn;
   battle.opponentBides[active]=battle.opponentBides[incoming]=BideState{};
   battle.opponentEncoreTurns[active]=battle.opponentEncoreTurns[incoming]=0;
@@ -3970,6 +4252,7 @@ bool forcePlayerSwitch(BattleState& battle,PokemonCollection& collection,
   loadPlayerMoveEffectState(battle,*incoming);
   clearGen4EffectsOnSwitch(battle.playerGen4Effects);
   clearGen5EffectsOnSwitch(battle.playerGen5Effects);
+  clearGen6EffectsOnSwitch(battle.playerGen6Effects);
   battle.playerMoveEffects.enteredTurn=battle.turn;
   battle.playerNightmare=false;
   applySpikesOnEntry(battle,*incoming,BattleSide::Player,result);
@@ -4020,6 +4303,8 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
   Gen4BattlerEffectState& targetGen4=gen4EffectsFor(battle,targetSide);
   Gen5BattlerEffectState& userGen5=gen5EffectsFor(battle,userSide);
   Gen5BattlerEffectState& targetGen5=gen5EffectsFor(battle,targetSide);
+  Gen6BattlerEffectState& userGen6=gen6EffectsFor(battle,userSide);
+  Gen6BattlerEffectState& targetGen6=gen6EffectsFor(battle,targetSide);
   auto preservePlayerAbility=[&](OwnedPokemon& pokemon,BattleSide side){
     if(side==BattleSide::Player&&!battle.playerAbilityTraced&&
        !battle.playerTransformed){
@@ -4027,6 +4312,149 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
       battle.playerPreTraceAbilityId=underlyingAbilityId(battle,pokemon);
     }
   };
+  if(effectIs(&move,"MAT_BLOCK")){
+    if(battle.turn>static_cast<uint16_t>(userEffects.enteredTurn+1U)){
+      failed();return true;
+    }
+    userGen6.matBlock=true;
+    effect(userSide,user.uid,BattleMoveEffect::MatBlockSet);return true;
+  }
+  if(effectIs(&move,"STICKY_WEB")){
+    bool& web=targetSide==BattleSide::Player?battle.playerStickyWeb:
+        battle.opponentStickyWeb;
+    if(web){failed();return true;}
+    web=true;effect(targetSide,target.uid,BattleMoveEffect::StickyWebSet);return true;
+  }
+  if(effectIs(&move,"FELL_STINGER")){
+    if(!target.currentHp)changeStageForHolder(user,userVolatile.attackStage,2);
+    return true;
+  }
+  if(effectIs(&move,"THIRD_TYPE_GHOST")||effectIs(&move,"THIRD_TYPE_GRASS")){
+    if(targetHadSubstitute||targetGen6.extraTypeActive){failed();return true;}
+    targetGen6.extraTypeActive=true;
+    targetGen6.extraType=effectIs(&move,"THIRD_TYPE_GHOST")?
+        PokemonType::Ghost:PokemonType::Grass;
+    BattleEvent& added=appendEvent(result,BattleEventType::MoveEffect,
+                                    targetSide,target.uid);
+    added.move=static_cast<MoveId>(move.id);
+    added.value=static_cast<uint16_t>(BattleMoveEffect::ThirdTypeAdded);
+    added.after=static_cast<uint16_t>(targetGen6.extraType);return true;
+  }
+  if(effectIs(&move,"NOBLE_ROAR")||effectIs(&move,"PARTING_SHOT")){
+    if(targetHadSubstitute){failed();return true;}
+    const int8_t attackBefore=targetVolatile.attackStage;
+    const int8_t specialBefore=targetVolatile.spAttackStage;
+    applyStageEffect(battle,user,"ATTACK_DOWN",userVolatile,
+                     targetVolatile,target,&result);
+    applyStageEffect(battle,user,"SPECIAL_ATTACK_DOWN",userVolatile,
+                     targetVolatile,target,&result);
+    if(attackBefore==targetVolatile.attackStage&&
+       specialBefore==targetVolatile.spAttackStage)failed();
+    return true;
+  }
+  if(effectIs(&move,"ION_DELUGE")){
+    battle.ionDeluge=true;
+    effect(userSide,user.uid,BattleMoveEffect::IonDelugeSet);return true;
+  }
+  if(effectIs(&move,"TOPSY_TURVY")){
+    if(targetHadSubstitute){failed();return true;}
+    targetVolatile.attackStage=-targetVolatile.attackStage;
+    targetVolatile.defenseStage=-targetVolatile.defenseStage;
+    targetVolatile.spAttackStage=-targetVolatile.spAttackStage;
+    targetVolatile.spDefenseStage=-targetVolatile.spDefenseStage;
+    targetVolatile.speedStage=-targetVolatile.speedStage;
+    targetVolatile.accuracyStage=-targetVolatile.accuracyStage;
+    targetVolatile.evasionStage=-targetVolatile.evasionStage;
+    effect(targetSide,target.uid,BattleMoveEffect::StatsInverted);return true;
+  }
+  if(effectIs(&move,"CRAFTY_SHIELD")){
+    userGen6.craftyShield=true;
+    effect(userSide,user.uid,BattleMoveEffect::CraftyShieldSet);return true;
+  }
+  if(effectIs(&move,"FLOWER_SHIELD")||effectIs(&move,"ROTOTILLER")){
+    bool changed=false;
+    auto boost=[&](OwnedPokemon& pokemon,CombatVolatile& volatileState,
+                   DedicatedMoveEffectState& effects,BattleSide side){
+      if(!hasBattleType(pokemon,effects,PokemonType::Grass))return;
+      if(effectIs(&move,"ROTOTILLER")&&!battlerIsGrounded(battle,pokemon,side))return;
+      if(effectIs(&move,"FLOWER_SHIELD"))
+        changed=changeStageForHolder(pokemon,volatileState.defenseStage,1)||changed;
+      else{
+        changed=changeStageForHolder(pokemon,volatileState.attackStage,1)||changed;
+        changed=changeStageForHolder(pokemon,volatileState.spAttackStage,1)||changed;
+      }
+    };
+    boost(user,userVolatile,userEffects,userSide);
+    boost(target,targetVolatile,targetEffects,targetSide);
+    if(!changed)failed();return true;
+  }
+  if(effectIs(&move,"GRASSY_TERRAIN")||effectIs(&move,"MISTY_TERRAIN")||
+     effectIs(&move,"ELECTRIC_TERRAIN")){
+    const Gen6Terrain terrain=effectIs(&move,"GRASSY_TERRAIN")?
+        Gen6Terrain::Grassy:effectIs(&move,"MISTY_TERRAIN")?
+        Gen6Terrain::Misty:Gen6Terrain::Electric;
+    if(battle.gen6Terrain==terrain&&battle.gen6TerrainTurns){failed();return true;}
+    battle.gen6Terrain=terrain;battle.gen6TerrainTurns=5U;
+    BattleEvent& set=appendEvent(result,BattleEventType::MoveEffect,userSide,user.uid);
+    set.move=static_cast<MoveId>(move.id);
+    set.value=static_cast<uint16_t>(BattleMoveEffect::TerrainSet);
+    set.after=static_cast<uint16_t>(terrain);return true;
+  }
+  if(effectIs(&move,"ELECTRIFY")){
+    if(sideAlreadyActed(result,targetSide)){failed();return true;}
+    targetGen6.electrified=true;
+    effect(targetSide,target.uid,BattleMoveEffect::Electrified);return true;
+  }
+  if(effectIs(&move,"FAIRY_LOCK")){
+    battle.fairyLockTurns=2U;
+    effect(userSide,user.uid,BattleMoveEffect::FairyLockSet);return true;
+  }
+  if(effectIs(&move,"VENOM_DRENCH")){
+    if(targetHadSubstitute||
+       (target.status!=StatusCondition::Poison&&
+        target.status!=StatusCondition::BadlyPoisoned)){failed();return true;}
+    applyStageEffect(battle,user,"ATTACK_DOWN",userVolatile,
+                     targetVolatile,target,&result);
+    applyStageEffect(battle,user,"SPECIAL_ATTACK_DOWN",userVolatile,
+                     targetVolatile,target,&result);
+    applyStageEffect(battle,user,"SPEED_DOWN",userVolatile,
+                     targetVolatile,target,&result);return true;
+  }
+  if(effectIs(&move,"POWDER")){
+    if(targetHadSubstitute||sideAlreadyActed(result,targetSide)){
+      failed();return true;
+    }
+    targetGen6.powdered=true;
+    effect(targetSide,target.uid,BattleMoveEffect::Powdered);return true;
+  }
+  if(effectIs(&move,"GEOMANCY")){
+    changeStageForHolder(user,userVolatile.spAttackStage,2);
+    changeStageForHolder(user,userVolatile.spDefenseStage,2);
+    changeStageForHolder(user,userVolatile.speedStage,2);return true;
+  }
+  if(effectIs(&move,"MAGNETIC_FLUX")){
+    if(!abilityIs(user,"PLUS")&&!abilityIs(user,"MINUS")){
+      failed();return true;
+    }
+    const bool defense=changeStageForHolder(user,userVolatile.defenseStage,1);
+    const bool special=changeStageForHolder(user,userVolatile.spDefenseStage,1);
+    if(!defense&&!special)failed();return true;
+  }
+  if(effectIs(&move,"HAPPY_HOUR")){
+    if(battle.happyHour){failed();return true;}
+    battle.happyHour=true;
+    effect(userSide,user.uid,BattleMoveEffect::HappyHourSet);return true;
+  }
+  if(effectIs(&move,"CELEBRATE")){
+    effect(userSide,user.uid,BattleMoveEffect::Celebrated);return true;
+  }
+  if(effectIs(&move,"THOUSAND_ARROWS")){
+    if(!targetHadSubstitute){
+      targetGen5.grounded=true;targetGen5.telekinesisTurns=0U;
+      targetGen4.magnetRiseTurns=0U;
+    }
+    return true;
+  }
   if(effectIs(&move,"HONE_CLAWS")){
     if(userVolatile.attackStage>=kMaximumBattleStatStage&&
        userVolatile.accuracyStage>=kMaximumBattleStatStage){failed();return true;}
@@ -4340,7 +4768,8 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     if(!heldItemIsBerry(berry)){failed();return true;}
     return true;
   }
-  if(effectIs(&move,"REMOVE_PROTECT")||effectIs(&move,"SHADOW_FORCE")){
+  if(effectIs(&move,"REMOVE_PROTECT")||effectIs(&move,"SHADOW_FORCE")||
+     effectIs(&move,"HYPERSPACE_FURY")){
     if(effectIs(&move,"REMOVE_PROTECT")&&!targetVolatile.protectedThisTurn){
       failed();return true;
     }
@@ -4430,7 +4859,13 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     effect(targetSide,target.uid,BattleMoveEffect::StatusTransferred);return true;
   }
   if(effectIs(&move,"PREVENT_HEALING")){
-    if(targetHadSubstitute||healBlockDuration(targetGen4)){failed();return true;}
+    if(targetHadSubstitute||healBlockDuration(targetGen4)||
+       defenderAbilityApplies(user,target,"AROMA VEIL")){
+      if(defenderAbilityApplies(user,target,"AROMA VEIL"))
+        appendAbilityActivation(result,targetSide,target);
+      else failed();
+      return true;
+    }
     setHealBlockDuration(targetGen4,5U);
     effect(targetSide,target.uid,BattleMoveEffect::HealBlocked);return true;
   }
@@ -4728,6 +5163,7 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
   if(effectIs(&move,"DISABLE")){
     const uint8_t slot=moveSlotFor(target,targetVolatile.lastMoveUsed,false);
     if(targetVolatile.substituteHp||targetVolatile.disabledMove!=MoveId::None||
+       defenderAbilityApplies(user,target,"AROMA VEIL")||
        slot>=kMoveSlots||!target.movePp[slot]){failed();return true;}
     targetVolatile.disabledMove=targetVolatile.lastMoveUsed;
     setDisableTurns(targetVolatile,
@@ -4878,14 +5314,24 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     return true;
   }
   if(effectIs(&move,"TAUNT")){
-    if(targetEffects.tauntTurns){failed();return true;}
+    if(targetEffects.tauntTurns||defenderAbilityApplies(user,target,"AROMA VEIL")){
+      if(defenderAbilityApplies(user,target,"AROMA VEIL"))
+        appendAbilityActivation(result,targetSide,target);
+      else failed();
+      return true;
+    }
     // Gen III writes two. The setup turn's end-turn pass consumes the first
     // tick; adding an artificial third tick made Taunt last one turn too long.
     targetEffects.tauntTurns=2;
     effect(targetSide,target.uid,BattleMoveEffect::Taunted);return true;
   }
   if(effectIs(&move,"TORMENT")){
-    if(targetEffects.tormented){failed();return true;}
+    if(targetEffects.tormented||defenderAbilityApplies(user,target,"AROMA VEIL")){
+      if(defenderAbilityApplies(user,target,"AROMA VEIL"))
+        appendAbilityActivation(result,targetSide,target);
+      else failed();
+      return true;
+    }
     targetEffects.tormented=true;
     effect(targetSide,target.uid,BattleMoveEffect::Tormented);return true;
   }
@@ -4900,6 +5346,9 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     if(targetVolatile.substituteHp||target.status!=StatusCondition::None||
        targetEffects.yawnTurns||safeguard||uproarKeepsAwake||
        defenderAbilityApplies(user,target,"INSOMNIA")||
+       mistyTerrainPreventsConfusion(battle,target,targetSide)||
+       (battle.gen6Terrain==Gen6Terrain::Electric&&
+        battlerIsGrounded(battle,target,targetSide))||
        defenderAbilityApplies(user,target,"VITAL SPIRIT")||
        (defenderAbilityApplies(user,target,"LEAF GUARD")&&
         (effectiveWeatherForBattler(battle,target,&user)==BattleWeather::Sun||
@@ -4913,7 +5362,13 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     const int8_t userGender=pokemonGender(user),targetGender=pokemonGender(target);
     if(userGender<0||targetGender<0||userGender==targetGender||
        targetEffects.attractedToUid||targetVolatile.substituteHp||
-       defenderAbilityApplies(user,target,"OBLIVIOUS")){failed();return true;}
+       defenderAbilityApplies(user,target,"OBLIVIOUS")||
+       defenderAbilityApplies(user,target,"AROMA VEIL")){
+      if(defenderAbilityApplies(user,target,"AROMA VEIL"))
+        appendAbilityActivation(result,targetSide,target);
+      else failed();
+      return true;
+    }
     targetEffects.attractedToUid=user.uid;
     effect(targetSide,target.uid,BattleMoveEffect::Infatuated);return true;
   }
@@ -5024,7 +5479,8 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     if(userEffects.lockedMoveTurns&&!--userEffects.lockedMoveTurns){
       userEffects.lockedMove=MoveId::None;
       if(isUproar){userEffects.uproar=false;effect(userSide,user.uid,BattleMoveEffect::UproarEnded);}
-      else if(!abilityIs(user,"OWN TEMPO")){
+      else if(!abilityIs(user,"OWN TEMPO")&&
+              !mistyTerrainPreventsConfusion(battle,user,userSide)){
         userVolatile.confusionTurns=static_cast<uint8_t>(2U+dedicatedEffectRandom(battle)%4U);
         effect(userSide,user.uid,BattleMoveEffect::RampageEnded);
       }
@@ -5358,7 +5814,9 @@ void applySecretPowerNonStatus(BattleState& battle,BattleActionResult& result,
       applyStageEffect(battle,source,"SPEED_DOWN_HIT",sourceVolatile,
                        targetVolatile,target,&result);break;
     case BattleTerrain::Mountain:{
-      if(defenderAbilityApplies(source,target,"OWN TEMPO")||targetVolatile.confusionTurns)break;
+      if(defenderAbilityApplies(source,target,"OWN TEMPO")||
+         targetVolatile.confusionTurns||
+         mistyTerrainPreventsConfusion(battle,target,targetSide))break;
       const uint8_t safeguard=targetSide==BattleSide::Player?
           battle.playerSafeguardTurns:battle.opponentSafeguardTurns;
       if(safeguard){
@@ -5669,6 +6127,25 @@ void BattleEngine::applyEntryAbilities(BattleState& battle,PokemonCollection& co
   }
   const bool playerEntered=scope==BattleEntryScope::Both||scope==BattleEntryScope::Player;
   const bool opponentEntered=scope==BattleEntryScope::Both||scope==BattleEntryScope::Opponent;
+  // Every entrance starts a fresh Zygarde assembly chain. Holding the Mega
+  // Stone is legal here, but variantFor() stays non-Mega until Complete.
+  if(playerEntered)resetBattleTriggeredForms(*player,battle.unlockedGeneration);
+  if(opponentEntered)resetBattleTriggeredForms(*opponent,battle.unlockedGeneration);
+  // Xerneas' antlers illuminate whenever it is battle-active. Keep the
+  // cartridge's Neutral form in storage and journal the Active transition so
+  // both the firmware and Android renderer swap sprites at the same moment.
+  const auto activateXerneas=[&](OwnedPokemon& pokemon,BattleSide side){
+    if(pokemon.speciesId!=716U||pokemon.form==1U)return;
+    pokemon.form=1U;
+    if(result){
+      BattleEvent& changed=appendEvent(*result,BattleEventType::MoveEffect,
+                                        side,pokemon.uid);
+      changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
+      changed.before=0U;changed.after=1U;
+    }
+  };
+  if(playerEntered)activateXerneas(*player,BattleSide::Player);
+  if(opponentEntered)activateXerneas(*opponent,BattleSide::Opponent);
   // SwitchInDataUpdate initializes both clocks before switch-in Abilities
   // (including Trace) are processed. Six end-turn ticks represent the entry
   // turn plus the five action turns for which Slow Start remains active.
@@ -5988,6 +6465,8 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   const DedicatedMoveEffectState& defenderEffects=moveEffectsFor(battle,defenderSide);
   const Gen4BattlerEffectState& defenderGen4=gen4EffectsFor(battle,defenderSide);
   const Gen5BattlerEffectState& defenderGen5=gen5EffectsFor(battle,defenderSide);
+  const Gen6BattlerEffectState& attackerGen6=gen6EffectsFor(battle,attackerSide);
+  const Gen6BattlerEffectState& defenderGen6=gen6EffectsFor(battle,defenderSide);
   const auto typeEffectiveness=[&](){
     // Scrappy is the permanent Gen-IV counterpart to Foresight: Normal and
     // Fighting attacks ignore only Ghost's immunity, not any other matchup.
@@ -5997,15 +6476,51 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
       scrappyEffects.identified=true;
       return identifiedTypeMultiplier100(attackType,defender,scrappyEffects,
           defenderGen4.miracleEye,battle.gravityTurns!=0||defenderGen5.grounded,
-          defenderGen4.roosting);
+          defenderGen4.roosting,effectIs(move,"NIHIL_LIGHT"));
     }
     return identifiedTypeMultiplier100(attackType,defender,defenderEffects,
-        defenderGen4.miracleEye,battle.gravityTurns!=0||defenderGen5.grounded,
-        defenderGen4.roosting);
+        defenderGen4.miracleEye,battle.gravityTurns!=0||defenderGen5.grounded||
+        effectIs(move,"THOUSAND_ARROWS"),
+        defenderGen4.roosting,effectIs(move,"NIHIL_LIGHT"));
   };
   auto resolvedEffectiveness=[&](){
     if(typelessStruggle)return static_cast<uint16_t>(100U);
     uint16_t effectiveness=typeEffectiveness();
+    if(effectIs(move,"FLYING_PRESS")){
+      const uint16_t flying=identifiedTypeMultiplier100(
+          PokemonType::Flying,defender,defenderEffects,
+          defenderGen4.miracleEye,
+          battle.gravityTurns!=0||defenderGen5.grounded,
+          defenderGen4.roosting);
+      effectiveness=static_cast<uint16_t>(
+          static_cast<uint32_t>(effectiveness)*flying/100U);
+    }
+    if(effectIs(move,"FREEZE_DRY")&&
+       hasBattleType(defender,defenderEffects,PokemonType::Water)&&effectiveness)
+      effectiveness=static_cast<uint16_t>(
+          std::min<uint32_t>(800U,static_cast<uint32_t>(effectiveness)*4U));
+    if(defenderGen6.extraTypeActive){
+      uint16_t extraMultiplier=100U;
+      if(effectIs(move,"NIHIL_LIGHT")&&attackType==PokemonType::Dragon&&
+         defenderGen6.extraType==PokemonType::Fairy){
+        extraMultiplier=100U;
+      }else if(!((defenderEffects.identified||abilityIs(attacker,"SCRAPPY"))&&
+           defenderGen6.extraType==PokemonType::Ghost&&
+           (attackType==PokemonType::Normal||attackType==PokemonType::Fighting))){
+        SpeciesData extra=*defenderSpecies;
+        extra.type1=extra.type2=defenderGen6.extraType;
+        extraMultiplier=typeMultiplier100(attackType,extra);
+      }
+      if(effectIs(move,"FLYING_PRESS")){
+        SpeciesData extra=*defenderSpecies;
+        extra.type1=extra.type2=defenderGen6.extraType;
+        extraMultiplier=static_cast<uint16_t>(
+            static_cast<uint32_t>(extraMultiplier)*
+            typeMultiplier100(PokemonType::Flying,extra)/100U);
+      }
+      effectiveness=static_cast<uint16_t>(
+          static_cast<uint32_t>(effectiveness)*extraMultiplier/100U);
+    }
     // Generation V Sky Drop still lifts a Flying target on turn one, but its
     // release deals no damage to that target. This is a move-specific
     // immunity, not a Flying-vs-Flying type-chart interaction.
@@ -6021,6 +6536,7 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
          !hasBattleType(defender,defenderEffects,second))effectiveness=0U;
     }
     if(!ignoreAbility&&((attackType==PokemonType::Ground&&!battle.gravityTurns&&
+        !effectIs(move,"THOUSAND_ARROWS")&&
         !defenderGen5.grounded&&(!defenderGen5.telekinesisTurns&&
         ((!defenderEffects.ingrained&&hasGroundImmunityAbility(defender))||
          defenderGen4.magnetRiseTurns)))||
@@ -6037,6 +6553,33 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
        (move->power&&attackType==PokemonType::Electric&&
         abilityIs(defender,"VOLT ABSORB"))))
       effectiveness=0;
+    const bool bulletMove=std::strcmp(move->name,"AURA SPHERE")==0||
+        std::strcmp(move->name,"ACID SPRAY")==0||
+        std::strcmp(move->name,"BARRAGE")==0||
+        std::strcmp(move->name,"BULLET SEED")==0||
+        std::strcmp(move->name,"EGG BOMB")==0||
+        std::strcmp(move->name,"ELECTRO BALL")==0||
+        std::strcmp(move->name,"ENERGY BALL")==0||
+        std::strcmp(move->name,"FOCUS BLAST")==0||
+        std::strcmp(move->name,"GYRO BALL")==0||
+        std::strcmp(move->name,"ICE BALL")==0||
+        std::strcmp(move->name,"MAGNET BOMB")==0||
+        std::strcmp(move->name,"MIST BALL")==0||
+        std::strcmp(move->name,"MUD BOMB")==0||
+        std::strcmp(move->name,"OCTAZOOKA")==0||
+        std::strcmp(move->name,"ROCK BLAST")==0||
+        std::strcmp(move->name,"SEARING SHOT")==0||
+        std::strcmp(move->name,"SEED BOMB")==0||
+        std::strcmp(move->name,"SHADOW BALL")==0||
+        std::strcmp(move->name,"SLUDGE BOMB")==0||
+        std::strcmp(move->name,"WEATHER BALL")==0||
+        std::strcmp(move->name,"ZAP CANNON")==0;
+    if(!ignoreAbility&&move->power&&bulletMove&&abilityIs(defender,"BULLETPROOF"))
+      effectiveness=0U;
+    if(effectiveness&&attackType==PokemonType::Dragon&&
+       battle.gen6Terrain==Gen6Terrain::Misty&&
+       battlerIsGrounded(battle,defender,defenderSide))
+      effectiveness=static_cast<uint16_t>(effectiveness/2U);
     // Retail Diamond/Pearl/Platinum accidentally classify Fire Fang's effect
     // as a non-damaging turn for the Wonder Guard gate.  Preserve that
     // source-game quirk for move 424 while all ordinary immunities and
@@ -6121,7 +6664,7 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   const int8_t attackStage = defenderAbilityApplies(attacker,defender,"UNAWARE") ? 0 :
       effectiveStage(storedAttackStage,abilityIs(attacker,"SIMPLE"));
   const int8_t defenseStage = (abilityIs(attacker,"UNAWARE")||effectIs(move,"CHIP_AWAY")||
-      effectIs(move,"SACRED_SWORD")) ? 0 :
+      effectIs(move,"SACRED_SWORD")||effectIs(move,"NIHIL_LIGHT")) ? 0 :
       effectiveStage(storedDefenseStage,
                      defenderAbilityApplies(attacker,defender,"SIMPLE"));
   // FireRed applies Ability stat modifiers to the raw battle stats before
@@ -6157,6 +6700,12 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
     rawAttack=std::max<uint32_t>(1U,rawAttack/2U);
   if(physical&&defenderAbilityApplies(attacker,defender,"MARVEL SCALE")&&
      defender.status!=StatusCondition::None)rawDefense=rawDefense*3U/2U;
+  if(physical&&defenderAbilityApplies(attacker,defender,"FUR COAT"))
+    rawDefense*=2U;
+  if(physical&&defenderAbilityApplies(attacker,defender,"GRASS PELT")&&
+     battle.gen6Terrain==Gen6Terrain::Grassy&&
+     battlerIsGrounded(battle,defender,defenderSide))
+    rawDefense=rawDefense*3U/2U;
   uint32_t attack=staged(rawAttack,critical&&attackStage<0?0:attackStage);
   uint32_t defense=std::max<uint32_t>(1U,
       staged(rawDefense,critical&&defenseStage>0?0:defenseStage));
@@ -6369,7 +6918,8 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
     power=power*150U/100U;
   const auto named=[&](const char* value){return std::strcmp(move->name,value)==0;};
   if(abilityIs(attacker,"MEGA LAUNCHER")&&(named("AURA SPHERE")||named("DARK PULSE")||
-     named("DRAGON PULSE")||named("WATER PULSE")))power=power*150U/100U;
+     named("DRAGON PULSE")||named("ORIGIN PULSE")||named("WATER PULSE")))
+    power=power*150U/100U;
   if(abilityIs(attacker,"STRONG JAW")&&(named("BITE")||named("CRUNCH")||named("HYPER FANG")||
      named("POISON FANG")||named("ICE FANG")||named("FIRE FANG")||named("THUNDER FANG")))power=power*150U/100U;
   if(abilityIs(attacker,"SHARPNESS")&&(named("CUT")||named("RAZOR LEAF")||
@@ -6402,8 +6952,17 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   // field charge for its holder while that Mega remains active.
   if(!typelessStruggle&&abilityIs(attacker,"ELECTRIC SURGE")&&
      attackType==PokemonType::Electric)power=power*130U/100U;
+  if(!typelessStruggle&&abilityIs(attacker,"FIRE MANE")&&
+     attackType==PokemonType::Fire)power=power*130U/100U;
   if(!typelessStruggle&&abilityIs(attacker,"SAND FORCE")&&attackerWeather==BattleWeather::Sandstorm&&
      (attackType==PokemonType::Rock||attackType==PokemonType::Ground||attackType==PokemonType::Steel))power=power*130U/100U;
+  const bool auraBreak=abilityIs(attacker,"AURA BREAK")||abilityIs(defender,"AURA BREAK");
+  if(!typelessStruggle&&attackType==PokemonType::Dark&&
+     (abilityIs(attacker,"DARK AURA")||abilityIs(defender,"DARK AURA")))
+    power=power*(auraBreak?3U:4U)/(auraBreak?4U:3U);
+  if(!typelessStruggle&&attackType==PokemonType::Fairy&&
+     (abilityIs(attacker,"FAIRY AURA")||abilityIs(defender,"FAIRY AURA")))
+    power=power*(auraBreak?3U:4U)/(auraBreak?4U:3U);
   const HeldItem attackItem=heldItemFor(attacker,attackerVolatile);
   if(!typelessStruggle&&attackItem==HeldItem::SeaIncense&&attackType==PokemonType::Water)
     power=power*105U/100U;
@@ -6432,6 +6991,17 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
     power=std::max<uint32_t>(1U,power/2U);
   if(!typelessStruggle&&attackType==PokemonType::Fire&&waterSport)
     power=std::max<uint32_t>(1U,power/2U);
+  if(!typelessStruggle&&battlerIsGrounded(battle,attacker,attackerSide)){
+    if(battle.gen6Terrain==Gen6Terrain::Grassy&&attackType==PokemonType::Grass)
+      power=power*3U/2U;
+    else if(battle.gen6Terrain==Gen6Terrain::Electric&&
+            attackType==PokemonType::Electric)
+      power=power*3U/2U;
+  }
+  if(battle.gen6Terrain==Gen6Terrain::Grassy&&
+     battlerIsGrounded(battle,defender,defenderSide)&&
+     (move->id==89U||move->id==222U||std::strstr(move->effect,"MAGNITUDE")))
+    power=std::max<uint32_t>(1U,power/2U);
   gLastCalculatedMovePower=static_cast<uint16_t>(std::min<uint32_t>(65535U,power));
   uint32_t damage = (((2U * attacker.level / 5U + 2U) * power * attack / defense) / 50U) + 2U;
   if (critical) damage *= abilityIs(attacker,"SNIPER") ? 3U : 2U;
@@ -6441,7 +7011,9 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   // result (including its +2), not just the move's nominal power.
   if(effectIs(move,"SPIT_UP"))
     damage*=std::max<uint8_t>(1U,attackerVolatile.stockpileCount);
-  if (!typelessStruggle&&hasBattleType(attacker,attackerEffects,attackType))
+  if (!typelessStruggle&&
+      (hasBattleType(attacker,attackerEffects,attackType)||
+       (attackerGen6.extraTypeActive&&attackerGen6.extraType==attackType)))
     damage = damage * (abilityIs(attacker,"ADAPTABILITY")?200U:150U) / 100U;
   if(abilityIs(attacker,"ANALYTIC")&&targetAlreadyActed)
     damage=damage*130U/100U;
@@ -6789,7 +7361,8 @@ void resolveMagicCoatReflection(BattleState& battle,BattleActionResult& result,
       effectIs(&move,"FLATTER"))&&!originalVolatile.confusionTurns){
     if(defenderAbilityApplies(reflector,originalUser,"OWN TEMPO"))
       appendAbilityActivation(result,originalSide,originalUser);
-    else{
+    else if(!mistyTerrainPreventsConfusion(
+                battle,originalUser,originalSide)){
       const uint8_t safeguard=originalSide==BattleSide::Player?
           battle.playerSafeguardTurns:battle.opponentSafeguardTurns;
       if(safeguard)appendMoveEffect(result,originalSide,originalUser.uid,
@@ -7253,6 +7826,16 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   }
   recordGlobalMove(battle,enemyMove);
   prepareEchoedVoice(gen5EffectsFor(battle,BattleSide::Opponent),enemyMoveData);
+  if(powderStopsMove(battle,enemyMoveData,*opponent,BattleSide::Opponent,result)){
+    if(!opponent->currentHp){
+      appendFaintedOnce(result,BattleSide::Opponent,*opponent);
+      result.opponentDefeated=true;awardExperience(battle,collection,result);
+      finishOpponentFaint(battle,collection,result);
+    }
+    result.enemyActed=true;return;
+  }
+  applyGen6PreMoveAbility(battle,enemyMoveData,*opponent,
+                          BattleSide::Opponent,result);
   if(effectIs(enemyMoveData,"MIMIC")||effectIs(enemyMoveData,"SKETCH")){
     copyLastMove(battle,result,*opponent,battle.playerVolatile,moveSlot,
                  *enemyMoveData,BattleSide::Opponent,effectIs(enemyMoveData,"SKETCH"));
@@ -7397,9 +7980,14 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
        (battle.playerGen5Effects.wideGuard&&
         (enemyMoveData->target==MoveTarget::Both||
          enemyMoveData->target==MoveTarget::FoesAndAlly)));
+  const Gen6BattlerEffectState& playerGen6=gen6EffectsFor(
+      battle,BattleSide::Player);
+  const bool blockedByGen6Guard=enemyMoveData&&!bypassesProtect&&
+      ((playerGen6.matBlock&&enemyMoveData->power!=0U)||
+       (playerGen6.craftyShield&&enemyMoveData->category==MoveCategory::Status));
   const bool protectAllowsMove=bypassesProtect||!enemyMoveData||
       ((!enemyMoveData->protectAffected||!battle.playerVolatile.protectedThisTurn)&&
-       !blockedByGen5Guard);
+       !blockedByGen5Guard&&!blockedByGen6Guard);
   const bool blockedByProtect=requirementMet&&!protectAllowsMove;
   StatusCondition attemptedPrimaryStatus=StatusCondition::None;
   const bool primaryStatusConflict=primaryStatusConflicts(
@@ -7669,10 +8257,24 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
         appendOhkoFailure(result,BattleSide::Player,player,enemyMove,enemyOhkoBlock);
       else appendMoveEffect(result, BattleSide::Player, player.uid, enemyMove,
                             BattleMoveEffect::Failed);
-    }else if(blockedByProtect)
+    }else if(blockedByProtect){
       appendMoveEffect(result,BattleSide::Player,player.uid,enemyMove,
                        BattleMoveEffect::Protected);
-    else if(soundproofBlocked&&protectAllowsMove)
+      if(enemyMoveData&&enemyMoveData->makesContact){
+        if(playerGen6.kingsShield){
+          const StageSnapshot before=snapshotStages(enemyVolatile);
+          changeStageForHolder(*opponent,enemyVolatile.attackStage,-2);
+          appendStageChanges(result,BattleSide::Opponent,opponent->uid,before,
+                             enemyVolatile);
+        }else if(playerGen6.spikyShield&&!abilityIs(*opponent,"MAGIC GUARD")){
+          const uint16_t before=opponent->currentHp;
+          const uint16_t hurt=std::max<uint16_t>(1U,opponent->maximumHp/8U);
+          opponent->currentHp=hurt>=before?0U:static_cast<uint16_t>(before-hurt);
+          appendHpChange(result,BattleSide::Opponent,opponent->uid,before,
+                         opponent->currentHp);
+        }
+      }
+    }else if(soundproofBlocked&&protectAllowsMove)
       appendAbilityActivation(result,BattleSide::Player,player);
     else if(pranksterDarkBlocked)
       appendMoveEffect(result,BattleSide::Player,player.uid,enemyMove,
@@ -7934,6 +8536,8 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
     if(std::strstr(effect,"COSMIC_POWER")){changeStageForHolder(*opponent,enemyVolatile.defenseStage,1);changeStageForHolder(*opponent,enemyVolatile.spDefenseStage,1);}
     if(std::strstr(effect,"SUPERPOWER")&&moveAffected){changeStageForHolder(*opponent,enemyVolatile.attackStage,-1);changeStageForHolder(*opponent,enemyVolatile.defenseStage,-1);}
     if(effectIs(enemyMoveData,"CLOSE_COMBAT")&&moveAffected){changeStageForHolder(*opponent,enemyVolatile.defenseStage,-1);changeStageForHolder(*opponent,enemyVolatile.spDefenseStage,-1);}
+    if(effectIs(enemyMoveData,"HYPERSPACE_FURY")&&moveAffected)
+      changeStageForHolder(*opponent,enemyVolatile.defenseStage,-1);
     if(effectIs(enemyMoveData,"DEFEND_ORDER")){changeStageForHolder(*opponent,enemyVolatile.defenseStage,1);changeStageForHolder(*opponent,enemyVolatile.spDefenseStage,1);}
     if(std::strstr(effect,"OVERHEAT")&&moveAffected)changeStageForHolder(*opponent,enemyVolatile.spAttackStage,-2);
     if(std::strstr(effect,"DEFENSE_CURL"))changeStageForHolder(*opponent,enemyVolatile.defenseStage,1);
@@ -8002,8 +8606,11 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
         std::strstr(effect,"TEETER_DANCE") || std::strstr(effect,"SWAGGER") ||
         std::strstr(effect,"FLATTER"))&&!battle.playerVolatile.confusionTurns;
     const bool enemyConfusionBlocked=enemyConfusionRolled&&
-        defenderAbilityApplies(*opponent,player,"OWN TEMPO");
-    if(enemyConfusionBlocked)appendAbilityActivation(result,BattleSide::Player,player);
+        (defenderAbilityApplies(*opponent,player,"OWN TEMPO")||
+         mistyTerrainPreventsConfusion(battle,player,BattleSide::Player));
+    if(enemyConfusionBlocked&&
+       defenderAbilityApplies(*opponent,player,"OWN TEMPO"))
+      appendAbilityActivation(result,BattleSide::Player,player);
     if (enemyConfusionRolled&&!enemyConfusionBlocked) {
       if (battle.playerSafeguardTurns)
         appendMoveEffect(result, BattleSide::Player, player.uid, enemyMove,
@@ -8052,11 +8659,19 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
       battle.opponentToxicSpikesLayers=0;
       battle.opponentStealthRock=false;
     }
-    if (effectIs(enemyMoveData,"PROTECT")) {
+    if (effectIs(enemyMoveData,"PROTECT")||effectIs(enemyMoveData,"KINGS_SHIELD")||
+        effectIs(enemyMoveData,"SPIKY_SHIELD")) {
       if (protectionSucceeds(battle,battle.opponentProtectChain,
-                             !sideAlreadyActed(result,BattleSide::Player)))
+                             !sideAlreadyActed(result,BattleSide::Player))){
         enemyVolatile.protectedThisTurn=true;
-      else appendMoveEffect(result,BattleSide::Opponent,opponent->uid,enemyMove,BattleMoveEffect::Failed);
+        Gen6BattlerEffectState& shield=battle.opponentGen6Effects[battle.opponentIndex];
+        shield.kingsShield=effectIs(enemyMoveData,"KINGS_SHIELD");
+        shield.spikyShield=effectIs(enemyMoveData,"SPIKY_SHIELD");
+        if(shield.kingsShield)appendMoveEffect(result,BattleSide::Opponent,
+            opponent->uid,enemyMove,BattleMoveEffect::KingsShieldSet);
+        else if(shield.spikyShield)appendMoveEffect(result,BattleSide::Opponent,
+            opponent->uid,enemyMove,BattleMoveEffect::SpikyShieldSet);
+      }else appendMoveEffect(result,BattleSide::Opponent,opponent->uid,enemyMove,BattleMoveEffect::Failed);
     }
     if (effectIs(enemyMoveData,"ENDURE")) {
       if (protectionSucceeds(battle,battle.opponentProtectChain,
@@ -8073,6 +8688,7 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
     if(enemyMoveData->power&&enemyMoveData->type==PokemonType::Electric)
       enemyEffects.chargeTurns=0;
     if(effectIs(enemyMoveData,"ENCORE")&&!playerHadSubstitute&&
+       !defenderAbilityApplies(*opponent,player,"AROMA VEIL")&&
        battle.playerVolatile.encoreMove==MoveId::None&&
        canEncoreMove(battle.playerVolatile.lastMoveUsed)&&
        moveSlotFor(player,battle.playerVolatile.lastMoveUsed)<kMoveSlots){
@@ -8137,7 +8753,8 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   // has another usable Pokemon. Resolve Destiny Bond/faints first so a user
   // that also fainted cannot switch a replacement in its own place.
   const bool enemyUTurnCanPivot=connected&&enemyMoveData&&
-      effectIs(enemyMoveData,"SWITCH_HIT")&&opponent->currentHp&&effectiveness&&
+      (effectIs(enemyMoveData,"SWITCH_HIT")||effectIs(enemyMoveData,"PARTING_SHOT"))&&
+      opponent->currentHp&&effectiveness&&!battle.fairyLockTurns&&
       hasHealthyOpponentReplacement(battle)&&
       (player.currentHp||firstHealthyPartyMember(collection,player.uid));
   if(enemyUTurnCanPivot){
@@ -8466,7 +9083,8 @@ void BattleEngine::applyMoveStatus(BattleState& battle, OwnedPokemon& source, Mo
     const bool freezeAbility=condition==StatusCondition::Frozen&&passiveBlocks("MAGMA ARMOR");
     const bool paralysisAbility=condition==StatusCondition::Paralysis&&passiveBlocks("LIMBER");
     const bool sleepAbility=condition==StatusCondition::Sleep&&
-        (passiveBlocks("INSOMNIA")||passiveBlocks("VITAL SPIRIT"));
+        (passiveBlocks("INSOMNIA")||passiveBlocks("VITAL SPIRIT")||
+         passiveBlocks("SWEET VEIL"));
     const BattleWeather targetWeather=
         effectiveWeatherForBattler(battle,pokemon,&source);
     const bool leafGuard=passiveBlocks("LEAF GUARD")&&
@@ -8491,6 +9109,11 @@ void BattleEngine::applyMoveStatus(BattleState& battle, OwnedPokemon& source, Mo
        ((!abilityIs(pokemon,"SOUNDPROOF")&&!abilityIs(pokemon,"CACOPHONY"))&&
         (battle.playerMoveEffects.uproar||
          battle.opponentMoveEffects[battle.opponentIndex].uproar))))return true;
+    const BattleSide pokemonSide=sideOf(battle,pokemon);
+    if(battlerIsGrounded(battle,pokemon,pokemonSide)&&
+       (battle.gen6Terrain==Gen6Terrain::Misty||
+        (battle.gen6Terrain==Gen6Terrain::Electric&&
+         condition==StatusCondition::Sleep)))return true;
     return false;
   };
   bool targetAbilityBlocked=false;
@@ -8762,6 +9385,9 @@ void BattleEngine::advanceEndTurnEffects(BattleState& battle,
     if(gen4.aquaRing&&!healBlockDuration(gen4))
       healWithEvent(affected,side,std::max<uint16_t>(1U,affected.maximumHp/16U),
                     static_cast<MoveId>(392),BattleMoveEffect::AquaRingHeal);
+    if(battle.gen6Terrain==Gen6Terrain::Grassy&&
+       battlerIsGrounded(battle,affected,side)&&!healBlockDuration(gen4))
+      plainHeal(affected,side,std::max<uint16_t>(1U,affected.maximumHp/16U));
     if(abilityIs(affected,"SHED SKIN")&&affected.status!=StatusCondition::None&&
        random(battle)%3U==0){
       const StatusCondition before=affected.status;
@@ -8920,6 +9546,15 @@ void BattleEngine::advanceEndTurnEffects(BattleState& battle,
   }
   updateDarmanitanZenMode(*player,BattleSide::Player,&result);
   updateDarmanitanZenMode(*opponent,BattleSide::Opponent,&result);
+  // A fainted battler or an already-ended matchup has no completed living
+  // turn to transform from. Resolve the two surviving sides independently,
+  // after every residual heal/damage has established the final HP ratio.
+  if(player->currentHp&&opponent->currentHp){
+    updateZygardeAssembly(*player,BattleSide::Player,
+                          battle.unlockedGeneration,&result);
+    updateZygardeAssembly(*opponent,BattleSide::Opponent,
+                          battle.unlockedGeneration,&result);
+  }
 
   if(!opponent->currentHp||!player->currentHp){
     if(!opponent->currentHp){
@@ -8946,7 +9581,10 @@ void BattleEngine::advanceEndTurnEffects(BattleState& battle,
     if(effects.tauntTurns)--effects.tauntTurns;
     if(effects.yawnTurns&&!--effects.yawnTurns&&pokemon.currentHp&&
        pokemon.status==StatusCondition::None&&!abilityIs(pokemon,"INSOMNIA")&&
-       !abilityIs(pokemon,"VITAL SPIRIT")&&
+       !abilityIs(pokemon,"VITAL SPIRIT")&&!abilityIs(pokemon,"SWEET VEIL")&&
+       !(battlerIsGrounded(battle,pokemon,side)&&
+         (battle.gen6Terrain==Gen6Terrain::Misty||
+          battle.gen6Terrain==Gen6Terrain::Electric))&&
        !(abilityIs(pokemon,"LEAF GUARD")&&
          (effectiveWeatherForBattler(battle,pokemon,
              side==BattleSide::Player?opponent:player)==BattleWeather::Sun||
@@ -9069,6 +9707,15 @@ void BattleEngine::advanceEndTurnEffects(BattleState& battle,
     appendMoveEffect(result,BattleSide::Player,player->uid,MoveId::None,
                      BattleMoveEffect::MagicRoomEnded);
   }
+  if(battle.gen6TerrainTurns&&!--battle.gen6TerrainTurns){
+    const Gen6Terrain ended=battle.gen6Terrain;
+    battle.gen6Terrain=Gen6Terrain::None;
+    BattleEvent& event=appendEvent(result,BattleEventType::MoveEffect,
+                                    BattleSide::Player,player->uid);
+    event.value=static_cast<uint16_t>(BattleMoveEffect::TerrainEnded);
+    event.before=static_cast<uint16_t>(ended);
+  }
+  if(battle.fairyLockTurns)--battle.fairyLockTurns;
   auto tickGen5=[](Gen5BattlerEffectState& state){
     if(state.telekinesisTurns)--state.telekinesisTurns;
   };
@@ -9179,10 +9826,16 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   gBattleTransient.gyroSnapshotValid=true;
   const int8_t playerPriority = plannedPlayerMove ? static_cast<int8_t>(plannedPlayerMove->priority+
       (plannedPlayerMove->category==MoveCategory::Status&&
-       abilityIs(*player,"PRANKSTER")?1:0)) : 0;
+       abilityIs(*player,"PRANKSTER")?1:0)+
+      (abilityIs(*player,"GALE WINGS")&&
+       effectiveMoveType(battle,*plannedPlayerMove,*player,opponent)==
+           PokemonType::Flying?1:0)) : 0;
   const int8_t enemyPriority = plannedEnemyMove ? static_cast<int8_t>(plannedEnemyMove->priority+
       (plannedEnemyMove->category==MoveCategory::Status&&
-       abilityIs(*opponent,"PRANKSTER")?1:0)) : 0;
+       abilityIs(*opponent,"PRANKSTER")?1:0)+
+      (abilityIs(*opponent,"GALE WINGS")&&
+       effectiveMoveType(battle,*plannedEnemyMove,*opponent,player)==
+           PokemonType::Flying?1:0)) : 0;
   const bool playerPursuesBatonPass=effectIs(plannedPlayerMove,"PURSUIT")&&
       effectIs(plannedEnemyMove,"BATON_PASS");
   const bool enemyPursuesBatonPass=effectIs(plannedEnemyMove,"PURSUIT")&&
@@ -9412,6 +10065,17 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   }
   recordGlobalMove(battle,selectedMove);
   prepareEchoedVoice(gen5EffectsFor(battle,BattleSide::Player),usedMove);
+  if(powderStopsMove(battle,usedMove,*player,BattleSide::Player,result)){
+    if(!player->currentHp){
+      player->recoverySecondsRemaining=1U;
+      appendFaintedOnce(result,BattleSide::Player,*player);
+      if(!firstHealthyPartyMember(collection,player->uid)){
+        battle.active=false;battle.outcome=BattleOutcome::Defeat;
+      }
+    }
+    finishInterruptedTurn();return;
+  }
+  applyGen6PreMoveAbility(battle,usedMove,*player,BattleSide::Player,result);
   if(effectIs(usedMove,"MIMIC")||effectIs(usedMove,"SKETCH")){
     copyLastMove(battle,result,*player,targetVolatile,moveSlot,*usedMove,
                  BattleSide::Player,effectIs(usedMove,"SKETCH"));
@@ -9543,9 +10207,14 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
        (targetGen5.wideGuard&&
         (usedMove->target==MoveTarget::Both||
          usedMove->target==MoveTarget::FoesAndAlly)));
+  const Gen6BattlerEffectState& targetGen6=gen6EffectsFor(
+      battle,BattleSide::Opponent);
+  const bool blockedByGen6Guard=usedMove&&!bypassesProtect&&
+      ((targetGen6.matBlock&&usedMove->power!=0U)||
+       (targetGen6.craftyShield&&usedMove->category==MoveCategory::Status));
   const bool protectAllowsMove = bypassesProtect||!usedMove ||
       ((!usedMove->protectAffected||!targetVolatile.protectedThisTurn)&&
-       !blockedByGen5Guard);
+       !blockedByGen5Guard&&!blockedByGen6Guard);
   const bool blockedByProtect=requirementMet&&!protectAllowsMove;
   StatusCondition attemptedPrimaryStatus=StatusCondition::None;
   const bool primaryStatusConflict=primaryStatusConflicts(
@@ -9810,10 +10479,24 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
                          BattleMoveEffect::BossImmune);
       else appendMoveEffect(result, BattleSide::Opponent, opponent->uid, selectedMove,
                             BattleMoveEffect::Failed);
-    }else if(blockedByProtect)
+    }else if(blockedByProtect){
       appendMoveEffect(result,BattleSide::Opponent,opponent->uid,selectedMove,
                        BattleMoveEffect::Protected);
-    else if(soundproofBlocked&&protectAllowsMove)
+      if(usedMove&&usedMove->makesContact){
+        if(targetGen6.kingsShield){
+          const StageSnapshot before=snapshotStages(selfVolatile);
+          changeStageForHolder(*player,selfVolatile.attackStage,-2);
+          appendStageChanges(result,BattleSide::Player,player->uid,before,
+                             selfVolatile);
+        }else if(targetGen6.spikyShield&&!abilityIs(*player,"MAGIC GUARD")){
+          const uint16_t before=player->currentHp;
+          const uint16_t hurt=std::max<uint16_t>(1U,player->maximumHp/8U);
+          player->currentHp=hurt>=before?0U:static_cast<uint16_t>(before-hurt);
+          appendHpChange(result,BattleSide::Player,player->uid,before,
+                         player->currentHp);
+        }
+      }
+    }else if(soundproofBlocked&&protectAllowsMove)
       appendAbilityActivation(result,BattleSide::Opponent,*opponent);
     else if(pranksterDarkBlocked)
       appendMoveEffect(result,BattleSide::Opponent,opponent->uid,selectedMove,
@@ -10051,6 +10734,8 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     if(std::strstr(usedMove->effect,"COSMIC_POWER")){changeStageForHolder(*player,selfVolatile.defenseStage,1);changeStageForHolder(*player,selfVolatile.spDefenseStage,1);}
     if(std::strstr(usedMove->effect,"SUPERPOWER")&&moveAffected){changeStageForHolder(*player,selfVolatile.attackStage,-1);changeStageForHolder(*player,selfVolatile.defenseStage,-1);}
     if(effectIs(usedMove,"CLOSE_COMBAT")&&moveAffected){changeStageForHolder(*player,selfVolatile.defenseStage,-1);changeStageForHolder(*player,selfVolatile.spDefenseStage,-1);}
+    if(effectIs(usedMove,"HYPERSPACE_FURY")&&moveAffected)
+      changeStageForHolder(*player,selfVolatile.defenseStage,-1);
     if(effectIs(usedMove,"DEFEND_ORDER")){changeStageForHolder(*player,selfVolatile.defenseStage,1);changeStageForHolder(*player,selfVolatile.spDefenseStage,1);}
     if(std::strstr(usedMove->effect,"OVERHEAT")&&moveAffected)changeStageForHolder(*player,selfVolatile.spAttackStage,-2);
     if(std::strstr(usedMove->effect,"DEFENSE_CURL"))changeStageForHolder(*player,selfVolatile.defenseStage,1);
@@ -10128,8 +10813,11 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
         std::strstr(usedMove->effect,"TEETER_DANCE") || std::strstr(usedMove->effect,"SWAGGER") ||
         std::strstr(usedMove->effect,"FLATTER"))&&!targetVolatile.confusionTurns;
     const bool playerConfusionBlocked=playerConfusionRolled&&
-        defenderAbilityApplies(*player,*opponent,"OWN TEMPO");
-    if(playerConfusionBlocked)
+        (defenderAbilityApplies(*player,*opponent,"OWN TEMPO")||
+         mistyTerrainPreventsConfusion(
+             battle,*opponent,BattleSide::Opponent));
+    if(playerConfusionBlocked&&
+       defenderAbilityApplies(*player,*opponent,"OWN TEMPO"))
       appendAbilityActivation(result,BattleSide::Opponent,*opponent);
     if (playerConfusionRolled&&!playerConfusionBlocked) {
       if (battle.opponentSafeguardTurns)
@@ -10184,9 +10872,19 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
       battle.playerToxicSpikesLayers=0;
       battle.playerStealthRock=false;
     }
-    if (effectIs(usedMove,"PROTECT")) {
+    if (effectIs(usedMove,"PROTECT")||effectIs(usedMove,"KINGS_SHIELD")||
+        effectIs(usedMove,"SPIKY_SHIELD")) {
       if (protectionSucceeds(battle,battle.playerProtectChain,!result.enemyActed))
+      {
         selfVolatile.protectedThisTurn=true;
+        Gen6BattlerEffectState& shield=battle.playerGen6Effects;
+        shield.kingsShield=effectIs(usedMove,"KINGS_SHIELD");
+        shield.spikyShield=effectIs(usedMove,"SPIKY_SHIELD");
+        if(shield.kingsShield)appendMoveEffect(result,BattleSide::Player,
+            player->uid,selectedMove,BattleMoveEffect::KingsShieldSet);
+        else if(shield.spikyShield)appendMoveEffect(result,BattleSide::Player,
+            player->uid,selectedMove,BattleMoveEffect::SpikyShieldSet);
+      }
       else appendMoveEffect(result,BattleSide::Player,player->uid,selectedMove,BattleMoveEffect::Failed);
     }
     if (effectIs(usedMove,"ENDURE")) {
@@ -10202,6 +10900,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     if(std::strstr(usedMove->effect,"RECHARGE")&&moveAffected)selfVolatile.recharging=true;
     if(usedMove->power&&usedMove->type==PokemonType::Electric)selfEffects.chargeTurns=0;
     if(effectIs(usedMove,"ENCORE")&&!opponentHadSubstitute&&
+       !defenderAbilityApplies(*player,*opponent,"AROMA VEIL")&&
        targetVolatile.encoreMove==MoveId::None&&
        canEncoreMove(targetVolatile.lastMoveUsed)&&
        moveSlotFor(*opponent,targetVolatile.lastMoveUsed)<kMoveSlots){
@@ -10254,7 +10953,8 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   }
   bool opponentFaintResolvedForUTurn=false;
   const bool playerUTurnConnected=connected&&usedMove&&
-      effectIs(usedMove,"SWITCH_HIT")&&player->currentHp&&
+      (effectIs(usedMove,"SWITCH_HIT")||effectIs(usedMove,"PARTING_SHOT"))&&
+      player->currentHp&&!battle.fairyLockTurns&&
       result.effectiveness100&&firstHealthyPartyMember(collection,player->uid);
   if(playerUTurnConnected&&!opponent->currentHp){
     resolveFaintVows(battle,result,BattleSide::Opponent,*opponent,targetEffects,*player,
@@ -10383,6 +11083,7 @@ void BattleEngine::runInto(BattleState& battle, PokemonCollection& collection,
   const uint16_t chance = std::min<uint16_t>(95, static_cast<uint16_t>(50 + (playerSpeed * 30U) / std::max<uint16_t>(1, wildSpeed)));
   const bool guaranteed = abilityIs(*player,"RUN AWAY") || heldIs(*player,battle.playerVolatile,HeldItem::SmokeBall);
   if (!guaranteed && (battle.playerVolatile.trappedTurns||
+      battle.fairyLockTurns||
       escapePrevented(battle.playerVolatile)||battle.playerMoveEffects.ingrained||
       trappedByAbility(battle,*player,battle.playerMoveEffects,*opponent))) result.escapeBlocked = true;
   else if (guaranteed || random(battle) % 100U < chance) {
@@ -10405,7 +11106,8 @@ BattleActionResult BattleEngine::switchPokemon(BattleState& battle, PokemonColle
   OwnedPokemon* current = CollectionLogic::find(collection, battle.playerUid);
   OwnedPokemon* trapper=currentOpponent(battle);
   if (!battle.active || !current || battle.playerVolatile.trappedTurns ||
-      escapePrevented(battle.playerVolatile)||battle.playerMoveEffects.ingrained ||
+      battle.fairyLockTurns||escapePrevented(battle.playerVolatile)||
+      battle.playerMoveEffects.ingrained ||
       (trapper&&trappedByAbility(battle,*current,battle.playerMoveEffects,*trapper))) return result;
   OwnedPokemon* replacement = nullptr;
   uint8_t currentSlot = 0;
@@ -10467,6 +11169,7 @@ BattleActionResult BattleEngine::completeBatonPassSwitch(BattleState& battle,
   }else{
     clearGen4EffectsOnSwitch(battle.playerGen4Effects);
     clearGen5EffectsOnSwitch(battle.playerGen5Effects);
+    clearGen6EffectsOnSwitch(battle.playerGen6Effects);
   }
   applySpikesOnEntry(battle,*replacement,BattleSide::Player,result);
   setPendingReplacement(battle,BattleSide::Player,0U);
@@ -10508,6 +11211,7 @@ BattleActionResult BattleEngine::switchToPokemon(BattleState& battle, PokemonCol
   OwnedPokemon* trapper=currentOpponent(battle);
   if (!battle.active || !current || !replacement || replacement->uid == current->uid ||
       (!forcedAfterFaint && (battle.playerVolatile.trappedTurns||
+       battle.fairyLockTurns||
        escapePrevented(battle.playerVolatile)||battle.playerMoveEffects.ingrained||
        (trapper&&trappedByAbility(battle,*current,battle.playerMoveEffects,*trapper)))) ||
       !CollectionLogic::isInParty(collection, uid) || replacement->currentHp == 0 ||
@@ -10555,6 +11259,7 @@ BattleActionResult BattleEngine::switchToPokemon(BattleState& battle, PokemonCol
   loadPlayerHeldItemState(battle,*replacement);loadPlayerMoveEffectState(battle,*replacement);
   clearGen4EffectsOnSwitch(battle.playerGen4Effects);
   clearGen5EffectsOnSwitch(battle.playerGen5Effects);
+  clearGen6EffectsOnSwitch(battle.playerGen6Effects);
   battle.playerMoveEffects.enteredTurn=battle.turn;
   applySpikesOnEntry(battle,*replacement,BattleSide::Player,result);
   if(replacement->currentHp&&(replacementReason==3U||replacementReason==4U)){
@@ -10610,7 +11315,9 @@ BattleActionResult BattleEngine::switchOpponentPvp(BattleState& battle, PokemonC
   restoreOpponentTransform(battle);
   restoreOpponentTemporaryAbility(outgoing, battle.unlockedGeneration);
   if(outgoing.speciesId==351U||outgoing.speciesId==421U||
-     outgoing.speciesId==555U||outgoing.speciesId==648U)outgoing.form=0;
+     outgoing.speciesId==555U||outgoing.speciesId==648U||
+     outgoing.speciesId==681U||outgoing.speciesId==716U)outgoing.form=0;
+  resetBattleTriggeredForms(outgoing,battle.unlockedGeneration);
   if(sureHitOwner(battle.playerVolatile)==2U)setSureHitOwner(battle.playerVolatile,0);
   setEscapePrevented(battle.playerVolatile,false);
   battle.playerVolatile.trappedTurns=0;
@@ -10629,6 +11336,8 @@ BattleActionResult BattleEngine::switchOpponentPvp(BattleState& battle, PokemonC
   clearGen4EffectsOnSwitch(battle.opponentGen4Effects[opponentIndex]);
   clearGen5EffectsOnSwitch(battle.opponentGen5Effects[battle.opponentIndex]);
   clearGen5EffectsOnSwitch(battle.opponentGen5Effects[opponentIndex]);
+  clearGen6EffectsOnSwitch(battle.opponentGen6Effects[battle.opponentIndex]);
+  clearGen6EffectsOnSwitch(battle.opponentGen6Effects[opponentIndex]);
   battle.opponentMoveEffects[battle.opponentIndex].enteredTurn=battle.turn;
   // Switching cancels both multi-turn locks in FireRed; neither Bide's stored
   // damage nor Encore's forced command follows a Pokemon to the bench.

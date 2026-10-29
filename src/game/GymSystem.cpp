@@ -1,4 +1,5 @@
 #include "game/GymSystem.h"
+#include "game/Economy.h"
 
 namespace {
 constexpr GymDefinition kGyms[] = {
@@ -169,6 +170,49 @@ bool GymSystem::recordLeagueVictory(GymProgress& progress, uint8_t generation) {
   if (generation != progress.unlockedGeneration || !leagueAvailable(progress)) return false;
   progress.leagueChampionBits |= static_cast<uint8_t>(1U << (generation - 1U));
   return true;
+}
+
+void GymSystem::initializeRegionRewardLedger(GymProgress& progress) {
+  progress.starterClaimedBits = static_cast<uint8_t>(
+      progress.starterClaimedBits | kRegionRewardSchemaBit);
+}
+
+uint8_t GymSystem::reconcileRegionCompletionRewards(
+    GymProgress& progress, Inventory& inventory, bool* stateChanged) {
+  bool changed = false;
+  if ((progress.starterClaimedBits & kRegionRewardSchemaBit) == 0U) {
+    // League victories already awarded these balls in every build predating
+    // the persistent ledger. Mark completed legacy regions as delivered so
+    // an update cannot duplicate them, then enable deferred delivery for all
+    // future clears.
+    for (uint8_t generation = 1U; generation <= 3U; ++generation) {
+      if (leagueComplete(progress, generation))
+        progress.starterClaimedBits = static_cast<uint8_t>(
+            progress.starterClaimedBits |
+            (1U << (kRegionRewardFirstBit + generation - 1U)));
+    }
+    initializeRegionRewardLedger(progress);
+    changed = true;
+  }
+
+  uint8_t granted = 0U;
+  uint16_t& masterBalls =
+      inventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)];
+  for (uint8_t generation = 1U; generation <= 3U; ++generation) {
+    const uint8_t rewardBit = static_cast<uint8_t>(
+        1U << (kRegionRewardFirstBit + generation - 1U));
+    if (!leagueComplete(progress, generation) ||
+        (progress.starterClaimedBits & rewardBit) != 0U ||
+        masterBalls >= kInventoryStackLimit)
+      continue;
+    ++masterBalls;
+    progress.starterClaimedBits = static_cast<uint8_t>(
+        progress.starterClaimedBits | rewardBit);
+    granted = static_cast<uint8_t>(granted | (1U << (generation - 1U)));
+    changed = true;
+  }
+  if (stateChanged) *stateChanged = changed;
+  return granted;
 }
 
 bool GymSystem::needsRegionalStarter(const GymProgress& progress) {

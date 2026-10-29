@@ -1,4 +1,5 @@
 #include "game/PokemonData.h"
+#include "game/Collection.h"
 #include "game/MegaEvolution.h"
 #include "game/Pokedex.h"
 #include <algorithm>
@@ -7,6 +8,31 @@ namespace {
 #include "PokemonDataGenerated.inc"
 #include "MoveDataGenerated.inc"
 #include "MoveDescriptionsGenerated.inc"
+
+// Pokemon Y ends at Light of Ruin (#617). Keep later signature moves beside,
+// rather than forged into, the generated cartridge table. #618-621 are the
+// four ORAS additions; Core Enforcer and Nihil Light are required by the
+// authored Mega Zygarde form.
+constexpr FullMoveData kPostXyMoves[] = {
+    {618, "ORIGIN PULSE", PokemonType::Water, 110, 85,
+     MoveCategory::Special, 10, 0, 0, "HIT",
+     MoveTarget::Both, false, false, false, true, true, true},
+    {619, "PRECIPICE BLADES", PokemonType::Ground, 120, 85,
+     MoveCategory::Physical, 10, 0, 0, "HIT",
+     MoveTarget::Both, false, false, false, true, true, true},
+    {620, "DRAGON ASCENT", PokemonType::Flying, 120, 100,
+     MoveCategory::Physical, 5, 0, 0, "CLOSE_COMBAT",
+     MoveTarget::Selected, true, false, false, true, true, true},
+    {621, "HYPERSPACE FURY", PokemonType::Dark, 100, 101,
+     MoveCategory::Physical, 5, 0, 0, "HYPERSPACE_FURY",
+     MoveTarget::Selected, false, false, false, false, true, true},
+    {687, "CORE ENFORCER", PokemonType::Dragon, 100, 100,
+     MoveCategory::Special, 10, 0, 0, "CORE_ENFORCER",
+     MoveTarget::Both, false, false, false, true, true, true},
+    {920, "NIHIL LIGHT", PokemonType::Dragon, 200, 100,
+     MoveCategory::Special, 10, 0, 0, "NIHIL_LIGHT",
+     MoveTarget::Both, false, false, false, false, true, false},
+};
 
 bool isLegendaryEncounterSpecies(uint16_t speciesId) {
   return speciesId == 144 || speciesId == 145 || speciesId == 146 ||
@@ -67,9 +93,10 @@ uint8_t evolutionChoices(uint16_t speciesId,uint8_t level,uint16_t attack,uint16
   // Gen-IV branches are Sinnoh content. Reaching Hoenn must not silently
   // expose them; the expedition raises the content generation to 4 only
   // after the player has opened Sinnoh.
-  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(5U,unlockedGeneration);
+  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(6U,unlockedGeneration);
   const auto generationFor=[](uint16_t id){
-    return id<=151U?1U:id<=251U?2U:id<=386U?3U:id<=493U?4U:5U;
+    return id<=151U?1U:id<=251U?2U:id<=386U?3U:id<=493U?4U:
+        id<=649U?5U:6U;
   };
   uint8_t familyLevel=255;
   for(const auto& evolution:kEvolutions){
@@ -83,12 +110,19 @@ uint8_t evolutionChoices(uint16_t speciesId,uint8_t level,uint16_t attack,uint16
   // level-up resolver, where Box capacity and identity can be checked safely.
   if(speciesId==290){output[0]=291;return 1;}
   uint8_t count=0;
-  for(const auto& evolution:kEvolutions){
-    if(evolution.fromSpeciesId!=speciesId)continue;
-    const uint8_t targetGeneration=generationFor(evolution.toSpeciesId);
-    if(targetGeneration>evolutionGenerationLimit)continue;
-    bool duplicate=false;for(uint8_t i=0;i<count;++i)if(output[i]==evolution.toSpeciesId)duplicate=true;
-    if(!duplicate&&count<maximum)output[count++]=evolution.toSpeciesId;
+  // The persisted picker has five compact slots, while Eevee has eight
+  // destinations by Kalos. Put newly unlocked regional branches first so
+  // Leafeon/Glaceon and later Sylveon can actually be selected; older forms
+  // were already available throughout the preceding campaign.
+  for(uint8_t generation=evolutionGenerationLimit;generation>=1U;--generation){
+    for(const auto& evolution:kEvolutions){
+      if(evolution.fromSpeciesId!=speciesId||
+         generationFor(evolution.toSpeciesId)!=generation)continue;
+      bool duplicate=false;
+      for(uint8_t i=0;i<count;++i)if(output[i]==evolution.toSpeciesId)duplicate=true;
+      if(!duplicate&&count<maximum)output[count++]=evolution.toSpeciesId;
+    }
+    if(generation==1U)break;
   }
   return count;
 }
@@ -137,10 +171,20 @@ const MoveData* findMove(MoveId id) {
 const FullMoveData* findFullMove(MoveId id) {
   const uint16_t value = static_cast<uint16_t>(id);
   for (const auto& move : kFullMoves) if (move.id == value) return &move;
+  for (const auto& move : kPostXyMoves) if (move.id == value) return &move;
   return nullptr;
 }
 
 const char* moveDescription(MoveId id) {
+  switch (static_cast<uint16_t>(id)) {
+    case 618U: return "BLASTS FOES WITH COUNTLESS BEAMS OF BLUE LIGHT.";
+    case 619U: return "STRIKES FOES WITH BLADES OF EARTH.";
+    case 620U: return "LOWERS THE USER'S DEFENSE AND SP. DEFENSE.";
+    case 621U: return "BYPASSES PROTECTION, THEN LOWERS THE USER'S DEFENSE.";
+    case 687U: return "SUPPRESSES A TARGET'S ABILITY IF IT ALREADY MOVED.";
+    case 920U: return "IGNORES TARGET STAT CHANGES AND FAIRY IMMUNITY.";
+    default: break;
+  }
   return generatedMoveDescription(static_cast<uint16_t>(id));
 }
 
@@ -151,7 +195,8 @@ bool isMoveAvailableInSingleBattle(MoveId id) {
   // preventing them from occupying a local move slot.
   return id != MoveId::None && id != static_cast<MoveId>(266) &&
          id != static_cast<MoveId>(270) && id != static_cast<MoveId>(476) &&
-         id != static_cast<MoveId>(502) && id != static_cast<MoveId>(505);
+         id != static_cast<MoveId>(502) && id != static_cast<MoveId>(505) &&
+         id != static_cast<MoveId>(597) && id != static_cast<MoveId>(607);
 }
 
 uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
@@ -159,7 +204,7 @@ uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
   uint8_t count = 0;
   // A #387-493 species is intrinsically Platinum content. Older species keep
   // their FireRed learnset until the Sinnoh unlock is explicitly supplied.
-  const uint8_t availableGeneration = std::min<uint8_t>(5U, unlockedGeneration);
+  const uint8_t availableGeneration = std::min<uint8_t>(6U, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
     if (entry.speciesId != speciesId || entry.level > level ||
         entry.generation > availableGeneration) continue;
@@ -197,6 +242,94 @@ constexpr FormLevelMoveOverride kFormLevelMoveOverrides[] = {
     {646, 2, 43, static_cast<MoveId>(184), static_cast<MoveId>(558)},  // Scary Face -> Fusion Flare
     {646, 2, 50, static_cast<MoveId>(549), static_cast<MoveId>(554)},  // Glaciate -> Ice Burn
 };
+
+struct FormLearnsetEntry { uint16_t move; uint8_t level; };
+// Pokemon Y personal/learnset row 748 is female Meowstic. It is the only
+// obtainable Kalos form whose level-up table differs from its National-Dex
+// base row; keeping it compact here avoids importing the other 77 form rows.
+constexpr FormLearnsetEntry kMeowsticFemaleLearnset[] = {
+    {500,1},{382,1},{345,1},{10,1},{43,1},{343,5},{93,9},{113,13},
+    {60,17},{252,19},{574,22},{473,25},{451,28},{247,31},{326,35},
+    {94,40},{272,43},{324,45},{389,48},{248,50},{500,53},
+};
+
+// Platinum's Meteorites make every Deoxys form available in one save, and
+// each form retains its own complete level-up row. Normal form already comes
+// from the generated Platinum table; these are the three alternate rows.
+constexpr FormLearnsetEntry kDeoxysAttackLearnset[] = {
+    {43,1},{35,1},{101,9},{100,17},{269,25},{228,33},{94,41},
+    {276,49},{375,57},{428,65},{322,73},{192,81},{354,89},{63,97},
+};
+constexpr FormLearnsetEntry kDeoxysDefenseLearnset[] = {
+    {43,1},{35,1},{101,9},{100,17},{282,25},{191,33},{94,41},
+    {289,49},{375,57},{428,65},{334,73},{133,73},{105,81},{354,89},
+    {68,97},{243,97},
+};
+constexpr FormLearnsetEntry kDeoxysSpeedLearnset[] = {
+    {43,1},{35,1},{101,9},{104,17},{282,25},{228,33},{94,41},
+    {129,49},{375,57},{428,65},{97,73},{105,81},{354,89},{245,97},
+};
+
+// Wormadam permanently keeps the cloak Burmy wore at evolution. Sandy and
+// Trash have independent Platinum level-up rows, not merely different art.
+constexpr FormLearnsetEntry kWormadamSandyLearnset[] = {
+    {33,1},{182,10},{450,15},{237,20},{93,23},{350,26},{106,29},
+    {60,32},{445,35},{175,38},{213,41},{94,44},{90,47},
+};
+constexpr FormLearnsetEntry kWormadamTrashLearnset[] = {
+    {33,1},{182,10},{450,15},{237,20},{93,23},{429,26},{319,29},
+    {60,32},{445,35},{175,38},{213,41},{94,44},{442,47},
+};
+
+// Eternal Flower shares Floette's ordinary X/Y row and inserts its signature
+// move at level 50, between Moonblast and Petal Dance.
+constexpr FormLearnsetEntry kEternalFloetteLearnset[] = {
+    {33,1},{22,1},{584,6},{381,10},{75,15},{273,20},{345,25},
+    {580,27},{572,33},{312,38},{581,43},{585,46},{617,50},{80,51},
+    {76,58},
+};
+
+// ORAS Hoopa Unbound level-up table. It is not present in Pokemon Y's GARC:
+// unlike Confined, the Unbound form trades its Ghost-oriented rows for Knock
+// Off/Dark Pulse and learns Hyperspace Fury both at level 1 and level 85.
+constexpr FormLearnsetEntry kHoopaUnboundLearnset[] = {
+    {621,1},{271,1},{194,1},{502,1},{93,1},{310,6},{277,10},{113,15},
+    {60,19},{285,25},{471,29},{470,29},{282,46},{472,50},{433,50},
+    {399,55},{94,75},{621,85},
+};
+
+uint8_t movesFromFormLearnset(const FormLearnsetEntry entries[],uint8_t size,
+                              uint8_t level,MoveId output[4]){
+  uint8_t count=0U;
+  for(uint8_t i=0;i<size;++i){
+    if(entries[i].level>level)continue;
+    const MoveId move=static_cast<MoveId>(entries[i].move);
+    if(!isMoveAvailableInSingleBattle(move))continue;
+    bool duplicate=false;for(uint8_t slot=0;slot<count;++slot)
+      if(output[slot]==move)duplicate=true;
+    if(duplicate)continue;
+    if(count<4U)output[count++]=move;
+    else{output[0]=output[1];output[1]=output[2];output[2]=output[3];output[3]=move;}
+  }
+  return count;
+}
+
+uint8_t relearnableFromFormLearnset(const FormLearnsetEntry entries[],
+                                    uint8_t size,uint8_t level,
+                                    MoveId output[],uint8_t maximum){
+  uint8_t count=0U;
+  for(uint8_t i=0U;i<size&&count<maximum;++i){
+    if(entries[i].level>level)continue;
+    const MoveId move=static_cast<MoveId>(entries[i].move);
+    if(!isMoveAvailableInSingleBattle(move))continue;
+    bool duplicate=false;
+    for(uint8_t slot=0U;slot<count;++slot)
+      if(output[slot]==move){duplicate=true;break;}
+    if(duplicate)continue;
+    output[count++]=move;
+  }
+  return count;
+}
 }
 
 MoveId formSignatureMove(uint16_t speciesId, uint8_t form) {
@@ -232,6 +365,38 @@ bool hasMove(const MoveId output[], uint8_t count, MoveId move) {
 uint8_t movesForForm(uint16_t speciesId, uint8_t form, uint8_t level,
                      MoveId output[4], uint8_t unlockedGeneration) {
   if (!output) return 0;
+  if(speciesId==413U&&form>0U&&unlockedGeneration>=4U){
+    const FormLearnsetEntry* entries=form==1U?kWormadamSandyLearnset:
+        kWormadamTrashLearnset;
+    const uint8_t size=form==1U?
+        static_cast<uint8_t>(sizeof(kWormadamSandyLearnset)/
+                             sizeof(kWormadamSandyLearnset[0])):
+        static_cast<uint8_t>(sizeof(kWormadamTrashLearnset)/
+                             sizeof(kWormadamTrashLearnset[0]));
+    return movesFromFormLearnset(entries,size,level,output);
+  }
+  if(speciesId==386U&&form>0U&&unlockedGeneration>=4U){
+    const FormLearnsetEntry* entries=form==1U?kDeoxysAttackLearnset:
+        form==2U?kDeoxysDefenseLearnset:kDeoxysSpeedLearnset;
+    const uint8_t size=form==1U?
+        static_cast<uint8_t>(sizeof(kDeoxysAttackLearnset)/sizeof(kDeoxysAttackLearnset[0])):
+        form==2U?
+        static_cast<uint8_t>(sizeof(kDeoxysDefenseLearnset)/sizeof(kDeoxysDefenseLearnset[0])):
+        static_cast<uint8_t>(sizeof(kDeoxysSpeedLearnset)/sizeof(kDeoxysSpeedLearnset[0]));
+    return movesFromFormLearnset(entries,size,level,output);
+  }
+  if(speciesId==670U&&form==5U&&unlockedGeneration>=6U)
+    return movesFromFormLearnset(kEternalFloetteLearnset,
+        static_cast<uint8_t>(sizeof(kEternalFloetteLearnset)/
+                             sizeof(kEternalFloetteLearnset[0])),level,output);
+  if(speciesId==678U&&form==1U&&unlockedGeneration>=6U)
+    return movesFromFormLearnset(kMeowsticFemaleLearnset,
+        static_cast<uint8_t>(sizeof(kMeowsticFemaleLearnset)/
+                             sizeof(kMeowsticFemaleLearnset[0])),level,output);
+  if(speciesId==720U&&form==1U&&unlockedGeneration>=6U)
+    return movesFromFormLearnset(kHoopaUnboundLearnset,
+        static_cast<uint8_t>(sizeof(kHoopaUnboundLearnset)/
+                             sizeof(kHoopaUnboundLearnset[0])),level,output);
   const uint8_t count = movesForLevel(speciesId, level, output, unlockedGeneration);
   applyFormLevelMoves(output, count, form, speciesId, [](const auto&) {});
   return count;
@@ -251,7 +416,7 @@ void collectRelearnableMoves(uint16_t speciesId, uint8_t level, MoveId output[],
       collectRelearnableMoves(evolution.fromSpeciesId, level, output, maximum,
                               count, visitedSpecies, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
-    const uint8_t availableGeneration = std::min<uint8_t>(5U, unlockedGeneration);
+    const uint8_t availableGeneration = std::min<uint8_t>(6U, unlockedGeneration);
     if (entry.speciesId != speciesId || entry.level > level ||
         entry.generation > availableGeneration) continue;
     const MoveId move = static_cast<MoveId>(entry.moveId);
@@ -279,8 +444,49 @@ uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
                                 uint8_t level, MoveId output[], uint8_t maximum,
                                 uint8_t unlockedGeneration) {
   if (!output || !maximum) return 0;
-  uint8_t count = relearnableMovesForLine(speciesId, level, output, maximum,
-                                          unlockedGeneration);
+  if(speciesId==413U&&form>0U&&unlockedGeneration>=4U){
+    const FormLearnsetEntry* entries=form==1U?kWormadamSandyLearnset:
+        kWormadamTrashLearnset;
+    const uint8_t size=form==1U?
+        static_cast<uint8_t>(sizeof(kWormadamSandyLearnset)/
+                             sizeof(kWormadamSandyLearnset[0])):
+        static_cast<uint8_t>(sizeof(kWormadamTrashLearnset)/
+                             sizeof(kWormadamTrashLearnset[0]));
+    return relearnableFromFormLearnset(entries,size,level,output,maximum);
+  }
+  if(speciesId==386U&&form>0U&&unlockedGeneration>=4U){
+    const FormLearnsetEntry* entries=form==1U?kDeoxysAttackLearnset:
+        form==2U?kDeoxysDefenseLearnset:kDeoxysSpeedLearnset;
+    const uint8_t size=form==1U?
+        static_cast<uint8_t>(sizeof(kDeoxysAttackLearnset)/sizeof(kDeoxysAttackLearnset[0])):
+        form==2U?
+        static_cast<uint8_t>(sizeof(kDeoxysDefenseLearnset)/sizeof(kDeoxysDefenseLearnset[0])):
+        static_cast<uint8_t>(sizeof(kDeoxysSpeedLearnset)/sizeof(kDeoxysSpeedLearnset[0]));
+    return relearnableFromFormLearnset(entries,size,level,output,maximum);
+  }
+  uint8_t count = relearnableMovesForLine(
+      speciesId==678U&&form==1U&&unlockedGeneration>=6U?677U:speciesId,
+      level, output, maximum, unlockedGeneration);
+  if(speciesId==670U&&form==5U&&unlockedGeneration>=6U&&level>=50U&&
+     !hasMove(output,count,static_cast<MoveId>(617U))&&count<maximum)
+    output[count++]=static_cast<MoveId>(617U);
+  if(speciesId==678U&&form==1U&&unlockedGeneration>=6U){
+    for(const FormLearnsetEntry& entry:kMeowsticFemaleLearnset){
+      if(entry.level>level||count>=maximum)continue;
+      const MoveId move=static_cast<MoveId>(entry.move);
+      if(!isMoveAvailableInSingleBattle(move)||hasMove(output,count,move))continue;
+      output[count++]=move;
+    }
+  }
+  if(speciesId==720U&&form==1U&&unlockedGeneration>=6U){
+    count=0U;
+    for(const FormLearnsetEntry& entry:kHoopaUnboundLearnset){
+      if(entry.level>level||count>=maximum)continue;
+      const MoveId move=static_cast<MoveId>(entry.move);
+      if(!isMoveAvailableInSingleBattle(move)||hasMove(output,count,move))continue;
+      output[count++]=move;
+    }
+  }
   applyFormLevelMoves(output, count, form, speciesId, [&](const auto& override) {
     if (override.level > level) return;
     if (hasMove(output, count, override.formMove)) return;
@@ -303,13 +509,43 @@ uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
   if (eventMove != MoveId::None && !hasMove(output, count, eventMove) &&
       count < maximum)
     output[count++] = eventMove;
+  // ORAS and later signature tutors live outside Pokemon Y's generated GARC.
+  // Summary is the project's event-move surface, just as it is for Keldeo,
+  // Meloetta and Rotom above.
+  MoveId laterSignature=MoveId::None;
+  if(unlockedGeneration>=6U){
+    if(speciesId==382U&&level>=45U)laterSignature=static_cast<MoveId>(618U);
+    else if(speciesId==383U&&level>=45U)laterSignature=static_cast<MoveId>(619U);
+    else if(speciesId==384U)laterSignature=static_cast<MoveId>(620U);
+    else if(speciesId==718U)laterSignature=static_cast<MoveId>(687U);
+  }
+  if(laterSignature!=MoveId::None&&!hasMove(output,count,laterSignature)&&
+     count<maximum)
+    output[count++]=laterSignature;
+  return count;
+}
+
+uint8_t relearnableMovesForPokemon(const OwnedPokemon& pokemon,
+                                   MoveId output[],uint8_t maximum,
+                                   uint8_t unlockedGeneration){
+  uint8_t count=relearnableMovesForForm(
+      pokemon.speciesId,CollectionLogic::resolvedForm(pokemon),pokemon.level,
+      output,maximum,unlockedGeneration);
+  if(pokemon.speciesId!=718U||
+     MegaEvolution::variantFor(pokemon)!=MegaVariant::Mega)return count;
+  const MoveId core=static_cast<MoveId>(687U);
+  const MoveId nihil=static_cast<MoveId>(920U);
+  for(uint8_t index=0U;index<count;++index){
+    if(output[index]==core){output[index]=nihil;return count;}
+  }
+  if(count<maximum)output[count++]=nihil;
   return count;
 }
 
 MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
                           uint8_t unlockedGeneration) {
   MoveId learned = MoveId::None;
-  const uint8_t availableGeneration = std::min<uint8_t>(5U, unlockedGeneration);
+  const uint8_t availableGeneration = std::min<uint8_t>(6U, unlockedGeneration);
   for (const auto& entry : kLearnsets) {
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (entry.speciesId == speciesId && entry.level == level &&
@@ -322,6 +558,57 @@ MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
 MoveId moveLearnedAtLevelForForm(uint16_t speciesId, uint8_t form,
                                  uint8_t level,
                                  uint8_t unlockedGeneration) {
+  if(speciesId==413U&&form>0U&&unlockedGeneration>=4U){
+    const FormLearnsetEntry* entries=form==1U?kWormadamSandyLearnset:
+        kWormadamTrashLearnset;
+    const uint8_t size=form==1U?
+        static_cast<uint8_t>(sizeof(kWormadamSandyLearnset)/
+                             sizeof(kWormadamSandyLearnset[0])):
+        static_cast<uint8_t>(sizeof(kWormadamTrashLearnset)/
+                             sizeof(kWormadamTrashLearnset[0]));
+    MoveId learned=MoveId::None;
+    for(uint8_t index=0U;index<size;++index)
+      if(entries[index].level==level&&isMoveAvailableInSingleBattle(
+          static_cast<MoveId>(entries[index].move)))
+        learned=static_cast<MoveId>(entries[index].move);
+    return learned;
+  }
+  if(speciesId==386U&&form>0U&&unlockedGeneration>=4U){
+    const FormLearnsetEntry* entries=form==1U?kDeoxysAttackLearnset:
+        form==2U?kDeoxysDefenseLearnset:kDeoxysSpeedLearnset;
+    const uint8_t size=form==1U?
+        static_cast<uint8_t>(sizeof(kDeoxysAttackLearnset)/sizeof(kDeoxysAttackLearnset[0])):
+        form==2U?
+        static_cast<uint8_t>(sizeof(kDeoxysDefenseLearnset)/sizeof(kDeoxysDefenseLearnset[0])):
+        static_cast<uint8_t>(sizeof(kDeoxysSpeedLearnset)/sizeof(kDeoxysSpeedLearnset[0]));
+    MoveId learned=MoveId::None;
+    for(uint8_t index=0U;index<size;++index)
+      if(entries[index].level==level&&isMoveAvailableInSingleBattle(
+          static_cast<MoveId>(entries[index].move)))
+        learned=static_cast<MoveId>(entries[index].move);
+    return learned;
+  }
+  if(speciesId==670U&&form==5U&&unlockedGeneration>=6U){
+    MoveId learned=MoveId::None;
+    for(const FormLearnsetEntry& entry:kEternalFloetteLearnset)
+      if(entry.level==level&&isMoveAvailableInSingleBattle(
+          static_cast<MoveId>(entry.move)))learned=static_cast<MoveId>(entry.move);
+    return learned;
+  }
+  if(speciesId==678U&&form==1U&&unlockedGeneration>=6U){
+    MoveId learned=MoveId::None;
+    for(const FormLearnsetEntry& entry:kMeowsticFemaleLearnset)
+      if(entry.level==level&&isMoveAvailableInSingleBattle(
+          static_cast<MoveId>(entry.move)))learned=static_cast<MoveId>(entry.move);
+    return learned;
+  }
+  if(speciesId==720U&&form==1U&&unlockedGeneration>=6U){
+    MoveId learned=MoveId::None;
+    for(const FormLearnsetEntry& entry:kHoopaUnboundLearnset)
+      if(entry.level==level&&isMoveAvailableInSingleBattle(
+          static_cast<MoveId>(entry.move)))learned=static_cast<MoveId>(entry.move);
+    return learned;
+  }
   MoveId learned = moveLearnedAtLevel(speciesId, level, unlockedGeneration);
   for (const auto& override : kFormLevelMoveOverrides) {
     if (override.speciesId == speciesId && override.form == form &&

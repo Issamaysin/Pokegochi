@@ -12,6 +12,7 @@
 #include "game/BossSystem.h"
 #include "game/SinnohExpedition.h"
 #include "game/UnovaAdventure.h"
+#include "game/KalosAdventure.h"
 #include "game/UnovaForms.h"
 #include "game/TowerDefenseSystem.h"
 
@@ -21,6 +22,7 @@ enum class UiColorTheme : uint8_t {
   Emerald = 2,
   Platinum = 3,
   White2 = 4,
+  X = 5,
 };
 
 struct UserSettings {
@@ -188,6 +190,8 @@ struct GameSave {
   UnovaAdventureState unova{};
   Gen5UniqueItemInventory gen5UniqueItems{};
   UnovaFormState unovaForms{};
+  // V47 adds Kalos after the complete frozen V46 payload.
+  KalosAdventureState kalos{};
 };
 // V43 added only the compact Poke Defense campaign record. The V42 and V43
 // ABIs are retained below as explicit frozen records and migrated field by
@@ -217,7 +221,7 @@ class PersistentSave {
  private:
   struct Record;
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 46;
+  static constexpr uint16_t kFormatVersion = 48;
   struct MartStateLegacy7 { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy10 { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy15 { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
@@ -934,6 +938,92 @@ class PersistentSave {
     Gen4UniqueItemInventory gen4UniqueItems{};
   };
   struct RecordV45 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV45 payload; uint32_t crc; };
+  // V46 is the complete shipped Unova record. V47 expands Box/Dex capacity
+  // and appends Generation-VI battle state, so freeze every V46 byte here.
+  struct BattleStateV46 { alignas(BattleState) uint8_t bytes[944]{}; };
+  static_assert(sizeof(BattleStateV46)==944,"Frozen V46 battle ABI changed");
+  struct GameSaveV46 {
+    uint32_t playTimeSeconds = 0;
+    uint32_t bootCount = 0;
+    uint8_t flags = 0;
+    uint8_t activePetSlot = 0;
+    PokemonCollectionV46 collection{};
+    Inventory inventory{};
+    EncounterCharges encounterCharges{};
+    WildEncounterClock wildEncounterClock{};
+    BattleStateV46 battle{};
+    PokedexStateV46 pokedex{};
+    GymProgress gymProgress{};
+    uint32_t money = 3000;
+    MartState mart{};
+    MoveLearningQueue moveLearning{};
+    EvolutionQueue evolutionQueue{};
+    EggState egg{};
+    UserSettings settings{};
+    uint64_t ownedMachines = 0;
+    PlayerStatistics statistics{};
+    uint32_t martSeenDay = 0;
+    PpItemInventory ppItems{};
+    HomePetPlacementState homePetPlacement{};
+    BerryGardenState berryGarden{};
+    CreativeBackgroundState creativeBackgrounds{};
+    SpecialHeldItemInventory specialHeldItems{};
+    uint32_t lastNpcGiftDay = UINT32_MAX;
+    uint32_t clockLocalEpochSeconds = 0;
+    uint32_t bossCooldownSecondsRemaining = 0;
+    BossEncounterState bossEncounter{};
+    EggInventory eggInventory{};
+    SinnohExpeditionState sinnoh{};
+    TowerDefense::CampaignState towerDefense{};
+    Gen4UniqueItemInventory gen4UniqueItems{};
+    UnovaAdventureState unova{};
+    Gen5UniqueItemInventory gen5UniqueItems{};
+    UnovaFormState unovaForms{};
+  };
+  struct RecordV46 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV46 payload; uint32_t crc; };
+  // V47 is the first complete Kalos payload.  Its 800-position collection is
+  // frozen here so V48 can compact occupied slots into the ESP32-safe active
+  // capacity without losing Pokemon stored near the old end of the Box.
+  struct GameSaveV47 {
+    uint32_t playTimeSeconds = 0;
+    uint32_t bootCount = 0;
+    uint8_t flags = 0;
+    uint8_t activePetSlot = 0;
+    PokemonCollectionV47 collection{};
+    Inventory inventory{};
+    EncounterCharges encounterCharges{};
+    WildEncounterClock wildEncounterClock{};
+    BattleState battle{};
+    PokedexState pokedex{};
+    GymProgress gymProgress{};
+    uint32_t money = 3000;
+    MartState mart{};
+    MoveLearningQueue moveLearning{};
+    EvolutionQueue evolutionQueue{};
+    EggState egg{};
+    UserSettings settings{};
+    uint64_t ownedMachines = 0;
+    PlayerStatistics statistics{};
+    uint32_t martSeenDay = 0;
+    PpItemInventory ppItems{};
+    HomePetPlacementState homePetPlacement{};
+    BerryGardenState berryGarden{};
+    CreativeBackgroundState creativeBackgrounds{};
+    SpecialHeldItemInventory specialHeldItems{};
+    uint32_t lastNpcGiftDay = UINT32_MAX;
+    uint32_t clockLocalEpochSeconds = 0;
+    uint32_t bossCooldownSecondsRemaining = 0;
+    BossEncounterState bossEncounter{};
+    EggInventory eggInventory{};
+    SinnohExpeditionState sinnoh{};
+    TowerDefense::CampaignState towerDefense{};
+    Gen4UniqueItemInventory gen4UniqueItems{};
+    UnovaAdventureState unova{};
+    Gen5UniqueItemInventory gen5UniqueItems{};
+    UnovaFormState unovaForms{};
+    KalosAdventureState kalos{};
+  };
+  struct RecordV47 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV47 payload; uint32_t crc; };
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   uint64_t sinnohMachineOwnership_ = 0;
@@ -942,6 +1032,7 @@ class PersistentSave {
   // total free heap being sufficient. Reserving it before the renderer starts
   // makes every subsequent persistent save independent of heap fragmentation.
   Record* scratch_ = nullptr;
+  size_t scratchBytes_ = 0;
   uint32_t sequence_ = 0;
   bool nextSlotA_ = true;
   bool readRecord(const char* key, Record& record);
@@ -973,6 +1064,8 @@ class PersistentSave {
   bool readRecordV43(const char* key, RecordV43& record);
   bool readRecordV44(const char* key, RecordV44& record);
   bool readRecordV45(const char* key, RecordV45& record);
+  bool readRecordV46(const char* key, RecordV46& record);
+  bool readRecordV47(const char* key, RecordV47& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   uint32_t crc32Update(uint32_t state, const uint8_t* data, size_t length) const;

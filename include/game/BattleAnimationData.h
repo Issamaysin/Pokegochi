@@ -510,7 +510,9 @@ enum class BattleAnimationTaskMotion : uint8_t {
   RotateAuroraRingColors,
   RotateMonSpriteToSide,
   RotateMonToSideAndRestore,
+  RotateVerticallyExact,
   ScaleMonAndRestore,
+  SnatchOpposingMonMoveExact,
   SetAllNonAttackersInvisible,
   SetAttackerInvisibleWaitForSignal,
   SetGrayscaleOrOriginalPal,
@@ -658,6 +660,7 @@ enum class BattleAnimationTaskMotion : uint8_t {
   LeafBladePath,
   ShockWaveProgressingBolt,
   ShockWaveLightning,
+  IonRain,
 };
 
 enum class BattleAnimationTaskTarget : uint8_t {

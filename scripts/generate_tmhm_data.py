@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from unova_rom_data import personal_record
+from kalos_rom_data import personal_record as y_personal_record
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,12 +46,39 @@ UNOVA_TM_PRICES = [3000,3000,2500,3000,3000,3000,3000,3000,2500,2500,
                    4000,4000,3000,5500,5000]
 assert len(BW_TM_MOVES) == 95 and len(UNOVA_TM_MOVES) == 25
 
+# X/Y's complete TM01..TM100/HM01..HM05 order. The first 96 moves are already
+# represented by the stable Emerald/Platinum/Unova catalog. Only the four
+# genuinely new Kalos machines are appended, preserving all existing IDs.
+XY_TM_MOVES = [
+    468,337,473,347,46,92,258,339,474,237,241,269,58,59,63,113,182,240,
+    355,219,218,76,479,85,87,89,216,91,94,247,280,104,115,482,53,188,
+    201,126,317,332,259,263,488,156,213,168,490,496,497,315,211,411,
+    412,206,503,374,451,507,510,511,261,512,373,153,421,371,514,416,
+    397,148,444,521,86,360,14,522,244,523,524,157,404,525,611,398,
+    138,447,207,214,369,164,430,433,528,249,555,267,399,612,605,590,
+]
+XY_HM_MOVES = [15, 19, 57, 70, 127]
+KALOS_TM_NUMBERS = [83, 98, 99, 100]
+KALOS_TM_MOVES = [XY_TM_MOVES[number - 1] for number in KALOS_TM_NUMBERS]
+KALOS_TM_PRICES = [4000, 5000, 7000, 3000]
+assert len(XY_TM_MOVES) == 100 and KALOS_TM_MOVES == [611, 612, 605, 590]
+
 
 def white_can_learn(species_id: int, move_id: int) -> bool:
     record = personal_record(species_id)
     bit_indices = [index for index, candidate in enumerate(BW_TM_MOVES)
                    if candidate == move_id]
     bit_indices += [95 + index for index, candidate in enumerate(BW_HM_MOVES)
+                    if candidate == move_id]
+    return any((record[40 + index // 8] >> (index % 8)) & 1
+               for index in bit_indices)
+
+
+def y_can_learn(species_id: int, move_id: int) -> bool:
+    record = y_personal_record(species_id)
+    bit_indices = [index for index, candidate in enumerate(XY_TM_MOVES)
+                   if candidate == move_id]
+    bit_indices += [100 + index for index, candidate in enumerate(XY_HM_MOVES)
                     if candidate == move_id]
     return any((record[40 + index // 8] >> (index % 8)) & 1
                for index in bit_indices)
@@ -145,7 +173,7 @@ legacy_masks = [0]
 sinnoh_masks = [0]
 unova_masks = [0]
 compatibility_count = 0
-for species_id in range(1, 650):
+for species_id in range(1, 722):
     platinum_allowed: set[str] = set()
     if species_id <= 493:
         platinum_data = json.loads(
@@ -168,7 +196,9 @@ for species_id in range(1, 650):
                  else f"HM{machine_id - 49:02d}")
         compatible = ((machine_symbol in allowed) if species_id <= 386 else
                       ((label in allowed) if species_id <= 493 else
-                       white_can_learn(species_id, move_ids[machine_symbol])))
+                       (white_can_learn(species_id, move_ids[machine_symbol])
+                        if species_id <= 649 else
+                        y_can_learn(species_id, move_ids[machine_symbol]))))
         if compatible:
             mask |= 1 << machine_id
             compatibility_count += 1
@@ -178,25 +208,32 @@ for species_id in range(1, 650):
     for machine_id in range(42):
         compatible = (f"TM{machine_id + 51:02d}" in platinum_allowed
                       if species_id <= 493 else
-                      white_can_learn(species_id, platinum_move_ids[machine_id]))
+                      (white_can_learn(species_id, platinum_move_ids[machine_id])
+                       if species_id <= 649 else
+                       y_can_learn(species_id, platinum_move_ids[machine_id])))
         if compatible:
             sinnoh_mask |= 1 << machine_id
             compatibility_count += 1
     sinnoh_masks.append(sinnoh_mask)
 
     unova_mask = 0
-    for machine_id, move_id in enumerate(UNOVA_TM_MOVES):
-        if white_can_learn(species_id, move_id):
+    regional_moves = UNOVA_TM_MOVES + KALOS_TM_MOVES
+    for machine_id, move_id in enumerate(regional_moves):
+        compatible = (white_can_learn(species_id, move_id)
+                      if species_id <= 649 and machine_id < len(UNOVA_TM_MOVES)
+                      else y_can_learn(species_id, move_id))
+        if compatible:
             unova_mask |= 1 << machine_id
             compatibility_count += 1
     unova_masks.append(unova_mask)
 
 move_rows = []
 all_machine_moves = ([move_ids[symbol] for symbol in machine_symbols] +
-                     platinum_move_ids + UNOVA_TM_MOVES)
+                     platinum_move_ids + UNOVA_TM_MOVES + KALOS_TM_MOVES)
 for offset in range(0, len(all_machine_moves), 10):
     move_rows.append("  " + ", ".join(str(value) for value in all_machine_moves[offset:offset + 10]) + ",")
-price_values = [3000] * 50 + [5000] * 8 + platinum_prices + UNOVA_TM_PRICES
+price_values = ([3000] * 50 + [5000] * 8 + platinum_prices +
+                UNOVA_TM_PRICES + KALOS_TM_PRICES)
 price_rows = []
 for offset in range(0, len(price_values), 10):
     price_rows.append("  " + ", ".join(str(value) for value in price_values[offset:offset + 10]) + ",")
@@ -223,18 +260,23 @@ output = (
     + "\n".join(price_rows)
     + "\n};\n"
     "// Index is the National Pokédex number; bit is TM01..TM50, HM01..HM08.\n"
-    "constexpr uint64_t machineLearnsets[650] = {\n"
+    "constexpr uint64_t machineLearnsets[722] = {\n"
     + "\n".join(legacy_mask_rows)
     + "\n};\n"
     "// New Sinnoh machines are TM51..TM92, mapped to bits 0..41.\n"
-    "constexpr uint8_t sinnohMachineLearnsets[650][6] = {\n"
+    "constexpr uint8_t sinnohMachineLearnsets[722][6] = {\n"
     + "\n".join(sinnoh_mask_rows)
     + "\n};\n"
     "// Unova-only additions retain their canonical TM numbers.\n"
     "constexpr uint8_t unovaMachineNumbers[kUnovaMachineCount] = {\n  "
     + ", ".join(str(number) for number in UNOVA_TM_NUMBERS)
     + ",\n};\n"
-    "constexpr uint8_t unovaMachineLearnsets[650][4] = {\n"
+    "// Kalos-only additions retain X/Y's canonical TM numbers.\n"
+    "constexpr uint8_t kalosMachineNumbers[kKalosMachineCount] = {\n  "
+    + ", ".join(str(number) for number in KALOS_TM_NUMBERS)
+    + ",\n};\n"
+    "// Bits 0..24 are Unova additions; bits 25..28 are Kalos additions.\n"
+    "constexpr uint8_t unovaMachineLearnsets[722][4] = {\n"
     + "\n".join(unova_mask_rows)
     + "\n};\n"
     f"constexpr uint16_t machineCompatibilityCount = {compatibility_count};\n"
@@ -252,6 +294,7 @@ if stamped != owner:
 
 print(
     f"Generated {len(all_machine_moves)} machines ({len(platinum_move_ids)} Sinnoh + "
-    f"{len(UNOVA_TM_MOVES)} Unova TMs) and {compatibility_count} species-machine "
-    f"compatibilities through Unova ({catalog_hash})"
+    f"{len(UNOVA_TM_MOVES)} Unova + {len(KALOS_TM_MOVES)} Kalos TMs) and "
+    f"{compatibility_count} species-machine compatibilities through Kalos "
+    f"({catalog_hash})"
 )

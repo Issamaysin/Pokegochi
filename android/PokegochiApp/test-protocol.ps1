@@ -28,7 +28,10 @@ foreach ($pair in $pairs) {
 }
 $temporary = Join-Path $appRoot 'build\protocol-test-classes'
 New-Item -ItemType Directory -Path $temporary -Force | Out-Null
-& $javac '-d' $temporary (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\MultiplayerProtocol.java') (Join-Path $appRoot 'app\src\test\java\com\pokegochi\app\ProtocolSelfTest.java')
+& $javac '-d' $temporary `
+    (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\MultiplayerProtocol.java') `
+    (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\BleTransportPolicy.java') `
+    (Join-Path $appRoot 'app\src\test\java\com\pokegochi\app\ProtocolSelfTest.java')
 if ($LASTEXITCODE -ne 0) { throw 'javac falhou.' }
 & $java '-cp' $temporary 'com.pokegochi.app.ProtocolSelfTest'
 if ($LASTEXITCODE -ne 0) { throw 'Teste de protocolo falhou.' }

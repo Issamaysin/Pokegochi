@@ -47,6 +47,7 @@ assert "ChallengeHub, RegionHub" in MAIN
 assert 'case Screen::RegionHub: return "RegionHub";' in MAIN
 assert 'case Screen::UnovaAdventure: return "UnovaAdventure";' in MAIN
 assert 'case Screen::UnovaTournament: return "UnovaTournament";' in MAIN
+assert 'case Screen::KalosAdventure: return "KalosAdventure";' in MAIN
 assert "case Screen::RegionHub: drawRegionHub(); break;" in MAIN
 assert "constexpr uint8_t kRegionHubDestinationsPerPage = 2U;" in MAIN
 assert '"/pokegochi/assets/platinum/region_hub/home_icon.pkg"' in MAIN
@@ -65,6 +66,10 @@ assert card_layout.index("fireRedText.setTextDatum(MC_DATUM);") < card_layout.in
 )
 assert "definition->descriptionLine1,\n                                 cardCenterX" in card_layout
 assert "definition->descriptionLine2,\n                                 cardCenterX" in card_layout
+assert "display.fillRoundRect(263,16,40,23,7,themePale());" in region_hub
+assert "fireRedText.setTextDatum(MC_DATUM);\n    fireRedText.setTextColor(themeDark(),themePale());\n    fireRedText.drawStringFitted(pageLabel,283,28,34,1);" in region_hub
+assert "fireRedText.drawStringFitted(pageLabel,283,28,34,1);" in region_hub
+assert "fireRedText.drawStringFitted(pageLabel,160,191,90,1);" not in region_hub
 
 pokedex = source_between(
     "void drawPokedex() {", "uint8_t pokedexDescriptionLineCount("
@@ -75,7 +80,7 @@ assert 'button(250, 202, 55, 22, "BACK"' in pokedex
 
 sinnoh = source_between("void drawSinnohExpedition() {", "void drawPokedexHeader() {")
 assert 'button(7, 8, 52, 24, "BACK"' in sinnoh
-assert '"RESEARCH %u - GYMS %u/8"' in sinnoh
+assert '"RESEARCH %u  GYM %u/8  EXP %u/8"' in sinnoh
 assert 'badgeWon ? "BADGE WON" : "GYM"' in sinnoh
 assert "SinnohExpedition::gymChallengeAvailable" in sinnoh
 assert "SinnohExpedition::hasGymVictory" in sinnoh
@@ -102,9 +107,12 @@ assert "centered_region_marker(white_item_icon(616))" in PACKER
 for marker in (
     "platinum/region_hub/sinnoh_adamant_orb.pkg",
     "unova/region_hub/unova_light_stone.pkg",
+    "kalos/region_hub/kalos_xerneas.pkg",
 ):
     left, top, right, bottom = pkg_visible_bounds(marker)
-    assert left == 32 - right and top == 32 - bottom, (
+    # Odd-width artwork can only straddle an even 32 px canvas to within one
+    # pixel; even-width markers remain exactly symmetric.
+    assert abs(left - (32 - right)) <= 1 and abs(top - (32 - bottom)) <= 1, (
         marker, (left, top, right, bottom)
     )
 assert '"unova/royal_unova/home_icon.pkg"' in PACKER
@@ -121,12 +129,29 @@ assert "std::copy(std::begin(collection.party), std::end(collection.party)," in 
 ).read_text(encoding="utf-8")
 assert "UiColorTheme::White2" in MAIN
 assert 'case UiColorTheme::White2: return "BLACK";' in MAIN
-assert '"SAPPHIRE","RUBY","EMERALD","PLATINUM","BLACK"' in MAIN
-assert '"UNOVA COMPLETE! BLACK THEME + ROYAL UNOVA!"' in MAIN
+assert "UiColorTheme::X" in MAIN
+assert 'case UiColorTheme::X: return "X/Y";' in MAIN
+assert "constexpr uint8_t kUiThemesPerPage = 3U;" in MAIN
+assert "drawSettingsThemeBrowser();" in MAIN
+assert "{0x2B38, 0xE92D, 0x20A7, 0xEF5F}, // X/Y" in MAIN
+assert '"CHAMPIONS CLEARED! BLACK + ROYAL UNOVA!"' in MAIN
+assert '"UNOVA 100%%! ROYAL UNOVA CLEARED!"' in MAIN
+assert '"/pokegochi/assets/kalos/region_hub/kalos_xerneas.pkg"' in MAIN
+assert '"/pokegochi/assets/kalos/rooms/area_%02u.pkg"' in MAIN
+assert '"/pokegochi/assets/kalos/rooms/kind_%02u.pkg"' in MAIN
+assert '"KALOS ADVENTURE"' in MAIN
+assert '"%u/8 BADGES  FRIEND SAFARI"' in MAIN
+assert 'button(8, 205, 304, 29, "ABANDON ROUTE", TFT_RED);' in MAIN
+assert '"HP / PP / STATUS STAY. ONE HEAL. NO ITEMS."' in MAIN
+assert "KalosAdventure::active(gameSave.kalos)&&!gameSave.battle.active" in MAIN
+assert '"KALOS 100%%! X/Y THEME UNLOCKED!"' in MAIN
+assert "KalosAdventure::xThemeUnlocked(gameSave.kalos)" in MAIN
+assert "KalosAdventure::setXThemeSelected(gameSave.kalos, true)" in MAIN
+assert '"--kalos-assets-only"' in PACKER
 assert '"WHITE 2 MONO"' not in MAIN
 assert '"WHITE 2 THEME + ROYAL UNOVA!"' not in MAIN
 assert '"--region-hub-assets-only"' in PACKER
 assert "merge_assets_into_archive(relatives, manifest)" in PACKER
-assert "kRequiredAssetPackVersion = 41" in PACK_VERSION
+assert "kRequiredAssetPackVersion = 46" in PACK_VERSION
 
 print("Region hub contract passed.")

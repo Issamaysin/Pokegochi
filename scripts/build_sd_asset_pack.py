@@ -167,14 +167,26 @@ BATTLE_ANIMATION_TASK_BACKGROUNDS = (
      "battle_anims/masks/cure_bubbles.bin"),
 )
 
-# Official Mega Evolutions available through the Pokegochi progression, plus
-# the two official Primal Reversions. Extra expansion folders that are not
-# real released forms remain intentionally absent from this allow-list.
+# Mega Evolutions authored by the expansion used by Pokegochi, plus the two
+# official Primal Reversions. This includes the romhack's regional additions,
+# not only forms released by the mainline games.
 GEN5_MEGA_FORMS = (
     (500,"emboar","mega"),(530,"excadrill","mega"),(531,"audino","mega"),
     (545,"scolipede","mega"),(560,"scrafty","mega"),
     (604,"eelektross","mega"),(609,"chandelure","mega"),
     (623,"golurk","mega"),
+)
+
+# Mega forms introduced for Kalos species.  The expansion checkout is the
+# same authored source used by the existing Mega catalog; keeping this list
+# separate lets an incremental Kalos release promote only the new assets.
+GEN6_MEGA_FORMS = (
+    (652,"chesnaught","mega"),(655,"delphox","mega"),
+    (658,"greninja","mega"),(668,"pyroar","mega"),
+    (670,"floette","mega"),(678,"meowstic","mega"),
+    (687,"malamar","mega"),(689,"barbaracle","mega"),
+    (691,"dragalge","mega"),(701,"hawlucha","mega"),
+    (718,"zygarde","mega"),(719,"diancie","mega"),
 )
 
 MEGA_FORMS = (
@@ -202,13 +214,13 @@ MEGA_FORMS = (
     # expansion decomp, matching the existing Mega Stone renderer.
     (428,"lopunny","mega"),(445,"garchomp","mega"),(448,"lucario","mega"),
     (460,"abomasnow","mega"),(475,"gallade","mega"),
-) + GEN5_MEGA_FORMS
+) + GEN5_MEGA_FORMS + GEN6_MEGA_FORMS
 
 # Stable, player-selectable Platinum forms. Battle-weather forms such as
 # Cherrim and Castform remain runtime-driven; these families have a persistent
 # form choice or held-item-driven form in Pokegochi. Arceus follows the exact
-# Plate order used by CollectionLogic::resolvedForm(). Platinum has no Fairy
-# sprite, so Pixie Plate deliberately resolves to exported form 0 (Normal).
+# Plate order used by CollectionLogic::resolvedForm(). Fairy is exported from
+# the expansion as form 17 because Platinum predates that type.
 PLATINUM_SELECTABLE_FORMS = (
     (479, "rotom", ("base", "heat", "wash", "frost", "fan", "mow")),
     (487, "giratina", ("base", "origin")),
@@ -216,6 +228,15 @@ PLATINUM_SELECTABLE_FORMS = (
     (493, "arceus", ("base", "fighting", "flying", "poison", "rock", "bug",
                      "ghost", "dragon", "steel", "fire", "water", "grass",
                      "electric", "psychic", "ice", "ground", "dark")),
+)
+
+# Environmental Sinnoh forms use the expansion's GBA-authored sprites. Their
+# numeric order is the persistent form byte used by CollectionLogic.
+SINNOH_EXPANSION_FORMS = (
+    (412, "burmy", ("", "sandy", "trash")),
+    (413, "wormadam", ("", "sandy", "trash")),
+    (422, "shellos", ("", "east")),
+    (423, "gastrodon", ("", "east")),
 )
 
 # Form order is the persistent numeric order used by
@@ -239,6 +260,29 @@ UNOVA_SELECTABLE_FORMS = (
                         "chill_drive")),
 )
 
+# Pokemon Y forms whose sprite can be requested by the shared firmware/app
+# renderer. Numeric order matches CollectionLogic exactly. Scatterbug and
+# Spewpa carry Vivillon's pattern byte through evolution but have no visible
+# form sprite of their own, so they intentionally do not appear here.
+KALOS_SELECTABLE_FORMS = (
+    (666, "vivillon", ("", "polar", "tundra", "continental", "garden",
+        "elegant", "meadow", "modern", "marine", "archipelago",
+        "high_plains", "sandstorm", "river", "monsoon", "savanna", "sun",
+        "ocean", "jungle", "fancy", "poke_ball")),
+    (669, "flabebe", ("", "yellow", "orange", "blue", "white")),
+    (670, "floette", ("", "yellow", "orange", "blue", "white", "eternal")),
+    (671, "florges", ("", "yellow", "orange", "blue", "white")),
+    (676, "furfrou", ("", "heart", "star", "diamond", "debutante",
+        "matron", "dandy", "la_reine", "kabuki", "pharaoh")),
+    (678, "meowstic", ("", "f")),
+    (681, "aegislash", ("", "blade")),
+    (710, "pumpkaboo", ("", "small", "large", "super")),
+    (711, "gourgeist", ("", "small", "large", "super")),
+    (716, "xerneas", ("", "active")),
+    (718, "zygarde", ("", "10_percent", "complete")),
+    (720, "hoopa", ("", "unbound")),
+)
+
 # The rooms remain small enough for the ESP32's retained scene arena, but are
 # built from complete authentic map renders rather than procedural colour
 # blocks. The selected Hoenn maps closely match each Unova area's biome while
@@ -247,6 +291,16 @@ UNOVA_AREA_MAPS = (
     "PetalburgWoods", "Route111", "NewMauville_Inside", "Route110",
     "MtPyre_2F", "ShoalCave_LowTideStairsRoom", "Route120", "FieryPath",
     "ShoalCave_LowTideIceRoom", "BattleFrontier_BattlePikeThreePathRoom",
+)
+
+# Kalos uses a second set of complete authored Emerald map strips selected to
+# match X/Y's forest, coast, city, marsh, crystal, snow and League biomes.
+# Pokemon and form graphics themselves still come from the Gen-VI expansion
+# atlas derived from the supplied Pokemon Y data set.
+KALOS_AREA_MAPS = (
+    "PetalburgWoods", "Route111", "Route114", "Route104",
+    "MauvilleCity", "Route120", "MossdeepCity", "Route123",
+    "EverGrandeCity",
 )
 
 # Ten authored healing-room views. Most Pokemon Centers in one region share
@@ -1213,6 +1267,27 @@ def asset_hash(relative: str) -> int:
     return value
 
 
+def write_runtime_metadata(animation_audit: dict | None = None) -> None:
+    """Keep the loose boot markers in lockstep with generated firmware data.
+
+    Incremental asset modes intentionally preserve the large PGA archive, but
+    they still produce release inputs.  Always refresh both markers here so an
+    Android APK can never pair a newly generated BattleAnimationData table
+    with the previous catalog identifier.
+    """
+    if animation_audit is None:
+        audit_path = ROOT / ".generated/battle_animation_audit.json"
+        animation_audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    catalog_hash = str(animation_audit.get("catalogHash", ""))
+    if not re.fullmatch(r"[0-9a-f]{16}", catalog_hash):
+        raise RuntimeError("Battle animation audit has no valid catalogHash")
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    (OUTPUT / "pack_version.txt").write_text(
+        f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+    (OUTPUT / "animation_catalog.txt").write_text(
+        f"{catalog_hash}\n", encoding="ascii")
+
+
 def write_asset_archive(manifest: dict[str, dict]) -> None:
     """Build one sequential, read-only asset stream for the microSD card.
 
@@ -1316,7 +1391,8 @@ def patch_asset_archive(relative: str) -> None:
     print(f"Patched {relative} in {ARCHIVE} ({ARCHIVE.stat().st_size} bytes)")
 
 
-def merge_assets_into_archive(relatives: list[str], manifest: dict[str, dict]) -> None:
+def merge_assets_into_archive(relatives: list[str], manifest: dict[str, dict],
+                              removed_relatives: list[str] | None = None) -> None:
     """Add or replace a small set of PKG payloads in an existing PGA3 archive.
 
     Release workstations do not always retain the proprietary FireRed ROM
@@ -1359,15 +1435,23 @@ def merge_assets_into_archive(relatives: list[str], manifest: dict[str, dict]) -
         physical_order.append(key)
     physical_order.sort(key=physical_offsets.__getitem__)
 
+    removed_keys = {asset_hash(relative) for relative in (removed_relatives or [])}
     archive_keys = set(payloads)
     manifest_keys = set(manifest_names)
     new_keys = {asset_hash(relative) for relative in relatives}
-    unknown_keys = archive_keys - manifest_keys
+    if removed_keys & manifest_keys:
+        raise RuntimeError("Removed archive paths are still present in the manifest")
+    unknown_keys = archive_keys - manifest_keys - removed_keys
     missing_legacy_keys = manifest_keys - archive_keys - new_keys
     if unknown_keys or missing_legacy_keys:
         raise RuntimeError(
             "Existing archive and manifest disagree: "
             f"unknown={len(unknown_keys)} missing={len(missing_legacy_keys)}")
+
+    if removed_keys:
+        physical_order = [key for key in physical_order if key not in removed_keys]
+        for key in removed_keys:
+            payloads.pop(key, None)
 
     for relative in relatives:
         key = asset_hash(relative)
@@ -2010,6 +2094,197 @@ def build_mega_form_assets(
     return relatives
 
 
+def build_additional_sinnoh_form_assets(
+        manifest: dict[str, dict]) -> list[str]:
+    """Export environmental forms, Fairy Arceus and the Prison Bottle."""
+    relatives: list[str] = []
+
+    def emit(relative: str, image: Image.Image) -> None:
+        write_asset(relative, image, manifest)
+        relatives.append(relative)
+
+    for species, species_name, form_names in SINNOH_EXPANSION_FORMS:
+        for form_index, form_name in enumerate(form_names):
+            species_prefix = f"graphics/pokemon/{species_name}"
+            source_prefix = species_prefix + (f"/{form_name}" if form_name else "")
+            normal_palette = expansion_jasc_palette(f"{source_prefix}/normal.pal")
+            shiny_palette = expansion_jasc_palette(f"{source_prefix}/shiny.pal")
+            front = expansion_indexed_png(
+                f"{source_prefix}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+            back = expansion_indexed_png(
+                f"{source_prefix}/back.png", normal_palette).crop((0, 0, 64, 64))
+            shiny_front = expansion_indexed_png(
+                f"{source_prefix}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+            shiny_back = expansion_indexed_png(
+                f"{source_prefix}/back.png", shiny_palette).crop((0, 0, 64, 64))
+            icon_sheet = expansion_source_png(f"{source_prefix}/icon.png")
+            prefix = f"pokemon/forms/sinnoh/{species:03}/{form_index}"
+            emit(f"{prefix}/front.pkg", front)
+            emit(f"{prefix}/back.pkg", back)
+            emit(f"{prefix}/shiny/front.pkg", shiny_front)
+            emit(f"{prefix}/shiny/back.pkg", shiny_back)
+            for frame in range(2):
+                top = frame * 32 if icon_sheet.height >= 64 else 0
+                icon = icon_sheet.crop((0, top, 32, top + 32))
+                emit(f"{prefix}/icons/{frame}.pkg", icon)
+                emit(f"{prefix}/shiny/icons/{frame}.pkg",
+                     shiny_icon(icon, normal_palette, shiny_palette))
+
+    # Arceus shares one silhouette across its types; Fairy supplies the
+    # expansion palette/icon while the root battle pixels retain every detail.
+    arceus_root = "graphics/pokemon/arceus"
+    fairy_prefix = f"{arceus_root}/fairy"
+    normal_palette = expansion_jasc_palette(f"{fairy_prefix}/normal.pal")
+    shiny_palette = expansion_jasc_palette(f"{fairy_prefix}/shiny.pal")
+    front = expansion_indexed_png(
+        f"{arceus_root}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+    back = expansion_indexed_png(
+        f"{arceus_root}/back.png", normal_palette).crop((0, 0, 64, 64))
+    shiny_front = expansion_indexed_png(
+        f"{arceus_root}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+    shiny_back = expansion_indexed_png(
+        f"{arceus_root}/back.png", shiny_palette).crop((0, 0, 64, 64))
+    icon_sheet = expansion_source_png(f"{fairy_prefix}/icon.png")
+    prefix = "pokemon/forms/arceus/17"
+    emit(f"{prefix}/front.pkg", front)
+    emit(f"{prefix}/back.pkg", back)
+    emit(f"{prefix}/shiny/front.pkg", shiny_front)
+    emit(f"{prefix}/shiny/back.pkg", shiny_back)
+    for frame in range(2):
+        top = frame * 32 if icon_sheet.height >= 64 else 0
+        icon = icon_sheet.crop((0, top, 32, top + 32))
+        emit(f"{prefix}/icons/{frame}.pkg", icon)
+        emit(f"{prefix}/shiny/icons/{frame}.pkg",
+             shiny_icon(icon, normal_palette, shiny_palette))
+
+    bottle_palette = expansion_jasc_palette(
+        "graphics/items/icon_palettes/prison_bottle.pal")
+    emit("kalos/key_items/prison_bottle.pkg", expansion_indexed_png(
+        "graphics/items/icons/prison_bottle.png", bottle_palette))
+    return relatives
+
+
+def build_kalos_assets(manifest: dict[str, dict]) -> list[str]:
+    """Incrementally export every runtime-requestable Kalos asset.
+
+    This path deliberately has no FireRed ROM dependency: the base/form
+    sprites come from the expansion checkout and route scenery from the
+    already present Emerald decomp. It lets a Gen-VI update be promoted into
+    an existing complete SD archive without rebuilding unrelated generations.
+    """
+    relatives: list[str] = []
+
+    def emit(relative: str, image: Image.Image) -> None:
+        write_asset(relative, image, manifest)
+        relatives.append(relative)
+
+    expansion_symbols = re.findall(
+        r"^\s*NATIONAL_DEX_([A-Z0-9_]+),",
+        expansion_text("include/constants/pokedex.h"), re.M)
+    if len(expansion_symbols) <= 721 or expansion_symbols[650] != "CHESPIN" or \
+            expansion_symbols[721] != "VOLCANION":
+        raise RuntimeError("Unexpected expansion National Dex order")
+    for species in range(650, 722):
+        folder_name = expansion_symbols[species].lower()
+        prefix = f"graphics/pokemon/{folder_name}"
+        normal_palette = expansion_jasc_palette(f"{prefix}/normal.pal")
+        shiny_palette = expansion_jasc_palette(f"{prefix}/shiny.pal")
+        front = expansion_indexed_png(
+            f"{prefix}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+        back = expansion_indexed_png(
+            f"{prefix}/back.png", normal_palette).crop((0, 0, 64, 64))
+        shiny_front = expansion_indexed_png(
+            f"{prefix}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+        shiny_back = expansion_indexed_png(
+            f"{prefix}/back.png", shiny_palette).crop((0, 0, 64, 64))
+        icon_sheet = expansion_source_png(f"{prefix}/icon.png")
+        emit(f"pokemon/front/{species:03}.pkg", front)
+        emit(f"pokemon/back/{species:03}.pkg", back)
+        emit(f"pokemon/shiny/front/{species:03}.pkg", shiny_front)
+        emit(f"pokemon/shiny/back/{species:03}.pkg", shiny_back)
+        for frame in range(2):
+            top = frame * 32 if icon_sheet.height >= 64 else 0
+            icon = icon_sheet.crop((0, top, 32, top + 32))
+            emit(f"pokemon/icons/{species:03}_{frame}.pkg", icon)
+            emit(f"pokemon/shiny/icons/{species:03}_{frame}.pkg",
+                 shiny_icon(icon, normal_palette, shiny_palette))
+        alpha = front.getchannel("A")
+        for tone, color in (("dark", (24, 32, 72, 255)),
+                            ("light", (248, 248, 248, 255))):
+            silhouette = Image.new("RGBA", front.size, color)
+            silhouette.putalpha(alpha)
+            emit(f"pokemon/evolution/{tone}/{species:03}.pkg", silhouette)
+
+    for species, species_name, form_names in KALOS_SELECTABLE_FORMS:
+        for form_index, form_name in enumerate(form_names):
+            species_prefix = f"graphics/pokemon/{species_name}"
+            source_prefix = species_prefix + (f"/{form_name}" if form_name else "")
+            flower_palette = 0 < form_index < 5 and species in (669, 670, 671)
+            pumpkin_size = form_index > 0 and species in (710, 711)
+            palette_prefix = species_prefix if pumpkin_size else source_prefix
+            battle_prefix = species_prefix if flower_palette else source_prefix
+            icon_prefix = species_prefix if pumpkin_size else source_prefix
+            normal_palette = expansion_jasc_palette(f"{palette_prefix}/normal.pal")
+            shiny_palette = expansion_jasc_palette(f"{palette_prefix}/shiny.pal")
+            front = expansion_indexed_png(
+                f"{battle_prefix}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+            back = expansion_indexed_png(
+                f"{battle_prefix}/back.png", normal_palette).crop((0, 0, 64, 64))
+            shiny_front = expansion_indexed_png(
+                f"{battle_prefix}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+            shiny_back = expansion_indexed_png(
+                f"{battle_prefix}/back.png", shiny_palette).crop((0, 0, 64, 64))
+            icon_sheet = expansion_source_png(f"{icon_prefix}/icon.png")
+            output_prefix = f"pokemon/forms/kalos/{species:03}/{form_index}"
+            emit(f"{output_prefix}/front.pkg", front)
+            emit(f"{output_prefix}/back.pkg", back)
+            emit(f"{output_prefix}/shiny/front.pkg", shiny_front)
+            emit(f"{output_prefix}/shiny/back.pkg", shiny_back)
+            for frame in range(2):
+                top = frame * 32 if icon_sheet.height >= 64 else 0
+                icon = icon_sheet.crop((0, top, 32, top + 32))
+                emit(f"{output_prefix}/icons/{frame}.pkg", icon)
+                emit(f"{output_prefix}/shiny/icons/{frame}.pkg",
+                     shiny_icon(icon, normal_palette, shiny_palette))
+
+    for area_index, map_name in enumerate(KALOS_AREA_MAPS):
+        emit(f"kalos/rooms/area_{area_index:02}.pkg",
+             fitted_authentic_map_strip(map_name))
+    room_icons = (
+        EMERALD / "graphics/object_events/pics/people/youngster.png",
+        EMERALD / "graphics/field_effects/pics/tall_grass.png",
+        EMERALD / "graphics/object_events/pics/berry_trees/pecha.png",
+        EMERALD / "graphics/battle_anims/sprites/round_shadow.png",
+        EMERALD / "graphics/object_events/pics/people/camper.png",
+        DECOMP / "graphics/items/icons/itemfinder.png",
+        EMERALD / "graphics/object_events/pics/people/nurse.png",
+        EMERALD / "graphics/object_events/pics/people/team_magma/magma_member_m.png",
+        EMERALD / "graphics/object_events/pics/people/expert_f.png",
+    )
+    for kind, source in enumerate(room_icons):
+        emit(f"kalos/rooms/kind_{kind:02}.pkg", centered_source_icon(source))
+    xerneas_icon = expansion_source_png("graphics/pokemon/xerneas/icon.png")
+    emit("kalos/region_hub/kalos_xerneas.pkg",
+         centered_region_marker(xerneas_icon.crop((0, 0, 32, 32))))
+    return relatives
+
+
+def legacy_kalos_asset_paths() -> list[str]:
+    """Paths emitted by the first incremental Kalos exporter revision."""
+    relatives: list[str] = []
+    for species in range(650, 722):
+        prefix = f"pokemon/{species:03}"
+        relatives.extend((
+            f"{prefix}/front.pkg",
+            f"{prefix}/back.pkg",
+            f"{prefix}/shiny/front.pkg",
+            f"{prefix}/shiny/back.pkg",
+            *(f"{prefix}/icons/{frame}.pkg" for frame in range(2)),
+            *(f"{prefix}/shiny/icons/{frame}.pkg" for frame in range(2)),
+        ))
+    return relatives
+
+
 def main() -> None:
     rom = ROM.read_bytes()
     if hashlib.sha1(rom).hexdigest().upper() != EXPECTED_SHA1:
@@ -2107,17 +2382,19 @@ def main() -> None:
             silhouette.putalpha(alpha)
             write_asset(f"pokemon/evolution/{tone}/{species:03}.pkg", silhouette, manifest)
 
-    # Generation V is exported from pokeemerald-expansion's complete GBA
+    # Generations V and VI are exported from pokeemerald-expansion's complete GBA
     # atlas. This is the same ROM-hack source used by the move/ability engine,
     # so battle, Box, Home and evolution never fall back to recoloured blobs or
     # DS sprites scaled at runtime.
     expansion_symbols = re.findall(
         r"^\s*NATIONAL_DEX_([A-Z0-9_]+),",
         expansion_text("include/constants/pokedex.h"), re.M)
-    if len(expansion_symbols) <= 649 or expansion_symbols[494] != "VICTINI" or \
-            expansion_symbols[649] != "GENESECT":
+    if len(expansion_symbols) <= 721 or expansion_symbols[494] != "VICTINI" or \
+            expansion_symbols[649] != "GENESECT" or \
+            expansion_symbols[650] != "CHESPIN" or \
+            expansion_symbols[721] != "VOLCANION":
         raise RuntimeError("Unexpected expansion National Dex order")
-    for species in range(494, 650):
+    for species in range(494, 722):
         folder_name = expansion_symbols[species].lower()
         prefix = f"graphics/pokemon/{folder_name}"
         normal_palette = expansion_jasc_palette(f"{prefix}/normal.pal")
@@ -2193,6 +2470,45 @@ def main() -> None:
                 write_asset(f"{output_prefix}/icons/{frame}.pkg", icon, manifest)
                 write_asset(f"{output_prefix}/shiny/icons/{frame}.pkg",
                             shiny_icon(icon, normal_palette, shiny_palette), manifest)
+
+    # Kalos form atlas. Flower colours share one silhouette and swap palettes;
+    # Pumpkaboo/Gourgeist sizes share the base palette/icon but have distinct
+    # battle pixels. Every other entry supplies a complete authored form set.
+    for species, species_name, form_names in KALOS_SELECTABLE_FORMS:
+        for form_index, form_name in enumerate(form_names):
+            species_prefix = f"graphics/pokemon/{species_name}"
+            source_prefix = species_prefix + (f"/{form_name}" if form_name else "")
+            flower_palette = 0 < form_index < 5 and species in (669, 670, 671)
+            pumpkin_size = form_index > 0 and species in (710, 711)
+            palette_prefix = species_prefix if pumpkin_size else source_prefix
+            battle_prefix = species_prefix if flower_palette else source_prefix
+            icon_prefix = species_prefix if pumpkin_size else source_prefix
+            normal_palette = expansion_jasc_palette(f"{palette_prefix}/normal.pal")
+            shiny_palette = expansion_jasc_palette(f"{palette_prefix}/shiny.pal")
+            front = expansion_indexed_png(
+                f"{battle_prefix}/anim_front.png", normal_palette).crop((0, 0, 64, 64))
+            back = expansion_indexed_png(
+                f"{battle_prefix}/back.png", normal_palette).crop((0, 0, 64, 64))
+            shiny_front = expansion_indexed_png(
+                f"{battle_prefix}/anim_front.png", shiny_palette).crop((0, 0, 64, 64))
+            shiny_back = expansion_indexed_png(
+                f"{battle_prefix}/back.png", shiny_palette).crop((0, 0, 64, 64))
+            icon_sheet = expansion_source_png(f"{icon_prefix}/icon.png")
+            output_prefix = f"pokemon/forms/kalos/{species:03}/{form_index}"
+            write_asset(f"{output_prefix}/front.pkg", front, manifest)
+            write_asset(f"{output_prefix}/back.pkg", back, manifest)
+            write_asset(f"{output_prefix}/shiny/front.pkg", shiny_front, manifest)
+            write_asset(f"{output_prefix}/shiny/back.pkg", shiny_back, manifest)
+            for frame in range(2):
+                top = frame * 32 if icon_sheet.height >= 64 else 0
+                icon = icon_sheet.crop((0, top, 32, top + 32))
+                write_asset(f"{output_prefix}/icons/{frame}.pkg", icon, manifest)
+                write_asset(f"{output_prefix}/shiny/icons/{frame}.pkg",
+                            shiny_icon(icon, normal_palette, shiny_palette), manifest)
+
+    # Environmental forms and Fairy Arceus come from the expansion because
+    # the Platinum source has neither those alternate sheets nor Fairy type.
+    build_additional_sinnoh_form_assets(manifest)
 
     # Persistent Platinum forms use the same native 80x80 battle sheets and
     # shared 32x64 icon sheets as their base species. Keep every form in its
@@ -2408,6 +2724,34 @@ def main() -> None:
         path = DECOMP / "graphics/items/icons" / f"{source_name}.png"
         if not path.exists(): raise RuntimeError(f"Missing held item icon: {source_name}")
         write_asset(f"firered/items/held_{index:02}.pkg", source_png(path), manifest)
+    # Battle Tower rewards and species-specific held items can return to the
+    # player's Bag after being unequipped.  They therefore need the same exact
+    # numbered icon contract as the normal held-item catalogue.  These ids are
+    # 39..65 in HeldItem; leaving the gap out of the archive made the complete
+    # Bag scene fail its preload and repeatedly retry missing files on ESP32.
+    battle_tower_held_icons = (
+        "berry_juice", "macho_brace", "soul_dew", "deep_sea_scale",
+        "deep_sea_tooth", "light_ball", "leppa_berry", "in_battle_herb",
+        "dragon_scale", "iapapa_berry", "wiki_berry", "sea_incense",
+        "salac_berry", "lansat_berry", "apicot_berry", "starf_berry",
+        "liechi_berry", "stick", "lax_incense", "aguav_berry", "figy_berry",
+        "thick_club", "mago_berry", "metal_powder", "petaya_berry",
+        "lucky_punch", "ganlon_berry",
+    )
+    for index, source_name in enumerate(battle_tower_held_icons, start=39):
+        path = DECOMP / "graphics/items/icons" / f"{source_name}.png"
+        if not path.exists():
+            raise RuntimeError(f"Missing Battle Tower held item icon: {source_name}")
+        write_asset(f"firered/items/held_{index:02}.pkg", source_png(path), manifest)
+
+    # Lucky Egg (66) has its own authored reward path. Quick Powder (67) uses
+    # the expansion's Ditto-powder silhouette and canonical Quick Powder
+    # palette, exactly as the source game does.
+    quick_powder = expansion_indexed_png(
+        "graphics/items/icons/ditto_powder.png",
+        expansion_jasc_palette(
+            "graphics/items/icon_palettes/quick_powder.pal"))
+    write_asset("firered/items/held_67.pkg", quick_powder, manifest)
     # Gen 4 signature items are appended after the frozen HeldItem enum
     # values. Expansion has one authored plate silhouette shared by the
     # elemental plates, plus the three exact legendary-orb icons.
@@ -2468,6 +2812,30 @@ def main() -> None:
     # from Pokemon White's a/0/2/5 NCGR/NCLR pair, with no generated stand-in.
     write_asset("unova/region_hub/unova_light_stone.pkg",
                 centered_region_marker(white_item_icon(616)), manifest)
+
+    # Kalos route selector. Keep the same 320x93 retained-scene contract as
+    # Unova so firmware and Android share one bounded rendering path.
+    for area_index, map_name in enumerate(KALOS_AREA_MAPS):
+        write_asset(f"kalos/rooms/area_{area_index:02}.pkg",
+                    fitted_authentic_map_strip(map_name), manifest)
+    kalos_room_icons = (
+        EMERALD / "graphics/object_events/pics/people/youngster.png",
+        EMERALD / "graphics/field_effects/pics/tall_grass.png",
+        EMERALD / "graphics/object_events/pics/berry_trees/pecha.png",
+        EMERALD / "graphics/battle_anims/sprites/round_shadow.png",
+        EMERALD / "graphics/object_events/pics/people/camper.png",
+        DECOMP / "graphics/items/icons/itemfinder.png",
+        EMERALD / "graphics/object_events/pics/people/nurse.png",
+        EMERALD / "graphics/object_events/pics/people/team_magma/magma_member_m.png",
+        EMERALD / "graphics/object_events/pics/people/expert_f.png",
+    )
+    for kind, source in enumerate(kalos_room_icons):
+        write_asset(f"kalos/rooms/kind_{kind:02}.pkg",
+                    centered_source_icon(source), manifest)
+    xerneas_icon = expansion_source_png("graphics/pokemon/xerneas/icon.png")
+    write_asset("kalos/region_hub/kalos_xerneas.pkg",
+                centered_region_marker(xerneas_icon.crop((0, 0, 32, 32))),
+                manifest)
 
     # Berry Garden is a real Route 123 berry patch, not a firmware-drawn set
     # of generic cards.  The six authored soil beds are already part of this
@@ -2944,11 +3312,11 @@ def main() -> None:
             write_asset("firered/item_menu/bag_icon.pkg",
                         normalized_home_icon(pocket), manifest)
 
-    required=[*(f"pokemon/front/{i:03}.pkg" for i in range(1,650)),*(f"pokemon/back/{i:03}.pkg" for i in range(1,650)),
-      *(f"pokemon/icons/{i:03}_{frame}.pkg" for i in range(1,650) for frame in range(2)),"firered/item_menu/bag_icon.pkg",
-      *(f"pokemon/shiny/front/{i:03}.pkg" for i in range(1,650)),*(f"pokemon/shiny/back/{i:03}.pkg" for i in range(1,650)),
-      *(f"pokemon/shiny/icons/{i:03}_{frame}.pkg" for i in range(1,650) for frame in range(2)),
-      *(f"pokemon/evolution/{tone}/{i:03}.pkg" for tone in ("dark", "light") for i in range(1,650)),
+    required=[*(f"pokemon/front/{i:03}.pkg" for i in range(1,722)),*(f"pokemon/back/{i:03}.pkg" for i in range(1,722)),
+      *(f"pokemon/icons/{i:03}_{frame}.pkg" for i in range(1,722) for frame in range(2)),"firered/item_menu/bag_icon.pkg",
+      *(f"pokemon/shiny/front/{i:03}.pkg" for i in range(1,722)),*(f"pokemon/shiny/back/{i:03}.pkg" for i in range(1,722)),
+      *(f"pokemon/shiny/icons/{i:03}_{frame}.pkg" for i in range(1,722) for frame in range(2)),
+      *(f"pokemon/evolution/{tone}/{i:03}.pkg" for tone in ("dark", "light") for i in range(1,722)),
       "firered/evolution_scene/scene.pkg","firered/evolution_scene/sparkle.pkg",
       "firered/ui/pokedex_icon.pkg","firered/ui/box_icon.pkg",
       *(f"firered/battle_terrain/{terrain}.pkg" for terrain in BATTLE_TERRAINS),
@@ -2975,10 +3343,14 @@ def main() -> None:
       "platinum/region_hub/home_icon.pkg",
       "platinum/region_hub/sinnoh_adamant_orb.pkg",
       "unova/region_hub/unova_light_stone.pkg",
+      "kalos/region_hub/kalos_xerneas.pkg",
       "unova/royal_unova/home_icon.pkg",
       "unova/key_items/dna_splicers.pkg",
+      "kalos/key_items/prison_bottle.pkg",
       *(f"unova/rooms/area_{index:02}.pkg" for index in range(10)),
       *(f"unova/rooms/kind_{index:02}.pkg" for index in range(10)),
+      *(f"kalos/rooms/area_{index:02}.pkg" for index in range(9)),
+      *(f"kalos/rooms/kind_{index:02}.pkg" for index in range(9)),
       *(f"firered/ui/home_move_effect_{type_index:02}.pkg"
         for type_index in range(18)),
       "firered/ui/wild_transition.pkg",
@@ -3015,7 +3387,8 @@ def main() -> None:
       "firered/shop/background.pkg","firered/items/poke_ball.pkg","firered/items/great_ball.pkg","firered/items/ultra_ball.pkg","firered/items/golden_ball.pkg",
       *(f"firered/battle_items/ball_{ball}_{frame:02}.pkg" for ball in ("poke_ball","great_ball","ultra_ball","master_ball","golden_ball") for frame in range(3)),
       *(f"firered/items/mart_{name}.pkg" for name in ("poke_ball","great_ball","ultra_ball","potion","large_potion","full_heal","antidote","status_heal","battle_stat_item")),
-      *(f"firered/items/held_{index:02}.pkg" for index in range(1,39)),
+      *(f"firered/items/held_{index:02}.pkg" for index in range(1,66)),
+      "firered/items/held_67.pkg",
       *(f"firered/items/held_{index:02}.pkg" for index in range(68,92)),
       "firered/items/lucky_egg.pkg",
       "emerald/berry_garden/background.pkg",
@@ -3039,12 +3412,32 @@ def main() -> None:
         for _species, species_name, form_names in PLATINUM_SELECTABLE_FORMS
         for form_index, _form_name in enumerate(form_names)
         for shiny in ("", "shiny/") for frame in range(2)),
+      *(f"pokemon/forms/sinnoh/{species:03}/{form_index}/{shiny}{view}.pkg"
+        for species, _species_name, form_names in SINNOH_EXPANSION_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for view in ("front", "back")),
+      *(f"pokemon/forms/sinnoh/{species:03}/{form_index}/{shiny}icons/{frame}.pkg"
+        for species, _species_name, form_names in SINNOH_EXPANSION_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for frame in range(2)),
+      *(f"pokemon/forms/arceus/17/{shiny}{view}.pkg"
+        for shiny in ("", "shiny/") for view in ("front", "back")),
+      *(f"pokemon/forms/arceus/17/{shiny}icons/{frame}.pkg"
+        for shiny in ("", "shiny/") for frame in range(2)),
       *(f"pokemon/forms/unova/{species:03}/{form_index}/{shiny}{view}.pkg"
         for species, _species_name, form_names in UNOVA_SELECTABLE_FORMS
         for form_index, _form_name in enumerate(form_names)
         for shiny in ("", "shiny/") for view in ("front", "back")),
       *(f"pokemon/forms/unova/{species:03}/{form_index}/{shiny}icons/{frame}.pkg"
         for species, _species_name, form_names in UNOVA_SELECTABLE_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for frame in range(2)),
+      *(f"pokemon/forms/kalos/{species:03}/{form_index}/{shiny}{view}.pkg"
+        for species, _species_name, form_names in KALOS_SELECTABLE_FORMS
+        for form_index, _form_name in enumerate(form_names)
+        for shiny in ("", "shiny/") for view in ("front", "back")),
+      *(f"pokemon/forms/kalos/{species:03}/{form_index}/{shiny}icons/{frame}.pkg"
+        for species, _species_name, form_names in KALOS_SELECTABLE_FORMS
         for form_index, _form_name in enumerate(form_names)
         for shiny in ("", "shiny/") for frame in range(2)),
       *(f"pokemon/forms/castform/{form}/{shiny}{view}.pkg"
@@ -3070,9 +3463,7 @@ def main() -> None:
     # plausible but older card can contain the core Home assets while missing
     # newer per-frame battle sprites; without an explicit version that error
     # surfaced only when the affected move was used.
-    (OUTPUT / "pack_version.txt").write_text(f"{ASSET_PACK_VERSION}\n", encoding="ascii")
-    (OUTPUT / "animation_catalog.txt").write_text(
-        f"{animation_audit['catalogHash']}\n", encoding="ascii")
+    write_runtime_metadata(animation_audit)
     (OUTPUT / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     (OUTPUT / "asset_audit.json").write_text(json.dumps({
         "assets": len(manifest), "trainers": trainer_count,
@@ -3084,13 +3475,63 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if "--sinnoh-gym-assets-only" in sys.argv:
+    if "--battle-animation-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        animation_audit = json.loads(
+            (ROOT / ".generated/battle_animation_audit.json").read_text(
+                encoding="utf-8"))
+        battle_sprite_audit = export_exact_battle_animation_assets(
+            animation_audit, manifest)
+        relatives = [
+            f"firered/battle_anims/sprites/{key}_{frame:02}.pkg"
+            for key, spec in animation_audit["visualAssets"].items()
+            for frame in range(spec["frameCount"])
+        ]
+        merge_assets_into_archive(relatives, manifest)
+        write_runtime_metadata(animation_audit)
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8")
+        asset_audit_path = OUTPUT / "asset_audit.json"
+        asset_audit = (json.loads(asset_audit_path.read_text(encoding="utf-8"))
+                       if asset_audit_path.exists() else {})
+        asset_audit.update({
+            "assets": len(manifest),
+            "runtimeAnimationFrames": len(relatives),
+            "battleSprites": battle_sprite_audit,
+        })
+        asset_audit_path.write_text(
+            json.dumps(asset_audit, indent=2), encoding="utf-8")
+        print(
+            f"Built and merged {len(relatives)} audited battle animation frames")
+    elif "--kalos-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        obsolete = legacy_kalos_asset_paths()
+        for relative in obsolete:
+            manifest.pop(relative, None)
+        relatives = build_kalos_assets(manifest)
+        relatives.extend(build_mega_form_assets(manifest, GEN6_MEGA_FORMS))
+        merge_assets_into_archive(relatives, manifest, obsolete)
+        for relative in obsolete:
+            (OUTPUT / relative).unlink(missing_ok=True)
+        write_runtime_metadata()
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print(f"Built {len(relatives)} Kalos/form/Mega assets and promoted the asset archive")
+    elif "--form-lifecycle-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        relatives = build_additional_sinnoh_form_assets(manifest)
+        merge_assets_into_archive(relatives, manifest)
+        write_runtime_metadata()
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print(f"Built {len(relatives)} lifecycle/form assets and promoted the asset archive")
+    elif "--sinnoh-gym-assets-only" in sys.argv:
         manifest_path = OUTPUT / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         relatives = build_sinnoh_gym_assets(manifest)
         merge_assets_into_archive(relatives, manifest)
-        (OUTPUT / "pack_version.txt").write_text(
-            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        write_runtime_metadata()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         print("Built Sinnoh Gym assets and promoted the asset archive")
     elif "--gen5-mega-assets-only" in sys.argv:
@@ -3098,8 +3539,7 @@ if __name__ == "__main__":
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         relatives = build_mega_form_assets(manifest, GEN5_MEGA_FORMS)
         merge_assets_into_archive(relatives, manifest)
-        (OUTPUT / "pack_version.txt").write_text(
-            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        write_runtime_metadata()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         print("Built Generation 5 Mega assets and promoted the asset archive")
     elif "--region-hub-assets-only" in sys.argv:
@@ -3109,14 +3549,18 @@ if __name__ == "__main__":
             "platinum/region_hub/home_icon.pkg",
             "platinum/region_hub/sinnoh_adamant_orb.pkg",
             "unova/region_hub/unova_light_stone.pkg",
+            "kalos/region_hub/kalos_xerneas.pkg",
         ]
         write_asset(relatives[0], region_hub_home_icon(), manifest)
         write_asset(relatives[1], sinnoh_region_icon(), manifest)
         write_asset(relatives[2],
                     centered_region_marker(white_item_icon(616)), manifest)
+        xerneas_icon = expansion_source_png(
+            "graphics/pokemon/xerneas/icon.png")
+        write_asset(relatives[3], centered_region_marker(
+            xerneas_icon.crop((0, 0, 32, 32))), manifest)
         merge_assets_into_archive(relatives, manifest)
-        (OUTPUT / "pack_version.txt").write_text(
-            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        write_runtime_metadata()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         print("Built Region Hub assets and promoted the asset archive")
     elif "--battle-tower-icon-only" in sys.argv:
@@ -3124,12 +3568,15 @@ if __name__ == "__main__":
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         write_asset("emerald/battle_tower/home_icon.pkg",
                     battle_tower_home_icon(), manifest)
-        (OUTPUT / "pack_version.txt").write_text(
-            f"{ASSET_PACK_VERSION}\n", encoding="ascii")
+        write_runtime_metadata()
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         patch_asset_archive("emerald/battle_tower/home_icon.pkg")
         print("Rebuilt the transparent Battle Tower icon and asset archive")
+    elif "--runtime-metadata-only" in sys.argv:
+        write_runtime_metadata()
+        print("Synchronized runtime asset metadata")
     elif "--archive-only" in sys.argv:
+        write_runtime_metadata()
         write_asset_archive(json.loads((OUTPUT / "manifest.json").read_text(encoding="utf-8")))
     else:
         main()

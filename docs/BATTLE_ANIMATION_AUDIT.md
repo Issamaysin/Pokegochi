@@ -6,11 +6,11 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 
 | Proof | SpriteTemplates |
 |---|---:|
-| ExactCallbackProfile | 476 |
-| ExplicitReviewedCallback | 37 |
+| ExactCallbackProfile | 527 |
+| ExplicitReviewedCallback | 42 |
 | FireRedStandardHelper | 1 |
 | SourceParticleMotion | 1 |
-| SourceVerticalMotion | 1 |
+| SourceVerticalMotion | 3 |
 
 | SpriteTemplate | Callback | Frame seq. / selector | Affine seq. / selector | Lifetime | Installed states | Motion | Travel | Origin | Proof |
 |---|---|---|---|---|---|---|---|---|---|
@@ -43,6 +43,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gBatonPassPokeballSpriteTemplate | AnimBatonPassPokeball | 1 / SingleSequence | 0 / NoAffine | 42 (MotionProfile) | - | BatonPassBall | Local | Attacker | ExactCallbackProfile |
 | gBattleAnimSpriteTemplate_LeafStorm | AnimAirWaveCrescent | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | StandardLinearProjectile | AttackerToTarget | Argument6 | ExactCallbackProfile |
 | gBattleAnimSpriteTemplate_LeafStorm2 | AnimNeedleArmSpike | 2 / DefaultInitialSequence | 1 / SingleSequence | 64 (MotionProfile) | AnimNeedleArmSpike_Step | NeedleArmSpike | Local | Argument4 | ExactCallbackProfile |
+| gBelchBerryTemplate | AnimMissileArc | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimMissileArc_Step | StandardArcProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gBellSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 105 (frame=105) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gBellyDrumHandSpriteTemplate | AnimBellyDrumHand | 1 / SingleSequence | 0 / NoAffine | 9 (MotionProfile) | - | BellyDrumHandExact | Local | Attacker | ExactCallbackProfile |
 | gBentSpoonSpriteTemplate | AnimBentSpoon | 2 / Constant1 | 0 / NoAffine | 187 (frame=187) | - | BentSpoonExact | Local | Attacker | ExactCallbackProfile |
@@ -62,6 +63,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gBrickBreakWallShardSpriteTemplate | AnimBrickBreakWallShard | 4 / OamTileArgument1 | 0 / NoAffine | 41 (MotionProfile) | AnimBrickBreakWallShard_Step | BrickWallShard | Local | Argument0 | ExactCallbackProfile |
 | gBrickBreakWallSpriteTemplate | AnimBrickBreakWall | 1 / SingleSequence | 0 / NoAffine | 36 (MotionProfile) | AnimBrickBreakWall_Step | BrickWallShake | Local | Argument0 | ExactCallbackProfile |
 | gBulletSeedSpriteTemplate | AnimBulletSeed | 1 / SingleSequence | 1 / SingleSequence | 37 (MotionProfile) | AnimBulletSeed_Step1, AnimBulletSeed_Step2, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | BulletSeedRicochet | AttackerToTarget | Target | ExactCallbackProfile |
+| gCelebrateBagTemplate | AnimFollowMeFinger | 1 / SingleSequence | 2 / DefaultInitialSequence | 74 (affine=74) | AnimFollowMeFinger_Step1, AnimFollowMeFinger_Step2, AnimMetronomeFinger_Step | FollowMeFinger | Local | Target | ExactCallbackProfile |
 | gChatterSingNotesTemplate | AnimIceEffectParticle | 8 / DefaultInitialSequence | 1 / SingleSequence | 20 (affine=17) | AnimFlickerIceEffectParticle | IceImpact | Local | Target | ExactCallbackProfile |
 | gCircleThrowRingTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 2 / DefaultInitialSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gClampJawSpriteTemplate | AnimBite | 1 / SingleSequence | 8 / Argument2 | 16 (MotionProfile) | AnimBite_Step1, AnimBite_Step2 | BiteClamp | Local | Target | ExactCallbackProfile |
@@ -70,6 +72,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gClawSlashSpriteTemplate | AnimClawSlash | 2 / Argument2 | 0 / NoAffine | 20 (frame=20) | - | Static | Local | Target | ExplicitReviewedCallback |
 | gCoinThrowSpriteTemplate | AnimCoinThrow | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | InitAnimLinearTranslationWithSpeedAndPos, AnimTranslateLinear_WithFollowup | CoinThrow | AttackerToTarget | Target | ExactCallbackProfile |
 | gComplexPaletteBlendSpriteTemplate | AnimComplexPaletteBlend | 1 / SingleSequence | 0 / NoAffine | 24 (MotionProfile) | AnimComplexPaletteBlend_Step1, AnimComplexPaletteBlend_Step2 | PalettePulse | Local | Attacker | ExactCallbackProfile |
+| gConfideBubbleTemplate | AnimThoughtBubble | 4 / DefaultInitialSequence | 0 / NoAffine | 64 (frame=8) | AnimThoughtBubble_Step | ThoughtBubble | Local | Argument0 | ExactCallbackProfile |
 | gConfuseRayBallBounceSpriteTemplate | AnimConfuseRayBallBounce | 1 / SingleSequence | 1 / SingleSequence | 42 (MotionProfile) | AnimConfuseRayBallBounce_Step1, AnimConfuseRayBallBounce_Step2, DestroyAnimSpriteAndDisableBlend | ConfuseRayBounce | AttackerToTarget | Target | ExactCallbackProfile |
 | gConfuseRayBallSpiralSpriteTemplate | AnimConfuseRayBallSpiral | 1 / SingleSequence | 0 / NoAffine | 61 (MotionProfile) | AnimConfuseRayBallSpiral_Step | ConfuseRaySpiral | Local | Target | ExactCallbackProfile |
 | gConstrictBindingSpriteTemplate | AnimConstrictBinding | 2 / DefaultInitialSequence | 2 / Argument2 | 255 (affine=13) | AnimConstrictBinding_Step1, AnimConstrictBinding_Step2 | ConstrictBinding | Local | Target | ExactCallbackProfile |
@@ -78,6 +81,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gConversion2SpriteTemplate | AnimConversion2 | 1 / SingleSequence | 1 / SingleSequence | 166 (MotionProfile) | AnimConversion2_Step, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | ConversionReturn | Local | Target | ExactCallbackProfile |
 | gConversionSpriteTemplate | AnimConversion | 1 / SingleSequence | 1 / SingleSequence | 255 (MotionProfile) | - | ConversionHold | Local | Attacker | ExactCallbackProfile |
 | gCottonGuardSporeTemplate | AnimPowerAbsorptionOrb | 2 / DefaultInitialSequence | 1 / SingleSequence | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | AbsorptionLinear | TargetToAttacker | Target | ExactCallbackProfile |
+| gCraftyShieldPinkConversionTemplate | AnimConversion | 1 / SingleSequence | 1 / SingleSequence | 255 (MotionProfile) | - | ConversionHold | Local | Attacker | ExactCallbackProfile |
 | gCrossChopHandSpriteTemplate | AnimCrossChopHand | 1 / SingleSequence | 0 / NoAffine | 48 (MotionProfile) | AnimCrossChopHand_Step, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup, StartAnimLinearTranslation | CrossChop | Local | Target | ExactCallbackProfile |
 | gCrossImpactSpriteTemplate | AnimCrossImpact | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gCrushGripExplosionTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=20) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
@@ -89,6 +93,8 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gDarkVoidPurpleStarsTemplate | AnimGrantingStars | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | TranslateSpriteLinearFixedPoint | LocalStarVelocity | Local | Attacker | ExactCallbackProfile |
 | gDestinyBondWhiteShadowSpriteTemplate | AnimDestinyBondWhiteShadow | 1 / SingleSequence | 0 / NoAffine | 48 (MotionProfile) | AnimDestinyBondWhiteShadow_Step | DestinyShadow | Local | Argument0 | ExactCallbackProfile |
 | gDevilSpriteTemplate | AnimDevil | 2 / Constant0 | 0 / NoAffine | 91 (MotionProfile) | - | DevilOrbit | Local | Target | ExactCallbackProfile |
+| gDiamondStormBlizzardTemplate | AnimMoveParticleBeyondTarget | 1 / SingleSequence | 0 / NoAffine | 18 (MotionProfile) | AnimWiggleParticleTowardsTarget | WavyBeyondTarget | AttackerToTarget | Argument7 | ExactCallbackProfile |
+| gDiamondStormDiamondsTemplate | AnimMoveTwisterParticle | 1 / SingleSequence | 2 / DefaultInitialSequence | 96 (MotionProfile) | AnimMoveTwisterParticle_Step | TwisterParticle | Local | Target | ExactCallbackProfile |
 | gDirtMoundSpriteTemplate | AnimDigDirtMound | 2 / OamTileArgument1 | 0 / NoAffine | 96 (MotionProfile) | - | DigDirtMoundExact | Local | Argument0 | ExactCallbackProfile |
 | gDirtPlumeSpriteTemplate | AnimDirtPlumeParticle | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimDirtPlumeParticle_Step | DirtPlume | Local | Target | ExactCallbackProfile |
 | gDiveBallSpriteTemplate | AnimDiveBall | 1 / SingleSequence | 1 / SingleSequence | 96 (MotionProfile) | AnimDiveBall_Step1, AnimDiveBall_Step2 | DiveBallCycle | Local | Attacker | ExactCallbackProfile |
@@ -104,10 +110,16 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gDragonRushSpriteTemplate | AnimDragonRush | 1 / SingleSequence | 2 / Constant1 | 8 (frame=8) | AnimDragonRushStep | DragonRushStrike | Local | Target | ExactCallbackProfile |
 | gDualChopImpactTemplate | AnimHitSplatBasic | 1 / SingleSequence | 4 / Argument3 | 9 (affine=9) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gEclipsingOrbSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 42 (frame=42) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gEerieImpulseImpactTemplate | AnimGrantingStars | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | TranslateSpriteLinearFixedPoint | LocalStarVelocity | Local | Attacker | ExactCallbackProfile |
+| gEerieImpulseRingTemplate | AnimHyperVoiceRing | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | AnimHyperVoiceRing_WaitEnd | HyperVoiceRing | AttackerToTarget | Target | ExactCallbackProfile |
 | gEggThrowSpriteTemplate | AnimThrowProjectile | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimThrowProjectile_Step | StandardArcProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gElectricChargingParticlesSpriteTemplate | SpriteCallbackDummy | 2 / DefaultInitialSequence | 0 / NoAffine | 255 (MotionProfile) | - | Static | Local | Target | ExplicitReviewedCallback |
 | gElectricPuffSpriteTemplate | AnimElectricPuff | 1 / SingleSequence | 0 / NoAffine | 12 (frame=12) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gElectricTerrainFlyingBallTemplate | AnimOrbitScatter | 2 / DefaultInitialSequence | 0 / NoAffine | 32 (MotionProfile) | AnimOrbitScatter_Step | RadialScatter | Local | Attacker | ExactCallbackProfile |
+| gElectricTerrainOrbsTemplate | AnimOrbitFast | 2 / DefaultInitialSequence | 0 / NoAffine | 52 (MotionProfile) | AnimOrbitFast_Step | FastOrbit | Local | Attacker | ExactCallbackProfile |
 | gElectricitySpriteTemplate | AnimElectricity | 3 / OamTileArgument3 | 0 / NoAffine | 64 (MotionProfile) | - | OrientedStatic | Local | Target | ExactCallbackProfile |
+| gElectrifyRingTemplate | SpriteCB_SurroundingRing | 1 / SingleSequence | 2 / DefaultInitialSequence | 14 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | RaiseSprite | Local | Attacker | ExactCallbackProfile |
+| gElectrifyYellowRingTemplate | AnimUproarRing | 1 / SingleSequence | 2 / Constant1 | 31 (frame=1+affine=31) | AnimSpriteOnMonPos | OrientedStatic | Local | Target | ExactCallbackProfile |
 | gElectroBallCannonBallTemplate | AnimShadowBall | 1 / SingleSequence | 1 / SingleSequence | 41 (MotionProfile) | AnimShadowBall_Step | ShadowBall | Local | Attacker | ExactCallbackProfile |
 | gEllipticalGustSpriteTemplate | AnimEllipticalGust | 1 / SingleSequence | 0 / NoAffine | 71 (MotionProfile) | AnimEllipticalGust_Step | EllipticalGust | Local | Target | ExactCallbackProfile |
 | gEmberFlareSpriteTemplate | AnimEmberFlare | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimTravelDiagonally, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TravelDiagonal | Local | Target | ExactCallbackProfile |
@@ -119,6 +131,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gExplosionSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=20) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gEyeSparkleSpriteTemplate | AnimEyeSparkle | 1 / SingleSequence | 0 / NoAffine | 20 (frame=20) | AnimEyeSparkle_Step | OrientedStatic | Local | Attacker | ExactCallbackProfile |
 | gFacadeSweatDropSpriteTemplate | AnimFacadeSweatDrop | 1 / SingleSequence | 0 / NoAffine | 7 (MotionProfile) | - | ShortLinearDrop | Local | Target | ExactCallbackProfile |
+| gFairyWindCloudTemplate | AnimTranslateLinearSingleSineWave | 1 / SingleSequence | 1 / SingleSequence | 31 (MotionProfile) | AnimTranslateLinearSingleSineWave_Step | StandardArcProjectile | AttackerToTarget | Argument6 | ExactCallbackProfile |
 | gFallingCoinSpriteTemplate | AnimFallingCoin | 1 / SingleSequence | 1 / SingleSequence | 52 (MotionProfile) | AnimFallingCoin_Step | FallingCoinBounce | Local | Target | ExactCallbackProfile |
 | gFallingFeatherSpriteTemplate | AnimFallingFeather | 2 / DefaultInitialSequence | 0 / NoAffine | 128 (frame=1) | AnimFallingFeather_Step | FallingFeatherWave | Local | Target | ExactCallbackProfile |
 | gFallingRockSpriteTemplate | AnimFallingRock | 3 / Argument1 | 0 / NoAffine | 64 (MotionProfile) | AnimFallingRock_Step, TranslateSpriteInEllipse, TranslateSpriteInEllipse | FallingRockEllipse | Local | Target | ExactCallbackProfile |
@@ -154,6 +167,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gFollowMeFingerSpriteTemplate | AnimFollowMeFinger | 1 / SingleSequence | 2 / DefaultInitialSequence | 74 (affine=74) | AnimFollowMeFinger_Step1, AnimFollowMeFinger_Step2, AnimMetronomeFinger_Step | FollowMeFinger | Local | Target | ExactCallbackProfile |
 | gForcePalmSpriteTemplate | AnimForcePalm | 1 / SingleSequence | 4 / Argument3 | 64 (affine=9) | - | Static | Local | Argument2 | ExplicitReviewedCallback |
 | gForesightMagnifyingGlassSpriteTemplate | AnimForesightMagnifyingGlass | 1 / SingleSequence | 0 / NoAffine | 90 (MotionProfile) | AnimForesightMagnifyingGlass_Step | ForesightScan | Local | Attacker | ExactCallbackProfile |
+| gForestsCurseIngrainTemplate | AnimWaterPulseBubble | 4 / DefaultInitialSequence | 0 / NoAffine | 38 (MotionProfile) | AnimWaterPulseBubble_Step | WaterPulseBubble | Local | Target | ExactCallbackProfile |
 | gFoulPlayImpactTemplate | AnimHitSplatBasic | 1 / SingleSequence | 4 / Argument3 | 9 (affine=9) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gFoulPlayRingTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 2 / DefaultInitialSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gFreezeShockCircleTemplate | AnimGrowingShockWaveOrb | 1 / SingleSequence | 3 / Constant2 | 172 (affine=172) | - | Static | Local | Attacker | ExplicitReviewedCallback |
@@ -168,12 +182,22 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gFusionFlareRedBubblesTemplate | AnimWaterPulseBubble | 2 / DefaultInitialSequence | 0 / NoAffine | 38 (MotionProfile) | AnimWaterPulseBubble_Step | WaterPulseBubble | Local | Target | ExactCallbackProfile |
 | gFusionFlareRedRingTemplate | AnimUproarRing | 1 / SingleSequence | 2 / Constant1 | 31 (frame=1+affine=31) | AnimSpriteOnMonPos | OrientedStatic | Local | Target | ExactCallbackProfile |
 | gGearGrindTemplate | AnimBite | 1 / SingleSequence | 1 / SingleSequence | 16 (MotionProfile) | AnimBite_Step1, AnimBite_Step2 | BiteClamp | Local | Target | ExactCallbackProfile |
+| gGeomancyBlueCellRaiseTemplate | AnimRaiseSprite | 2 / Argument4 | 0 / NoAffine | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | RaiseSprite | Local | Attacker | ExactCallbackProfile |
+| gGeomancyBlueCellVortexTemplate | AnimParticleInVortex | 2 / DefaultInitialSequence | 0 / NoAffine | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
+| gGeomancyGreenCellRaiseTemplate | AnimRaiseSprite | 2 / Argument4 | 0 / NoAffine | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | RaiseSprite | Local | Attacker | ExactCallbackProfile |
+| gGeomancyGreenCellVortexTemplate | AnimParticleInVortex | 2 / DefaultInitialSequence | 0 / NoAffine | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
+| gGeomancyRedCellRaiseTemplate | AnimRaiseSprite | 2 / Argument4 | 0 / NoAffine | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | RaiseSprite | Local | Attacker | ExactCallbackProfile |
+| gGeomancyRedCellVortexTemplate | AnimParticleInVortex | 2 / DefaultInitialSequence | 0 / NoAffine | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
+| gGeomancyRingTemplate | SpriteCB_SurroundingRing | 1 / SingleSequence | 2 / DefaultInitialSequence | 14 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | RaiseSprite | Local | Attacker | ExactCallbackProfile |
+| gGeomancyYellowRageTemplate | AnimDragonRageFirePlume | 1 / SingleSequence | 0 / NoAffine | 25 (frame=25) | - | OrientedStatic | Local | Argument0 | ExactCallbackProfile |
 | gGlaciateSmokeTemplate | AnimBlackSmoke | 1 / SingleSequence | 0 / NoAffine | 28 (MotionProfile) | AnimBlackSmoke_Step | SmokeDrift | Local | Target | ExactCallbackProfile |
 | gGlareEyeDotSpriteTemplate | AnimGlareEyeDot | 1 / SingleSequence | 0 / NoAffine | 37 (MotionProfile) | - | Static | Local | Target | ExplicitReviewedCallback |
 | gGoldRingSpriteTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gGrantingStarsSpriteTemplate | AnimGrantingStars | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | TranslateSpriteLinearFixedPoint | LocalStarVelocity | Local | Attacker | ExactCallbackProfile |
 | gGrassKnotSpriteTemplate | AnimGrassKnot | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimGrassKnotStep | TargetSinWave | Local | Target | ExactCallbackProfile |
 | gGrassPledgeSpriteTemplate | AnimFlyUpTarget | 2 / DefaultInitialSequence | 0 / NoAffine | 48 (MotionProfile) | AnimFlyUpTarget_Step | Rising | Local | Target | ExplicitReviewedCallback |
+| gGrassyTerrainOrbsTemplate | AnimOrbitFast | 1 / SingleSequence | 1 / SingleSequence | 52 (MotionProfile) | AnimOrbitFast_Step | FastOrbit | Local | Attacker | ExactCallbackProfile |
+| gGrassyTerrainStarTemplate | AnimOrbitScatter | 1 / SingleSequence | 0 / NoAffine | 32 (MotionProfile) | AnimOrbitScatter_Step | RadialScatter | Local | Attacker | ExactCallbackProfile |
 | gGreenPoisonBubble | AnimAcidPoisonBubble | 3 / Constant2 | 1 / SingleSequence | 64 (MotionProfile) | AnimAcidPoisonBubble_Step | AcidBubbleArc | AttackerToTarget | Argument3 | ExactCallbackProfile |
 | gGreenPoisonDrip | AnimAcidPoisonDroplet | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetDroplet | Local | Target | ExactCallbackProfile |
 | gGreenStarSpriteTemplate | AnimGreenStar | 3 / DefaultInitialSequence | 0 / NoAffine | 96 (MotionProfile) | AnimGreenStar_Callback, AnimGreenStar_Step1, AnimGreenStar_Step2 | GreenStarRise | Local | Attacker | ExactCallbackProfile |
@@ -189,6 +213,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gGunkShotImpactSpriteTemplate | AnimGunkShotImpact | 1 / SingleSequence | 4 / Argument3 | 64 (affine=9) | - | Static | Local | Argument2 | ExplicitReviewedCallback |
 | gGustToTargetSpriteTemplate | AnimGustToTarget | 1 / SingleSequence | 1 / SingleSequence | 31 (affine=25) | AnimGustToTarget_Step | StandardLinearProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gHandleInvertHitSplatSpriteTemplate | AnimHitSplatHandleInvert | 1 / SingleSequence | 4 / Argument3 | 16 (MotionProfile) | - | InvertedHitSplatExact | Local | Argument2 | ExactCallbackProfile |
+| gHappyHourCoinShowerTemplate | AnimHappyHourCoinShower | 1 / SingleSequence | 0 / NoAffine | 18 (MotionProfile) | AnimFallingRock_Step, TranslateSpriteInEllipse, TranslateSpriteInEllipse | Falling | Local | Attacker | SourceVerticalMotion |
 | gHealBellMusicNoteSpriteTemplate | AnimHealBellMusicNote | 1 / SingleSequence | 0 / NoAffine | 36 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | HealBellNote | Local | Attacker | ExactCallbackProfile |
 | gHealingBlueStarSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 21 (frame=21) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gHeartStampSpinningHeartTemplate | AnimSpinningKickOrPunch | 2 / Argument2 | 1 / SingleSequence | 96 (MotionProfile) | AnimSpinningKickOrPunchFinish | SpinningKickOrPunchExact | Local | Target | ExactCallbackProfile |
@@ -197,6 +222,10 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gHelpingHandClapSpriteTemplate | AnimHelpingHandClap | 2 / DefaultInitialSequence | 0 / NoAffine | 92 (MotionProfile) | AnimHelpingHandClap_Step | HelpingHandClap | Local | Target | ExactCallbackProfile |
 | gHiddenPowerOrbScatterSpriteTemplate | AnimOrbitScatter | 1 / SingleSequence | 1 / SingleSequence | 32 (MotionProfile) | AnimOrbitScatter_Step | RadialScatter | Local | Attacker | ExactCallbackProfile |
 | gHiddenPowerOrbSpriteTemplate | AnimOrbitFast | 1 / SingleSequence | 1 / SingleSequence | 52 (MotionProfile) | AnimOrbitFast_Step | FastOrbit | Local | Attacker | ExactCallbackProfile |
+| gHoldBackRingTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 2 / DefaultInitialSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gHoldBackStarsTemplate | AnimDizzyPunchDuck | 1 / SingleSequence | 0 / NoAffine | 42 (MotionProfile) | - | DizzyWave | Local | Target | ExactCallbackProfile |
+| gHoldBackSwipeTemplate | AnimRevengeScratch | 3 / DefaultInitialSequence | 0 / NoAffine | 24 (frame=12) | - | RevengeScratchExact | Local | Argument2 | ExactCallbackProfile |
+| gHoldHandsHeartTemplate | AnimPetalDanceBigFlower | 1 / SingleSequence | 0 / NoAffine | 141 (MotionProfile) | AnimPetalDanceBigFlower_Step | PetalDanceBig | Local | Attacker | ExactCallbackProfile |
 | gHorizontalLungeSpriteTemplate | DoHorizontalLunge | 1 / SingleSequence | 0 / NoAffine | 12 (MotionProfile) | ReverseHorizontalLungeDirection, TranslateSpriteLinearById, TranslateSpriteLinearById | BattlerLunge | Local | Target | ExactCallbackProfile |
 | gHornHitSpriteTemplate | AnimHornHit | 1 / SingleSequence | 0 / NoAffine | 18 (MotionProfile) | AnimHornHit_Step | HornLunge | Local | Target | ExactCallbackProfile |
 | gHornLeechHornTemplate | AnimShadowBall | 1 / SingleSequence | 0 / NoAffine | 41 (MotionProfile) | AnimShadowBall_Step | ShadowBall | Local | Attacker | ExactCallbackProfile |
@@ -205,6 +234,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gHydroPumpOrbSpriteTemplate | AnimToTargetInSinWave | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimToTargetInSinWave_Step | SinWaveProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gHyperBeamOrbSpriteTemplate | AnimHyperBeamOrb | 7 / DefaultInitialSequence | 0 / NoAffine | 31 (MotionProfile) | AnimHyperBeamOrb_Step | HyperBeamOrb | AttackerToTarget | Target | ExactCallbackProfile |
 | gHyperVoiceRingSpriteTemplate | AnimHyperVoiceRing | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | AnimHyperVoiceRing_WaitEnd | HyperVoiceRing | AttackerToTarget | Target | ExactCallbackProfile |
+| gHyperspaceHoleImpactTemplate | AnimIceEffectParticle | 1 / SingleSequence | 1 / SingleSequence | 20 (affine=17) | AnimFlickerIceEffectParticle | IceImpact | Local | Target | ExactCallbackProfile |
 | gIceBallChunkSpriteTemplate | InitIceBallAnim | 2 / DefaultInitialSequence | 5 / DefaultInitialSequence | 31 (frame=16) | AnimThrowIceBall | StandardArcProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gIceBeamInnerCrystalSpriteTemplate | AnimIceBeamParticle | 1 / SingleSequence | 1 / SingleSequence | 20 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | IceBeamParticle | AttackerToTarget | Target | ExactCallbackProfile |
 | gIceBeamOuterCrystalSpriteTemplate | AnimIceBeamParticle | 1 / SingleSequence | 0 / NoAffine | 20 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | IceBeamParticle | AttackerToTarget | Target | ExactCallbackProfile |
@@ -219,8 +249,10 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gIcicleCrashSpearTemplate | AnimFallingRock | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | AnimFallingRock_Step, TranslateSpriteInEllipse, TranslateSpriteInEllipse | FallingRockEllipse | Local | Target | ExactCallbackProfile |
 | gIcicleSpearSpriteTemplate | AnimMissileArc | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimMissileArc_Step | StandardArcProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gIncinerateSpriteTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
+| gInfestationBubbleTemplate | AnimParticleInVortex | 2 / DefaultInitialSequence | 0 / NoAffine | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
 | gIngrainOrbSpriteTemplate | AnimIngrainOrb | 1 / SingleSequence | 0 / NoAffine | 96 (MotionProfile) | - | IngrainOrbWave | Local | Attacker | ExactCallbackProfile |
 | gIngrainRootSpriteTemplate | AnimIngrainRoot | 4 / Argument3 | 0 / NoAffine | 64 (MotionProfile) | AnimRootFlickerOut | IngrainRoot | Local | Attacker | ExactCallbackProfile |
+| gIonSpriteTemplate | AnimIon | 1 / SingleSequence | 0 / NoAffine | 18 (frame=18) | AnimIon_Step | Static | Local | Target | ExplicitReviewedCallback |
 | gJaggedMusicNoteSpriteTemplate | AnimJaggedMusicNote | 2 / OamTileArgument3 | 0 / NoAffine | 18 (MotionProfile) | AnimJaggedMusicNote_Step | RoarLine | Local | Target | ExactCallbackProfile |
 | gJudgmentBlackChargeTemplate | AnimGrowingChargeOrb | 1 / SingleSequence | 1 / SingleSequence | 172 (affine=166) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
 | gJudgmentGrayInwardOrbsTemplate | AnimNeedleArmSpike | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimNeedleArmSpike_Step | NeedleArmSpike | Local | Argument4 | ExactCallbackProfile |
@@ -229,6 +261,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gKarateChopSpriteTemplate | AnimSlideHandOrFootToTarget | 5 / Argument6 | 0 / NoAffine | 18 (MotionProfile) | - | DiagonalStrike | Local | Target | ExactCallbackProfile |
 | gKinesisZapEnergySpriteTemplate | AnimKinesisZapEnergy | 1 / SingleSequence | 0 / NoAffine | 42 (frame=42) | - | OrientedStatic | Local | Attacker | ExactCallbackProfile |
 | gKnockOffStrikeSpriteTemplate | AnimKnockOffStrike | 1 / SingleSequence | 2 / Constant1 | 34 (frame=8) | AnimKnockOffStrike_Step | KnockOffStrike | Local | Target | ExactCallbackProfile |
+| gLandsWrathVortexTemplate | AnimParticleInVortex | 1 / SingleSequence | 1 / SingleSequence | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
 | gLargeFlameScatterSpriteTemplate | AnimLargeFlame | 1 / SingleSequence | 0 / NoAffine | 36 (MotionProfile) | AnimLargeFlame_Step | FlameDrift | Local | Target | ExactCallbackProfile |
 | gLargeFlameSpriteTemplate | AnimLargeFlame | 1 / SingleSequence | 1 / SingleSequence | 36 (MotionProfile) | AnimLargeFlame_Step | FlameDrift | Local | Target | ExactCallbackProfile |
 | gLavaPlumeSpriteTemplate | AnimLavaPlumeOrbitScatter | 1 / SingleSequence | 1 / SingleSequence | 20 (MotionProfile) | AnimLavaPlumeOrbitScatterStep | LavaPlumeDrift | Local | Attacker | ExactCallbackProfile |
@@ -239,6 +272,9 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gLeerSpriteTemplate | AnimLeer | 1 / SingleSequence | 0 / NoAffine | 15 (frame=15) | - | OrientedStatic | Local | Attacker | ExactCallbackProfile |
 | gLetterZSpriteTemplate | AnimLetterZ | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | - | SleepLetterWave | Local | Attacker | ExactCallbackProfile |
 | gLickSpriteTemplate | AnimLick | 1 / SingleSequence | 0 / NoAffine | 51 (frame=10) | AnimLick_Step | LickFlicker | Local | Target | ExactCallbackProfile |
+| gLightOfRuinPinkDischargeTemplate | AnimElectricPuff | 1 / SingleSequence | 0 / NoAffine | 12 (frame=12) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gLightOfRuinPinkExplosionTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=20) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gLightOfRuinPinkOrbsTemplate | AnimHyperBeamOrb | 7 / DefaultInitialSequence | 0 / NoAffine | 31 (MotionProfile) | AnimHyperBeamOrb_Step | HyperBeamOrb | AttackerToTarget | Target | ExactCallbackProfile |
 | gLightScreenWallSpriteTemplate | AnimDefensiveWall | 1 / SingleSequence | 0 / NoAffine | 62 (MotionProfile) | AnimDefensiveWall_Step2, AnimDefensiveWall_Step3, AnimDefensiveWall_Step4, AnimDefensiveWall_Step5 | DefensiveWallCycle | Local | Attacker | ExactCallbackProfile |
 | gLightningSpriteTemplate | AnimLightning | 1 / SingleSequence | 0 / NoAffine | 28 (frame=28) | AnimLightning_Step | OrientedStatic | Local | Target | ExactCallbackProfile |
 | gLinearStingerSpriteTemplate | AnimTranslateStinger | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | StandardLinearProjectile | AttackerToTarget | Target | ExactCallbackProfile |
@@ -249,6 +285,8 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gLusterPurgeCircleSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 1 / SingleSequence | 121 (frame=1+affine=121) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gMagentaHeartSpriteTemplate | AnimMagentaHeart | 1 / SingleSequence | 0 / NoAffine | 60 (MotionProfile) | - | RisingHeartWave | Local | Attacker | ExactCallbackProfile |
 | gMagicCoatWallSpriteTemplate | AnimDefensiveWall | 1 / SingleSequence | 0 / NoAffine | 62 (MotionProfile) | AnimDefensiveWall_Step2, AnimDefensiveWall_Step3, AnimDefensiveWall_Step4, AnimDefensiveWall_Step5 | DefensiveWallCycle | Local | Attacker | ExactCallbackProfile |
+| gMagneticFluxUproarTemplate | AnimUproarRing | 1 / SingleSequence | 2 / Constant1 | 31 (frame=1+affine=31) | AnimSpriteOnMonPos | OrientedStatic | Local | Target | ExactCallbackProfile |
+| gMatBlockGreenConversionTemplate | AnimConversion | 1 / SingleSequence | 1 / SingleSequence | 255 (MotionProfile) | - | ConversionHold | Local | Attacker | ExactCallbackProfile |
 | gMeanLookEyeSpriteTemplate | AnimMeanLookEye | 1 / SingleSequence | 2 / DefaultInitialSequence | 48 (affine=7) | AnimMeanLookEye_Step1, AnimMeanLookEye_Step2, AnimMeanLookEye_Step3, AnimMeanLookEye_Step4 | SpotlightSway | Local | Target | ExactCallbackProfile |
 | gMegaPunchKickSpriteTemplate | AnimSpinningKickOrPunch | 5 / Argument2 | 1 / SingleSequence | 96 (MotionProfile) | AnimSpinningKickOrPunchFinish | SpinningKickOrPunchExact | Local | Target | ExactCallbackProfile |
 | gMegahornHornSpriteTemplate | AnimMegahornHorn | 1 / SingleSequence | 3 / DefaultInitialSequence | 7 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | MegahornStrike | Local | Target | ExactCallbackProfile |
@@ -260,6 +298,8 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gMirrorCoatWallSpriteTemplate | AnimDefensiveWall | 1 / SingleSequence | 0 / NoAffine | 62 (MotionProfile) | AnimDefensiveWall_Step2, AnimDefensiveWall_Step3, AnimDefensiveWall_Step4, AnimDefensiveWall_Step5 | DefensiveWallCycle | Local | Attacker | ExactCallbackProfile |
 | gMistBallSpriteTemplate | AnimThrowMistBall | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | TranslateAnimSpriteToTargetMonLocation, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gMistCloudSpriteTemplate | InitSwirlingFogAnim | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimSwirlingFogAnim | SwirlingFog | Local | Argument4 | ExactCallbackProfile |
+| gMistyTerrainOrbsTemplate | AnimOrbitFast | 1 / SingleSequence | 1 / SingleSequence | 52 (MotionProfile) | AnimOrbitFast_Step | FastOrbit | Local | Attacker | ExactCallbackProfile |
+| gMistyTerrainStarTemplate | AnimOrbitScatter | 1 / SingleSequence | 0 / NoAffine | 32 (MotionProfile) | AnimOrbitScatter_Step | RadialScatter | Local | Attacker | ExactCallbackProfile |
 | gMonEdgeHitSplatSpriteTemplate | AnimHitSplatOnMonEdge | 1 / SingleSequence | 4 / Argument3 | 9 (affine=9) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
 | gMoonSpriteTemplate | AnimMoon | 1 / SingleSequence | 0 / NoAffine | 255 (MotionProfile) | AnimMoon_Step | MoonAbsolute | Local | Target | ExactCallbackProfile |
 | gMoonlightSparkleSpriteTemplate | AnimMoonlightSparkle | 1 / SingleSequence | 0 / NoAffine | 255 (MotionProfile) | AnimMoonlightSparkle_Step | MoonlightSparkleFall | Local | Attacker | ExactCallbackProfile |
@@ -274,6 +314,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gNightDazeVioletRingsTemplate | AnimUproarRing | 1 / SingleSequence | 2 / Constant1 | 31 (frame=1+affine=31) | AnimSpriteOnMonPos | OrientedStatic | Local | Target | ExactCallbackProfile |
 | gNightSlashLeftSpriteTemplate | AnimNightSlash | 2 / DefaultInitialSequence | 0 / NoAffine | 34 (frame=16) | AnimSlashSlice, AnimFalseSwipeSlice_Step3 | SlashFlicker | Local | Target | ExactCallbackProfile |
 | gNightSlashRightSpriteTemplate | AnimNightSlash | 2 / DefaultInitialSequence | 0 / NoAffine | 34 (frame=16) | AnimSlashSlice, AnimFalseSwipeSlice_Step3 | SlashFlicker | Local | Target | ExactCallbackProfile |
+| gOblivionWingBeamTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 1 / SingleSequence | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gOctazookaBallSpriteTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gOctazookaSmokeSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=15) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gOpeningEyeSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 88 (frame=88) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
@@ -285,6 +326,8 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gPerishSongMusicNote2SpriteTemplate | AnimPerishSongMusicNote2 | 8 / DefaultInitialSequence | 3 / DefaultInitialSequence | 200 (MotionProfile) | - | PerishSongDelayedNote | Local | Target | ExactCallbackProfile |
 | gPerishSongMusicNoteSpriteTemplate | AnimPerishSongMusicNote | 8 / Argument1 | 3 / Constant1 | 120 (MotionProfile) | AnimPerishSongMusicNote_Step1, AnimPerishSongMusicNote_Step2 | PerishSongNote | Local | Target | ExactCallbackProfile |
 | gPersistHitSplatSpriteTemplate | AnimHitSplatPersistent | 1 / SingleSequence | 4 / Argument3 | 128 (affine=9) | - | HitSplatPersistentExact | Local | Argument2 | ExactCallbackProfile |
+| gPetalBlizzardTwister1Template | AnimMoveTwisterParticle | 1 / SingleSequence | 0 / NoAffine | 96 (MotionProfile) | AnimMoveTwisterParticle_Step | TwisterParticle | Local | Target | ExactCallbackProfile |
+| gPetalBlizzardTwister2Template | AnimMoveTwisterParticle | 1 / SingleSequence | 0 / NoAffine | 96 (MotionProfile) | AnimMoveTwisterParticle_Step | TwisterParticle | Local | Target | ExactCallbackProfile |
 | gPetalDanceBigFlowerSpriteTemplate | AnimPetalDanceBigFlower | 1 / SingleSequence | 0 / NoAffine | 141 (MotionProfile) | AnimPetalDanceBigFlower_Step | PetalDanceBig | Local | Attacker | ExactCallbackProfile |
 | gPetalDanceSmallFlowerSpriteTemplate | AnimPetalDanceSmallFlower | 1 / SingleSequence | 0 / NoAffine | 101 (MotionProfile) | AnimPetalDanceSmallFlower_Step | PetalDanceSmall | Local | Attacker | ExactCallbackProfile |
 | gPinMissileSpriteTemplate | AnimMissileArc | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimMissileArc_Step | StandardArcProjectile | AttackerToTarget | Target | ExactCallbackProfile |
@@ -294,6 +337,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gPoisonGasCloudSpriteTemplate | InitPoisonGasCloudAnim | 1 / SingleSequence | 0 / NoAffine | 160 (MotionProfile) | MovePoisonGasCloud | PoisonGasCloud | AttackerToTarget | Target | ExactCallbackProfile |
 | gPoisonJabProjectileSpriteTemplate | AnimPoisonJabProjectile | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | PoisonJabProjectile | Local | Target | ExactCallbackProfile |
 | gPoisonPowderParticleSpriteTemplate | AnimMovePowderParticle | 1 / SingleSequence | 0 / NoAffine | 96 (MotionProfile) | AnimMovePowderParticle_Step | PowderParticle | Local | Target | ExactCallbackProfile |
+| gPowderBlackSporeTemplate | AnimSporeParticle | 2 / Argument4 | 0 / NoAffine | 96 (MotionProfile) | AnimSporeParticle_Step | SporeOrbit | Local | Target | ExactCallbackProfile |
 | gPowderSnowSnowballSpriteTemplate | AnimMoveParticleBeyondTarget | 1 / SingleSequence | 0 / NoAffine | 18 (MotionProfile) | AnimWiggleParticleTowardsTarget | WavyBeyondTarget | AttackerToTarget | Argument7 | ExactCallbackProfile |
 | gPowerAbsorptionOrbSpriteTemplate | AnimPowerAbsorptionOrb | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | AbsorptionLinear | TargetToAttacker | Target | ExactCallbackProfile |
 | gPowerGemOrbScatterSpriteTemplate | AnimOrbitScatter | 1 / SingleSequence | 1 / SingleSequence | 32 (MotionProfile) | AnimOrbitScatter_Step | RadialScatter | Local | Attacker | ExactCallbackProfile |
@@ -434,6 +478,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gSpotlightSpriteTemplate | AnimSpotlight | 1 / SingleSequence | 2 / DefaultInitialSequence | 64 (affine=21) | AnimSpotlight_Step1, AnimSpotlight_Step2 | SpotlightSway | Local | Target | ExactCallbackProfile |
 | gSprayWaterDropletSpriteTemplate | AnimSprayWaterDroplet | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | AnimSprayWaterDroplet_Step | WaterSprayBallistic | Local | Argument1 | ExactCallbackProfile |
 | gStealthRockSpriteTemplate | AnimStealthRock | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimStealthRockStep, AnimStealthRockStep2 | StealthRockArc | Local | Target | ExactCallbackProfile |
+| gSteamEruptionBreathTemplate | AnimDragonFireToTarget | 2 / Constant1 | 2 / Constant1 | 21 (MotionProfile) | - | DragonFire | AttackerToTarget | Target | ExactCallbackProfile |
 | gStockpileAbsorptionOrbSpriteTemplate | AnimPowerAbsorptionOrb | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | AbsorptionLinear | TargetToAttacker | Target | ExactCallbackProfile |
 | gStompFootSpriteTemplate | AnimStompFoot | 1 / SingleSequence | 0 / NoAffine | 23 (MotionProfile) | AnimStompFootStep, AnimStompFootEnd, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | StompDrop | Local | Target | ExactCallbackProfile |
 | gStoneEdgeSpriteTemplate | AnimParticleInVortex | 1 / SingleSequence | 0 / NoAffine | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
@@ -469,6 +514,15 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gThinRingExpandingSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 2 / DefaultInitialSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gThinRingShrinkingSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 1 / SingleSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gThoughtBubbleSpriteTemplate | AnimThoughtBubble | 4 / DefaultInitialSequence | 0 / NoAffine | 64 (frame=8) | AnimThoughtBubble_Step | ThoughtBubble | Local | Argument0 | ExactCallbackProfile |
+| gThousandArrowsGreenArrowTemplate | AnimMudSportDirt | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimMudSportDirtFalling, AnimMudSportDirtRising | MudSportDirt | Local | Attacker | ExactCallbackProfile |
+| gThousandArrowsGreenChargeTemplate | AnimGrowingChargeOrb | 1 / SingleSequence | 3 / DefaultInitialSequence | 172 (affine=172) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gThousandArrowsGreenDischargeTemplate | AnimElectricPuff | 1 / SingleSequence | 0 / NoAffine | 12 (frame=12) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gThousandArrowsGreenHexTemplate | SpriteCB_Geyser | 2 / DefaultInitialSequence | 0 / NoAffine | 18 (MotionProfile) | AnimMudSportDirtRising | Rising | Local | Attacker | SourceVerticalMotion |
+| gThousandWavesGreenRecoverTemplate | AnimPowerAbsorptionOrb | 2 / DefaultInitialSequence | 1 / SingleSequence | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | AbsorptionLinear | TargetToAttacker | Target | ExactCallbackProfile |
+| gThousandWavesGreenWaveTemplate | AnimFlyingSandCrescent | 1 / SingleSequence | 0 / NoAffine | 192 (MotionProfile) | - | FlyingSandCrescent | Local | Target | ExactCallbackProfile |
+| gThousandWavesGreenWheelTemplate | AnimDragonDanceOrb | 2 / DefaultInitialSequence | 0 / NoAffine | 82 (MotionProfile) | AnimDragonDanceOrb_Step | DragonDanceOrbit | Local | Attacker | ExactCallbackProfile |
+| gThousandWavesPoundImpactTemplate | AnimHitSplatOnMonEdge | 1 / SingleSequence | 4 / Argument3 | 9 (affine=9) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gThousandWavesRotatingImpactTemplate | AnimParticleInVortex | 2 / DefaultInitialSequence | 1 / SingleSequence | 30 (MotionProfile) | AnimParticleInVortex_Step | Vortex | Local | Argument6 | ExactCallbackProfile |
 | gThunderWaveSpriteTemplate | AnimThunderWave | 2 / DefaultInitialSequence | 0 / NoAffine | 51 (MotionProfile) | AnimThunderWave_Step | ThunderWavePairBlink | Local | Target | ExactCallbackProfile |
 | gThunderboltOrbSpriteTemplate | AnimThunderboltOrb | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | AnimThunderboltOrb_Step | ThunderboltOrbBlink | Local | Target | ExactCallbackProfile |
 | gToxicBubbleSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=20) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
@@ -485,6 +539,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gVCreateFlameTemplate | AnimNeedleArmSpike | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimNeedleArmSpike_Step | NeedleArmSpike | Local | Argument4 | ExactCallbackProfile |
 | gVCreateRedOrbTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 42 (frame=42) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gVCreateRedRingTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 1 / SingleSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gVenomDrenchAcidTemplate | AnimFallingRock | 3 / Argument1 | 0 / NoAffine | 64 (MotionProfile) | AnimFallingRock_Step, TranslateSpriteInEllipse, TranslateSpriteInEllipse | FallingRockEllipse | Local | Target | ExactCallbackProfile |
 | gVerticalDipSpriteTemplate | DoVerticalDip | 1 / SingleSequence | 0 / NoAffine | 12 (MotionProfile) | ReverseVerticalDipDirection, TranslateSpriteLinearById, TranslateSpriteLinearById | BattlerDip | Local | Argument2 | ExactCallbackProfile |
 | gViceGripSpriteTemplate | AnimViceGripPincer | 2 / Constant1 | 0 / NoAffine | 26 (frame=26) | AnimViceGripPincer_Step, StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | ViceGripPincer | Local | Target | ExactCallbackProfile |
 | gVineWhipSpriteTemplate | AnimWhipHit | 2 / Constant1 | 0 / NoAffine | 32 (frame=15) | AnimWhipHit_WaitEnd | WhipHitExact | Local | Target | ExactCallbackProfile |
@@ -499,6 +554,9 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gWaterPledgeOrbSpriteTemplate | AnimFlyUpTarget | 1 / SingleSequence | 0 / NoAffine | 48 (MotionProfile) | AnimFlyUpTarget_Step | Rising | Local | Target | ExplicitReviewedCallback |
 | gWaterPulseBubbleSpriteTemplate | AnimWaterPulseBubble | 2 / DefaultInitialSequence | 0 / NoAffine | 38 (MotionProfile) | AnimWaterPulseBubble_Step | WaterPulseBubble | Local | Target | ExactCallbackProfile |
 | gWaterPulseRingSpriteTemplate | AnimWaterPulseRing | 1 / SingleSequence | 1 / SingleSequence | 34 (MotionProfile) | AnimWaterPulseRing_Step | WaterPulseRing | Local | Target | ExactCallbackProfile |
+| gWaterShurikenImpactTemplate | AnimHitSplatBasic | 1 / SingleSequence | 4 / Argument3 | 9 (affine=9) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gWaterShurikenRingTemplate | AnimWaterPulseRing | 1 / SingleSequence | 1 / SingleSequence | 34 (MotionProfile) | AnimWaterPulseRing_Step | WaterPulseRing | Local | Target | ExactCallbackProfile |
+| gWaterShurikenStarTemplate | AnimShadowBall | 1 / SingleSequence | 1 / SingleSequence | 41 (MotionProfile) | AnimShadowBall_Step | ShadowBall | Local | Attacker | ExactCallbackProfile |
 | gWavyMusicNotesSpriteTemplate | AnimWavyMusicNotes | 8 / Argument0 | 1 / SingleSequence | 41 (MotionProfile) | AnimWavyMusicNotes_Step | WavyMusicNote | Local | Target | ExactCallbackProfile |
 | gWeakFrustrationAngerMarkSpriteTemplate | AnimWeakFrustrationAngerMark | 1 / SingleSequence | 0 / NoAffine | 96 (MotionProfile) | - | WeakFrustrationMark | Local | Attacker | ExactCallbackProfile |
 | gWeatherBallFireDownSpriteTemplate | AnimWeatherBallDown | 1 / SingleSequence | 0 / NoAffine | 26 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | WeatherBallDown | Local | Target | ExactCallbackProfile |
@@ -1094,3 +1152,61 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 557 | V_CREATE | 0 | 7 | 5 | Sprite:BattlerLunge, Sprite:BattlerRestorePosition, Sprite:NeedleArmSpike, Sprite:OrientedStatic, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ShakeMonExact, Task:ShakeMonInPlaceExact, Task:SlidingBackground, Task:WindUpLunge |
 | 558 | FUSION_FLARE | 0 | 6 | 5 | Sprite:BattlerDip, Sprite:EndureRise, Sprite:OrientedStatic, Sprite:StompDrop, Sprite:WaterPulseBubble, Sprite:WeatherBallRise, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:HorizontalShakeExact, Task:ShakeMon2Exact, Task:TagBlendToColor |
 | 559 | FUSION_BOLT | 0 | 3 | 5 | Sprite:OffscreenFly, Sprite:Static, Sprite:VoltTackleSlide, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact, Task:TagBlendToColor, Task:VoltTackleAttackerReappear, Task:VoltTackleBolts |
+| 560 | FLYING_PRESS | 0 | 3 | 1 | Sprite:BlockBounce, Sprite:FlyBallRise, Sprite:OrientedStatic, Task:SmellingSaltsSquish |
+| 561 | MAT_BLOCK | 0 | 1 | 1 | Sprite:ConversionHold, Task:ConversionAlphaBlendExact |
+| 562 | BELCH | 0 | 2 | 1 | Sprite:OrientedStatic, Sprite:StandardArcProjectile, Task:ShakeMonInPlaceExact |
+| 563 | ROTOTILLER | 0 | 2 | 2 | Sprite:DigDirtMoundExact, Sprite:DirtPlume, Task:BlendBattleAnimPalExact, Task:TranslateMonEllipticalRespectSide |
+| 564 | STICKY_WEB | 0 | 3 | 0 | Sprite:PalettePulse, Sprite:SpiderWebFade, Sprite:WebThreadWave |
+| 565 | FELL_STINGER | 0 | 2 | 1 | Sprite:OrientedStatic, Sprite:StandardLinearProjectile, Task:ShakeMon2Exact |
+| 566 | PHANTOM_FORCE | 1 | 1 | 9 | Sprite:RandomBattlerHit, Task:AttackerFadeToInvisibleExact, Task:BlendColorCycleExact, Task:DestinyBondShadow, Task:GrudgeFlames, Task:NightShadeClone, Task:ShakeMon2Exact, Task:TagBlendToColor, Task:TranslateMonEllipticalRespectSide |
+| 567 | TRICK_OR_TREAT | 0 | 1 | 3 | Sprite:GhostRiseFade, Task:BlendColorCycleExact, Task:ScaryFaceExact, Task:ShakeMon2Exact |
+| 568 | NOBLE_ROAR | 0 | 2 | 3 | Sprite:PalettePulse, Sprite:RoarLine, Task:ScaleMonAndRestore, Task:ShakeMon2Exact |
+| 569 | ION_DELUGE | 0 | 0 | 2 | Task:BlendBattleAnimPalExact, Task:IonRain |
+| 570 | PARABOLIC_CHARGE | 0 | 3 | 6 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ElectricChargingParticles, Task:ShakeMonExact, Task:ShockWaveLightning, Task:ShockWaveProgressingBolt |
+| 571 | FORESTS_CURSE | 0 | 2 | 2 | Sprite:GhostRiseFade, Sprite:WaterPulseBubble, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 572 | PETAL_BLIZZARD | 0 | 5 | 1 | Sprite:OrientedStatic, Sprite:RandomBattlerHit, Sprite:TwisterParticle, Task:ShakeMonInPlaceExact |
+| 573 | FREEZE_DRY | 0 | 5 | 3 | Sprite:GrowingCircle, Sprite:IceImpact, Sprite:PalettePulse, Task:BlendBattleAnimPalExact, Task:FrozenIceCube, Task:ShakeMonExact |
+| 574 | DISARMING_VOICE | 0 | 1 | 4 | Sprite:RoarLine, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 575 | PARTING_SHOT | 0 | 1 | 3 | Sprite:RoarLine, Task:ShakeMon2Exact |
+| 576 | TOPSY_TURVY | 0 | 1 | 1 | Sprite:PalettePulse, Task:RotateVerticallyExact |
+| 577 | DRAINING_KISS | 0 | 5 | 2 | Sprite:AbsorptionArc, Sprite:HeartWaveProjectile, Sprite:OrientedStatic, Sprite:ParticleBurstWave, Task:ShakeMonExact, Task:SwayMonExact |
+| 578 | CRAFTY_SHIELD | 0 | 1 | 3 | Sprite:ConversionHold, Task:BlendBattleAnimPalExact, Task:ConversionAlphaBlendExact, Task:TagFlash |
+| 579 | FLOWER_SHIELD | 0 | 2 | 1 | Sprite:PetalDanceBig, Sprite:PetalDanceSmall, Task:BlendBattleAnimPalExact |
+| 580 | GRASSY_TERRAIN | 0 | 2 | 3 | Sprite:FastOrbit, Sprite:RadialScatter, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ScaleMonAndRestore |
+| 581 | MISTY_TERRAIN | 0 | 2 | 3 | Sprite:FastOrbit, Sprite:RadialScatter, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ScaleMonAndRestore |
+| 582 | ELECTRIFY | 0 | 5 | 2 | Sprite:OrientedStatic, Sprite:RaiseSprite, Sprite:StaticElectricity, Sprite:ZapCannonSpark, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
+| 583 | PLAY_ROUGH | 0 | 3 | 1 | Sprite:DizzyWave, Sprite:OrientedStatic, Sprite:PinkHeartWave, Task:TranslateMonElliptical |
+| 584 | FAIRY_WIND | 0 | 1 | 2 | Sprite:StandardArcProjectile, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 585 | MOONBLAST | 0 | 3 | 3 | Sprite:MoonAbsolute, Sprite:PalettePulse, Sprite:TargetLocationProjectile, Task:AlphaFadeInExact, Task:MoonlightEndFadeExact, Task:ShakeMonExact |
+| 586 | BOOMBURST | 0 | 2 | 6 | Sprite:HyperVoiceRing, Sprite:OrientedStatic, Task:InvertScreenColorExact, Task:ScaleMonAndRestore, Task:ShakeMon2Exact |
+| 587 | FAIRY_LOCK | 0 | 0 | 2 | Task:BlendBattleAnimPalExact, Task:VoltTackleBolts |
+| 588 | KINGS_SHIELD | 0 | 1 | 1 | Sprite:ProtectSlide, Task:TagBlendToColor |
+| 589 | PLAY_NICE | 0 | 1 | 1 | Sprite:HeartWaveProjectile, Task:SwayMonExact |
+| 590 | CONFIDE | 0 | 1 | 1 | Sprite:ThoughtBubble, Task:Splash |
+| 591 | DIAMOND_STORM | 0 | 5 | 3 | Sprite:OrientedStatic, Sprite:RandomBattlerHit, Sprite:SwirlingSnowball, Sprite:TwisterParticle, Sprite:WavyBeyondTarget, Task:BlendBattleAnimPalExact, Task:ShakeMonInPlaceExact, Task:TagBlendToColor |
+| 592 | STEAM_ERUPTION | 0 | 1 | 2 | Sprite:DragonFire, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 593 | HYPERSPACE_HOLE | 0 | 1 | 5 | Sprite:IceImpact, Task:BlendBattleAnimPalExact, Task:DestinyBondShadow, Task:ShakeMon2Exact, Task:SnatchOpposingMonMoveExact |
+| 594 | WATER_SHURIKEN | 0 | 3 | 1 | Sprite:OrientedStatic, Sprite:ShadowBall, Sprite:WaterPulseRing, Task:ShakeMon2Exact |
+| 595 | MYSTICAL_FIRE | 0 | 1 | 3 | Sprite:FlameDrift, Task:BlendColorCycleExact, Task:PsychicPaletteCycle, Task:ShakeMon2Exact |
+| 596 | SPIKY_SHIELD | 0 | 2 | 0 | Sprite:NeedleArmSpike, Sprite:ProtectSlide |
+| 597 | AROMATIC_MIST | 0 | 1 | 2 | Sprite:SweetScentPetal, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact |
+| 598 | EERIE_IMPULSE | 0 | 4 | 0 | Sprite:HyperVoiceRing, Sprite:LocalStarVelocity, Sprite:OrientedStatic, Sprite:ZapCannonSpark |
+| 599 | VENOM_DRENCH | 0 | 1 | 0 | Sprite:FallingRockEllipse |
+| 600 | POWDER | 0 | 1 | 0 | Sprite:SporeOrbit |
+| 601 | GEOMANCY | 1 | 9 | 2 | Sprite:EndureRise, Sprite:OrientedStatic, Sprite:RaiseSprite, Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
+| 602 | MAGNETIC_FLUX | 0 | 2 | 2 | Sprite:OrientedStatic, Sprite:StaticElectricity, Task:BlendBattleAnimPalExact, Task:DefenseCurlDeformMon |
+| 603 | HAPPY_HOUR | 0 | 1 | 0 | Sprite:Falling |
+| 604 | ELECTRIC_TERRAIN | 0 | 2 | 3 | Sprite:FastOrbit, Sprite:RadialScatter, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ScaleMonAndRestore |
+| 605 | DAZZLING_GLEAM | 0 | 3 | 4 | Sprite:LocalStarVelocity, Sprite:PalettePulse, Sprite:RandomBattlerHit, Task:BlendColorCycleExact, Task:ShakeMonExact, Task:TagBlendToColor |
+| 606 | CELEBRATE | 0 | 1 | 0 | Sprite:FollowMeFinger |
+| 607 | HOLD_HANDS | 0 | 2 | 4 | Sprite:HelpingHandClap, Sprite:PetalDanceBig, Task:BlendMonInAndOutExact, Task:HelpingHandAttackerMovement, Task:ShakeMon2Exact, Task:TranslateMonEllipticalRespectSide |
+| 608 | BABY_DOLL_EYES | 0 | 1 | 3 | Sprite:OrientedStatic, Task:BlendBattleAnimPalExact, Task:ScaleMonAndRestore, Task:ShakeMon2Exact |
+| 609 | NUZZLE | 0 | 3 | 1 | Sprite:OrientedStatic, Sprite:RisingHeartWave, Task:RockMonBackAndForth |
+| 610 | HOLD_BACK | 0 | 4 | 1 | Sprite:DizzyWave, Sprite:OrientedStatic, Sprite:RevengeScratchExact, Task:ShakeMon2Exact |
+| 611 | INFESTATION | 0 | 1 | 2 | Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
+| 612 | POWER_UP_PUNCH | 0 | 1 | 2 | Sprite:OrientedStatic, Task:GrowAndShrink, Task:ShakeMonExact |
+| 613 | OBLIVION_WING | 0 | 3 | 4 | Sprite:FlyBallRise, Sprite:OrientedStatic, Sprite:TargetLocationProjectile, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:ShakeMonExact, Task:TagBlendToColor |
+| 614 | THOUSAND_ARROWS | 0 | 4 | 2 | Sprite:MudSportDirt, Sprite:Rising, Sprite:Static, Task:BlendBattleAnimPalExact, Task:HorizontalShakeExact |
+| 615 | THOUSAND_WAVES | 0 | 5 | 4 | Sprite:AbsorptionLinear, Sprite:DragonDanceOrbit, Sprite:FlyingSandCrescent, Sprite:Static, Sprite:Vortex, Task:AttackerStretchAndDisappear, Task:BlendBattleAnimPalExact, Task:ExtremeSpeedMonReappear, Task:HeatWaveTargetMotion |
+| 616 | LANDS_WRATH | 0 | 1 | 3 | Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:FissureBackgroundPosition, Task:HorizontalShakeExact |
+| 617 | LIGHT_OF_RUIN | 0 | 3 | 6 | Sprite:HyperBeamOrb, Sprite:OrientedStatic, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ElectricChargingParticles, Task:ShakeMon2Exact, Task:ShakeMonExact, Task:TagBlendToColor, Task:TagFlash |

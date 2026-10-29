@@ -5,6 +5,404 @@
 - A placa Pokegochi conectada por USB normalmente aparece como `USB-SERIAL CH340` na `COM6` ou `COM7`.
 - Em qualquer pedido de leitura, diagnóstico ou atualização da placa, testar `COM6` e `COM7` diretamente e consultar `Get-PnpDevice -PresentOnly -Class Ports` antes de concluir que ela não está conectada. `Win32_SerialPort` pode omitir temporariamente a CH340 e não deve ser usado sozinho.
 - Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
+- Nunca publicar um APK Android somente porque o Gradle terminou em `BUILD SUCCESSFUL`. Antes de assinar ou subir, abrir o APK final e comparar o `pokegochi.pak` interno com o pacote canônico por versão, quantidade/tamanho e SHA-256. Essa classe de falha já ocorreu duas vezes: R20261028-239 e R20261029-253.
+
+## R20261029-260 - publicar APK, firmware e código final
+
+```mermaid
+graph TD
+    R20261029_260["R20261029-260: release completo"]
+    R20261029_260 --> T1["Suíte final"]
+    T1 --> F1["Firmware BIN + factory + PGOTA"]
+    T1 --> A1["APK versionCode 87"]
+    A1 --> V1["PAK v46 + alinhamento 16 KiB + assinatura v2/v3"]
+    V1 --> D1["Upload e releitura no Drive"]
+    F1 --> G1["Commit, tag e push no GitHub"]
+    D1 --> G1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-260 | 2026-10-29 | Depois das correções, gerar releases do APK e firmware, subir o APK no Drive e atualizar o código no GitHub | Concluído, validado e publicado | A suíte completa terminou em `All native tests passed.`. O APK Android 2.0 avançou para `versionCode 87`, foi compilado em release, alinhado para páginas de 16 KiB e assinado pelos esquemas v2/v3 com o certificado de atualização SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O APK final possui 10.467.114 bytes e SHA-256 `5F3A6261074FDCD8B4FBA2AC243E5DCD61B1FD8E186B2C38B48F95142BCF56B6`; seu PAK interno foi relido e coincide com o canônico v46 de 24.295.916 bytes e SHA-256 `BDB31050328AE846AE1754BA831F0986578E1B1C97DB94AF800EA87F8AC3F740`. O arquivo foi enviado e relido no Drive como `Pokegochi-Android-2.0-r260-ble-bag-release.apk`: https://drive.google.com/file/d/102y6SU-dLV_v7-Adh4HRm9Hjvu4oem6S/view?usp=drivesdk. O firmware final compilou com 113.584/327.680 bytes de RAM e 1.947.656/1.966.080 bytes de flash; o BIN tem 1.959.312 bytes e SHA-256 `30D52A2C4765897037C1109073A6773282A47DF1E7128E3982F71F54E25C4917`, a imagem factory tem 2.024.848 bytes e SHA-256 `0240232933E993144396E693575AB689215CC253320087C556DD64B427E1649C`, e o PGOTA P-256/SHA-256 tem 27.407.703 bytes e SHA-256 `C461C4010A0B6D9F7C25AEB5130A3E9C59F7C4915BB8DF51872BB50CB9E7333D`. Os artefatos e `SHA256SUMS.txt` ficaram em `dist/release-r260`; o código foi sincronizado na `main` do GitHub e marcado com a tag `release-r260`. |
+
+## R20261029-259 - corrigir Bag e bloqueio após trades BLE
+
+```mermaid
+graph TD
+    R20261029_259["R20261029-259: Bag e saída da Box após trades BLE"]
+    R20261029_259 --> D1["Diagnóstico direto da COM7"]
+    D1 --> B1["Bag: assets held_41/held_60 ausentes"]
+    D1 --> T1["Trade remoto não renovava o prazo de inatividade"]
+    B1 --> F1["Completar assets canônicos e subir pack para v46"]
+    T1 --> F2["Renovar atividade no commit/cinemática e usar relógio fresco"]
+    F1 --> V1["Testes + gravação e smoke test na placa"]
+    F2 --> V1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-259 | 2026-10-29 | Investigar a placa que, depois de dois trades com o aplicativo por BLE, ficava presa na Box e bloqueava ao tentar sair; corrigir também a Bag ainda defeituosa | Concluído, gravado e validado na placa | O log da COM7 separou duas causas. A Bag tentava abrir `held_41.pkg` e `held_60.pkg`, ausentes do pacote, entrava em repetidas falhas de preload e parecia travada; o gerador agora cobre canonicamente os held items 1--65 e 67--91, incluindo Quick Powder, e o pack v46 possui 12.919 assets, 24.295.916 bytes e SHA-256 `BDB31050328AE846AE1754BA831F0986578E1B1C97DB94AF800EA87F8AC3F740`. No fluxo BLE, commits recebidos e a cinemática bloqueante de troca não renovavam `lastInteractionMs`; ao terminar, o cálculo ainda usava o `millis()` antigo e podia disparar imediatamente o pocket lock, explicando a tela preta seguida da Pokébola. A atividade remota e o fim da cinemática agora renovam o prazo, o timeout usa uma leitura fresca e o estado transitório da Box é limpo. A regressão valida o arquivo PGA3 real byte a byte e as proteções do trade; a suíte completa terminou em `All native tests passed.`. Foi feito backup prévio de NVS/SPIFFS em `backups/r252-20261029-111934-COM7`, o pack v46 foi instalado e a fonte final, incluindo R258, foi recompilada e gravada na COM7 sem apagar o save. O firmware final tem 1.959.312 bytes e SHA-256 `576C2354BAD0FC5A0279070F8CC43E62F4291AE4E3D6D50510CFC607CF4896C8`. No boot final: `Save OK`, `archive probe OK`, pack OK e Player ID 56925 preservado. O smoke test percorreu Home -> Bag -> held items -> item 60 -> Home -> Box -> Home; houve zero `scene asset failed`, `open failed`, `retained cache miss`, panic, abort ou brownout. |
+
+## R20261029-258 - Master Ball por 100% de cada região
+
+```mermaid
+graph TD
+    R20261029_258["R20261029-258: uma Master Ball por região 100%"]
+    R20261029_258 --> G1["Kanto/Johto/Hoenn: 8 Gyms + Liga"]
+    R20261029_258 --> S1["Sinnoh: 8 Gyms + 8 EXPLORE"]
+    R20261029_258 --> U1["Unova: 10 áreas + 5 PWT + Champions + Royal"]
+    R20261029_258 --> K1["Kalos: 9 rotas/líderes"]
+    G1 --> P1["Ledger persistente e compatível com saves antigos"]
+    S1 --> P1
+    U1 --> P1
+    K1 --> P1
+    P1 --> R1["1 recompensa, sem farm; entrega adiada se a pilha estiver cheia"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-258 | 2026-10-29 | Dar 1 Master Ball ao completar tudo de cada região, contando ao menos uma conclusão das missões repetíveis | Concluído e validado | A regra agora cobre as seis regiões. Kanto, Johto e Hoenn exigem seus oito Gyms e a Liga; Sinnoh exige os oito líderes e ao menos um EXPLORE bem-sucedido em cada um dos oito locais; Unova exige os dez chefes, as cinco divisões do PWT, Champions e uma viagem completa no Royal Unova; Kalos exige as nove rotas/líderes, incluindo Diantha. Cada recompensa possui flag persistente, é idempotente entre reinícios e fica pendente se a pilha de Master Balls estiver em 999. O ledger de Kanto--Hoenn migra saves antigos sem duplicar as bolas que as versões anteriores já davam ao vencer a Liga. A tela de Sinnoh passou a mostrar `EXP N/8`, e os avisos de batalha/Home confirmam a entrega. O contrato `test_region_completion_reward_contract.py` entrou na suíte permanente; todos os testes terminaram em `All native tests passed.`. O Android release compilou e confirmou dentro do APK o PAK v46 de 24.295.916 bytes com SHA-256 `BDB31050328AE846AE1754BA831F0986578E1B1C97DB94AF800EA87F8AC3F740`. O firmware `esp32-2432S028R` compilou usando 113.456/327.680 bytes de RAM e 1.947.760/1.966.080 bytes de flash. |
+
+## R20261029-257 - centralizar contador de páginas em Regions
+
+```mermaid
+graph TD
+    R20261029_257["R20261029-257: 1/2 centralizado na bolinha"]
+    R20261029_257 --> C1["Identificar datum herdado dos botões"]
+    C1 --> F1["Reaplicar MC_DATUM antes do texto"]
+    F1 --> T1["Contrato visual de Regions"]
+    T1 --> A1["APK versionCode 86"]
+    A1 --> D1["Substituir r255 no mesmo link do Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-257 | 2026-10-29 | Centralizar o indicador `1/2` dentro da bolinha/pílula do cabeçalho de Regions | Concluído, validado e publicado | As setas de paginação são desenhadas por `button()`, que restaura `TL_DATUM`; por isso o `1/2`, embora recebesse as coordenadas geométricas centrais da pílula, era interpretado como canto superior esquerdo e aparecia deslocado para baixo e para a direita. O renderer agora reaplica `MC_DATUM` imediatamente antes do contador, mantendo centro em `(283,28)` dentro da área `(263,16,40,23)`. O contrato de Regions passou a exigir essa ordem. O Android release avançou para `versionCode 86`, passou pelos contratos e pela validação do PAK v46, foi alinhado e assinado v2/v3. O APK `Pokegochi-Android-2.0-r257-theme-selector-regions-fix.apk` substituiu o r255 no mesmo Drive: https://drive.google.com/file/d/1JuzKPEdSgcrt5ug1QyTPuB3spjDgq-7a/view?usp=drivesdk (10.446.634 bytes; SHA-256 `015BF29112EF8D47B53F80FBC5885DC4FC5A63C97DBF001FACBE72CAE94AECD1`). |
+
+## R20261029-256 - publicar APK do seletor de temas
+
+```mermaid
+graph TD
+    R20261029_256["R20261029-256: APK do seletor expansível"]
+    R20261029_256 --> B1["versionCode 85"]
+    B1 --> P1["Verificar PAK interno v46"]
+    P1 --> S1["Alinhar e assinar v2/v3"]
+    S1 --> D1["Publicar e reler metadados no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-256 | 2026-10-29 | Gerar e subir no Drive o APK com o seletor de temas expansível de R20261029-255 | Concluído e validado; upload substituído pela revisão R20261029-257 | O app permaneceu na versão 2.0 e avançou para `versionCode 85`, permitindo atualização sobre o r253. O release passou pelo verificador obrigatório: o PAK interno é v46, possui 24.295.916 bytes e SHA-256 `BDB31050328AE846AE1754BA831F0986578E1B1C97DB94AF800EA87F8AC3F740`, idêntico ao canônico. O APK foi alinhado e assinado pelos esquemas v2/v3 com o mesmo certificado das instalações anteriores. Antes da entrega final, o usuário identificou o contador deslocado em Regions; por isso o arquivo r255 foi substituído no mesmo link pela revisão r257 registrada acima, evitando manter no Drive uma versão já obsoleta. |
+
+## R20261029-255 - seletor de temas expansível
+
+```mermaid
+graph TD
+    R20261029_255["R20261029-255: temas sem botões apertados"]
+    R20261029_255 --> G1["GAME mostra tema atual + CHOOSE"]
+    G1 --> B1["Navegador dedicado de temas"]
+    B1 --> P1["3 cartões grandes por página"]
+    P1 --> U1["Começa com Sapphire, Ruby e Emerald"]
+    P1 --> U2["Novos desbloqueios criam páginas"]
+    B1 --> S1["Seleção salva e mantém desbloqueios"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-255 | 2026-10-29 | Substituir a fileira de temas que ficava cada vez mais apertada por um seletor preparado para novas gerações, começando com três opções e crescendo conforme os temas são desbloqueados | Concluído e validado | A aba GAME agora mostra somente o tema atual e um botão `CHOOSE`. Ele abre `COLOR THEMES`, um navegador dedicado com três cartões grandes e paletas visuais por página, indicador `N/M`, setas e destaque `SELECTED`. Um save inicial apresenta exatamente Sapphire, Ruby e Emerald em uma página; Platinum, Black e X/Y entram na lista somente após seus desbloqueios e criam páginas adicionais em vez de reduzir a área de toque. A lista é filtrada por desbloqueio, portanto continua válida mesmo se um futuro tema não for contíguo. A escolha centralizada preserva corretamente os flags especiais de Unova/Kalos e o tema persistente das três primeiras gerações, sem mudar a ABI do save. Foi criado o contrato `test_theme_selector_contract.py`, incluído na suíte permanente; a suíte terminou em `All native tests passed.`. O Android release passou incluindo a comparação do asset pack interno, e o firmware `esp32-2432S028R` compilou com 113.456/327.680 bytes de RAM e 1.946.584/1.966.080 bytes de flash. |
+
+## R20261029-254 - registrar reincidência de asset pack obsoleto no APK
+
+```mermaid
+graph TD
+    R20261029_254["R20261029-254: segunda falha de PAK obsoleto"]
+    R20261029_254 --> F1["Primeira ocorrência: R20261028-239"]
+    R20261029_254 --> F2["Segunda ocorrência: R20261029-253"]
+    F1 --> G1["Regra permanente de publicação"]
+    F2 --> G1
+    G1 --> V1["Abrir APK e comparar versão, tamanho e SHA-256"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-254 | 2026-10-29 | Registrar no índice que o `SPRITE ASSET READ FAIL` causado por APK com asset pack antigo já aconteceu pela segunda vez | Registrado como reincidência e regra permanente | A primeira ocorrência foi R20261028-239: o APK levava catálogo/PGA3 anterior ao runtime Gen 6. A segunda foi R20261029-253: o APK r252 levava pack 45 enquanto o binário exigia pack 46. O índice agora proíbe considerar apenas `BUILD SUCCESSFUL` como validação de publicação; todo APK deve ser aberto depois de pronto e seu `pokegochi.pak` interno deve coincidir com o canônico por versão, tamanho e SHA-256 antes da assinatura e do upload. O pipeline r253 já automatiza essa barreira em debug e release. |
+
+## R20261029-253 - corrigir a segunda ocorrência de SPRITE ASSET READ FAIL no APK r252
+
+```mermaid
+graph TD
+    R20261029_253["R20261029-253: corrigir pacote de sprites do APK"]
+    R20261029_253 --> C1["Comparar PAK canônico com PAK dentro do APK"]
+    C1 --> C2["Encontrado pack 45 obsoleto no APK e runtime no pack 46"]
+    C2 --> F1["Forçar restage do PAK em todo build Android"]
+    F1 --> V1["Validar versão, tamanho e SHA-256 dentro do APK"]
+    V1 --> D1["Assinar e substituir APK no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-253 | 2026-10-29 | Corrigir o APK que mostrava `SPRITE ASSET READ FAIL` e subir uma versão funcional | Concluído, validado e publicado; segunda ocorrência da classe de falha registrada em R20261029-254 | A falha foi reproduzida no próprio APK r252: ele continha um `pokegochi.pak` antigo de 24.286.924 bytes e marcador 45, enquanto o runtime e o pacote canônico já exigiam a versão 46 de 24.295.916 bytes. Esta foi a segunda ocorrência, após o incidente R20261028-239. O `stageAndroidAssets` do Gradle agora nunca reutiliza a cópia intermediária e o build passa por uma verificação final que abre o APK e compara versão, tamanho e SHA-256 do PAK empacotado com o canônico. O contrato Android também garante que os verificadores façam parte dos builds debug e release. O release r253 foi confirmado com pack 46, 12.919 assets e SHA-256 interno `BDB31050328AE846AE1754BA831F0986578E1B1C97DB94AF800EA87F8AC3F740`; o APK foi alinhado, assinado com o certificado de atualização existente e validado pelos esquemas v2/v3. O arquivo `Pokegochi-Android-2.0-r253-asset-pack-fix.apk` substituiu o upload quebrado no Drive em https://drive.google.com/file/d/1VSOCsPtzig0L2TvCMlwI73SFkAl3rcrt/view?usp=drivesdk (10.446.634 bytes; SHA-256 `14F8638C49D640C9D843789F938A31DFA0368AE6F5A09AA9D1DDC12C3C5A4150`). |
+
+## R20261029-252 - completar formas, Prison Bottle, Rayquaza e UI de Regions
+
+```mermaid
+graph TD
+    R20261029_252["R20261029-252: fechar lacunas da auditoria de formas"]
+    R20261029_252 --> F1["Burmy, Wormadam, Shellos, Gastrodon, Shaymin e Furfrou"]
+    R20261029_252 --> H1["Hoopa: Prison Bottle 3 dias + cooldown 3 dias"]
+    R20261029_252 --> V1["Spinda unico e Arceus Fairy"]
+    R20261029_252 --> R1["Rayquaza por Dragon Ascent, sem Mega Stone"]
+    R20261029_252 --> U1["Regions legivel e tema X/Y misto"]
+    H1 --> T1["Tempo online e offline"]
+    V1 --> A1["Asset pack 46"]
+    R1 --> B1["Motor de batalha compartilhado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-252 | 2026-10-29 | Corrigir todas as lacunas da tabela anterior, exceto Cosplay Pikachu; criar Prison Bottle em Key Items para Hoopa Unbound por 3 dias e cooldown de 3 dias; corrigir Spinda e Arceus; fazer Rayquaza rejeitar Mega Stone e Mega Evoluir com Dragon Ascent, mantendo Kyogre/Groudon na pedra; mover o indicador 1/2 de Regions; renomear o tema X para X/Y e misturar as cores das duas versoes | Concluido e validado | Burmy agora recebe Plant/Sandy/Trash Cloak pelo terreno da batalha e Wormadam preserva o manto, stats, tipos e learnset corretos; Shellos/Gastrodon recebem e preservam West/East Sea; Shaymin Sky reverte a noite, congelado ou na Box; os trims de Furfrou expiram em 5 dias ou ao ir para a Box. Hoopa ganhou Prison Bottle real em Key Items: fica Unbound por 72 horas, volta a Confined e respeita 72 horas de cooldown, inclusive consumindo corretamente o tempo offline sem reiniciar o prazo; a movepool sincroniza Hyperspace Hole/Fury. Spinda usa os quatro masks oficiais derivados da personalidade e Arceus Fairy ganhou sprite/paleta propria na forma 17. Rayquaza nao aceita nem conserva Mega Stone e ativa Mega/Delta Stream ao usar Dragon Ascent durante a batalha; Kyogre e Groudon continuam usando a pedra. O contador de paginas foi movido para o cabecalho de Regions, e o tema agora se chama X/Y com azul/ciano de X e vermelho/magenta de Y. Cosplay Pikachu permaneceu fora por decisao explicita. Foram adicionados 89 assets e o pack subiu para 46. A suite completa terminou em `All native tests passed.`, o firmware compilou com 113.456/327.680 bytes de RAM e 1.945.616/1.966.080 bytes de flash, e o Android release terminou em `BUILD SUCCESSFUL`. |
+
+## R20261029-251 - auditar formas e mecânicas especiais ainda ausentes
+
+```mermaid
+graph TD
+    R20261029_251["R20261029-251: lacunas de formas até Gen VI"]
+    R20261029_251 --> M1["Mecânicas ausentes"]
+    M1 --> B1["Burmy/Wormadam por ambiente"]
+    M1 --> T1["Reversões de Shaymin, Furfrou e Hoopa"]
+    R20261029_251 --> V1["Formas visuais ausentes"]
+    V1 --> S1["Shellos/Gastrodon East"]
+    V1 --> P1["Spinda e Arceus Fairy"]
+    R20261029_251 --> A1["Gatilhos adaptados, não quebrados"]
+    A1 --> F1["FORM genérico e Mega Stone universal"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-251 | 2026-10-29 | Verificar se ainda existe algum Pokémon com transformação ou mecânica especial não tratada | Auditado; nenhuma regra de jogo alterada | O catálogo e o motor foram cruzados com as tabelas de formas até a Gen VI. As lacunas funcionais confirmadas são os mantos de Burmy/Wormadam e as reversões condicionais de Shaymin Sky, Furfrou e Hoopa Unbound. Shellos/Gastrodon East, os pontos individuais de Spinda e a arte Fairy de Arceus são lacunas visuais; Cosplay Pikachu é conteúdo opcional de ORAS, fora do núcleo de Pokémon Y. Deoxys, Rotom, Shaymin, os gênios e Hoopa usam o seletor `FORM` como adaptação, enquanto Rayquaza e as Primals usam a Mega Stone universal. As transformações de batalha importantes já estão implementadas: Castform, Cherrim, Darmanitan, Aegislash, Meloetta, Xerneas, Zygarde, Ditto/Imposter, Zoroark/Illusion e Protean. |
+
+## R20261029-250 - remover cura gratuita do PWT
+
+```mermaid
+graph TD
+    R20261029_250["R20261029-250: PWT sem cura gratuita"]
+    R20261029_250 --> C1["Remover cura de startBattle"]
+    C1 --> P1["Preservar HP, status e PP"]
+    C1 --> R1["Preservar recovery timer"]
+    P1 --> T1["Carregar estado entre partidas"]
+    R1 --> T1
+    T1 --> V1["Validar PWT, Champions e Royal Unova"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-250 | 2026-10-29 | Corrigir o exploit em Unova que permitia entrar em uma batalha do PWT e sair para recuperar gratuitamente toda a Party | Concluído e validado | A causa era uma chamada de cura total dentro de `UnovaTournament::startBattle()`, executada antes de cada combate e persistida na coleção real. Essa chamada foi removida dos modos PWT, Champions Tournament e Royal Unova. HP, status, PP e recovery timer agora entram na batalha exatamente como estavam e continuam entre as partidas; Pokémon ainda em recuperação não são aceitos como lead. A tela do torneio passou a informar `HP, PP AND STATUS CARRY BETWEEN MATCHES`, eliminando a instrução antiga de restauração. A regressão mantém simultaneamente dano, Burn, Poison, PP gasto e recovery timer ao iniciar todos os modos, além de confirmar que o torneio não libera um lead incapacitado. O teste dedicado, a suíte completa (`All native tests passed.`) e o Android release (`BUILD SUCCESSFUL`) passaram. |
+
+## R20261029-249 - corrigir reset visual e HP do Zygarde
+
+```mermaid
+graph TD
+    R20261029_249["R20261029-249: reset correto do Zygarde"]
+    R20261029_249 --> V1["Capturar forma e HP máximo antes de resolver o turno"]
+    V1 --> V2["Exibir todo o último ataque na forma ativa"]
+    R20261029_249 --> H1["Restaurar 10% ao sair da batalha"]
+    H1 --> H2["Converter HP pela mesma porcentagem"]
+    V2 --> T1["Validar renderer, motor e APK"]
+    H2 --> T1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-249 | 2026-10-29 | Corrigir o Zygarde que voltava visualmente para 10% antes da animação do ataque final e preservar a porcentagem de HP ao retornar para 10%, em vez de deixá-lo com 1 HP | Concluído, validado e publicado | A apresentação de batalha agora captura forma e HP máximo de ambos os lados antes de o motor resolver qualquer ataque, item, troca, fuga ou ação multiplayer. Assim, mesmo que a batalha termine e o registro persistente já seja restaurado para 10%, o journal conserva a forma 50%/Complete e seu HP máximo até o último ataque, dano, faint e texto final terminarem. A restauração para 10% passou a recalcular o HP proporcionalmente, com arredondamento e mínimo de 1 apenas para porcentagens realmente muito baixas; normalização de saves e capturas de uma forma temporária usam a mesma regra. A regressão força um Complete ferido a 37%, troca-o de campo e confirma 10% com a mesma proporção e HP maior que 1. O contrato de apresentação, o teste nativo específico, o Android release (`BUILD SUCCESSFUL`) e a suíte completa (`All native tests passed.`) passaram. O APK `Pokegochi-Android-2.0-zygarde-reset-r249.apk` foi alinhado para páginas de 16 KiB, assinado pelos esquemas v2/v3 com o certificado de atualização existente e publicado no Drive em https://drive.google.com/file/d/1BtFyZ7nyFrfIjgn4-qpsFmo5Pjjh7n87/view?usp=drivesdk (10.323.754 bytes; SHA-256 `C6E8247357B97A7D107AE813FC7B63563C48F6A75A9411C4DF5A662B2D673285`). |
+
+## R20261029-248 - progressão de formas do Zygarde por HP
+
+```mermaid
+graph TD
+    R20261029_248["R20261029-248: Zygarde por HP"]
+    R20261029_248 --> B1["Armazenamento e entrada sempre em 10%"]
+    B1 --> H1["Fim de turno <=90%: 50%"]
+    H1 --> H2["Turno posterior <=50%: Complete"]
+    H2 --> N1["Sem pedra: Complete normal + Core Enforcer"]
+    H2 --> M1["Com pedra: Mega Complete + Nihil Light"]
+    M1 --> V1["Sincronizar HP, sprites, golpes, save e apresentação"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-248 | 2026-10-29 | Fazer Zygarde começar sempre em 10%, passar a 50% ao terminar um turno com até 90% de HP e chegar a Complete em um turno posterior com até 50%; a Mega Stone deve poder ser equipada desde 10%, mas ativar somente na passagem final | Concluído, validado e publicado | Zygarde agora é criado, capturado, recebido e armazenado canonicamente em 10%, não possui mais seleção manual e reinicia sua cadeia ao entrar ou sair da batalha. Cada fim de turno vivo avalia o HP depois de residuais e avança no máximo uma etapa: 10% -> 50% em `HP <= 90%`, depois 50% -> Complete em `HP <= 50%`. Sem Mega Stone, a última etapa usa Complete normal e mantém Core Enforcer; com a pedra já equipada, somente essa etapa ativa Mega Complete e troca o golpe para Nihil Light. A retirada da pedra, troca de Pokémon e fim da batalha restauram 10%/Core Enforcer; uma batalha salva preserva a etapa ativa ao reabrir o app. Stats, HP máximo/atual, Ability, tipo, sprite e golpe são recalculados na mesma transição. A apresentação mantém forma e HP máximo antigos até o evento correto, então o sprite, texto e preenchimento da barra avançam juntos. Regressões cobrem 90%+1, <=90%, 50%+1, <=50%, uma única etapa por turno, com/sem pedra, troca de Pokémon e golpes. A suíte terminou em `All native tests passed.`, o Android release em `BUILD SUCCESSFUL` e o firmware compilou com 113.456/327.680 bytes de RAM e 1.940.796/1.966.080 bytes de flash. O APK `Pokegochi-Android-2.0-zygarde-hp-r248.apk` foi alinhado, assinado com o certificado compatível com os releases anteriores, validado pelos esquemas APK Signature v2/v3 e publicado no Drive em https://drive.google.com/file/d/1p7E7qZViNRz3e4pPg_V9mvqzGpTeTWM7/view?usp=drivesdk (10.323.754 bytes; SHA-256 local `73CE2DE2B100577EF882DD1F3E02FB5FA8CB4A937A6676D0B51C70A7A8D5C599`). |
+
+## R20261029-247 - corrigir movepools de formas e Mega Zygarde
+
+```mermaid
+graph TD
+    R20261029_247["R20261029-247: movepools por forma"]
+    R20261029_247 --> A1["Auditar formas e Megas suportadas"]
+    A1 --> M1["Separar learnsets que realmente mudam"]
+    M1 --> Z1["Trocar Core Enforcer por Nihil Light no Mega Zygarde"]
+    Z1 --> T1["Cobrir Summary, batalha, animação e saves antigos"]
+    T1 --> V1["Validar suíte, APK e firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-247 | 2026-10-29 | Corrigir todos os Pokémon com mais de uma forma, principalmente Megas, e fazer Nihil Light aparecer para Mega Zygarde | Concluído, validado e publicado | Todos os learnsets por forma suportados foram auditados. Deoxys Attack/Defense/Speed, Rotom, Shaymin Sky, Kyurem Black/White, Meowstic-F, Floette Eternal e Hoopa Unbound agora usam suas exceções reais; Megas comuns preservam a movepool base, enquanto Mega Zygarde, a exceção do romhack, troca Core Enforcer por Nihil Light. O Summary distingue a variante Mega e lista o golpe correto; equipar ou remover a Mega Stone sincroniza Core Enforcer/Nihil Light inclusive em saves existentes, preservando PP e evitando duplicatas. Também foram incluídos os golpes ausentes Origin Pulse, Precipice Blades, Dragon Ascent, Hyperspace Fury, Core Enforcer e Nihil Light, com animações compatíveis. Nihil Light atravessa Protect, ignora alterações defensivas/evasivas do alvo e trata Fairy como dano neutro apenas quando usado pelo Mega Zygarde. Os testes percorrem todas as formas oficiais registradas e todos os golpes novos; a suíte terminou em `All native tests passed.`, o Android release terminou em `BUILD SUCCESSFUL` e o firmware compilou com 113.440/327.680 bytes de RAM e 1.939.340/1.966.080 bytes de flash. APK 2.0 `versionCode 84`, alinhado para páginas de 16 KiB e assinado v2/v3 com o certificado de atualização existente: `Pokegochi-Android-2.0-forms-moves-r247.apk`, 10.303.274 bytes, SHA-256 `67FEF3D4...310F7`; publicado e relido no [Drive](https://drive.google.com/file/d/1cd23jvNE8nJGAiSBDz9r7i56kEKbCdv2/view?usp=drivesdk). |
+
+## R20261028-246 - completar megas e formas de Kalos
+
+```mermaid
+graph TD
+    R20261028_246["R20261028-246: conteúdo de formas Gen 6"]
+    R20261028_246 --> A1["Auditar ROM, dados, regras e assets"]
+    A1 --> M1["Integrar megas de Kalos e Mega Greninja do romhack"]
+    M1 --> F1["Integrar formas de Hoopa e Zygarde"]
+    F1 --> C1["Cobrir demais formas de Kalos ausentes"]
+    C1 --> V1["Validar APK, firmware e save"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-246 | 2026-10-28 | Implementar o conteúdo de Kalos que ficou faltando, incluindo megas, Mega Greninja e formas de Hoopa e Zygarde | Concluído, validado, publicado e gravado na placa | O catálogo do romhack foi auditado e recebeu 12 megas de espécies de Kalos: Chesnaught, Delphox, Greninja, Pyroar, Floette, Meowstic, Malamar, Barbaracle, Dragalge, Hawlucha, Zygarde e Diancie. Hoopa Confined/Unbound, Zygarde 50%/10%/Complete e Floette Eternal agora compartilham forma, stats, tipo, Summary, Box, batalha, ícone e sprites normal/shiny; a Mega Stone usa o seletor existente e Fire Mane ganhou efeito real de +30% para golpes Fire. O pack v44 contém 12.803 assets e 24.169.976 bytes (SHA-256 `B55138CB...F4101`); o contrato conferiu 1.336 caminhos base/forma/Mega byte a byte dentro do PGA3 e a suíte terminou em `All native tests passed.`. Firmware compilou com 113.568/327.680 bytes de RAM e 1.936.656/1.966.080 bytes de flash; binário de 1.948.320 bytes, SHA-256 `6036123F...1A216`. O pacote OTA assinado P-256/SHA-256 de 27.260.680 bytes foi enviado integralmente à placa MAC `B4:BF:E9:21:3C:E4` na COM7, preservou o save, iniciou em `app1`, aceitou o candidato e confirmou `Save OK`, `archive probe OK`, `sprite asset pack OK` e `Ready`. APK 2.0 `versionCode 84`, alinhado 16 KiB e assinado v2/v3 com o certificado existente: 10.295.082 bytes, SHA-256 `2D23B880...E2F041`; publicado e relido no [Drive](https://drive.google.com/file/d/1pnmF8Sqfr8B9Ey5DbLHUbK6FNOWtAx6R/view?usp=drivesdk). |
+
+## R20261028-245 - corrigir conexão BLE iniciada pelo app
+
+```mermaid
+graph TD
+    R20261028_245["R20261028-245: app inicia conexão BLE"]
+    R20261028_245 --> C1["Capturar Android central -> ESP32 servidor na COM7"]
+    C1 --> H1["Corrigir descoberta, CCCD e handshake Invite"]
+    H1 --> T1["Adicionar regressão do sentido app -> placa"]
+    T1 --> V1["Validar placa, APK e publicar no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-245 | 2026-10-28 | Corrigir o Bluetooth no sentido em que o app inicia a conexão; quando a placa inicia, já funciona | Implementado, validado em transporte e publicado | A captura física provou que a placa anuncia o fabricante/protocolo correto e aceita conexão, descoberta de serviço, CCCD e `Invite` quando um central BLE externo inicia; portanto o bloqueio estava na transição de papéis do Android. O app agora encerra scan e advertising, cancela descoberta Bluetooth Classic, aguarda 320 ms para o rádio estabilizar, abre GATT LE em PHY 1M no handler serializado e aplica timeout/três tentativas limitadas. O sentido simultâneo preserva a conexão recebida e após falha volta a anunciar. Contratos Java/Python, suíte nativa e build release passaram; o APK `versionCode 84` foi publicado no Drive junto do R246. A validação física final do caminho especificamente iniciado pelo Android depende do teste no celular, que não estava conectado ao PC nesta execução. |
+
+## R20261028-244 - reforçar conexão Bluetooth entre app e placa
+
+```mermaid
+graph TD
+    R20261028_244["R20261028-244: conexão BLE app x placa"]
+    R20261028_244 --> M1["Mapear GATT, convite e filas dos dois lados"]
+    M1 --> C1["Corrigir handshake, retries e serialização"]
+    C1 --> T1["Cobrir regressões de protocolo e transporte"]
+    T1 --> V1["Validar APK e firmware na COM7"]
+    V1 --> D1["Publicar APK atualizado no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-244 | 2026-10-28 | Melhorar o protocolo Bluetooth porque app e placa se encontram, mas a conexão sempre falha | Concluido, validado, publicado e gravado na placa | Foram corrigidas tres causas concretas. No Android, o `Invite` drenado antes do GATT pronto agora permanece enfileirado e e enviado logo apos service discovery/CCCD; callbacks foram serializados, conexoes recebidas ganharam 12 s para completar o handshake, o central ganhou tres tentativas limitadas e notificacoes do servidor so avancam depois de `onNotificationSent`. Na ESP32, advertisements repetidos foram movidos para um mailbox coalescente e nao podem mais expulsar eventos criticos; a fila critica passou a oito slots, o GATT faz duas tentativas e so declara transporte conectado depois de service/subscribe. O protocolo reenvia `InviteAccept` perdido e desempata convites simultaneos pelo menor player ID. Testes novos cobrem os dois casos e a suite terminou em `All native tests passed.`; Android e firmware compilaram, com 113.568/327.680 bytes de RAM e 1.935.968/1.966.080 bytes de flash. APK 2.0 `versionCode 83`, alinhado 16 KiB e assinado v2/v3: `Pokegochi-Android-2.0-ble-r244.apk`, 10.245.731 bytes, SHA-256 `6492FD4D3926951459087CB76873F6E72001C46F473563B0398CD3A024631DD7`; publicado e relido no [Drive](https://drive.google.com/file/d/1svlz8kdVBvFDzJrOSRLD1MAnwbDB2CUi/view?usp=drivesdk). A placa MAC `B4:BF:E9:21:3C:E4` foi gravada na COM7 preservando o save; digest conferido, boot com `Save OK`, assets `OK` e `Ready`. O harness fisico abriu a aba Multiplayer e ligou o radio: advertising e scan iniciaram, a arena BLE ficou com 21.684 bytes livres e maior bloco de 12.788 bytes, sem overflow ou reset. |
+
+## R20261028-243 - tema X como recompensa de Kalos
+
+```mermaid
+graph TD
+    R20261028_243["R20261028-243: tema X"]
+    R20261028_243 --> K1["Desbloquear ao derrotar Diantha"]
+    K1 --> S1["Persistir seleção em flag livre de Kalos"]
+    S1 --> U1["Adicionar paleta e botão X em Settings"]
+    U1 --> T1["Validar save, recompensa, firmware e app"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-243 | 2026-10-28 | Criar um tema X como recompensa por zerar Kalos | Concluído e validado | Derrotar Diantha agora libera retroativamente o tema `X`, anuncia `KALOS COMPLETE! X THEME UNLOCKED!` e acrescenta sua paleta azul/ciano ao seletor de Settings. A seleção usa um bit livre do estado persistente de Kalos, sem ampliar nem migrar o save, e é mutuamente exclusiva com o tema Black. O contrato de interface e a suíte completa terminaram em `All native tests passed.`; firmware ESP32 compilou com 113.208/327.680 bytes de RAM e 1.935.432/1.966.080 bytes de flash, e o Android release ARM64/x86-64 terminou em `BUILD SUCCESSFUL`. |
+
+## R20261028-242 - colocar Zygarde e Hoopa na placa
+
+```mermaid
+graph TD
+    R20261028_242["R20261028-242: preparar teste de Zygarde e Hoopa"]
+    R20261028_242 --> P1["Detectar a ESP32 em COM6/COM7"]
+    P1 --> B1["Preservar tabela, NVS, OTA e SPIFFS"]
+    B1 --> I1["Adicionar Zygarde 718 e Hoopa 720 sem duplicar"]
+    I1 --> V1["Confirmar o save na placa e retirar o injetor"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-242 | 2026-10-28 | Colocar um Zygarde e um Hoopa na placa conectada para testar suas formas | Concluído e validado na placa | A ESP32 `B4:BF:E9:21:3C:E4` foi confirmada na COM7. Tabela de partições, NVS, OTA e SPIFFS foram preservados antes da alteração; o snapshot anterior tem SHA-256 `F8CF7420...AE284D`. Um injetor temporário, idempotente e baseado no construtor/serializador reais adicionou Zygarde 718 (UID 28) e Hoopa 720 (UID 29), ambos no nível 75 e forma base, marcou a Pokédex e elevou a coleção a 23 Pokémon. O segundo boot confirmou ambos sem duplicar; o snapshot posterior tem SHA-256 `1DA2FD07...120BD4`. O injetor foi removido do código e a imagem de produção `F61204E6...05B0835` foi restaurada e verificada em `app1`; o boot final confirmou `running=app1 selected=app1`, `Save OK`, pack de assets OK e `Ready`, sem qualquer log do injetor. |
+
+## R20261028-241 - corrigir sprites default dos Pokemon de Kalos
+
+```mermaid
+graph TD
+    R20261028_241["R20261028-241: sprites de Kalos"]
+    R20261028_241 --> C1["Corrigir arvore incremental de assets"]
+    C1 --> A1["Auditar 720 front/back/icon normal e shiny"]
+    A1 --> P1["Pack v43 e APK versionCode 82"]
+    P1 --> M1["Migrar save V47 sem apagar progresso"]
+    M1 --> V1["App, Drive e placa COM7 validados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-241 | 2026-10-28 | Corrigir Kalos no app, onde os Pokemon apareciam com o sprite default roxo por falha nos assets | Concluido, validado, publicado e gravado na placa | A causa era estrutural no modo incremental de Kalos: ele emitia caminhos obsoletos como `pokemon/650/front.pkg`, enquanto o runtime consulta `pokemon/front/650.pkg`, `pokemon/back/650.pkg`, `pokemon/icons/650_0.pkg` e os equivalentes shiny/evolution. O gerador agora produz a arvore canonica, remove 576 entradas legadas e audita byte a byte 720 assets base (front/back/icon normal e shiny para #650-#721), dimensoes e payloads do PGA3. O pack v43 contem 12.659 assets, 23.978.834 bytes e SHA-256 `369D3A04EE857D41EB12D229264146753F49D811B1B4B9A518EB683470B73C77`. Durante o teste fisico foi encontrado um segundo defeito: o `GameSave` V47 de 53.712 bytes excedia em 476 bytes o maior bloco continuo da ESP32. O V48 mantem as 721 especies e 63 reservas (784 slots), compacta todos os ocupados de saves V47 de 800 slots e recusa um save realmente superlotado em vez de truncar Pokemon; um teste preserva deliberadamente um shiny no ultimo slot antigo, UID, party, Pokedex e progresso de Kalos. A suite terminou em `All native tests passed.`. APK 2.0 `versionCode 82` ARM64/x86-64 alinhado 16 KiB e assinado v2/v3: `Pokegochi-Android-2.0-kalos-sprites-r241.apk`, 10.217.258 bytes, SHA-256 `63A3EDF38AF103D9B9EE6835A31DD92D33BDC021E1BEBC1E4A4CE8A9B89E5745`; substituido e relido no mesmo [Drive](https://drive.google.com/file/d/1RaCKH7dI7BPRtOMDerd8OQWFntT8dawA/view?usp=drivesdk). O emulador confirmou `Save OK`, `archive probe OK`, `sprite asset pack OK` e `Ready`. Firmware com 113.336 bytes de RAM e 1.934.536/1.966.080 bytes de flash; `firmware.bin` tem 1.946.192 bytes e SHA-256 `F61204E6915AF244A80D5B8DD7432B0BFC0D45786C90852965103885505B0835`. A placa MAC `B4:BF:E9:21:3C:E4` na COM7 foi gravada sem apagar o save, recebeu por BLE o pacote assinado de 27.052.572 bytes, iniciou em `app1`, aceitou a candidata e confirmou `PGA3 versioned asset source`, `Save OK`, `archive probe OK`, `sprite asset pack OK` e `Ready`; START retomou a batalha persistida sem crash. |
+
+## R20261028-240 - corrigir o fundo da tela New Champion na placa
+
+```mermaid
+graph TD
+    R20261028_240["R20261028-240: fundo New Champion na ESP32"]
+    R20261028_240 --> C1["Comparar cache Android e workspace ESP32"]
+    C1 --> W1["Restaurar o banco normal apos a batalha"]
+    W1 --> L1["Tratar victory_bg como cena grande"]
+    L1 --> V1["Contrato, suite completa e build do firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-240 | 2026-10-28 | Corrigir a tela `NEW CHAMPION` que mostra apenas riscos no fundo da placa, embora o APK mostre o Hall of Fame corretamente | Concluido em fonte e validado; placa nao conectada para gravacao | Os riscos eram o fallback deliberado da tela: na ESP32, a vitoria e aberta diretamente depois da batalha, e uma animacao podia deixar o workspace compartilhado reduzido ao tamanho exato de seu plano. O fundo 320x240 de 57.600 bytes entao nao ficava residente; o Android escondia o defeito com seu cache de 4 MiB. `LeagueComplete` agora restaura o banco normal fora da composicao retida antes de preparar o manifesto, e `pokemon_league/victory_bg.pkg` passou a ser tratado como cena grande, preservando a paleta fora do workspace de pixels. Um contrato novo verifica a ordem restauracao->manifesto, a classificacao dos dois fundos e o limite de 57 KiB. A suite terminou em `All native tests passed.`. O firmware ESP32 compilou com 113.336/327.680 bytes de RAM e 1.933.384/1.966.080 bytes de flash. COM6 e COM7 nao estavam presentes, portanto nenhuma placa foi alterada neste pedido. |
+
+## R20261028-239 - corrigir sprite asset read fail no APK de Kalos
+
+```mermaid
+graph TD
+    R20261028_239["R20261028-239: sprite asset read fail"]
+    R20261028_239 --> L1["Reproduzir o boot Android e capturar o log nativo"]
+    L1 --> C1["Sincronizar catalogo do binario e do pack"]
+    C1 --> A1["Mesclar os frames Gen 6 ausentes no PGA3"]
+    A1 --> V1["Contrato, suite completa e boot de atualizacao"]
+    V1 --> D1["Substituir o APK defeituoso no mesmo link do Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-239 | 2026-10-28 | Corrigir o erro `sprite asset read fail` no aplicativo Android | Concluido, validado e publicado | O boot real em Android identificou duas inconsistencias do empacotamento incremental: o APK continha o catalogo antigo `2bf91af231161bed`, enquanto o binario Gen 6 exigia `d1499bc18f7dd328`, e o PGA3 nao tinha 213 dos novos frames auditados. O gerador incremental agora sincroniza sempre os metadados de runtime e ganhou um modo dedicado que exportou/mesclou os 2.042 frames de animacao; o pack v42 passou de 12.302 para 12.515 assets e 23.679.890 bytes. Um novo contrato verifica catalogo do audit, constante nativa, marcador Android, versao/cabecalho do arquivo e todos os frames; o Gradle tambem bloqueia APK com catalogo divergente antes de `stageAndroidAssets`. A suite terminou em `All native tests passed.`. O app 2.0 `versionCode 81` foi instalado por cima do v80 preservando dados e o log confirmou `Save OK`, `archive probe OK`, `sprite asset pack OK` e `Ready`. APK assinado v2/v3 com 10.196.579 bytes e SHA-256 `298F3024956B15C454FA854ECDE9ECA66C1F9B2E587D521265B711EF38DB5B7F`; o arquivo defeituoso foi substituido no mesmo Drive ID e relido: `https://drive.google.com/file/d/1RaCKH7dI7BPRtOMDerd8OQWFntT8dawA/view?usp=drivesdk`. |
+
+## R20261028-238 - publicar o APK Android com Kalos
+
+```mermaid
+graph TD
+    R20261028_238["R20261028-238: subir APK"]
+    R20261028_238 --> V1["Incrementar versionCode para 80"]
+    V1 --> B1["Recompilar release ARM64/x86-64"]
+    B1 --> S1["Alinhar e assinar com o certificado existente"]
+    S1 --> D1["Enviar e reler no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-238 | 2026-10-28 | Subir o APK mais recente no Google Drive | Substituido pelo APK corrigido do R239 | O app 2.0 com todo o conteudo de Kalos/Gen 6 do R237 foi recompilado com `versionCode 80` para ARM64 e x86-64, alinhado para paginas de 16 KiB e assinado em APK Signature Scheme v2/v3 com o mesmo certificado de atualizacao `B2923926...1EDCE7D`. O pacote original tinha 10.184.291 bytes e SHA-256 `B3632A997E6DD524F6ED595809BBAA65B2247DCA7195BEBE44DAB883321178F2`, mas foi publicado com catalogo de animacao antigo e falhava no diagnostico de assets. O mesmo arquivo/ID do Drive foi substituido pelo `versionCode 81` corrigido e validado no R239. |
+
+## R20261028-237 - iniciar a Generation VI a partir de Pokemon Y
+
+```mermaid
+graph TD
+    R20261028_237["R20261028-237: base da Gen 6"]
+    R20261028_237 --> D1["Baixar e identificar o dump de Pokemon Y"]
+    D1 --> P1["Generalizar o pipeline usado em White/Gen 5"]
+    P1 --> S1["Species, moves, abilities, forms e learnsets"]
+    P1 --> G1["Progressao e conteudo inspirado em Kalos"]
+    S1 --> V1["Contratos gerados, testes e limite do ESP32"]
+    G1 --> V1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261028-237 | 2026-10-28 | Baixar o arquivo de Pokemon Y enviado ao Drive e iniciar para a Gen 6 um trabalho semelhante ao feito com a Gen 5 | Concluido em fonte e validado; APK publicado no R238 | O ZIP de 1.807.578.194 bytes foi baixado e extraido para o pipeline local. O leitor GARC de Pokemon Y agora gera a National Dex ate #721, 617 moves, 189 abilities oficiais, 355 evolucoes, 14.696 entradas de learnset e compatibilidade de 129 TMs/HMs, incluindo TM83 Infestation, TM98 Power-Up Punch, TM99 Dazzling Gleam e TM100 Confide. Kalos ganhou nove areas persistentes, oito lideres, Diantha, Team Flare, Friend Safari com Hidden Ability, encontros lendarios, uma cura sem revive por rota, party travada e retomada exata. Foram integrados Fairy, terrains, efeitos/abilities Gen VI, formas de Vivillon, flores, Furfrou, Meowstic, Aegislash, Pumpkaboo/Gourgeist e Xerneas, alem das evolucoes especiais adaptadas e prioridade para Sylveon/Leafeon/Glaceon no seletor compacto. O save migra V46 para V47; o pack v42 recebeu 1.067 assets de Kalos e totaliza 12.302 assets/23.601.498 bytes. A auditoria executou as 58 moves novas dos dois lados, validou 58/58 animacoes e a suite terminou em `All native tests passed.`. Firmware compilado com 113.336 bytes de RAM e 1.933.280/1.966.080 bytes de flash (98,3%); Android release ARM64/x86-64 tambem compilado. O APK foi publicado posteriormente no R238; firmware e GitHub continuam fora do escopo deste pedido. |
 
 ## R20261028-236 - distribuir a correção das categorias dos moves
 

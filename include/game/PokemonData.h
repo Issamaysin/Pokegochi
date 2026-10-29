@@ -53,6 +53,8 @@ struct AbilityData { uint8_t id; const char* name; const char* description; };
 
 enum class MoveId : uint16_t { None=0, Scratch=10, Gust=16, VineWhip=22, Tackle=33, PoisonSting=40, Ember=52, WaterGun=55, StringShot=81, Struggle=165 };
 
+struct OwnedPokemon;
+
 // Values intentionally match FireRed's MOVE_TARGET_* flags. Keeping the
 // original target is essential: a move used on the user/field must never be
 // accuracy-checked against, redirected by or blocked by the opposing Pokemon.
@@ -93,12 +95,20 @@ struct FullMoveData {
   bool kingsRockAffected;
 };
 struct LearnsetEntry {
-  uint16_t speciesId;
-  uint8_t level;
-  uint16_t moveId;
+  // National species through #721 and custom move rows through #920 need ten
+  // bits each.
+  // Levels fit in seven bits and the authored generation in three, so one
+  // row fits exactly in a uint32_t without losing any X/Y data.
+  uint32_t speciesId : 10;
+  uint32_t moveId : 10;
+  uint32_t level : 7;
   // 1 = the original FireRed/Hoenn-era learnset, 4 = Platinum additions.
-  uint8_t generation = 1;
+  uint32_t generation : 3;
 };
+// This table has almost fifteen thousand rows after Kalos. Expanding it by a
+// single byte costs more flash than many gameplay systems, so guard the
+// packed representation at compile time.
+static_assert(sizeof(LearnsetEntry) == 4, "LearnsetEntry must remain flash-packed");
 
 struct EvolutionData { uint16_t fromSpeciesId; uint16_t toSpeciesId; uint8_t level; };
 struct EncounterSpecies { uint16_t speciesId; uint8_t unlockLevel; uint8_t weight; uint8_t generation; };
@@ -114,7 +124,8 @@ bool isMoveAvailableInSingleBattle(MoveId id);
 uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
                       uint8_t unlockedGeneration = 1);
 // Form-aware level-up table. Most alternate forms share their base table;
-// Shaymin-Sky and Black/White Kyurem have explicit replacements.
+// Deoxys, Shaymin-Sky, Black/White Kyurem, Eternal Floette, Meowstic-F and
+// Hoopa Unbound have explicit replacements/additions.
 uint8_t movesForForm(uint16_t speciesId, uint8_t form, uint8_t level,
                      MoveId output[4], uint8_t unlockedGeneration = 1);
 // Returns every level-up move available to this species and each of its
@@ -122,11 +133,17 @@ uint8_t movesForForm(uint16_t speciesId, uint8_t form, uint8_t level,
 uint8_t relearnableMovesForLine(uint16_t speciesId, uint8_t level,
                                MoveId output[], uint8_t maximum,
                                uint8_t unlockedGeneration = 1);
-// Form-aware Summary/move-reminder pool. This includes Platinum's Rotom
-// appliance move and the authored Shaymin/Kyurem form replacements.
+// Form-aware Summary/move-reminder pool. This includes Platinum's Rotom and
+// Deoxys rules plus authored Shaymin/Kyurem/Floette/Meowstic/Hoopa tables.
 uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
                                 uint8_t level, MoveId output[], uint8_t maximum,
                                 uint8_t unlockedGeneration = 1);
+// Pokemon-aware counterpart for transformations whose move identity changes
+// without changing the persistent species/form byte. All ordinary Megas keep
+// their base pool; Mega Zygarde alone converts Core Enforcer to Nihil Light.
+uint8_t relearnableMovesForPokemon(const OwnedPokemon& pokemon,
+                                   MoveId output[], uint8_t maximum,
+                                   uint8_t unlockedGeneration = 1);
 // Rotom's appliance move is taught by changing form, not by a TM. Returning
 // None for every other species keeps this table explicit and auditable.
 MoveId formSignatureMove(uint16_t speciesId, uint8_t form);

@@ -1,4 +1,4 @@
-"""Generate all 649 National Pokedex rows from FireRed, Platinum and Unova."""
+"""Generate all 721 National Pokedex rows through Pokemon Y/Kalos."""
 from __future__ import annotations
 
 import re
@@ -108,6 +108,91 @@ for species_id in range(494, 650):
 
 if len(rows) != 649:
     raise RuntimeError(f"Expected 649 National Pokedex rows, found {len(rows)}")
+
+gen6_source = expansion_text("src/data/pokemon/species_info/gen_6_families.h")
+gen1_source = expansion_text("src/data/pokemon/species_info/gen_1_families.h")
+# Sylveon is authored beside the rest of the Eevee family, while most Kalos
+# species live in gen_6_families.h. Search both sources without duplicating
+# the data by hand.
+gen6_direct_source = gen6_source + "\n" + gen1_source
+shared_dex_source = expansion_text("src/data/pokemon/species_info/shared_dex_text.h")
+shared_dex_descriptions = {}
+for match in re.finditer(
+        r"const u8\s+(g\w+PokedexText)\[\]\s*=\s*_\((.*?)\);",
+        shared_dex_source, re.S):
+    shared_dex_descriptions[match.group(1)] = "".join(
+        piece.replace("\\n", " ")
+        for piece in re.findall(r'"([^"]*)"', match.group(2))
+    )
+gen6_symbols = {
+    int(number): symbol
+    for symbol, number in re.findall(
+        r"\bSPECIES_([A-Z0-9_]+)\s*=\s*(\d+)", expansion_species)
+    if 650 <= int(number) <= 721
+}
+# These families are expanded from C preprocessor macros in the upstream
+# source, so there is no literal SPECIES_* block for the base form to parse.
+# Keep only the macro arguments here; the descriptions still come from the
+# shared upstream Pokedex text table above.
+gen6_macro_metadata = {
+    "SCATTERBUG_ICY_SNOW": ("Scatterdust", 3, 25, "gScatterbugPokedexText"),
+    "SPEWPA_ICY_SNOW": ("Scatterdust", 3, 84, "gSpewpaPokedexText"),
+    "FURFROU_NATURAL": ("Poodle", 12, 280, "gFurfrouPokedexText"),
+}
+# Vivillon keeps its form-specific description in a literal species block,
+# but inherits these three fields from VIVILLON_MISC_INFO.
+gen6_inherited_metadata = {
+    "VIVILLON_ICY_SNOW": ("Scale", 12, 170),
+    "FLABEBE_RED": ("Single Bloom", 1, 1),
+    "FLOETTE_RED": ("Single Bloom", 2, 9),
+    "FLORGES_RED": ("Garden", 11, 100),
+}
+for species_id in range(650, 722):
+    symbol = gen6_symbols[species_id]
+    macro_metadata = gen6_macro_metadata.get(symbol)
+    if macro_metadata:
+        category, height, weight, description_name = macro_metadata
+        description = shared_dex_descriptions.get(description_name, "")
+        if not description:
+            raise RuntimeError(f"Missing shared Gen-VI Pokedex text for {symbol}")
+        rows.append((category, height, weight, description))
+        continue
+    start_match = re.search(rf"\[SPECIES_{symbol}\]\s*=\s*\{{", gen6_direct_source)
+    if not start_match:
+        raise RuntimeError(f"Missing Gen-VI Pokedex source for {symbol}")
+    next_match = re.search(r"\n\s*\[SPECIES_[A-Z0-9_]+\]\s*=", gen6_direct_source[start_match.end():])
+    end = start_match.end() + next_match.start() if next_match else len(gen6_direct_source)
+    body = gen6_direct_source[start_match.end():end]
+    category = re.search(r'\.categoryName\s*=\s*_\("([^"]+)"\)', body)
+    height = re.search(r"\.height\s*=\s*(\d+)", body)
+    weight = re.search(r"\.weight\s*=\s*(\d+)", body)
+    description_block = re.search(r"\.description\s*=\s*COMPOUND_STRING\((.*?)\)\s*,",
+                                  body, re.S)
+    description_symbol = re.search(r"\.description\s*=\s*(g\w+PokedexText)", body)
+    inherited_metadata = gen6_inherited_metadata.get(symbol)
+    if not inherited_metadata and not all((category, height, weight)):
+        raise RuntimeError(f"Incomplete Gen-VI Pokedex metadata for {symbol}")
+    if not (description_block or description_symbol):
+        raise RuntimeError(f"Incomplete Gen-VI Pokedex metadata for {symbol}")
+    if description_block:
+        description = " ".join(
+            piece.replace("\\n", " ")
+            for piece in re.findall(r'"([^"]*)"', description_block.group(1))
+        )
+    else:
+        description = shared_dex_descriptions.get(description_symbol.group(1), "")
+        if not description:
+            raise RuntimeError(f"Missing shared Gen-VI Pokedex text for {symbol}")
+    if inherited_metadata:
+        category_name, height_value, weight_value = inherited_metadata
+    else:
+        category_name = category.group(1)
+        height_value = int(height.group(1))
+        weight_value = int(weight.group(1))
+    rows.append((category_name, height_value, weight_value, description))
+
+if len(rows) != 721:
+    raise RuntimeError(f"Expected 721 National Pokedex rows, found {len(rows)}")
 
 lines = ["static constexpr PokedexEntryData kPokedexEntries[] = {"]
 for category, height, weight, description in rows:

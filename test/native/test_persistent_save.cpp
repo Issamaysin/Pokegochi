@@ -181,6 +181,45 @@ struct GameSaveV45Test {
   TowerDefense::CampaignState towerDefense{};Gen4UniqueItemInventory gen4UniqueItems{};
 };
 struct RecordV45Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV45Test payload;uint32_t crc;};
+// Exact shipped Unova record. V47 may enlarge the Box/Dex and append Kalos
+// state, but it must preserve all 720 stored slots and every Gen-V sidecar.
+struct BattleStateV46Test {alignas(BattleState) uint8_t bytes[944]{};};
+struct GameSaveV46Test {
+  uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
+  PokemonCollectionV46 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
+  WildEncounterClock wildEncounterClock{};BattleStateV46Test battle{};PokedexStateV46 pokedex{};
+  GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
+  MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
+  uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
+  PpItemInventory ppItems{};HomePetPlacementState homePetPlacement{};
+  BerryGardenState berryGarden{};CreativeBackgroundState creativeBackgrounds{};
+  SpecialHeldItemInventory specialHeldItems{};uint32_t lastNpcGiftDay=UINT32_MAX;
+  uint32_t clockLocalEpochSeconds=0,bossCooldownSecondsRemaining=0;
+  BossEncounterState bossEncounter{};EggInventory eggInventory{};SinnohExpeditionState sinnoh{};
+  TowerDefense::CampaignState towerDefense{};Gen4UniqueItemInventory gen4UniqueItems{};
+  UnovaAdventureState unova{};Gen5UniqueItemInventory gen5UniqueItems{};
+  UnovaFormState unovaForms{};
+};
+struct RecordV46Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV46Test payload;uint32_t crc;};
+// Exact shipped Kalos/V47 record. V48 compacts occupied positions from this
+// 800-slot collection into the ESP32-safe active collection.
+struct GameSaveV47Test {
+  uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
+  PokemonCollectionV47 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
+  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexState pokedex{};
+  GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
+  MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
+  uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
+  PpItemInventory ppItems{};HomePetPlacementState homePetPlacement{};
+  BerryGardenState berryGarden{};CreativeBackgroundState creativeBackgrounds{};
+  SpecialHeldItemInventory specialHeldItems{};uint32_t lastNpcGiftDay=UINT32_MAX;
+  uint32_t clockLocalEpochSeconds=0,bossCooldownSecondsRemaining=0;
+  BossEncounterState bossEncounter{};EggInventory eggInventory{};SinnohExpeditionState sinnoh{};
+  TowerDefense::CampaignState towerDefense{};Gen4UniqueItemInventory gen4UniqueItems{};
+  UnovaAdventureState unova{};Gen5UniqueItemInventory gen5UniqueItems{};
+  UnovaFormState unovaForms{};KalosAdventureState kalos{};
+};
+struct RecordV47Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV47Test payload;uint32_t crc;};
 static_assert(sizeof(BattleStateV33Test)==684);
 static_assert(sizeof(GameSaveV33Test)==25912);
 static_assert(sizeof(RecordV33Test)==25936);
@@ -207,6 +246,9 @@ static_assert(offsetof(RecordV41Test,crc)==26640);
 static_assert(sizeof(RecordV41Test)==26648);
 static_assert(sizeof(GameSaveV42Test) < sizeof(GameSave));
 static_assert(sizeof(GameSaveV45Test) < sizeof(GameSave));
+static_assert(sizeof(BattleStateV46Test)==944U);
+static_assert(sizeof(GameSaveV46Test) < sizeof(GameSave));
+static_assert(sizeof(GameSaveV47Test) > sizeof(GameSave));
 uint32_t crc32(const uint8_t* data,size_t length){uint32_t crc=0xFFFFFFFFU;for(size_t i=0;i<length;++i){crc^=data[i];for(uint8_t bit=0;bit<8;++bit)crc=(crc>>1U)^(0xEDB88320U&(0U-(crc&1U)));}return ~crc;}
 
 PokemonCollectionV41 legacyCollectionWithStarter(uint16_t speciesId) {
@@ -803,6 +845,110 @@ int main() {
       CollectionLogic::createPokemon(0U,649U,70U,false,0x649U,5U),
       &genesectUid));
   assert(CollectionLogic::find(v45Migrated.collection,genesectUid)->speciesId==649U);
+
+  // V47 upgrades a real Unova save in place. The Box tail, active battle
+  // prefix, National Dex bits and campaign/form sidecars must all survive;
+  // only the new Kalos capacity starts empty.
+  Preferences::resetTestStorage();
+  GameSaveV46Test v46Prefix{};
+  PokemonCollection v46Expanded{};
+  CollectionLogic::initialize(v46Expanded);
+  assert(CollectionLogic::chooseStarter(v46Expanded,1U));
+  uint32_t zekromUid=0U,genesectV46Uid=0U;
+  assert(CollectionLogic::add(v46Expanded,
+      CollectionLogic::createPokemon(0U,644U,82U,false,0x644U,5U),
+      &zekromUid));
+  assert(CollectionLogic::add(v46Expanded,
+      CollectionLogic::createPokemon(0U,649U,75U,false,0x649U,5U),
+      &genesectV46Uid));
+  std::memcpy(v46Prefix.collection.box,v46Expanded.box,
+              sizeof(v46Prefix.collection.box));
+  std::memcpy(v46Prefix.collection.party,v46Expanded.party,
+              sizeof(v46Prefix.collection.party));
+  v46Prefix.collection.nextUid=v46Expanded.nextUid;
+  v46Prefix.playTimeSeconds=246046U;v46Prefix.money=721649U;
+  v46Prefix.pokedex.caught[(649U-1U)/8U]|=
+      static_cast<uint8_t>(1U<<((649U-1U)%8U));
+  v46Prefix.unova.unlockedAreas=UnovaAdventure::kAllAreasMask;
+  v46Prefix.unova.defeatedBosses=UnovaAdventure::kAllAreasMask;
+  v46Prefix.unova.pwtCompletedTiers=0x1FU;
+  v46Prefix.gen5UniqueItems.keyItems=0x15U;
+  v46Prefix.unovaForms.fusedKyuremUid=zekromUid;
+  BattleState v46Battle{};
+  v46Battle.active=true;v46Battle.playerUid=zekromUid;
+  v46Battle.unlockedGeneration=5U;v46Battle.turn=46U;
+  std::memcpy(v46Prefix.battle.bytes,&v46Battle,sizeof(v46Prefix.battle.bytes));
+  RecordV46Test old46{};old46.magic=0x504F4B45;old46.version=46U;
+  old46.payloadSize=sizeof(GameSaveV46Test);old46.sequence=101446U;
+  old46.payload=v46Prefix;
+  old46.crc=crc32(reinterpret_cast<const uint8_t*>(&old46),
+                  offsetof(RecordV46Test,crc));
+  assert(raw.putBytes("save_a",&old46,sizeof(old46))==sizeof(old46));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v46Migrator;assert(v46Migrator.begin());GameSave v46Migrated;
+  assert(v46Migrator.loadOrCreate(v46Migrated)==SaveLoadResult::Loaded);
+  assert(v46Migrated.playTimeSeconds==246046U&&v46Migrated.money==721649U);
+  assert(CollectionLogic::find(v46Migrated.collection,zekromUid)->speciesId==644U);
+  assert(CollectionLogic::find(v46Migrated.collection,genesectV46Uid)->speciesId==649U);
+  assert(PokedexLogic::hasCaught(v46Migrated.pokedex,649U)&&
+         !PokedexLogic::hasCaught(v46Migrated.pokedex,650U));
+  assert(v46Migrated.unova.unlockedAreas==UnovaAdventure::kAllAreasMask&&
+         v46Migrated.unova.defeatedBosses==UnovaAdventure::kAllAreasMask&&
+         v46Migrated.unova.pwtCompletedTiers==0x1FU);
+  assert(v46Migrated.gen5UniqueItems.keyItems==0x15U&&
+         v46Migrated.unovaForms.fusedKyuremUid==zekromUid);
+  assert(v46Migrated.battle.active&&v46Migrated.battle.playerUid==zekromUid&&
+         v46Migrated.battle.turn==46U&&
+         v46Migrated.battle.playerGen6Effects.extraTypeActive==false&&
+         v46Migrated.battle.gen6Terrain==Gen6Terrain::None);
+  assert(v46Migrated.kalos.unlockedAreas==0U&&
+         v46Migrated.kalos.defeatedBosses==0U&&
+         v46Migrated.kalos.run.flags==0U);
+
+  // V48 must preserve a Pokemon deliberately stored in V47's final slot.
+  // It compacts occupied slots and never interprets the capacity reduction as
+  // permission to truncate the old Box.
+  Preferences::resetTestStorage();
+  GameSaveV47Test v47Prefix{};
+  v47Prefix.playTimeSeconds=347047U;v47Prefix.money=650721U;
+  OwnedPokemon starterV47=CollectionLogic::createPokemon(41U,650U,72U,false,0x650U,6U);
+  OwnedPokemon tailV47=CollectionLogic::createPokemon(79941U,721U,88U,true,0x721U,6U);
+  v47Prefix.collection.box[0]=starterV47;
+  v47Prefix.collection.box[kBoxCapacityV47-1U]=tailV47;
+  v47Prefix.collection.party[0]=starterV47.uid;
+  v47Prefix.collection.party[1]=tailV47.uid;
+  v47Prefix.collection.nextUid=79942U;
+  v47Prefix.kalos.unlockedAreas=0x07U;
+  v47Prefix.kalos.defeatedBosses=0x03U;
+  v47Prefix.pokedex.caught[(721U-1U)/8U]|=
+      static_cast<uint8_t>(1U<<((721U-1U)%8U));
+  RecordV47Test old47{};old47.magic=0x504F4B45;old47.version=47U;
+  old47.payloadSize=sizeof(GameSaveV47Test);old47.sequence=101447U;
+  old47.payload=v47Prefix;
+  old47.crc=crc32(reinterpret_cast<const uint8_t*>(&old47),
+                  offsetof(RecordV47Test,crc));
+  assert(raw.putBytes("save_a",&old47,sizeof(old47))==sizeof(old47));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v47Migrator;assert(v47Migrator.begin());GameSave v47Migrated;
+  assert(v47Migrator.loadOrCreate(v47Migrated)==SaveLoadResult::Loaded);
+  assert(v47Migrated.playTimeSeconds==347047U&&v47Migrated.money==650721U);
+  assert(CollectionLogic::count(v47Migrated.collection)==2U);
+  assert(CollectionLogic::find(v47Migrated.collection,starterV47.uid)->speciesId==650U);
+  const OwnedPokemon* migratedTail=CollectionLogic::find(v47Migrated.collection,tailV47.uid);
+  assert(migratedTail&&migratedTail->speciesId==721U&&migratedTail->shiny);
+  assert(v47Migrated.collection.party[1]==tailV47.uid&&
+         v47Migrated.collection.nextUid==79942U);
+  assert(PokedexLogic::hasCaught(v47Migrated.pokedex,721U)&&
+         v47Migrated.kalos.unlockedAreas==0x07U&&
+         v47Migrated.kalos.defeatedBosses==0x03U);
+  PersistentSave v48Reload;assert(v48Reload.begin());GameSave v48Reloaded;
+  assert(v48Reload.loadOrCreate(v48Reloaded)==SaveLoadResult::Loaded);
+  assert(CollectionLogic::find(v48Reloaded.collection,tailV47.uid)->speciesId==721U);
+
+  PokemonCollectionV47 overfullV47{};
+  for(uint16_t i=0;i<=kBoxCapacity;++i)overfullV47.box[i].uid=static_cast<uint32_t>(i)+1U;
+  PokemonCollection rejectedV47{};
+  assert(!rejectedV47.importV47(overfullV47));
 
   // User-requested reset writes a new, complete blank record instead of
   // deleting the two redundant slots first. It must survive a fresh loader.

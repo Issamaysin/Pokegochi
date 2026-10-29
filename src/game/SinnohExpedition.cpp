@@ -232,6 +232,14 @@ void SinnohExpedition::reconcile(SinnohExpeditionState& state, const GymProgress
     state.gymVictoryMask = 0U;
     state.rewardFlags = static_cast<uint8_t>(state.rewardFlags | kGymSchemaBit);
   }
+  if ((state.rewardFlags & kExplorationSchemaBit) == 0U) {
+    // Older builds stored only an aggregate encounter count, so no individual
+    // site clear can be inferred safely. Preserve that count (capped to the
+    // low byte) and start the per-site ledger empty.
+    state.battles = std::min<uint16_t>(state.battles, 0x00FFU);
+    state.rewardFlags = static_cast<uint8_t>(
+        state.rewardFlags | kExplorationSchemaBit);
+  }
   if (!available(progress, state)) return;
   if (!state.unlockedSites) state.unlockedSites = 1U;
 }
@@ -286,9 +294,34 @@ bool SinnohExpedition::allGymsDefeated(const SinnohExpeditionState& state) {
   return (state.gymVictoryMask & kAllSitesMask) == kAllSitesMask;
 }
 
+bool SinnohExpedition::hasExplored(const SinnohExpeditionState& state,
+                                   SinnohSite site) {
+  const uint8_t explored = static_cast<uint8_t>(state.battles >> 8U);
+  return (explored & (1U << siteIndex(site))) != 0U;
+}
+
+uint8_t SinnohExpedition::exploredSiteCount(
+    const SinnohExpeditionState& state) {
+  const uint8_t explored = static_cast<uint8_t>(state.battles >> 8U);
+  uint8_t count = 0U;
+  for (uint8_t index = 0U; index < kSiteCount; ++index)
+    if ((explored & (1U << index)) != 0U) ++count;
+  return count;
+}
+
+bool SinnohExpedition::allSitesExplored(
+    const SinnohExpeditionState& state) {
+  return (static_cast<uint8_t>(state.battles >> 8U) & kAllSitesMask) ==
+      kAllSitesMask;
+}
+
 bool SinnohExpedition::completed(const SinnohExpeditionState& state) {
   return allGymsDefeated(state) ||
       (state.rewardFlags & kLegacyCompletionBit) != 0U;
+}
+
+bool SinnohExpedition::fullyCompleted(const SinnohExpeditionState& state) {
+  return allGymsDefeated(state) && allSitesExplored(state);
 }
 
 const SinnohGymDefinition* SinnohExpedition::gymDefinition(SinnohSite site) {
@@ -379,7 +412,8 @@ SinnohExpedition::CompletionReward SinnohExpedition::reconcileCompletionReward(
 
   uint16_t& masterBalls =
       inventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)];
-  if ((state.rewardFlags & kMasterBallRewardBit) == 0U &&
+  if (fullyCompleted(state) &&
+      (state.rewardFlags & kMasterBallRewardBit) == 0U &&
       masterBalls < kInventoryStackLimit) {
     ++masterBalls;
     state.rewardFlags = static_cast<uint8_t>(
@@ -423,9 +457,16 @@ uint8_t SinnohExpedition::availableSpecies(SinnohSite site, uint16_t* output,
   return count;
 }
 
-uint16_t SinnohExpedition::recordBattle(SinnohExpeditionState& state, bool successful) {
+uint16_t SinnohExpedition::recordBattle(SinnohExpeditionState& state,
+                                        SinnohSite site, bool successful) {
   if (!successful) return 0U;
-  ++state.battles;
+  const uint8_t total = static_cast<uint8_t>(std::min<uint16_t>(
+      static_cast<uint16_t>(state.battles & 0x00FFU) + 1U, 0x00FFU));
+  const uint8_t explored = static_cast<uint8_t>(
+      static_cast<uint8_t>(state.battles >> 8U) |
+      static_cast<uint8_t>(1U << siteIndex(site)));
+  state.battles = static_cast<uint16_t>(
+      total | (static_cast<uint16_t>(explored) << 8U));
   constexpr uint16_t kResearchPerPokemon = 1U;
   const uint16_t available = state.research < kMaximumResearch
       ? static_cast<uint16_t>(kMaximumResearch - state.research) : 0U;

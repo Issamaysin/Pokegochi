@@ -113,8 +113,8 @@ void initializeSingleBattle(BattleState& battle, PokemonCollection& collection,
 }  // namespace
 
 int main() {
-  static_assert(kBoxCapacity == 720U);
-  static_assert(kPokedexSpeciesCount == 649U);
+  static_assert(kBoxCapacityV46 == 720U);
+  static_assert(kPokedexSpeciesCountV46 == 649U);
   assert(UnovaAdventure::kLegendaryChanceDenominator == 265U);
   assert(UnovaAdventure::kSpecialLegendaryChanceDenominator == 240U);
   for (uint8_t area = 0U; area < UnovaAdventure::kAreaCount; ++area)
@@ -776,14 +776,41 @@ int main() {
 
   // PWT checkpoints unlock after every two area bosses. Champions is the
   // conclusion gate and unlocks both White 2 and the daily Royal Unova.
+  // Entering any tournament battle must not be a free Pokecenter: damage,
+  // status, PP and recovery timers persist even if the player immediately
+  // runs from the match.
+  starter->currentHp=static_cast<uint16_t>(starter->maximumHp/3U);
+  starter->status=StatusCondition::Burn;
+  starter->movePp[0]=1U;
+  bench->currentHp=1U;
+  bench->status=StatusCondition::Poison;
+  bench->recoverySecondsRemaining=11U;
+  collection.party[1]=benchUid;
+  const auto assertTournamentPartyUnchanged=[&](){
+    assert(starter->currentHp==starter->maximumHp/3U);
+    assert(starter->status==StatusCondition::Burn);
+    assert(starter->movePp[0]==1U);
+    assert(bench->currentHp==1U);
+    assert(bench->status==StatusCondition::Poison);
+    assert(bench->recoverySecondsRemaining==11U);
+  };
   for (uint8_t tier = 0U; tier < 5U; ++tier) {
     assert(UnovaAdventure::pwtTierUnlocked(unova, tier));
     assert(UnovaTournament::beginPwt(unova, tier, 222U + tier));
+    if(tier==0U){
+      starter->recoverySecondsRemaining=2U;
+      BattleState blockedPwt{};
+      assert(!UnovaTournament::startBattle(
+          unova,blockedPwt,collection,starter->uid));
+      assert(starter->recoverySecondsRemaining==2U);
+      starter->recoverySecondsRemaining=0U;
+    }
     for (uint8_t round = 0; round < 3U; ++round) {
       BattleState pwt{};
       assert(UnovaTournament::startBattle(
           unova, pwt, collection, starter->uid));
       assert(pwt.kind == BattleKind::Pwt && pwt.opponentCount == 3U);
+      assertTournamentPartyUnchanged();
       bool complete = false;
       assert(UnovaTournament::recordBattle(
           unova, BattleOutcome::Victory, complete));
@@ -797,6 +824,7 @@ int main() {
     BattleState champion{};
     assert(UnovaTournament::startBattle(
         unova, champion, collection, starter->uid));
+    assertTournamentPartyUnchanged();
     bool complete = false;
     assert(UnovaTournament::recordBattle(
         unova, BattleOutcome::Victory, complete));
@@ -804,6 +832,11 @@ int main() {
   }
   assert(UnovaAdventure::championsCompleted(unova));
   assert(UnovaAdventure::white2ThemeUnlocked(unova));
+  assert(!UnovaAdventure::royalUnovaCompletedAtLeastOnce(unova));
+  assert(!UnovaAdventure::fullyCompleted(unova));
+  Inventory unovaRewardInventory{};
+  assert(!UnovaAdventure::reconcileCompletionReward(
+      unova, unovaRewardInventory));
   assert(UnovaTournament::championsUnlocked(unova));
   assert(UnovaTournament::beginChampions(unova, 334U));
   assert(UnovaTournament::abandon(unova));
@@ -819,11 +852,33 @@ int main() {
     assert(UnovaTournament::startBattle(
         unova, royal, collection, starter->uid));
     assert(royal.kind == BattleKind::RoyalUnova);
+    assertTournamentPartyUnchanged();
     bool complete = false;
     assert(UnovaTournament::recordBattle(
         unova, BattleOutcome::Victory, complete));
   }
   assert(!UnovaAdventure::royalAvailableToday(unova, 12U));
   assert(UnovaAdventure::royalAvailableToday(unova, 13U));
+  assert(UnovaAdventure::royalUnovaCompletedAtLeastOnce(unova));
+  assert(UnovaAdventure::fullyCompleted(unova));
+  assert(UnovaAdventure::reconcileCompletionReward(
+      unova, unovaRewardInventory));
+  assert(unovaRewardInventory.balls[
+             static_cast<uint8_t>(PokeBallType::MasterBall)] == 1U);
+  assert(!UnovaAdventure::reconcileCompletionReward(
+      unova, unovaRewardInventory));
+
+  UnovaAdventureState pendingUnovaReward = unova;
+  pendingUnovaReward.flags = static_cast<uint8_t>(
+      pendingUnovaReward.flags & ~UnovaAdventure::kMasterBallRewardBit);
+  Inventory fullUnovaInventory{};
+  fullUnovaInventory.balls[
+      static_cast<uint8_t>(PokeBallType::MasterBall)] = kInventoryStackLimit;
+  assert(!UnovaAdventure::reconcileCompletionReward(
+      pendingUnovaReward, fullUnovaInventory));
+  fullUnovaInventory.balls[
+      static_cast<uint8_t>(PokeBallType::MasterBall)] = 0U;
+  assert(UnovaAdventure::reconcileCompletionReward(
+      pendingUnovaReward, fullUnovaInventory));
   return 0;
 }

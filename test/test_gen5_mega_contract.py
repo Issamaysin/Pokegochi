@@ -39,6 +39,6 @@ assert ENGINE.count("hasGroundImmunityAbility(") >= 8
 assert "groundImmunityAbilityApplies" in ENGINE
 assert 'abilityIs(attacker,"EELEVATE")' in ENGINE
 assert '"--gen5-mega-assets-only"' in PACKER
-assert "kRequiredAssetPackVersion = 41" in PACK_VERSION
+assert "kRequiredAssetPackVersion = 46" in PACK_VERSION
 
 print("Generation 5 Mega contract passed: 8 forms, 3 abilities, 64 assets.")

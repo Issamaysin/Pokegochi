@@ -33,6 +33,25 @@ public final class ProtocolSelfTest {
         check(MultiplayerProtocol.parsePacket(packet, 0x01020304) == null, "self packet rejection");
         byte[] wrongVersion = packet.clone(); wrongVersion[2] = 5;
         check(MultiplayerProtocol.parsePacket(wrongVersion, 99) == null, "version rejection");
+        check(BleTransportPolicy.isIdleProtocolState(BleTransportPolicy.STATE_ADVERTISING),
+                "advertising is idle");
+        check(BleTransportPolicy.isIdleProtocolState(BleTransportPolicy.STATE_SCANNING),
+                "scanning is idle");
+        check(!BleTransportPolicy.isIdleProtocolState(BleTransportPolicy.STATE_CONNECTING),
+                "connecting is not stale-idle");
+        check(BleTransportPolicy.staleLinkGraceMs(false) >= 10_000L,
+                "new inbound GATT link gets full handshake window");
+        check(BleTransportPolicy.staleLinkGraceMs(true) < 1_000L,
+                "closed established session is released promptly");
+        check(BleTransportPolicy.canRetryCentral(BleTransportPolicy.STATE_CONNECTING, 1),
+                "central connection retries while protocol is connecting");
+        check(!BleTransportPolicy.canRetryCentral(BleTransportPolicy.STATE_ADVERTISING, 1),
+                "central retry stops after protocol reset");
+        check(!BleTransportPolicy.canRetryCentral(BleTransportPolicy.STATE_CONNECTING,
+                BleTransportPolicy.MAX_CENTRAL_ATTEMPTS), "central retry is bounded");
+        check(BleTransportPolicy.CENTRAL_ROLE_SETTLE_MS >= 250L &&
+                        BleTransportPolicy.CENTRAL_ROLE_SETTLE_MS < 1_000L,
+                "central role transition is settled without stalling the handshake");
         System.out.println("MultiplayerProtocol v7 discovery and packet vectors: OK");
     }
 

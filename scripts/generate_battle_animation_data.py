@@ -206,7 +206,10 @@ EXPANSION_GRAPHICS = (EXPANSION / "src/graphics.c").read_text(encoding="utf-8")
 EXPANSION_BATTLE_DATA = (EXPANSION / "src/data/battle_anim.h").read_text(encoding="utf-8")
 EXPANSION_GRAPHICS_RULES = (EXPANSION / "graphics_file_rules.mk").read_text(encoding="utf-8")
 EXPANSION_SPRITES = EXPANSION / "graphics/battle_anims/sprites"
-EXPANSION_MOVE_IDS = set(range(355, 560))
+# Expansion supplies the exact authored scripts for every post-FireRed move.
+# Keep the catalog continuous through Pokemon X/Y's Light of Ruin (#617), so
+# a newly generated Kalos move can never silently fall back to no animation.
+EXPANSION_MOVE_IDS = set(range(355, 618))
 SOURCE_NUMERIC_CONSTANTS: dict[str, int] = {}
 
 
@@ -681,6 +684,14 @@ MANUAL_TILE_BASE_BIAS: dict[str, int] = {
     "InitIceBallParticle": 0,
 }
 
+# Template-level corrections for callbacks reused with a different compact
+# sheet. Thousand Arrows borrows AnimMudSportDirt only for its falling motion;
+# its NEEDLE asset is exactly one 16x16 cel, so the dirt callback's +1 tile
+# write would address beyond the loaded four-tile resource on the GBA too.
+TEMPLATE_MANUAL_TILE_BASE_BIAS: dict[str, int] = {
+    "gThousandArrowsGreenArrowTemplate": 0,
+}
+
 # callback: (argument index, tile stride, variant count, per-variant h/v flip)
 MANUAL_TILE_ARGUMENT_VARIANTS: dict[
         str, tuple[int, int, int, dict[int, tuple[bool, bool]]]] = {
@@ -821,7 +832,8 @@ def template_visual_asset_spec(template: str, tag: str,
         }
 
     callback = str(spec.get("callback", ""))
-    base_bias = MANUAL_TILE_BASE_BIAS.get(callback, 0)
+    base_bias = TEMPLATE_MANUAL_TILE_BASE_BIAS.get(
+        template, MANUAL_TILE_BASE_BIAS.get(callback, 0))
     if base_bias:
         command_sequences = [shifted_sequence(sequence, base_bias)
                              for sequence in command_sequences]
@@ -1510,6 +1522,14 @@ for source, _source_name in animation_sources:
         affine_pointer_tables[match.group(1)] = re.findall(
             r"^\s*(\w+)\s*,?\s*$", match.group(2), re.M)
 
+# The expansion has one legacy raw-OAM template instead of a named
+# gOamData_* declaration.  Its attr0/attr1 shape+size bits are 0/0, i.e. one
+# 8x8 square cell; keep the decoded contract explicit so a future raw OAM
+# addition still stops generation for review.
+RAW_TEMPLATE_OAM_SIZES: dict[str, tuple[int, int]] = {
+    "gPetalBlizzardTwister2Template": (8, 8),
+}
+
 template_specs: dict[str, dict[str, object]] = {}
 for source, source_name in animation_sources:
     for match in re.finditer(
@@ -1528,6 +1548,8 @@ for source, source_name in animation_sources:
         animations = re.search(r"\.anims\s*=\s*(\w+)", body)
         affine_animations = re.search(r"\.affineAnims\s*=\s*(\w+)", body)
         oam_size = re.search(r"gOamData_[A-Za-z0-9_]+_(\d+)x(\d+)", body)
+        raw_width, raw_height = RAW_TEMPLATE_OAM_SIZES.get(
+            match.group(1), (0, 0))
         template_specs[match.group(1)] = {
             "tag": (tag.group(1) if tag else
                     "SMOKESCREEN_IMPACT" if match.group(1) ==
@@ -1540,9 +1562,11 @@ for source, source_name in animation_sources:
             "affineAnimations": (affine_animations.group(1)
                                  if affine_animations else ""),
             "width": (int(oam_size.group(1)) if oam_size else
-                      16 if match.group(1) == "sSmokescreenImpactSpriteTemplate" else 0),
+                      16 if match.group(1) == "sSmokescreenImpactSpriteTemplate"
+                      else raw_width),
             "height": (int(oam_size.group(2)) if oam_size else
-                       16 if match.group(1) == "sSmokescreenImpactSpriteTemplate" else 0),
+                       16 if match.group(1) == "sSmokescreenImpactSpriteTemplate"
+                       else raw_height),
         }
 
 
@@ -1561,6 +1585,10 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     "AnimThunderboltOrb": ("BattleAnimationMotion::ThunderboltOrbBlink", 64),
     "AnimThunderWave": ("BattleAnimationMotion::ThunderWavePairBlink", 51),
     "SpriteCallbackDummy": ("BattleAnimationMotion::Static", 18),
+    # AnimTask_CreateIons owns each spawn coordinate and the +1/+4 drift in
+    # the retained IonRain renderer. AnimIon itself only installs the child
+    # callback, so the exported sprite resource must remain position-neutral.
+    "AnimIon": ("BattleAnimationMotion::Static", 18),
     "AnimSkyAttackBird": ("BattleAnimationMotion::SkyAttackBird", 30),
     "AnimMovementWaves": ("BattleAnimationMotion::MovementWavesRepeat", 96),
     "AnimReversalOrb": ("BattleAnimationMotion::FastOrbit", 52),
@@ -2506,7 +2534,8 @@ QUERY_TASKS = {
 def task_kind(name: str) -> str:
     lowered = name.lower()
     body = expanded_task_callback_body(name).lower()
-    if name in {"AnimTask_AllySwitchAttacker", "AnimTask_AllySwitchPartner"}:
+    if name in {"AnimTask_AllySwitchAttacker", "AnimTask_AllySwitchPartner",
+                "AnimTask_SnatchOpposingMonMove"}:
         return "BattleAnimationTaskKind::BattlerMotion"
     if name == "AnimTask_TechnoBlast":
         return "BattleAnimationTaskKind::Control"
@@ -2651,7 +2680,9 @@ TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_RotateAuroraRingColors": ("RotateAuroraRingColors", "None"),
     "AnimTask_RotateMonSpriteToSide": ("RotateMonSpriteToSide", "ScriptAnchor"),
     "AnimTask_RotateMonToSideAndRestore": ("RotateMonToSideAndRestore", "ScriptAnchor"),
+    "AnimTask_RotateVertically": ("RotateVerticallyExact", "ScriptAnchor"),
     "AnimTask_ScaleMonAndRestore": ("ScaleMonAndRestore", "ScriptAnchor"),
+    "AnimTask_SnatchOpposingMonMove": ("SnatchOpposingMonMoveExact", "Attacker"),
     "AnimTask_SetAllNonAttackersInvisiblity": ("SetAllNonAttackersInvisible", "Target"),
     "AnimTask_SetAttackerInvisibleWaitForSignal": ("SetAttackerInvisibleWaitForSignal", "Attacker"),
     "AnimTask_SetGrayscaleOrOriginalPal": ("SetGrayscaleOrOriginalPal", "ScriptAnchor"),
@@ -2769,6 +2800,7 @@ TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_PurpleFlamesOnTarget": ("GrudgeFlames", "Target"),
     "AnimTask_Hail": ("HailStones", "Screen"),
     "AnimTask_ImprisonOrbs": ("ImprisonOrbs", "Attacker"),
+    "AnimTask_CreateIons": ("IonRain", "Screen"),
     "AnimTask_LeafBlade": ("LeafBladePath", "Target"),
     "AnimTask_Rollout": ("RolloutDebris", "Attacker"),
     "AnimTask_ShockWaveLightning": ("ShockWaveLightning", "Target"),
@@ -2871,6 +2903,7 @@ TASK_MOTION_LIFETIMES = {
     "VoltTackleBolts": 72, "WaterSportOrbs": 170,
     "LeafBladePath": 150, "ShockWaveProgressingBolt": 150,
     "ShockWaveLightning": 80,
+    "IonRain": 120,
 }
 
 # Conservative source-timeline defaults for callback-identity profiles.
@@ -2893,6 +2926,8 @@ TASK_MOTION_LIFETIMES.update({
     "PainSplitMovement": 14, "RapidSpinMonElevation": 32,
     "RockMonBackAndForth": 64, "RolePlaySilhouette": 80,
     "RotateAuroraRingColors": 64, "RotateMonSpriteToSide": 32,
+    "RotateVerticallyExact": 161,
+    "SnatchOpposingMonMoveExact": 80,
     "RotateMonToSideAndRestore": 64, "ScaleMonAndRestore": 32,
     "SetAllNonAttackersInvisible": 1,
     "SetAttackerInvisibleWaitForSignal": 0xFFFF,
@@ -2973,6 +3008,7 @@ rows: list[str] = []
 program_rows: list[str] = []
 program_command_rows: list[str] = []
 program_argument_values: list[int] = []
+program_argument_offsets: dict[tuple[int, ...], int] = {}
 sprite_resource_rows: list[str] = []
 sprite_frame_step_rows: list[str] = []
 sprite_frame_sequence_rows: list[str] = []
@@ -3431,8 +3467,12 @@ def task_resource_id(name: str, kind: str,
 def append_program_command(opcode: str, resource: str = "0", anchor: int = 0,
                            priority: int = 0, arguments: list[int] | None = None) -> None:
     values = arguments or []
-    offset = len(program_argument_values)
-    program_argument_values.extend(values)
+    key = tuple(values)
+    offset = program_argument_offsets.get(key, -1)
+    if offset < 0:
+        offset = len(program_argument_values)
+        program_argument_values.extend(values)
+        program_argument_offsets[key] = offset
     program_command_rows.append(
         f"  {{{resource}, {offset}, static_cast<uint8_t>(BattleAnimationOpcode::{opcode}), "
         f"{anchor & 0xFF}, {priority & 0xFF}, {len(values)}}},")
@@ -3450,13 +3490,16 @@ expansion_move_definitions = [
         (EXPANSION / "include/constants/moves.h").read_text(encoding="utf-8"))
     if int(number_text) in EXPANSION_MOVE_IDS
 ]
-# The first entries for Gen IV and Gen V alias the preceding generation count
-# instead of spelling out their numeric IDs. Keep both boundary moves in the
-# exact catalog rather than silently losing them to the numeric-only parser.
+# The first entry of each expansion generation aliases the preceding
+# generation count instead of spelling out its numeric ID. Keep every boundary
+# move in the exact catalog rather than silently losing it to the numeric-only
+# parser.
 if 355 in EXPANSION_MOVE_IDS:
     expansion_move_definitions.insert(0, ("ROOST", 355))
 if 468 in EXPANSION_MOVE_IDS:
     expansion_move_definitions.append(("HONE_CLAWS", 468))
+if 560 in EXPANSION_MOVE_IDS:
+    expansion_move_definitions.append(("FLYING_PRESS", 560))
 expansion_move_definitions.sort(key=lambda entry: entry[1])
 move_definitions += expansion_move_definitions
 
@@ -3854,10 +3897,16 @@ if unhandled_sprite_callbacks:
         "Tagged sprite callbacks lack a renderer family: " +
         ", ".join(sorted(unhandled_sprite_callbacks)))
 
+# These callbacks are exported only as cels for an exact visual-task
+# renderer; their source coordinate writes are reproduced by that owning
+# task rather than by an independently spawned sprite instance.
+TASK_OWNED_STATIC_CALLBACKS = {"AnimIon"}
+
 static_moving_state_machines = [
     f"{template}/{handler['callback']}"
     for template, handler in sprite_handler_audit.items()
-    if handler["stateMovesCoordinates"] and handler["motion"] == "Static"
+    if (handler["stateMovesCoordinates"] and handler["motion"] == "Static" and
+        handler["callback"] not in TASK_OWNED_STATIC_CALLBACKS)
 ]
 if static_moving_state_machines:
     raise RuntimeError(

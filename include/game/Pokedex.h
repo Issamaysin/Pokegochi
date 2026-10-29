@@ -5,8 +5,10 @@ constexpr uint16_t kPokedexSpeciesCountV41 = 386;
 constexpr uint8_t kPokedexBytesV41 = 49;
 constexpr uint16_t kPokedexSpeciesCountV45 = 493;
 constexpr uint8_t kPokedexBytesV45 = 62;
-constexpr uint16_t kPokedexSpeciesCount = 649;
-constexpr uint8_t kPokedexBytes = 82;
+constexpr uint16_t kPokedexSpeciesCountV46 = 649;
+constexpr uint8_t kPokedexBytesV46 = 82;
+constexpr uint16_t kPokedexSpeciesCount = 721;
+constexpr uint8_t kPokedexBytes = 91;
 
 struct PokedexStateV41 {
   uint8_t seen[kPokedexBytesV41]{};
@@ -26,6 +28,11 @@ struct PokedexStateV45 {
   }
 };
 
+struct PokedexStateV46 {
+  uint8_t seen[kPokedexBytesV46]{};
+  uint8_t caught[kPokedexBytesV46]{};
+};
+
 struct PokedexState {
   uint8_t seen[kPokedexBytes]{};
   uint8_t caught[kPokedexBytes]{};
@@ -42,6 +49,14 @@ struct PokedexState {
     for (uint8_t index = 0; index < kPokedexBytes; ++index) {
       seen[index] = index < kPokedexBytesV45 ? legacy.seen[index] : 0U;
       caught[index] = index < kPokedexBytesV45 ? legacy.caught[index] : 0U;
+    }
+    return *this;
+  }
+
+  PokedexState& operator=(const PokedexStateV46& legacy) {
+    for (uint8_t index = 0; index < kPokedexBytes; ++index) {
+      seen[index] = index < kPokedexBytesV46 ? legacy.seen[index] : 0U;
+      caught[index] = index < kPokedexBytesV46 ? legacy.caught[index] : 0U;
     }
     return *this;
   }

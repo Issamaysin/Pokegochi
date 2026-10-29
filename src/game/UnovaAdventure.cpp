@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iterator>
 
+#include "game/Economy.h"
 #include "game/Pokedex.h"
 
 namespace {
@@ -198,6 +199,27 @@ bool UnovaAdventure::allAreasCompleted(const UnovaAdventureState& state) {
 }
 bool UnovaAdventure::championsCompleted(const UnovaAdventureState& state) {
   return (state.flags & kChampionsComplete) != 0U;
+}
+bool UnovaAdventure::royalUnovaCompletedAtLeastOnce(
+    const UnovaAdventureState& state) {
+  return state.royalUnovaLastDay != UINT32_MAX;
+}
+bool UnovaAdventure::fullyCompleted(const UnovaAdventureState& state) {
+  return allAreasCompleted(state) &&
+      (state.pwtCompletedTiers & 0x1FU) == 0x1FU &&
+      championsCompleted(state) && royalUnovaCompletedAtLeastOnce(state);
+}
+bool UnovaAdventure::reconcileCompletionReward(
+    UnovaAdventureState& state, Inventory& inventory) {
+  if (!fullyCompleted(state) ||
+      (state.flags & kMasterBallRewardBit) != 0U)
+    return false;
+  uint16_t& masterBalls =
+      inventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)];
+  if (masterBalls >= kInventoryStackLimit) return false;
+  ++masterBalls;
+  state.flags = static_cast<uint8_t>(state.flags | kMasterBallRewardBit);
+  return true;
 }
 bool UnovaAdventure::white2ThemeUnlocked(const UnovaAdventureState& state) {
   return (state.flags & kWhite2Theme) != 0U;

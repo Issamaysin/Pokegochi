@@ -146,7 +146,31 @@ int main() {
   assert(Economy::machineMove(99) == static_cast<MoveId>(433)); // TM92 Trick Room
   assert(Economy::machineMove(100) == static_cast<MoveId>(468)); // BW TM01 Hone Claws
   assert(Economy::machineMove(124) == static_cast<MoveId>(555)); // BW TM95 Snarl
+  assert(Economy::machineMove(125) == static_cast<MoveId>(611)); // XY TM83 Infestation
+  assert(Economy::machineMove(126) == static_cast<MoveId>(612)); // XY TM98 Power-Up Punch
+  assert(Economy::machineMove(127) == static_cast<MoveId>(605)); // XY TM99 Dazzling Gleam
+  assert(Economy::machineMove(128) == static_cast<MoveId>(590)); // XY TM100 Confide
   assert(Economy::machineNumber(100)==1U&&Economy::machineNumber(124)==95U);
+  assert(Economy::machineNumber(125)==83U&&Economy::machineNumber(128)==100U);
+  const MartOffer highMachine=MartOffer::machine(128U,3000U);
+  assert(highMachine.isMachine()&&highMachine.machineId()==128U&&
+         highMachine.item==MartItem::Count);
+  MartState kalosLockedMart{};
+  constexpr uint32_t kOwnedUnovaMachines=(uint32_t{1}<<kUnovaMachineCount)-1U;
+  Economy::rotate(kalosLockedMart,24U,~uint64_t{0},~uint64_t{0},true,
+                  kOwnedUnovaMachines,true,false);
+  for(const MartOffer& offer:kalosLockedMart.offers)
+    assert(!offer.isMachine());
+  MartState kalosOpenMart{};
+  Economy::rotate(kalosOpenMart,24U,~uint64_t{0},~uint64_t{0},true,
+                  kOwnedUnovaMachines,true,true);
+  bool sawKalosMachine=false;
+  for(const MartOffer& offer:kalosOpenMart.offers)
+    if(offer.isMachine()){
+      assert(offer.machineId()>=125U&&offer.machineId()<kMachineCount);
+      sawKalosMachine=true;
+    }
+  assert(sawKalosMachine);
   assert(!Economy::canLearnMachine(1, 0));   // Bulbasaur / Focus Punch
   assert(Economy::canLearnMachine(1, 5));    // Bulbasaur / Toxic
   assert(Economy::canLearnMachine(1, 50));   // Bulbasaur / Cut
@@ -155,9 +179,9 @@ int main() {
   assert(Economy::canLearnMachine(252, 8));  // Treecko / Bullet Seed
   assert(Economy::canLearnMachine(445, 1));  // Garchomp / Dragon Claw
   assert(Economy::canLearnMachine(448, 0));  // Lucario / Focus Punch
-  for (uint8_t machine = 0; machine < kMachineCount; ++machine)
+  for (uint16_t machine = 0; machine < kMachineCount; ++machine)
     assert(Economy::canLearnMachine(151, machine)); // Mew learns every machine.
-  for (uint8_t machine = 0; machine < kMachineCount; ++machine) {
+  for (uint16_t machine = 0; machine < kMachineCount; ++machine) {
     assert(!Economy::canLearnMachine(201, machine)); // Unown learns no machines.
     assert(!Economy::canLearnMachine(235, machine)); // Neither does Smeargle.
   }
@@ -179,17 +203,32 @@ int main() {
   assert(platinumNewTmCompatibilityCount == 6074U);
   uint16_t unovaTmCompatibilityCount=0;
   for(uint16_t species=1;species<=493U;++species)
-    for(uint8_t machine=kLegacyMachineCount+kSinnohMachineCount;
-        machine<kMachineCount;++machine)
+    for(uint16_t machine=kLegacyMachineCount+kSinnohMachineCount;
+        machine<kLegacyMachineCount+kSinnohMachineCount+kUnovaMachineCount;
+        ++machine)
       unovaTmCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
   assert(unovaTmCompatibilityCount==1988U);
   uint16_t unovaSpeciesMachineCompatibilityCount=0;
   for(uint16_t species=494U;species<=649U;++species)
-    for(uint8_t machine=0;machine<kMachineCount;++machine)
+    for(uint16_t machine=0;
+        machine<kLegacyMachineCount+kSinnohMachineCount+kUnovaMachineCount;
+        ++machine)
       unovaSpeciesMachineCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
   assert(unovaSpeciesMachineCompatibilityCount==4947U);
+  uint16_t kalosTmCompatibilityCount=0;
+  for(uint16_t species=1U;species<=649U;++species)
+    for(uint16_t machine=kLegacyMachineCount+kSinnohMachineCount+kUnovaMachineCount;
+        machine<kMachineCount;++machine)
+      kalosTmCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
+  assert(kalosTmCompatibilityCount==981U);
+  uint16_t kalosSpeciesMachineCompatibilityCount=0;
+  for(uint16_t species=650U;species<=721U;++species)
+    for(uint16_t machine=0;machine<kMachineCount;++machine)
+      kalosSpeciesMachineCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
+  assert(kalosSpeciesMachineCompatibilityCount==2527U);
   assert(Economy::canLearnMachine(494U,101U)); // Victini learns TM03 Psyshock.
-  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(650, 0) &&
+  assert(Economy::canLearnMachine(650U,128U)); // Chespin learns XY TM100 Confide.
+  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(722, 0) &&
          !Economy::canLearnMachine(1, kMachineCount));
 
   // The Summary move editor exposes the complete level-up pool inherited
@@ -208,8 +247,8 @@ int main() {
 
   static_assert(sizeof(CombatVolatile)==34,
       "stockpileCount must use existing tail padding and keep saves compatible");
-  assert(battleAnimationCount()==559);
-  assert(battleAnimationProgramCount()==559);
+  assert(battleAnimationCount()==617);
+  assert(battleAnimationProgramCount()==617);
   assert(battleAnimationSpriteResourceCount()>=250);
   // Every generated SpriteTemplate variant must remain drawable for its full
   // retained lifetime.  This is deliberately exhaustive rather than a list
@@ -264,7 +303,7 @@ int main() {
     assert(battleAnimationPlaybackKind(move)==BattleAnimationPlaybackKind::Generated);
     assert(findBattleAnimationProgram(move));
   }
-  assert(battleAnimationProgramCount()==559);
+  assert(battleAnimationProgramCount()==617);
   uint16_t userTargetMoveCount = 0;
   for(uint16_t move=1;move<=354;++move){
     const FullMoveData* moveData=findFullMove(static_cast<MoveId>(move));
@@ -704,6 +743,33 @@ int main() {
   assert(CollectionLogic::setForm(deoxys, 3));
   assert(CollectionLogic::calculatedStat(deoxys, PokemonStat::Speed) > attackFormSpeed);
   assert(!CollectionLogic::setForm(deoxys, 4));
+
+  // The Meteorite changes Deoxys' authored Platinum level-up row as well as
+  // its stats. Summary must therefore follow the selected form, not keep the
+  // Normal-form table for every sprite.
+  auto formPoolContains=[](const MoveId* pool,uint8_t count,uint16_t move){
+    for(uint8_t index=0U;index<count;++index)
+      if(pool[index]==static_cast<MoveId>(move))return true;
+    return false;
+  };
+  MoveId deoxysAttackPool[64]{},deoxysDefensePool[64]{},deoxysSpeedPool[64]{};
+  const uint8_t deoxysAttackCount=relearnableMovesForForm(
+      386U,1U,100U,deoxysAttackPool,64U,4U);
+  const uint8_t deoxysDefenseCount=relearnableMovesForForm(
+      386U,2U,100U,deoxysDefensePool,64U,4U);
+  const uint8_t deoxysSpeedCount=relearnableMovesForForm(
+      386U,3U,100U,deoxysSpeedPool,64U,4U);
+  assert(formPoolContains(deoxysAttackPool,deoxysAttackCount,276U)); // Superpower
+  assert(formPoolContains(deoxysAttackPool,deoxysAttackCount,192U)); // Zap Cannon
+  assert(!formPoolContains(deoxysAttackPool,deoxysAttackCount,105U)); // Recover
+  assert(formPoolContains(deoxysDefensePool,deoxysDefenseCount,191U)); // Spikes
+  assert(formPoolContains(deoxysDefensePool,deoxysDefenseCount,334U)); // Iron Defense
+  assert(formPoolContains(deoxysDefensePool,deoxysDefenseCount,243U)); // Mirror Coat
+  assert(formPoolContains(deoxysSpeedPool,deoxysSpeedCount,104U)); // Double Team
+  assert(formPoolContains(deoxysSpeedPool,deoxysSpeedCount,97U));  // Agility
+  assert(formPoolContains(deoxysSpeedPool,deoxysSpeedCount,245U)); // ExtremeSpeed
+  assert(moveLearnedAtLevelForForm(386U,1U,49U,4U)==static_cast<MoveId>(276U));
+  assert(moveLearnedAtLevelForForm(386U,3U,97U,4U)==static_cast<MoveId>(245U));
 
   // Platinum forms are not cosmetic-only. Rotom's appliance forms resolve
   // the real stat/type data, expose their exclusive move in the Summary pool,
@@ -2327,7 +2393,7 @@ int main() {
   assert(reopenedMart.day==soldOutMart.day+1U&&reopenedMart.offers[0].remaining>0U);
 
   assert(!Economy::ownsMachine(ownedMachines,ownedSinnohMachines,mart.offers[machineOffer].machineId()));
-  const uint8_t offeredMachine=mart.offers[machineOffer].machineId();
+  const uint16_t offeredMachine=mart.offers[machineOffer].machineId();
   uint32_t machineMoney=10000;
   assert(Economy::buy(mart,machineOffer,machineMoney,inventory,ownedMachines,ownedSinnohMachines));
   assert(Economy::ownsMachine(ownedMachines,ownedSinnohMachines,offeredMachine));
@@ -2449,7 +2515,7 @@ int main() {
     if(raw<kHeldItemInventorySlots)assert(data->price&&data->martWeight);
     else assert(data->unlockBadges==255U&&!data->martWeight);
   }
-  assert(MegaEvolution::officialFormCount()==67);
+  assert(MegaEvolution::officialFormCount()==79);
   assert(heldItemIsTransferLocked(HeldItem::MegaStone));
   OwnedPokemon megaCharizard=CollectionLogic::createPokemon(7000,6,50,false,1);
   megaCharizard.heldItem=HeldItem::MegaStone;
@@ -2642,8 +2708,8 @@ int main() {
                        gen4Rewards,gen4OwnedMachines));
   assert(gen4UniqueItemQuantity(gen4Rewards,HeldItem::FistPlate)==1U);
   // Arceus uses the held Plate as its permanent visual identity. The form
-  // indices mirror the Platinum asset export; Pixie Plate keeps the Normal
-  // art because the original Sinnoh game has no Fairy sprite.
+  // indices mirror the Platinum asset export plus the expansion's dedicated
+  // Fairy palette at form 17.
   struct ArceusPlateCase { HeldItem item; uint8_t form; PokemonType type; const char* name; };
   static constexpr ArceusPlateCase arceusPlates[] = {
       {HeldItem::None, 0U, PokemonType::Normal, "NORMAL"},
@@ -2662,10 +2728,10 @@ int main() {
       {HeldItem::MindPlate, 13U, PokemonType::Psychic, "PSYCHIC"},
       {HeldItem::IciclePlate, 14U, PokemonType::Ice, "ICE"},
       {HeldItem::EarthPlate, 15U, PokemonType::Ground, "GROUND"},
-      {HeldItem::PixiePlate, 0U, PokemonType::Fairy, "NORMAL"},
+      {HeldItem::PixiePlate, 17U, PokemonType::Fairy, "FAIRY"},
       {HeldItem::DreadPlate, 16U, PokemonType::Dark, "DARK"},
   };
-  assert(CollectionLogic::formCount(493U) == 17U && !CollectionLogic::canChangeForm(arceus));
+  assert(CollectionLogic::formCount(493U) == 18U && !CollectionLogic::canChangeForm(arceus));
   for (const ArceusPlateCase& plate : arceusPlates) {
     arceus.heldItem = plate.item;
     assert(CollectionLogic::resolvedForm(arceus) == plate.form &&
@@ -2678,6 +2744,72 @@ int main() {
   assert(CollectionLogic::normalizeForm(arceus) && arceus.form == 16U);
   arceus.heldItem = HeldItem::None;
   assert(CollectionLogic::normalizeForm(arceus) && arceus.form == 0U);
+
+  // Sinnoh's environmental/cosmetic forms keep one stable form byte through
+  // evolution, while the timed Gen-IV/VI forms obey day, status and storage.
+  PokemonCollection formCollection{};
+  CollectionLogic::initialize(formCollection);
+  assert(CollectionLogic::chooseStarter(formCollection,1U,0xF001U));
+  uint32_t burmyUid=0U;
+  assert(CollectionLogic::add(formCollection,
+      CollectionLogic::createPokemon(0U,412U,20U,false,0x412U,4U),&burmyUid));
+  assert(CollectionLogic::setPartySlot(formCollection,1U,burmyUid));
+  assert(CollectionLogic::applyBurmyCloak(
+      formCollection,BurmyCloak::Sandy));
+  assert(CollectionLogic::find(formCollection,burmyUid)->form==1U);
+  assert(CollectionLogic::evolve(formCollection,burmyUid,413U,nullptr,4U));
+  OwnedPokemon* wormadam=CollectionLogic::find(formCollection,burmyUid);
+  assert(wormadam&&wormadam->form==1U&&
+         MegaEvolution::type2(*wormadam,PokemonType::Grass)==PokemonType::Ground);
+  OwnedPokemon plantWormadam=*wormadam;plantWormadam.form=0U;
+  CollectionLogic::refreshDerivedStats(plantWormadam,false);
+  assert(CollectionLogic::calculatedStat(*wormadam,PokemonStat::Attack)>
+         CollectionLogic::calculatedStat(plantWormadam,PokemonStat::Attack));
+  assert(moveLearnedAtLevelForForm(413U,1U,26U,4U)==static_cast<MoveId>(350U));
+  assert(moveLearnedAtLevelForForm(413U,2U,26U,4U)==static_cast<MoveId>(429U));
+
+  uint32_t shellosUid=0U;
+  assert(CollectionLogic::add(formCollection,
+      CollectionLogic::createPokemon(0U,422U,30U,false,0x4227U,4U),
+      &shellosUid));
+  const uint8_t seaForm=CollectionLogic::find(formCollection,shellosUid)->form;
+  assert(seaForm<=1U&&CollectionLogic::evolve(
+      formCollection,shellosUid,423U,nullptr,4U));
+  assert(CollectionLogic::find(formCollection,shellosUid)->form==seaForm);
+
+  uint32_t shayminUid=0U;
+  assert(CollectionLogic::add(formCollection,
+      CollectionLogic::createPokemon(0U,492U,50U,false,0x492U,4U),
+      &shayminUid));
+  assert(CollectionLogic::setPartySlot(formCollection,2U,shayminUid));
+  OwnedPokemon* formShaymin=CollectionLogic::find(formCollection,shayminUid);
+  assert(CollectionLogic::setFormForWorld(*formShaymin,1U,10U,false));
+  assert(CollectionLogic::reconcileFormLifecycles(
+      formCollection,11U,true)&&formShaymin->form==0U);
+  formShaymin->status=StatusCondition::Frozen;
+  assert(!CollectionLogic::setFormForWorld(*formShaymin,1U,12U,false));
+  formShaymin->status=StatusCondition::None;
+  assert(CollectionLogic::setFormForWorld(*formShaymin,1U,13U,false));
+  assert(CollectionLogic::removeFromParty(formCollection,shayminUid));
+  assert(CollectionLogic::reconcileFormLifecycles(
+      formCollection,13U,false)&&formShaymin->form==0U);
+
+  uint32_t furfrouUid=0U;
+  assert(CollectionLogic::add(formCollection,
+      CollectionLogic::createPokemon(0U,676U,50U,false,0x676U,6U),
+      &furfrouUid));
+  assert(CollectionLogic::setPartySlot(formCollection,2U,furfrouUid));
+  OwnedPokemon* furfrou=CollectionLogic::find(formCollection,furfrouUid);
+  assert(CollectionLogic::setFormForWorld(*furfrou,3U,100U,false));
+  assert(!CollectionLogic::reconcileFormLifecycles(
+      formCollection,219U,false)&&furfrou->form==3U);
+  assert(CollectionLogic::reconcileFormLifecycles(
+      formCollection,220U,false)&&furfrou->form==0U);
+  assert(CollectionLogic::setFormForWorld(*furfrou,5U,300U,false));
+  assert(CollectionLogic::removeFromParty(formCollection,furfrouUid));
+  assert(CollectionLogic::reconcileFormLifecycles(
+      formCollection,300U,false)&&furfrou->form==0U);
+
   OwnedPokemon giratina=CollectionLogic::createPokemon(9201,487,70,false,124,4);
   assert(equipHeldItem(giratina,HeldItem::GriseousOrb,gen4Held,gen4Old,
                        gen4Rewards,gen4OwnedMachines));
@@ -3719,6 +3851,7 @@ int main() {
   assert(PokedexLogic::generationSpeciesCount(3) == 386);
   assert(PokedexLogic::generationSpeciesCount(4) == 493);
   assert(PokedexLogic::generationSpeciesCount(5) == 649);
+  assert(PokedexLogic::generationSpeciesCount(6) == 721);
   assert(PokedexLogic::generationCaughtCount(completedDex, 1) == 151);
   assert(PokedexLogic::isGenerationComplete(completedDex, 1));
   assert(!PokedexLogic::isGenerationComplete(completedDex, 2));

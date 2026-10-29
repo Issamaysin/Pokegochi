@@ -2,7 +2,24 @@
 #include <algorithm>
 #include "BattleAnimationGenerated.inc"
 
+namespace {
+uint16_t authoredAnimationMove(uint16_t moveId) {
+  switch (moveId) {
+    case 618U: return 352U; // Origin Pulse -> Water Pulse
+    case 619U: return 89U;  // Precipice Blades -> Earthquake
+    case 620U: return 413U; // Dragon Ascent -> Brave Bird
+    case 621U: return 593U; // Hyperspace Fury -> Hyperspace Hole
+    case 687U: return 406U; // Core Enforcer -> Dragon Pulse
+    case 920U: return 617U; // Nihil Light -> Light of Ruin
+    default: return moveId;
+  }
+}
+}
+
 const BattleAnimationData* findBattleAnimation(uint16_t moveId) {
+  // Later signature moves reuse the closest complete authored visual from
+  // the Pokemon Y catalog instead of falling through to no animation.
+  moveId = authoredAnimationMove(moveId);
   uint16_t lo=0,hi=static_cast<uint16_t>(sizeof(kBattleAnimations)/sizeof(kBattleAnimations[0]));
   while(lo<hi){const uint16_t mid=static_cast<uint16_t>((lo+hi)/2);if(kBattleAnimations[mid].moveId<moveId)lo=mid+1;else hi=mid;}
   return lo<battleAnimationCount()&&kBattleAnimations[lo].moveId==moveId?&kBattleAnimations[lo]:nullptr;
@@ -11,6 +28,7 @@ uint16_t battleAnimationCount(){return static_cast<uint16_t>(sizeof(kBattleAnima
 const char* battleAnimationCatalogId(){return kBattleAnimationCatalogId;}
 
 const BattleAnimationProgram* findBattleAnimationProgram(uint16_t moveId) {
+  moveId = authoredAnimationMove(moveId);
   uint16_t lo = 0;
   uint16_t hi = battleAnimationProgramCount();
   while (lo < hi) {
@@ -285,4 +303,4 @@ BattleAnimationPlaybackKind battleAnimationPlaybackKind(uint16_t moveId) {
   return BattleAnimationPlaybackKind::Generated;
 }
 
-// Battle animation data: c5229b2201967dc1
+// Battle animation data: 5b90894914eb1769

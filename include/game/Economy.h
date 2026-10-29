@@ -6,8 +6,9 @@ enum class MartItem : uint8_t { PokeBall, GreatBall, UltraBall, Potion, SuperPot
 constexpr uint8_t kLegacyMachineCount = 58;
 constexpr uint8_t kSinnohMachineCount = 42;
 constexpr uint8_t kUnovaMachineCount = 25;
-constexpr uint8_t kMachineCount = kLegacyMachineCount + kSinnohMachineCount +
-                                  kUnovaMachineCount;
+constexpr uint8_t kKalosMachineCount = 4;
+constexpr uint16_t kMachineCount = kLegacyMachineCount + kSinnohMachineCount +
+                                   kUnovaMachineCount + kKalosMachineCount;
 constexpr uint8_t kMartOfferCount = 20;
 constexpr uint16_t kInventoryStackLimit = 999;
 struct MartOffer {
@@ -16,10 +17,18 @@ struct MartOffer {
   uint16_t price=0;
   uint8_t remaining=0;
   bool isMachine() const { return (static_cast<uint8_t>(heldItem) & 0x80U) != 0; }
-  uint8_t machineId() const { return static_cast<uint8_t>(heldItem) & 0x7FU; }
+  // The original persisted encoding had seven ID bits. Kalos brings the
+  // catalog to 129 entries, so MartItem::Count acts as the high ID bit only
+  // for machine offers. This keeps sizeof(MartOffer), old saves and every
+  // existing machine ID byte-for-byte stable.
+  uint16_t machineId() const {
+    return static_cast<uint16_t>(static_cast<uint8_t>(heldItem) & 0x7FU) +
+           (item == MartItem::Count ? 128U : 0U);
+  }
   bool isHeldItem() const { return heldItem != HeldItem::None && !isMachine(); }
-  static MartOffer machine(uint8_t id, uint16_t price) {
-    return {MartItem::PokeBall, static_cast<HeldItem>(0x80U | id), price, 1};
+  static MartOffer machine(uint16_t id, uint16_t price) {
+    return {id >= 128U ? MartItem::Count : MartItem::PokeBall,
+            static_cast<HeldItem>(0x80U | (id & 0x7FU)), price, 1};
   }
 };
 enum class MartOfferCategory : uint8_t {
@@ -41,18 +50,21 @@ class Economy {
                            uint64_t ownedSinnohMachines = 0,
                            bool sinnohUnlocked = false,
                            uint32_t ownedUnovaMachines = 0,
-                           bool unovaUnlocked = false);
+                           bool unovaUnlocked = false,
+                           bool kalosUnlocked = false);
   static void advance(MartState& mart, uint32_t seconds, uint8_t badgeCount = 0,
                       uint64_t ownedMachines = 0,
                       uint64_t ownedSinnohMachines = 0,
                       bool sinnohUnlocked = false,
                       uint32_t ownedUnovaMachines = 0,
-                      bool unovaUnlocked = false);
+                      bool unovaUnlocked = false,
+                      bool kalosUnlocked = false);
   static void rotate(MartState& mart, uint8_t badgeCount = 0, uint64_t ownedMachines = 0,
                      uint64_t ownedSinnohMachines = 0,
                      bool sinnohUnlocked = false,
                      uint32_t ownedUnovaMachines = 0,
-                     bool unovaUnlocked = false);
+                     bool unovaUnlocked = false,
+                     bool kalosUnlocked = false);
   static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
                   uint64_t& ownedMachines, PpItemInventory* ppItems = nullptr);
   static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
@@ -89,17 +101,17 @@ class Economy {
   static const char* name(const MartOffer& offer);
   static uint32_t price(const MartOffer& offer);
   static MartOfferCategory category(const MartOffer& offer);
-  static MoveId machineMove(uint8_t machineId);
-  static bool canLearnMachine(uint16_t speciesId, uint8_t machineId);
+  static MoveId machineMove(uint16_t machineId);
+  static bool canLearnMachine(uint16_t speciesId, uint16_t machineId);
   // Form-aware entry point. Platinum's supported forms inherit the species
   // TM/HM table unchanged; keeping the Pokemon overload prevents callers
   // from accidentally dropping form rules as new form data is added.
-  static bool canLearnMachine(const OwnedPokemon& pokemon, uint8_t machineId);
-  static bool ownsMachine(uint64_t ownedMachines, uint8_t machineId);
+  static bool canLearnMachine(const OwnedPokemon& pokemon, uint16_t machineId);
+  static bool ownsMachine(uint64_t ownedMachines, uint16_t machineId);
   static bool ownsMachine(uint64_t ownedMachines, uint64_t ownedSinnohMachines,
-                          uint8_t machineId);
+                          uint16_t machineId);
   static bool ownsMachine(uint64_t ownedMachines, uint64_t ownedSinnohMachines,
-                          uint32_t ownedUnovaMachines, uint8_t machineId);
-  static bool isHiddenMachine(uint8_t machineId);
-  static uint8_t machineNumber(uint8_t machineId);
+                          uint32_t ownedUnovaMachines, uint16_t machineId);
+  static bool isHiddenMachine(uint16_t machineId);
+  static uint8_t machineNumber(uint16_t machineId);
 };

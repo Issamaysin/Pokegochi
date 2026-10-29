@@ -35,6 +35,12 @@ struct GymProgress {
 
 class GymSystem {
  public:
+  // Bits 3..5 of starterClaimedBits persist the one-time Kanto, Johto and
+  // Hoenn completion rewards. Bit 6 marks saves which use this ledger; old
+  // saves are migrated without receiving a duplicate of the Master Ball
+  // already awarded by the former League-victory path.
+  static constexpr uint8_t kRegionRewardFirstBit = 3U;
+  static constexpr uint8_t kRegionRewardSchemaBit = 1U << 6U;
   static const GymDefinition* definition(GymId id);
   static GymId next(const GymProgress& progress);
   static bool hasBadge(const GymProgress& progress, GymId id);
@@ -51,6 +57,13 @@ class GymSystem {
   static bool leagueAvailable(const GymProgress& progress);
   static bool leagueComplete(const GymProgress& progress, uint8_t generation);
   static bool recordLeagueVictory(GymProgress& progress, uint8_t generation);
+  static void initializeRegionRewardLedger(GymProgress& progress);
+  // Returns a generation mask (bit 0 = Kanto) for Master Balls delivered by
+  // this call. A full Bag leaves the reward pending. stateChanged also covers
+  // the one-time migration marker even when no item was delivered.
+  static uint8_t reconcileRegionCompletionRewards(
+      GymProgress& progress, Inventory& inventory,
+      bool* stateChanged = nullptr);
   static bool needsRegionalStarter(const GymProgress& progress);
   static bool unlockWithStarter(GymProgress& progress, uint16_t speciesId);
   static bool start(BattleState& battle, PokemonCollection& collection, uint32_t playerUid,

@@ -119,7 +119,9 @@ enum class BattleKind : uint8_t {
   // Sinnoh site Gyms are independent from the 24-bit Kanto/Johto/Hoenn Gym
   // ledger. Keep this appended so every previously serialized value remains
   // stable while an interrupted Sinnoh challenge can still resume safely.
-  SinnohGym
+  SinnohGym,
+  // Generation-VI route, Gym and League battles. Appended for save ABI.
+  KalosAdventure
 };
 enum class BattleWeather : uint8_t { Clear, Rain, Sun, Sandstorm, Hail, HeavyRain, HarshSun, StrongWinds };
 // The first ten values intentionally match FireRed's gBattleTerrain indices.
@@ -282,6 +284,27 @@ struct Gen5BattlerEffectState {
   uint16_t spDefenseOverride = 0;
 };
 
+// Generation-VI battle-local mechanics. Keep this as an appended sidecar:
+// BattleState through the end of the Gen-V block is the frozen save-V46
+// prefix and must remain byte-for-byte readable by the V46 -> V47 migrator.
+struct Gen6BattlerEffectState {
+  PokemonType extraType = PokemonType::Normal;
+  bool extraTypeActive = false;
+  bool electrified = false;
+  bool powdered = false;
+  bool kingsShield = false;
+  bool spikyShield = false;
+  bool matBlock = false;
+  bool craftyShield = false;
+};
+
+enum class Gen6Terrain : uint8_t {
+  None = 0,
+  Grassy,
+  Misty,
+  Electric,
+};
+
 struct BattleRecyclableItemState {
   uint32_t pokemonUid = 0;
   HeldItem item = HeldItem::None;
@@ -424,9 +447,21 @@ struct BattleState {
   MoveId previousMoveUsedGlobally = MoveId::None;
   uint16_t playerRetaliateDueTurn = 0;
   uint16_t opponentRetaliateDueTurn = 0;
+  // Everything below this point is the V47 / Generation-VI extension.
+  Gen6BattlerEffectState playerGen6Effects{};
+  Gen6BattlerEffectState opponentGen6Effects[kOpponentTeamCapacity]{};
+  Gen6Terrain gen6Terrain = Gen6Terrain::None;
+  uint8_t gen6TerrainTurns = 0;
+  uint8_t fairyLockTurns = 0;
+  bool playerStickyWeb = false;
+  bool opponentStickyWeb = false;
+  bool ionDeluge = false;
+  bool happyHour = false;
 };
 static_assert(offsetof(BattleState, playerGen5Effects) == 856,
               "The frozen V45 battle prefix changed");
+static_assert(offsetof(BattleState, playerGen6Effects) == 944,
+              "The frozen V46 battle prefix changed");
 
 enum class BattleEventType : uint8_t {
   MoveUsed, MoveMissed, HpChanged, CriticalHit, Effectiveness,
@@ -503,7 +538,13 @@ enum class BattleMoveEffect : uint8_t {
   AbilityChangedGen5, ItemBestowed, StatsAveraged,
   // Appended for journal/save compatibility. AFTER YOU and QUASH are legal
   // in singles while their target still has an action pending.
-  TurnOrderAdjusted
+  TurnOrderAdjusted,
+  // Generation-VI effects. Appended so serialized journals from every older
+  // save keep their numeric meaning.
+  StickyWebSet, TerrainSet, TerrainEnded, FairyLockSet,
+  KingsShieldSet, SpikyShieldSet, MatBlockSet, CraftyShieldSet,
+  Powdered, Electrified, HappyHourSet, ThirdTypeAdded, StatsInverted,
+  IonDelugeSet, Celebrated
 };
 
 enum class BattleSide : uint8_t { Player, Opponent };

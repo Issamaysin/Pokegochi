@@ -164,6 +164,7 @@ NimBLECharacteristic* gServerTx = nullptr;
 NimBLEClient* gClient = nullptr;
 NimBLERemoteCharacteristic* gRemoteRx = nullptr;
 bool gOutboundPhysicalLink = false;
+bool gOutboundConnectPending = false;
 uint16_t gInboundConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
 enum class TransportEventKind : uint8_t { Discovered, Connected, Disconnected, Packet };
 struct TransportEvent {
@@ -178,14 +179,38 @@ struct TransportEvent {
 };
 QueueHandle_t gTransportQueue = nullptr;
 uint32_t gLastAdvertisementLogMs = 0;
+portMUX_TYPE gDiscoveryMux = portMUX_INITIALIZER_UNLOCKED;
+TransportEvent gLatestDiscovery{};
+bool gDiscoveryPending = false;
+uint32_t gCriticalTransportDrops = 0;
 
 void queueTransportEvent(const TransportEvent& event) {
-  if (gTransportQueue) xQueueSend(gTransportQueue, &event, 0);
+  // Advertisements can arrive dozens of times per second. They are only a
+  // latest-value observation and must never occupy the queue used by link,
+  // packet and disconnect events.
+  if (event.kind == TransportEventKind::Discovered) {
+    portENTER_CRITICAL(&gDiscoveryMux);
+    gLatestDiscovery = event;
+    gDiscoveryPending = true;
+    portEXIT_CRITICAL(&gDiscoveryMux);
+    return;
+  }
+  if (gTransportQueue && xQueueSend(gTransportQueue, &event, 0) == pdTRUE) return;
+  portENTER_CRITICAL(&gDiscoveryMux);
+  ++gCriticalTransportDrops;
+  portEXIT_CRITICAL(&gDiscoveryMux);
 }
 
 class ServerCallbacks final : public NimBLEServerCallbacks {
   void onConnect(NimBLEServer*, NimBLEConnInfo& info) override {
+    if (gOutboundConnectPending || gOutboundPhysicalLink) {
+      Serial.printf("[BLE] rejecting competing inbound link handle=%u\n",
+                    static_cast<unsigned>(info.getConnHandle()));
+      if (gServer) gServer->disconnect(info.getConnHandle());
+      return;
+    }
     if (gServer) gServer->updateConnParams(info.getConnHandle(), 12, 24, 0, 240);
+    if (NimBLEDevice::getScan()) NimBLEDevice::getScan()->stop();
     gOutboundPhysicalLink = false;
     gInboundConnectionHandle = info.getConnHandle();
     TransportEvent event{}; event.kind = TransportEventKind::Connected; event.outbound = false;
@@ -193,13 +218,16 @@ class ServerCallbacks final : public NimBLEServerCallbacks {
                   static_cast<unsigned>(info.getConnHandle()));
     queueTransportEvent(event);
   }
-  void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) override {
-    gInboundConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
-    if (!gOutboundPhysicalLink) {
+  void onDisconnect(NimBLEServer*, NimBLEConnInfo& info, int) override {
+    const bool trackedInbound = gInboundConnectionHandle == info.getConnHandle();
+    if (trackedInbound) gInboundConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
+    if (trackedInbound && !gOutboundPhysicalLink && !gOutboundConnectPending) {
       TransportEvent event{}; event.kind = TransportEventKind::Disconnected; queueTransportEvent(event);
     }
-    Serial.println("[BLE] inbound physical link disconnected");
-    if (gMultiplayer && gMultiplayer->enabled()) NimBLEDevice::startAdvertising();
+    Serial.printf("[BLE] inbound physical link disconnected handle=%u tracked=%u\n",
+                  static_cast<unsigned>(info.getConnHandle()), trackedInbound ? 1U : 0U);
+    if (gMultiplayer && gMultiplayer->enabled() && !gOutboundPhysicalLink &&
+        !gOutboundConnectPending) NimBLEDevice::startAdvertising();
   }
 } gServerCallbacks;
 
@@ -214,10 +242,8 @@ class RxCallbacks final : public NimBLECharacteristicCallbacks {
 
 class ClientCallbacks final : public NimBLEClientCallbacks {
   void onConnect(NimBLEClient*) override {
-    gOutboundPhysicalLink = true;
-    TransportEvent event{}; event.kind = TransportEventKind::Connected; event.outbound = true;
+    if (NimBLEDevice::getScan()) NimBLEDevice::getScan()->stop();
     Serial.println("[BLE] outbound physical link connected");
-    queueTransportEvent(event);
   }
   void onDisconnect(NimBLEClient*, int) override {
     if (gOutboundPhysicalLink) {
@@ -361,7 +387,11 @@ bool Multiplayer::setEnabled(bool enable) {
 #if defined(ARDUINO_ARCH_ESP32)
     if (initialized_) NimBLEDevice::deinit(true);
     if (gTransportQueue) { vQueueDelete(gTransportQueue); gTransportQueue = nullptr; }
+    portENTER_CRITICAL(&gDiscoveryMux);
+    gDiscoveryPending = false; gLatestDiscovery = {}; gCriticalTransportDrops = 0;
+    portEXIT_CRITICAL(&gDiscoveryMux);
     gServer = nullptr; gServerTx = nullptr; gClient = nullptr; gRemoteRx = nullptr;
+    gOutboundPhysicalLink = false; gOutboundConnectPending = false;
 #endif
     initialized_ = false; enabled_ = false; transportConnected_ = false;
     setState(State::Off, "TURN BLUETOOTH ON TO PLAY.");
@@ -395,12 +425,15 @@ bool Multiplayer::startTransport() {
   initialized_ = true; return true;
 #else
   if (initialized_) return true;
-  // Four entries cover discovery/connection plus two full packets. Sixteen
-  // entries required a single >3.3 KiB block and could never fit after FAT,
-  // the retained renderer and save service were active (largest block ~2.8
-  // KiB), making the visible OFF toggle appear inert.
-  if (!gTransportQueue) gTransportQueue = xQueueCreate(4, sizeof(TransportEvent));
+  // Discovery uses a coalescing mailbox, while this queue is reserved for
+  // critical link and packet events. Eight entries remain below the largest
+  // free block available after FAT/renderer/save startup and absorb short BLE
+  // bursts without silently losing battle state.
+  if (!gTransportQueue) gTransportQueue = xQueueCreate(8, sizeof(TransportEvent));
   if (!gTransportQueue) { Serial.println("[BLE] event queue allocation failed"); return false; }
+  portENTER_CRITICAL(&gDiscoveryMux);
+  gDiscoveryPending = false; gLatestDiscovery = {}; gCriticalTransportDrops = 0;
+  portEXIT_CRITICAL(&gDiscoveryMux);
   char name[20]; std::snprintf(name, sizeof(name), "POKEGOCHI-%05lu", static_cast<unsigned long>(playerId_));
   NimBLEDevice::init(name);
   NimBLEDevice::setMTU(200);
@@ -524,39 +557,57 @@ void Multiplayer::answerPeerInvitation(bool accept) {
 
 bool Multiplayer::connectTransport(const PeerRecord& peer) {
 #if !defined(ARDUINO_ARCH_ESP32)
-  (void)peer; transportConnected(true); return sendPacket(Invite, nullptr, 0, invitationToken_);
+  // The Android bridge can queue the invitation before GATT is ready, but the
+  // physical transport only becomes connected after service discovery/CCCD.
+  (void)peer; return sendPacket(Invite, nullptr, 0, invitationToken_);
 #else
   NimBLEDevice::getScan()->stop();
+  NimBLEDevice::stopAdvertising();
+  gOutboundConnectPending = true;
   Serial.printf("[BLE] connecting player=%05lu address=%s type=%u\n",
                 static_cast<unsigned long>(peer.publicData.playerId), peer.address,
                 static_cast<unsigned>(peer.addressType));
   if (!gClient) {
     gClient = NimBLEDevice::createClient();
-    if (!gClient) { Serial.println("[BLE] client allocation failed"); return false; }
+    if (!gClient) {
+      gOutboundConnectPending = false;
+      NimBLEDevice::startAdvertising();
+      Serial.println("[BLE] client allocation failed");
+      return false;
+    }
     gClient->setClientCallbacks(&gClientCallbacks, false);
     gClient->setConnectionParams(12, 24, 0, 240);
-    gClient->setConnectTimeout(5 * 1000);
+    gClient->setConnectTimeout(8 * 1000);
   }
   const NimBLEAddress address(std::string(peer.address), peer.addressType);
-  if (!gClient->connect(address, true, false, true)) {
-    Serial.printf("[BLE] physical connection failed error=%d\n", gClient->getLastError());
-    return false;
+  for (uint8_t attempt = 1; attempt <= 2; ++attempt) {
+    Serial.printf("[BLE] GATT attempt=%u/2\n", static_cast<unsigned>(attempt));
+    if (!gClient->connect(address, true, false, true)) {
+      Serial.printf("[BLE] physical connection failed error=%d\n", gClient->getLastError());
+    } else {
+      NimBLERemoteService* service = gClient->getService(kServiceUuid);
+      gRemoteRx = service ? service->getCharacteristic(kRxUuid) : nullptr;
+      NimBLERemoteCharacteristic* remoteTx = service ? service->getCharacteristic(kTxUuid) : nullptr;
+      if (gRemoteRx && remoteTx && remoteTx->subscribe(true, notificationCallback)) {
+        gOutboundConnectPending = false;
+        gOutboundPhysicalLink = true;
+        outbound_ = true;
+        transportConnected(true);
+        invitationToken_ = static_cast<uint32_t>(micros()) ^ playerId_ ^ peerId_;
+        return sendPacket(Invite, nullptr, 0, invitationToken_);
+      }
+      Serial.printf("[BLE] service/subscribe failed service=%u rx=%u tx=%u error=%d\n",
+                    service ? 1U : 0U, gRemoteRx ? 1U : 0U, remoteTx ? 1U : 0U,
+                    gClient->getLastError());
+      gRemoteRx = nullptr;
+      gClient->disconnect();
+    }
+    if (attempt < 2) delay(300);
   }
-  NimBLERemoteService* service = gClient->getService(kServiceUuid);
-  if (!service) {
-    Serial.printf("[BLE] multiplayer service missing error=%d\n", gClient->getLastError());
-    gClient->disconnect(); return false;
-  }
-  gRemoteRx = service->getCharacteristic(kRxUuid);
-  NimBLERemoteCharacteristic* remoteTx = service->getCharacteristic(kTxUuid);
-  if (!gRemoteRx || !remoteTx || !remoteTx->subscribe(true, notificationCallback)) {
-    Serial.printf("[BLE] characteristic/subscribe failed rx=%u tx=%u error=%d\n",
-                  gRemoteRx ? 1U : 0U, remoteTx ? 1U : 0U, gClient->getLastError());
-    gClient->disconnect(); return false;
-  }
-  outbound_ = true;
-  invitationToken_ = static_cast<uint32_t>(micros()) ^ playerId_ ^ peerId_;
-  return sendPacket(Invite, nullptr, 0, invitationToken_);
+  gOutboundConnectPending = false;
+  gOutboundPhysicalLink = false;
+  NimBLEDevice::startAdvertising();
+  return false;
 #endif
 }
 
@@ -622,7 +673,30 @@ void Multiplayer::processPacket(const uint8_t* bytes, size_t length) {
   const uint8_t* payload = bytes + sizeof(header);
   switch (header.type) {
     case Invite:
-      if (!enabled_ || connected()) { sendPacket(InviteReject, nullptr, 0, header.transaction); break; }
+      if (!enabled_) break;
+      // A repeated invitation means the acceptance was lost; acknowledge it
+      // again instead of rejecting an otherwise healthy session.
+      if (connected()) {
+        if (header.sourceId == peerId_ && header.transaction == invitationToken_)
+          sendPacket(InviteAccept, nullptr, 0, header.transaction);
+        else
+          sendPacket(InviteReject, nullptr, 0, header.transaction);
+        break;
+      }
+      if (state_ == State::ConfirmIncomingPeer && header.sourceId == peerId_ &&
+          header.transaction == invitationToken_) break;
+      // Simultaneous outgoing invitations are resolved without another prompt:
+      // the lower player id remains the initiator and the higher id accepts.
+      if (state_ == State::Connecting && header.sourceId == peerId_) {
+        if (playerId_ < header.sourceId) {
+          sendPacket(Invite, nullptr, 0, invitationToken_);
+        } else {
+          invitationToken_ = header.transaction;
+          sendPacket(InviteAccept, nullptr, 0, invitationToken_);
+          setState(State::Connected, "PLAYER CONNECTED.");
+        }
+        break;
+      }
       peerId_ = header.sourceId; invitationToken_ = header.transaction;
       setState(State::ConfirmIncomingPeer, "A PLAYER WANTS TO CONNECT.");
       break;
@@ -899,6 +973,9 @@ void Multiplayer::closeTransportLink() {
 #endif
   transportConnected_ = false;
   outbound_ = false;
+#if defined(ARDUINO_ARCH_ESP32)
+  gOutboundConnectPending = false;
+#endif
 }
 
 void Multiplayer::resetSession(bool) {
@@ -1234,11 +1311,34 @@ void Multiplayer::completeTradeCommit(bool success) {
 
 void Multiplayer::update() {
 #if defined(ARDUINO_ARCH_ESP32)
+  TransportEvent discovery{};
+  bool hasDiscovery = false;
+  uint32_t criticalDrops = 0;
+  portENTER_CRITICAL(&gDiscoveryMux);
+  if (gDiscoveryPending) {
+    discovery = gLatestDiscovery;
+    gDiscoveryPending = false;
+    hasDiscovery = true;
+  }
+  criticalDrops = gCriticalTransportDrops;
+  gCriticalTransportDrops = 0;
+  portEXIT_CRITICAL(&gDiscoveryMux);
+  if (hasDiscovery)
+    transportDiscovered(discovery.id, discovery.rssi, discovery.address, discovery.addressType);
+  if (criticalDrops) {
+    Serial.printf("[BLE] critical transport queue overflow drops=%lu; resetting link\n",
+                  static_cast<unsigned long>(criticalDrops));
+    if (gTransportQueue) xQueueReset(gTransportQueue);
+    closeTransportLink();
+    resetSession(true);
+    setState(State::Advertising, "BLUETOOTH OVERLOADED. TRY AGAIN.");
+    NimBLEDevice::startAdvertising();
+    return;
+  }
   TransportEvent event{};
   while (gTransportQueue && xQueueReceive(gTransportQueue, &event, 0) == pdTRUE) {
     switch (event.kind) {
-      case TransportEventKind::Discovered:
-        transportDiscovered(event.id, event.rssi, event.address, event.addressType); break;
+      case TransportEventKind::Discovered: break;
       case TransportEventKind::Connected: transportConnected(event.outbound); break;
       case TransportEventKind::Disconnected: transportDisconnected(); break;
       case TransportEventKind::Packet: transportPacket(event.bytes, event.length); break;

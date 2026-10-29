@@ -65,7 +65,7 @@ BattleSide firstMoveSide(const BattleActionResult& result){
 }
 
 MoveId moveNamed(const char* name){
-  for(uint16_t id=1;id<=559U;++id){
+  for(uint16_t id=1;id<=617U;++id){
     const FullMoveData* move=findFullMove(static_cast<MoveId>(id));
     if(move&&std::strcmp(move->name,name)==0)return static_cast<MoveId>(id);
   }

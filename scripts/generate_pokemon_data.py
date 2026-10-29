@@ -8,6 +8,8 @@ from pathlib import Path
 
 from unova_rom_data import (evolutions as white_evolutions, expansion_text,
                             internal_ability_id, personal_record)
+from kalos_rom_data import (evolutions as y_evolutions,
+                            personal_record as y_personal_record)
 
 ROOT = Path(__file__).resolve().parent.parent
 DECOMP = ROOT / ".downloads" / "pokefirered-tree" / "pokefirered-master"
@@ -64,6 +66,23 @@ gen5_ability_ids = {symbol: 125 + index
                     for index, symbol in enumerate(gen5_ability_symbols)}
 all_ability_ids.update(gen5_ability_ids)
 
+gen6_ability_symbols = [
+    "AROMA_VEIL", "FLOWER_VEIL", "CHEEK_POUCH", "PROTEAN", "FUR_COAT",
+    "MAGICIAN", "BULLETPROOF", "COMPETITIVE", "STRONG_JAW",
+    "REFRIGERATE", "SWEET_VEIL", "STANCE_CHANGE", "GALE_WINGS",
+    "MEGA_LAUNCHER", "GRASS_PELT", "SYMBIOSIS", "TOUGH_CLAWS",
+    "PIXILATE", "GOOEY", "AERILATE", "PARENTAL_BOND", "DARK_AURA",
+    "FAIRY_AURA", "AURA_BREAK",
+]
+# Pokemon Y uses canonical ability ids 165..188.  Pokegochi retains
+# Cacophony=76 in its persistent byte ABI, so every canonical id from Air
+# Lock onward remains shifted by one exactly like the White importer.
+gen6_ability_ids = {
+    symbol: internal_ability_id(165 + index)
+    for index, symbol in enumerate(gen6_ability_symbols)
+}
+all_ability_ids.update(gen6_ability_ids)
+
 platinum_species_symbols = [line.strip().removeprefix("SPECIES_")
                             for line in (PLATINUM / "generated/species.txt").read_text(
                                 encoding="utf-8").splitlines()
@@ -95,6 +114,12 @@ for species_id, symbol in species:
 
 def white_ability_triplet(species_id: int) -> tuple[int, int, int]:
     record = personal_record(species_id)
+    return tuple(internal_ability_id(record[offset])
+                 for offset in (24, 25, 26))
+
+
+def y_ability_triplet(species_id: int) -> tuple[int, int, int]:
+    record = y_personal_record(species_id)
     return tuple(internal_ability_id(record[offset])
                  for offset in (24, 25, 26))
 
@@ -258,6 +283,53 @@ for number in range(494, 650):
         f'{record[18]}}},'
     )
 
+# Generation VI base species come directly from the validated local Pokemon Y
+# personal table.  Alternate-form rows remain available to the form layer but
+# never displace the National-Dex base ids #650-721.
+gen6_symbols = {
+    int(number): symbol
+    for symbol, number in re.findall(
+        r"\bSPECIES_([A-Z0-9_]+)\s*=\s*(\d+)", expansion_species_constants)
+    if 650 <= int(number) <= 721
+}
+if len(gen6_symbols) != 72:
+    raise RuntimeError(f"Expected 72 Gen-VI species symbols, got {len(gen6_symbols)}")
+
+gen6_display_names = {
+    "SCATTERBUG_ICY_SNOW": "SCATTERBUG",
+    "SPEWPA_ICY_SNOW": "SPEWPA",
+    "VIVILLON_ICY_SNOW": "VIVILLON",
+    "FLABEBE_RED": "FLABEBE",
+    "FLOETTE_RED": "FLOETTE",
+    "FLORGES_RED": "FLORGES",
+    "FURFROU_NATURAL": "FURFROU",
+    "MEOWSTIC_M": "MEOWSTIC",
+    "AEGISLASH_SHIELD": "AEGISLASH",
+    "PUMPKABOO_AVERAGE": "PUMPKABOO",
+    "GOURGEIST_AVERAGE": "GOURGEIST",
+    "XERNEAS_NEUTRAL": "XERNEAS",
+    "ZYGARDE_50": "ZYGARDE",
+    "HOOPA_CONFINED": "HOOPA",
+}
+gen6_types = ds_types + ["Fairy"]
+for number in range(650, 722):
+    record = y_personal_record(number)
+    symbol = gen6_symbols[number]
+    name = gen6_display_names.get(symbol, symbol.replace("_", " "))
+    ev_bits = int.from_bytes(record[10:12], "little")
+    evs = [(ev_bits >> shift) & 0x3 for shift in (0, 2, 4, 8, 10, 6)]
+    ability_one, ability_two, hidden = y_ability_triplet(number)
+    rows.append(
+        f'    {{{number}, "{name}", PokemonType::{gen6_types[record[6]]}, '
+        f'PokemonType::{gen6_types[record[7]]}, {record[0]}, {record[1]}, '
+        f'{record[2]}, {record[4]}, {record[5]}, {record[3]}, {record[8]}, '
+        f'{int.from_bytes(record[34:36], "little")}, GrowthRate::{ds_growth[record[21]]}, '
+        f'{ability_one}, {ability_two}, {ability_one}, {ability_two}, '
+        f'{ability_one}, {ability_two}, {hidden}, '
+        f'{evs[0]}, {evs[1]}, {evs[2]}, {evs[3]}, {evs[4]}, {evs[5]}, '
+        f'{record[18]}}},'
+    )
+
 # Keep original level evolutions. Convert stones/trades/friendship to deterministic
 # levels across the National Dex. Every branch is retained for the in-game chooser.
 evolutions = []
@@ -372,6 +444,30 @@ for source_id in range(1, 650):
         if entry not in evolutions:
             evolutions.append(entry)
 
+
+def kalos_evolution_level(method: int, argument: int) -> int:
+    # X/Y methods 4/23/28/30/31/32/33/34 carry a level.  Pokegochi adapts
+    # hardware orientation, weather, time, party-type and gender checks to
+    # that canonical threshold; friendship/item/trade methods use the same
+    # deterministic levels established by the earlier regions.
+    if method in {4, 23, 24, 28, 30, 31, 32, 33, 34}:
+        return max(1, min(100, argument))
+    if method in {1, 2, 3, 29}:
+        return 30
+    if method in {5, 6, 7}:
+        return 40
+    return 36
+
+
+for source_id in range(1, 722):
+    for method, argument, target_id in y_evolutions(source_id):
+        if target_id > 721 or (source_id <= 649 and target_id <= 649):
+            continue
+        entry = (source_id, target_id,
+                 kalos_evolution_level(method, argument))
+        if entry not in evolutions:
+            evolutions.append(entry)
+
 content = "// Generated by scripts/generate_pokemon_data.py from local pokefirered data.\n"
 content += "constexpr SpeciesData kSpecies[] = {\n" + "\n".join(rows) + "\n};\n\n"
 content += "constexpr EvolutionData kEvolutions[] = {\n"
@@ -463,6 +559,21 @@ for symbol in gen5_ability_symbols:
                    "GENERATION V ABILITY.").replace("\\n", " ").upper()
     description = description.replace('\\', '\\\\').replace('"', '\\"')
     content += f'    {{{gen5_ability_ids[symbol]}, "{name}", "{description}"}},\n'
+for symbol in gen6_ability_symbols:
+    block_match = re.search(
+        rf"\[ABILITY_{symbol}\]\s*=\s*\{{(.*?)\n\s*\}},",
+        expansion_abilities, re.S)
+    if not block_match:
+        raise RuntimeError(f"Missing expansion ability block {symbol}")
+    block = block_match.group(1)
+    name_match = re.search(r'\.name\s*=\s*_\("([^"]+)"\)', block)
+    description_match = re.search(
+        r'\.description\s*=\s*COMPOUND_STRING\("([^"]*)"\)', block)
+    name = (name_match.group(1) if name_match else symbol.replace("_", " ")).upper()
+    description = (description_match.group(1) if description_match else
+                   "GENERATION VI ABILITY.").replace("\\n", " ").upper()
+    description = description.replace('\\', '\\\\').replace('"', '\\"')
+    content += f'    {{{gen6_ability_ids[symbol]}, "{name}", "{description}"}},\n'
 content += "};\n"
 
 wild_data = json.loads((DECOMP / "src/data/wild_encounters.json").read_text(encoding="utf-8"))
@@ -584,5 +695,5 @@ assert encounter_weight(374) == 6 and encounter_weight(376) == 3  # Beldum famil
 assert all(encounter_weight(species_id) == 1 for species_id in legendary)
 assert all(species_id in legendary or encounter_weight(species_id) >= 3
            for species_id, _ in species)
-OUT.write_text(content, encoding="utf-8", newline="\n")
+OUT.write_text(content, encoding="utf-8")
 print(f"Generated {len(rows)} species and {len(evolutions)} National evolutions")

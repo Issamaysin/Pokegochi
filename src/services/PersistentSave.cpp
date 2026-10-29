@@ -47,6 +47,7 @@ void initializeNewSave(GameSave& save) {
   save.battle.rngState = 0xA341316CU;
   save.battle.unlockedGeneration = 1;
   save.gymProgress.unlockedGeneration = 1;
+  save.gymProgress.starterClaimedBits = GymSystem::kRegionRewardSchemaBit;
   save.money = 3000;
   save.mart.elapsedSeconds = 86400;
   save.mart.rng = 0x4D415254U;
@@ -125,19 +126,25 @@ bool PersistentSave::begin(void* migrationScratch, size_t migrationScratchBytes)
   // Current records are read and committed as streams, so no permanent
   // Record-sized heap allocation is needed. The renderer's still-unused boot
   // arena is borrowed only if an older save must be migrated.
-  scratch_ = migrationScratchBytes >= sizeof(Record)
+  const size_t requiredMigrationBytes = std::max(sizeof(Record), sizeof(RecordV47));
+  scratch_ = migrationScratchBytes >= requiredMigrationBytes
                  ? reinterpret_cast<Record*>(migrationScratch)
                  : nullptr;
-  Serial.printf("[SAVE] storage ready migration-scratch=%s/%u record=%u heap=%u block=%u\n",
+  scratchBytes_ = scratch_ ? migrationScratchBytes : 0U;
+  Serial.printf("[SAVE] storage ready migration-scratch=%s/%u record=%u legacy=%u heap=%u block=%u\n",
                 scratch_ ? "OK" : "NONE", static_cast<unsigned>(migrationScratchBytes),
                 static_cast<unsigned>(sizeof(Record)),
+                static_cast<unsigned>(sizeof(RecordV47)),
                 static_cast<unsigned>(ESP.getFreeHeap()),
                 static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #else
   (void)migrationScratch;
   (void)migrationScratchBytes;
-  if (!scratch_) scratch_ = new (std::nothrow) Record;
+  const size_t requiredMigrationBytes = std::max(sizeof(Record), sizeof(RecordV47));
+  if (!scratch_)
+    scratch_ = reinterpret_cast<Record*>(::operator new(requiredMigrationBytes, std::nothrow));
   if (!scratch_) return false;
+  scratchBytes_ = requiredMigrationBytes;
 #endif
   return true;
 }
@@ -203,7 +210,7 @@ bool PersistentSave::inspectAnyFileRecord(const char* key, uint32_t& sequence) c
   if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) != sizeof(header) ||
       header.magic != kMagic || header.version < 21U ||
       header.version > kFormatVersion || !header.payloadSize ||
-      header.payloadSize > sizeof(GameSave) ||
+      header.payloadSize > std::max(sizeof(GameSave), sizeof(GameSaveV47)) ||
       file.size() != sizeof(CurrentSaveHeader) + header.payloadSize +
                          2U * sizeof(uint32_t)) {
     file.close();
@@ -693,6 +700,38 @@ bool PersistentSave::readRecordV45(const char* key, RecordV45& record) {
   return read && record.magic == kMagic && record.version == 45 &&
          record.payloadSize == sizeof(GameSaveV45) && record.crc == calculatedCrc;
 }
+bool PersistentSave::readRecordV46(const char* key, RecordV46& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV46)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV46) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV46, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 46 &&
+         record.payloadSize == sizeof(GameSaveV46) && record.crc == calculatedCrc;
+}
+bool PersistentSave::readRecordV47(const char* key, RecordV47& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV47)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV47) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV47, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 47 &&
+         record.payloadSize == sizeof(GameSaveV47) && record.crc == calculatedCrc;
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -909,6 +948,138 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     save.battle.playerEncoreTurns=0;
     std::memset(save.battle.opponentEncoreTurns,0,sizeof(save.battle.opponentEncoreTurns));
   };
+  if (!found) {
+    // V48 keeps the complete Kalos payload but compacts V47's occupied Box
+    // positions into 784 slots. Reject a genuinely overfull legacy Box
+    // instead of silently dropping any Pokemon.
+    if (scratchBytes_ >= sizeof(RecordV47)) {
+      RecordV47* legacy47 = reinterpret_cast<RecordV47*>(record);
+      bool legacy47CandidateSeen = false;
+      bool legacy47Found = false;
+      bool legacy47Overfull = false;
+      uint32_t legacy47Sequence = 0;
+      for (const char* key : {"save_a", "save_b"}) {
+        std::memset(legacy47, 0, sizeof(*legacy47));
+        if (!readRecordV47(key, *legacy47) ||
+            (legacy47CandidateSeen && !isNewer(legacy47->sequence, legacy47Sequence))) continue;
+        legacy47CandidateSeen = true;
+        legacy47Sequence = legacy47->sequence;
+        initializeNewSave(save);
+        const GameSaveV47& old = legacy47->payload;
+        if (!save.collection.importV47(old.collection)) {
+          legacy47Found = false;
+          legacy47Overfull = true;
+          continue;
+        }
+        save.playTimeSeconds = old.playTimeSeconds;
+        save.bootCount = old.bootCount;
+        save.flags = old.flags;
+        save.activePetSlot = old.activePetSlot;
+        save.inventory = old.inventory;
+        save.encounterCharges = old.encounterCharges;
+        save.wildEncounterClock = old.wildEncounterClock;
+        save.battle = old.battle;
+        save.pokedex = old.pokedex;
+        save.gymProgress = old.gymProgress;
+        save.money = old.money;
+        save.mart = old.mart;
+        save.moveLearning = old.moveLearning;
+        save.evolutionQueue = old.evolutionQueue;
+        save.egg = old.egg;
+        save.settings = old.settings;
+        save.ownedMachines = old.ownedMachines;
+        save.statistics = old.statistics;
+        save.martSeenDay = old.martSeenDay;
+        save.ppItems = old.ppItems;
+        save.homePetPlacement = old.homePetPlacement;
+        save.berryGarden = old.berryGarden;
+        save.creativeBackgrounds = old.creativeBackgrounds;
+        save.specialHeldItems = old.specialHeldItems;
+        save.lastNpcGiftDay = old.lastNpcGiftDay;
+        save.clockLocalEpochSeconds = old.clockLocalEpochSeconds;
+        save.bossCooldownSecondsRemaining = old.bossCooldownSecondsRemaining;
+        save.bossEncounter = old.bossEncounter;
+        save.eggInventory = old.eggInventory;
+        save.sinnoh = old.sinnoh;
+        save.towerDefense = old.towerDefense;
+        save.gen4UniqueItems = old.gen4UniqueItems;
+        save.unova = old.unova;
+        save.gen5UniqueItems = old.gen5UniqueItems;
+        save.unovaForms = old.unovaForms;
+        save.kalos = old.kalos;
+        legacy47Found = true;
+        legacy47Overfull = false;
+      }
+      if (legacy47Found) {
+        sequence_ = legacy47Sequence;
+        nextSlotA_ = true;
+        if (!commit(save)) return SaveLoadResult::StorageError;
+        return SaveLoadResult::Loaded;
+      }
+      if (legacy47Overfull) return SaveLoadResult::StorageError;
+    }
+  }
+  if (!found) {
+    // V47 enlarges Box/Dex storage and appends Generation-VI battle state.
+    // Preserve the complete shipped V46 Unova payload and initialize only
+    // the new Kalos capacity/tail to clean defaults.
+    static_assert(sizeof(Record) >= sizeof(RecordV46),
+                  "V47 record must hold the V46 migration buffer");
+    RecordV46* legacy46 = reinterpret_cast<RecordV46*>(record);
+    bool legacy46Found = false;
+    uint32_t legacy46Sequence = 0;
+    for (const char* key : {"save_a", "save_b"}) {
+      std::memset(legacy46, 0, sizeof(*legacy46));
+      if (!readRecordV46(key, *legacy46) ||
+          (legacy46Found && !isNewer(legacy46->sequence, legacy46Sequence))) continue;
+      initializeNewSave(save);
+      const GameSaveV46& old = legacy46->payload;
+      save.playTimeSeconds = old.playTimeSeconds;
+      save.bootCount = old.bootCount;
+      save.flags = old.flags;
+      save.activePetSlot = old.activePetSlot;
+      save.collection = old.collection;
+      save.inventory = old.inventory;
+      save.encounterCharges = old.encounterCharges;
+      save.wildEncounterClock = old.wildEncounterClock;
+      std::memcpy(&save.battle,old.battle.bytes,sizeof(old.battle.bytes));
+      save.pokedex = old.pokedex;
+      save.gymProgress = old.gymProgress;
+      save.money = old.money;
+      save.mart = old.mart;
+      save.moveLearning = old.moveLearning;
+      save.evolutionQueue = old.evolutionQueue;
+      save.egg = old.egg;
+      save.settings = old.settings;
+      save.ownedMachines = old.ownedMachines;
+      save.statistics = old.statistics;
+      save.martSeenDay = old.martSeenDay;
+      save.ppItems = old.ppItems;
+      save.homePetPlacement = old.homePetPlacement;
+      save.berryGarden = old.berryGarden;
+      save.creativeBackgrounds = old.creativeBackgrounds;
+      save.specialHeldItems = old.specialHeldItems;
+      save.lastNpcGiftDay = old.lastNpcGiftDay;
+      save.clockLocalEpochSeconds = old.clockLocalEpochSeconds;
+      save.bossCooldownSecondsRemaining = old.bossCooldownSecondsRemaining;
+      save.bossEncounter = old.bossEncounter;
+      save.eggInventory = old.eggInventory;
+      save.sinnoh = old.sinnoh;
+      save.towerDefense = old.towerDefense;
+      save.gen4UniqueItems = old.gen4UniqueItems;
+      save.unova = old.unova;
+      save.gen5UniqueItems = old.gen5UniqueItems;
+      save.unovaForms = old.unovaForms;
+      legacy46Sequence = legacy46->sequence;
+      legacy46Found = true;
+    }
+    if (legacy46Found) {
+      sequence_ = legacy46Sequence;
+      nextSlotA_ = true;
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
+  }
   if (!found) {
     // V46 enlarges Box/Dex storage and appends Unova state. Preserve the
     // complete V45 Sinnoh payload before initializing the new tail.

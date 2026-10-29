@@ -25,9 +25,18 @@ constexpr uint8_t kFirstCustomAbilityId = 192;
 const MegaFormData* formData(uint16_t speciesId, MegaVariant variant);
 MegaVariant variantFor(const OwnedPokemon& pokemon);
 bool canTransform(uint16_t speciesId);
+// Rayquaza transforms by using Dragon Ascent and explicitly rejects the
+// universal stone. Kyogre, Groudon and every ordinary Mega retain it.
+bool canHoldMegaStone(uint16_t speciesId);
+bool activateRayquazaBattleMega(OwnedPokemon& pokemon);
+bool resetRayquazaBattleMega(OwnedPokemon& pokemon);
 uint8_t variantChoiceCount(uint16_t speciesId);
 MegaVariant variantChoice(uint16_t speciesId, uint8_t index);
 bool setVariantChoice(OwnedPokemon& pokemon, MegaVariant variant);
+// Mega Zygarde is the sole Mega whose known move changes while transformed.
+// Keeps a learned Core Enforcer/Nihil Light slot consistent with the held
+// Mega Stone, including old saves and item removal.
+bool synchronizeSignatureMove(OwnedPokemon& pokemon);
 uint8_t baseHp(const OwnedPokemon& pokemon, uint8_t fallback);
 uint8_t baseStat(const OwnedPokemon& pokemon, uint8_t statIndex, uint8_t fallback);
 PokemonType type1(const OwnedPokemon& pokemon, PokemonType fallback);

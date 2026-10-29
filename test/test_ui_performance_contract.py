@@ -40,8 +40,9 @@ def main() -> None:
     summary_pool = MAIN[summary_pool_start:summary_pool_end]
     assert "summaryMovePoolCacheValid && summaryMovePoolCacheKey == cacheKey" in summary_pool
     assert summary_pool.index("summaryMovePoolCacheValid &&") < summary_pool.index(
-        "relearnableMovesForForm("
+        "relearnableMovesForPokemon("
     )
+    assert "MegaEvolution::variantFor(pokemon)" in summary_pool
 
     summary_touch_start = MAIN.index("if(screen==Screen::BattleSummary){")
     summary_touch_end = MAIN.index("if (screen == Screen::Bag) {", summary_touch_start)
@@ -87,7 +88,9 @@ def main() -> None:
     inventory_touch = MAIN[inventory_touch_start:inventory_touch_end]
     assert "inside(p, 106, kDnaSplicersY, 203, kKeyItemCompactH)" in inventory_touch
     assert inventory_touch.count("openDnaSplicersFromInventory();") == 2
-    assert "dnaSplicersSelected() ? \"USE\" : \"OPEN\"" in MAIN
+    assert "(dnaSplicersSelected() || prisonBottleSelected()) ? \"USE\" : \"OPEN\"" in MAIN
+    assert '"PRISON BOTTLE"' in contents
+    assert "usePrisonBottleFromInventory();" in inventory_touch
 
     mart_start = MAIN.index(
         "if (inside(p, kHomeBottomX[5], kHomeBottomY, kHomeButtonWidth, "
@@ -183,6 +186,21 @@ def main() -> None:
     release_start = RENDERER.index("void releaseSceneWorkspace(")
     release_end = RENDERER.index("bool AssetRenderer::restoreSceneWorkspace", release_start)
     assert "AssetRenderer::clearCache()" in RENDERER[release_start:release_end]
+
+    # The Kalos living Dex is 53,712 bytes. On the no-PSRAM board the SD/FAT
+    # mount leaves a 53,236-byte ordinary-heap block when the retained visual
+    # layer table is there, causing an immediate reboot before save loading.
+    # Keep the full 36-layer table in the otherwise spare RTC slow bank.
+    assert "RTC_DATA_ATTR BattleVisualLayer" in MAIN
+    assert "battleVisualLayerStorage[kBattleVisualLayerCapacity]" in MAIN
+    assert "battleVisualLayers = battleVisualLayerStorage" in MAIN
+    assert "std::memset(battleVisualLayerStorage" in MAIN
+    esp_layers_start = MAIN.index(
+        "#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)\n"
+        "RTC_DATA_ATTR BattleVisualLayer"
+    )
+    esp_layers_end = MAIN.index("#endif", esp_layers_start)
+    assert "std::calloc" not in MAIN[esp_layers_start:esp_layers_end]
 
     commit_start = SAVE.index("bool PersistentSave::commit(")
     commit_end = SAVE.index("bool PersistentSave::reset(", commit_start)

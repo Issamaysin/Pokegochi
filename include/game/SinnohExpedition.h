@@ -24,7 +24,10 @@ enum class SinnohSite : uint8_t {
 struct SinnohExpeditionState {
   uint32_t rngState = 0x53494E4EU;  // "SINN"
   uint16_t research = 0;
-  // This occupies the former excavations slot for save compatibility.
+  // This occupies the former excavations slot for save compatibility. Under
+  // the exploration schema its low byte is a capped successful-battle count
+  // and its high byte records which of the eight repeatable EXPLORE missions
+  // have been cleared at least once.
   uint16_t battles = 0;
   uint8_t unlockedSites = 0;
   // The UI now uses its visible carousel cursor instead of a persisted active
@@ -71,6 +74,7 @@ class SinnohExpedition {
   // while still leaving every new Gym available to play.
   static constexpr uint8_t kGymSchemaBit = 1U << 2;
   static constexpr uint8_t kLegacyCompletionBit = 1U << 3;
+  static constexpr uint8_t kExplorationSchemaBit = 1U << 4;
   static constexpr uint8_t kMaxEncounterLevel = 95U;
   static constexpr uint16_t kMaximumResearch = 999U;
   static constexpr uint16_t kGymResearchReward = 20U;
@@ -98,10 +102,17 @@ class SinnohExpedition {
   static bool hasGymVictory(const SinnohExpeditionState& state, SinnohSite site);
   static uint8_t gymVictoryCount(const SinnohExpeditionState& state);
   static bool allGymsDefeated(const SinnohExpeditionState& state);
+  static bool hasExplored(const SinnohExpeditionState& state, SinnohSite site);
+  static uint8_t exploredSiteCount(const SinnohExpeditionState& state);
+  static bool allSitesExplored(const SinnohExpeditionState& state);
   // New saves complete Sinnoh by defeating all eight leaders. Saves which
   // had already opened every site before this system existed remain complete
   // for rewards and Unova, but may still challenge the new leaders.
   static bool completed(const SinnohExpeditionState& state);
+  // Regional 100% requires every unique Gym and at least one successful clear
+  // of each repeatable site EXPLORE mission. Legacy completion remains enough
+  // for the historical theme/Unova gate, but not for a new 100% reward.
+  static bool fullyCompleted(const SinnohExpeditionState& state);
   static const SinnohGymDefinition* gymDefinition(SinnohSite site);
   static bool gymChallengeAvailable(const SinnohExpeditionState& state,
                                     SinnohSite site);
@@ -114,9 +125,9 @@ class SinnohExpedition {
     bool platinumThemeUnlocked = false;
     bool masterBallGranted = false;
   };
-  // Grants the one-time reward after all eight Gyms are defeated. The Platinum
-  // theme is always recorded immediately; the Master Ball remains pending if
-  // its inventory stack is full and is granted on the next reconciliation.
+  // The theme follows the historical completion gate. The Master Ball requires
+  // regional 100%, remains pending if its stack is full, and is delivered on
+  // the next reconciliation after the player creates inventory space.
   static CompletionReward reconcileCompletionReward(SinnohExpeditionState& state,
                                                     Inventory& inventory);
   static uint16_t unlockCost(SinnohSite site);
@@ -128,7 +139,8 @@ class SinnohExpedition {
   // Sinnoh" label in the UI instead of trying to render 107 icons.
   static uint8_t availableSpecies(SinnohSite site, uint16_t* output,
                                   uint8_t capacity);
-  static uint16_t recordBattle(SinnohExpeditionState& state, bool successful);
+  static uint16_t recordBattle(SinnohExpeditionState& state, SinnohSite site,
+                               bool successful);
   static uint16_t chooseEncounterSpecies(const SinnohExpeditionState& state,
                                          SinnohSite site, uint8_t teamLevel,
                                          uint32_t seed);

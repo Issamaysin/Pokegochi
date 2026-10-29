@@ -81,6 +81,11 @@ class AssetRenderer {
   static void* bootScratch(size_t& capacity);
   static bool draw(PixelCanvas& display, const char* path, int16_t x, int16_t y,
                    bool useCache = true);
+  // Spinda's four markings are generated from its complete personality value
+  // over the resident front sprite, matching the cartridge's palette-index
+  // spot operation without creating thousands of separate assets.
+  static bool drawSpinda(PixelCanvas& display, const char* path,
+                         int16_t x, int16_t y, uint32_t personality);
   // Draw an already-resident indexed sprite with its columns reversed. Home
   // partners use this to face their horizontal walking direction without a
   // second asset or any extra SD access.

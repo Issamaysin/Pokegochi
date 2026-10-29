@@ -9,7 +9,7 @@ enum CustomAbility : uint8_t {
   SolarPower, Pixilate, MagicBounce, Filter, StrongJaw, SheerForce,
   Prankster, Refrigerate, PrimordialSea, DesolateLand, DeltaStream,
   Multiscale, InnardsOut, ElectricSurge, Stalwart, Sharpness, Dragonize,
-  MegaSol, PiercingDrill, Eelevate, UnseenFist,
+  MegaSol, PiercingDrill, Eelevate, UnseenFist, FireMane,
 };
 
 constexpr AbilityData kCustomAbilities[] = {
@@ -45,6 +45,7 @@ constexpr AbilityData kCustomAbilities[] = {
   {PiercingDrill,"PIERCING DRILL","CONTACT MOVES BYPASS PROTECTION."},
   {Eelevate,"EELEVATE","GROUND IMMUNITY; KOS BOOST TOP STAT."},
   {UnseenFist,"UNSEEN FIST","CONTACT MOVES BYPASS PROTECTION."},
+  {FireMane,"FIRE MANE","BOOSTS FIRE MOVES BY 30%."},
 };
 
 // Official Mega Evolutions in the available National Dex, plus the two
@@ -118,6 +119,18 @@ constexpr MegaFormData kForms[] = {
  {604,MegaVariant::Mega,85,145,80,135,90,80,PokemonType::Electric,PokemonType::Electric,Eelevate,"mega","MEGA"},
  {609,MegaVariant::Mega,60,75,110,175,110,90,PokemonType::Ghost,PokemonType::Fire,152,"mega","MEGA"},
  {623,MegaVariant::Mega,89,159,105,70,105,55,PokemonType::Ground,PokemonType::Ghost,UnseenFist,"mega","MEGA"},
+ {652,MegaVariant::Mega,88,137,172,74,115,44,PokemonType::Grass,PokemonType::Fighting,172,"mega","MEGA"},
+ {655,MegaVariant::Mega,75,69,72,159,125,134,PokemonType::Fire,PokemonType::Psychic,26,"mega","MEGA"},
+ {658,MegaVariant::Mega,72,125,77,133,81,142,PokemonType::Water,PokemonType::Dark,169,"mega","MEGA"},
+ {668,MegaVariant::Mega,86,88,92,129,86,126,PokemonType::Fire,PokemonType::Normal,FireMane,"mega","MEGA"},
+ {670,MegaVariant::Mega,74,85,87,155,148,102,PokemonType::Fairy,PokemonType::Fairy,188,"mega","MEGA"},
+ {678,MegaVariant::Mega,74,48,76,143,101,124,PokemonType::Psychic,PokemonType::Psychic,36,"mega","MEGA"},
+ {687,MegaVariant::Mega,86,102,88,98,120,88,PokemonType::Dark,PokemonType::Psychic,127,"mega","MEGA"},
+ {689,MegaVariant::Mega,72,140,130,64,106,88,PokemonType::Rock,PokemonType::Fighting,ToughClaws,"mega","MEGA"},
+ {691,MegaVariant::Mega,65,85,105,132,163,44,PokemonType::Poison,PokemonType::Dragon,145,"mega","MEGA"},
+ {701,MegaVariant::Mega,78,137,100,74,93,118,PokemonType::Fighting,PokemonType::Flying,NoGuard,"mega","MEGA"},
+ {718,MegaVariant::Mega,216,70,91,216,85,100,PokemonType::Dragon,PokemonType::Ground,189,"mega","MEGA"},
+ {719,MegaVariant::Mega,50,160,110,160,110,110,PokemonType::Rock,PokemonType::Fairy,MagicBounce,"mega","MEGA"},
 };
 }
 
@@ -125,12 +138,28 @@ namespace MegaEvolution {
 namespace {
 constexpr uint8_t kVariantChoiceShift=11U;
 constexpr uint32_t kVariantChoiceMask=0x07UL<<kVariantChoiceShift;
+constexpr uint32_t kRayquazaBattleMegaMask=1UL<<15U;
 }
 const MegaFormData* formData(uint16_t speciesId,MegaVariant variant){
   for(const auto& form:kForms)if(form.speciesId==speciesId&&form.variant==variant)return &form;
   return nullptr;
 }
 bool canTransform(uint16_t speciesId){for(const auto& form:kForms)if(form.speciesId==speciesId)return true;return false;}
+bool canHoldMegaStone(uint16_t speciesId){
+  return speciesId!=384U&&canTransform(speciesId);
+}
+bool activateRayquazaBattleMega(OwnedPokemon& pokemon){
+  if(pokemon.speciesId!=384U||
+     (pokemon.legacyCareCounterReserved&kRayquazaBattleMegaMask))return false;
+  pokemon.legacyCareCounterReserved|=kRayquazaBattleMegaMask;
+  return true;
+}
+bool resetRayquazaBattleMega(OwnedPokemon& pokemon){
+  if(pokemon.speciesId!=384U||
+     !(pokemon.legacyCareCounterReserved&kRayquazaBattleMegaMask))return false;
+  pokemon.legacyCareCounterReserved&=~kRayquazaBattleMegaMask;
+  return true;
+}
 uint8_t variantChoiceCount(uint16_t speciesId){
   uint8_t count=0;for(const auto& form:kForms)if(form.speciesId==speciesId)++count;return count;
 }
@@ -143,10 +172,20 @@ bool setVariantChoice(OwnedPokemon& pokemon,MegaVariant variant){
   if(!formData(pokemon.speciesId,variant))return false;
   pokemon.legacyCareCounterReserved=(pokemon.legacyCareCounterReserved&~kVariantChoiceMask)|
       (static_cast<uint32_t>(variant)<<kVariantChoiceShift);
+  synchronizeSignatureMove(pokemon);
   return true;
 }
 MegaVariant variantFor(const OwnedPokemon& pokemon){
+  if(pokemon.speciesId==384U)
+    return (pokemon.legacyCareCounterReserved&kRayquazaBattleMegaMask)
+        ?MegaVariant::Mega:MegaVariant::None;
   if(pokemon.heldItem!=HeldItem::MegaStone)return MegaVariant::None;
+  // Zygarde may carry its stone in 10% and 50% Forme, but unlike every
+  // ordinary Mega it does not transform merely by equipping the item. The
+  // stone is consumed as a form condition only when Power Construct reaches
+  // Complete Forme in battle.
+  if(pokemon.speciesId==718U&&CollectionLogic::resolvedForm(pokemon)!=2U)
+    return MegaVariant::None;
   const MegaVariant selected=static_cast<MegaVariant>(
       (pokemon.legacyCareCounterReserved&kVariantChoiceMask)>>kVariantChoiceShift);
   if(selected!=MegaVariant::None&&formData(pokemon.speciesId,selected))return selected;
@@ -154,15 +193,62 @@ MegaVariant variantFor(const OwnedPokemon& pokemon){
   // until the player next equips the stone and chooses a form.
   return variantChoice(pokemon.speciesId,0);
 }
+bool synchronizeSignatureMove(OwnedPokemon& pokemon){
+  if(pokemon.speciesId!=718U)return false;
+  const MoveId core=static_cast<MoveId>(687U);
+  const MoveId nihil=static_cast<MoveId>(920U);
+  const bool mega=variantFor(pokemon)==MegaVariant::Mega;
+  const MoveId desired=mega?nihil:core;
+  const MoveId obsolete=mega?core:nihil;
+  int8_t desiredSlot=-1;
+  for(uint8_t slot=0U;slot<kMoveSlots;++slot)
+    if(pokemon.moves[slot]==desired){desiredSlot=static_cast<int8_t>(slot);break;}
+  bool changed=false;
+  for(uint8_t slot=0U;slot<kMoveSlots;++slot){
+    if(pokemon.moves[slot]!=obsolete)continue;
+    if(desiredSlot>=0){
+      pokemon.moves[slot]=MoveId::None;
+      pokemon.movePp[slot]=0U;
+      CollectionLogic::clearMovePpUps(pokemon,slot);
+    }else{
+      pokemon.moves[slot]=desired;
+      pokemon.movePp[slot]=std::min<uint8_t>(
+          pokemon.movePp[slot],CollectionLogic::maximumMovePp(pokemon,slot));
+      desiredSlot=static_cast<int8_t>(slot);
+    }
+    changed=true;
+  }
+  return changed;
+}
 uint8_t baseHp(const OwnedPokemon& pokemon,uint8_t fallback){
+  if(const auto* mega=formData(pokemon.speciesId,variantFor(pokemon)))return mega->baseHp;
   if (pokemon.speciesId == 479U || pokemon.speciesId == 487U || pokemon.speciesId == 492U)
     return fallback;
-  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->baseHp:fallback;
+  const uint8_t form=CollectionLogic::resolvedForm(pokemon);
+  if(pokemon.speciesId==670U&&form==5U)return 74U;
+  if(pokemon.speciesId==718U){
+    static constexpr uint8_t kHp[]={108U,54U,216U};
+    return kHp[std::min<uint8_t>(form,2U)];
+  }
+  if(pokemon.speciesId==710U){
+    static constexpr uint8_t kHp[]={49U,44U,54U,59U};
+    return kHp[std::min<uint8_t>(form,3U)];
+  }
+  if(pokemon.speciesId==711U){
+    static constexpr uint8_t kHp[]={65U,55U,75U,85U};
+    return kHp[std::min<uint8_t>(form,3U)];
+  }
+  return fallback;
 }
 uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback){
   // Platinum's selectable forms carry real stat changes. These are kept here
   // beside Mega stat overrides so every battle/stat-summary caller sees the
   // same resolved values without changing the persistent SpeciesData table.
+  if(const auto* mega=formData(pokemon.speciesId,variantFor(pokemon))){
+    const uint8_t stats[]={mega->baseAttack,mega->baseDefense,mega->baseSpeed,
+                           mega->baseSpAttack,mega->baseSpDefense};
+    return statIndex<5U?stats[statIndex]:fallback;
+  }
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
   if (pokemon.speciesId == 479U && form > 0U) {
     static constexpr uint8_t kRotom[5] = {65,107,86,105,107};
@@ -175,6 +261,12 @@ uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback)
   if (pokemon.speciesId == 492U && form == 1U) {
     static constexpr uint8_t kSky[5] = {103,75,127,120,75};
     return statIndex < 5U ? kSky[statIndex] : fallback;
+  }
+  if (pokemon.speciesId == 413U && form > 0U) {
+    static constexpr uint8_t kSandy[5] = {79,105,36,59,85};
+    static constexpr uint8_t kTrash[5] = {69,95,36,69,95};
+    const uint8_t* values=form==1U?kSandy:kTrash;
+    return statIndex<5U?values[statIndex]:fallback;
   }
   if (pokemon.speciesId == 555U && form == 1U) {
     static constexpr uint8_t kZen[5] = {30,105,55,140,105};
@@ -202,10 +294,34 @@ uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback)
     static constexpr uint8_t kPirouette[5] = {128,90,128,77,77};
     return statIndex < 5U ? kPirouette[statIndex] : fallback;
   }
-  const auto* f=formData(pokemon.speciesId,variantFor(pokemon));
-  if(!f)return fallback;
-  const uint8_t s[]={f->baseAttack,f->baseDefense,f->baseSpeed,f->baseSpAttack,f->baseSpDefense};
-  return statIndex<5?s[statIndex]:fallback;
+  if (pokemon.speciesId == 681U && form == 1U) {
+    // Aegislash Blade Forme: Attack/Defense/Speed/Sp.Atk/Sp.Def.
+    static constexpr uint8_t kBlade[5] = {150,50,60,150,50};
+    return statIndex < 5U ? kBlade[statIndex] : fallback;
+  }
+  if(pokemon.speciesId==670U&&form==5U){
+    static constexpr uint8_t kEternal[5]={65,67,92,125,128};
+    return statIndex<5U?kEternal[statIndex]:fallback;
+  }
+  if(pokemon.speciesId==718U&&form>0U){
+    static constexpr uint8_t kForms[2][5]={{100,71,115,61,85},{100,121,85,91,95}};
+    return statIndex<5U?kForms[std::min<uint8_t>(form,2U)-1U][statIndex]:fallback;
+  }
+  if(pokemon.speciesId==720U&&form==1U){
+    static constexpr uint8_t kUnbound[5]={160,60,80,170,130};
+    return statIndex<5U?kUnbound[statIndex]:fallback;
+  }
+  if(pokemon.speciesId==710U){
+    static constexpr uint8_t kStats[4][5]={{66,70,51,44,55},{66,70,56,44,55},
+        {66,70,46,44,55},{66,70,41,44,55}};
+    return statIndex<5U?kStats[std::min<uint8_t>(form,3U)][statIndex]:fallback;
+  }
+  if(pokemon.speciesId==711U){
+    static constexpr uint8_t kStats[4][5]={{90,122,84,58,75},{85,122,99,58,75},
+        {95,122,69,58,75},{100,122,54,58,75}};
+    return statIndex<5U?kStats[std::min<uint8_t>(form,3U)][statIndex]:fallback;
+  }
+  return fallback;
 }
 PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){
   // "MULTITYPE" resolves Arceus through the currently held Plate.
@@ -215,6 +331,7 @@ PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
   if (pokemon.speciesId == 479U && form > 0U) return PokemonType::Electric;
   if (pokemon.speciesId == 492U && form == 1U) return PokemonType::Grass;
+  if (pokemon.speciesId == 413U) return PokemonType::Bug;
   if (pokemon.speciesId == 555U && form == 1U) return PokemonType::Fire;
   if (pokemon.speciesId == 648U && form == 1U) return PokemonType::Normal;
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type1:fallback;
@@ -230,8 +347,14 @@ PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){
     return kRotomTypes[std::min<uint8_t>(CollectionLogic::resolvedForm(pokemon), 5U)];
   }
   if (pokemon.speciesId == 492U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Flying;
+  if (pokemon.speciesId == 413U) {
+    const uint8_t form=CollectionLogic::resolvedForm(pokemon);
+    if(form==1U)return PokemonType::Ground;
+    if(form==2U)return PokemonType::Steel;
+  }
   if (pokemon.speciesId == 555U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Psychic;
   if (pokemon.speciesId == 648U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Fighting;
+  if (pokemon.speciesId == 720U && CollectionLogic::resolvedForm(pokemon) == 1U) return PokemonType::Dark;
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type2:fallback;
 }
 uint8_t abilityId(const OwnedPokemon& pokemon,uint8_t fallback){

@@ -122,5 +122,45 @@ int main() {
   pump(device, app);
   assert(app.state() == Multiplayer::State::Connected);
   assert(device.state() == Multiplayer::State::Connected);
+
+  // A lost InviteAccept is recovered when the initiator repeats its Invite.
+  Multiplayer retryInitiator;
+  Multiplayer retryReceiver;
+  assert(retryInitiator.beginWithPlayerId(3003));
+  assert(retryReceiver.beginWithPlayerId(4004));
+  assert(retryInitiator.setEnabled(true));
+  assert(retryReceiver.setEnabled(true));
+  retryReceiver.transportConnected(false);
+  assert(retryInitiator.requestPeer(4004));
+  uint8_t repeatedInvite[174]{};
+  uint16_t repeatedInviteLength = 0;
+  assert(retryInitiator.takeOutgoingPacket(repeatedInvite, repeatedInviteLength));
+  retryReceiver.transportPacket(repeatedInvite, repeatedInviteLength);
+  retryReceiver.answerPeerInvitation(true);
+  uint8_t lostAccept[174]{};
+  uint16_t lostAcceptLength = 0;
+  assert(retryReceiver.takeOutgoingPacket(lostAccept, lostAcceptLength));
+  assert(retryInitiator.state() == Multiplayer::State::Connecting);
+  retryReceiver.transportPacket(repeatedInvite, repeatedInviteLength);
+  pump(retryReceiver, retryInitiator);
+  assert(retryInitiator.state() == Multiplayer::State::Connected);
+  assert(retryReceiver.state() == Multiplayer::State::Connected);
+
+  // If both players initiate together, player id deterministically resolves
+  // the crossed invitations instead of leaving both at an incoming prompt.
+  Multiplayer lowerId;
+  Multiplayer higherId;
+  assert(lowerId.beginWithPlayerId(5005));
+  assert(higherId.beginWithPlayerId(6006));
+  assert(lowerId.setEnabled(true));
+  assert(higherId.setEnabled(true));
+  assert(lowerId.requestPeer(6006));
+  assert(higherId.requestPeer(5005));
+  pump(lowerId, higherId);
+  pump(higherId, lowerId);
+  pump(lowerId, higherId);
+  pump(higherId, lowerId);
+  assert(lowerId.state() == Multiplayer::State::Connected);
+  assert(higherId.state() == Multiplayer::State::Connected);
   return 0;
 }

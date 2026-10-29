@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fail the build when a declared Pokemon Ability has no audited behavior.
 
-Generation-III abilities are sourced from the generated FireRed table; Mega
-abilities are the explicitly supported official-form extensions.  A literal
+Generation I-VI abilities are sourced from the generated ROM tables; Mega
+abilities are the explicitly supported expansion-form extensions. A literal
 reference in the battle/field engine is required unless the ability has a
 documented Pokegochi adaptation below.
 """
@@ -41,7 +41,7 @@ HANDLER_GROUPS = {
         "DRIZZLE", "INTIMIDATE", "TRACE", "FORECAST", "SAND STREAM",
         "DROUGHT", "PRIMORDIAL SEA", "DESOLATE LAND", "DELTA STREAM",
         "MEGA SOL", "SNOW WARNING", "DOWNLOAD", "MULTITYPE", "IMPOSTER",
-        "ILLUSION", "ZEN MODE",
+        "ILLUSION", "ZEN MODE", "STANCE CHANGE",
     },
     "end-turn/cadence": {
         "SPEED BOOST", "RAIN DISH", "SHED SKIN", "TRUANT", "SOLAR POWER",
@@ -51,7 +51,7 @@ HANDLER_GROUPS = {
     "accuracy/priority/PP": {
         "SAND VEIL", "COMPOUND EYES", "PRESSURE", "HUSTLE", "NO GUARD",
         "PRANKSTER", "TANGLED FEET", "SNOW CLOAK", "QUICK FEET", "STALL",
-        "UNBURDEN", "VICTORY STAR", "WONDER SKIN",
+        "UNBURDEN", "VICTORY STAR", "WONDER SKIN", "GALE WINGS",
     },
     "damage and critical modifiers": {
         "BATTLE ARMOR", "SHELL ARMOR", "STURDY", "DAMP", "SHIELD DUST",
@@ -68,7 +68,9 @@ HANDLER_GROUPS = {
         "SOLID ROCK", "RECKLESS", "FLOWER GIFT", "DEFEATIST",
         "HEAVY METAL", "LIGHT METAL", "TOXIC BOOST", "FLARE BOOST",
         "ANALYTIC", "INFILTRATOR", "TURBOBLAZE", "TERAVOLT",
-        "PIERCING DRILL", "UNSEEN FIST",
+        "PIERCING DRILL", "UNSEEN FIST", "FUR COAT", "BULLETPROOF",
+        "GRASS PELT", "DARK AURA", "FAIRY AURA", "AURA BREAK",
+        "PROTEAN", "FIRE MANE",
     },
     "type immunity/absorption/weather suppression": {
         "CLOUD NINE", "AIR LOCK", "VOLT ABSORB", "WATER ABSORB",
@@ -79,22 +81,28 @@ HANDLER_GROUPS = {
         "LIMBER", "OBLIVIOUS", "INSOMNIA", "IMMUNITY", "OWN TEMPO",
         "INNER FOCUS", "MAGMA ARMOR", "WATER VEIL", "VITAL SPIRIT",
         "NATURAL CURE", "STEADFAST", "EARLY BIRD", "LEAF GUARD",
+        "SWEET VEIL", "AROMA VEIL",
     },
     "contact/post-damage": {
         "STATIC", "COLOR CHANGE", "ROUGH SKIN", "EFFECT SPORE",
         "SYNCHRONIZE", "POISON POINT", "FLAME BODY", "CUTE CHARM",
         "LIQUID OOZE", "PICKPOCKET", "CURSED BODY", "WEAK ARMOR",
         "POISON TOUCH", "MUMMY", "JUSTIFIED", "RATTLED", "IRON BARBS",
+        "GOOEY",
     },
     "stat-loss prevention": {
         "CLEAR BODY", "KEEN EYE", "HYPER CUTTER", "WHITE SMOKE",
-        "CONTRARY", "DEFIANT", "BIG PECKS", "MOXIE",
+        "CONTRARY", "DEFIANT", "BIG PECKS", "MOXIE", "FLOWER VEIL",
+        "COMPETITIVE",
     },
     "sound/forced switch/trapping": {
         "SUCTION CUPS", "SHADOW TAG", "MAGNET PULL", "SOUNDPROOF",
         "ARENA TRAP", "CACOPHONY",
     },
-    "items/escape/field": {"RUN AWAY", "PICKUP", "STICKY HOLD", "GLUTTONY", "KLUTZ", "UNNERVE"},
+    "items/escape/field": {
+        "RUN AWAY", "PICKUP", "STICKY HOLD", "GLUTTONY", "KLUTZ",
+        "UNNERVE", "CHEEK POUCH", "MAGICIAN",
+    },
     "weather speed": {"SWIFT SWIM", "CHLOROPHYLL", "SAND RUSH"},
     "secondary effects/reflection": {"SERENE GRACE", "MAGIC BOUNCE", "STENCH"},
 }
@@ -115,6 +123,7 @@ ADAPTED_NO_EFFECT = {
     "HEALER": "heals adjacent allies and Pokegochi battles are one-on-one",
     "FRIEND GUARD": "reduces damage to allies and Pokegochi battles are one-on-one",
     "TELEPATHY": "avoids allied attacks and Pokegochi battles are one-on-one",
+    "SYMBIOSIS": "passes an item to an ally and Pokegochi battles are one-on-one",
 }
 
 errors: list[str] = []
@@ -142,10 +151,10 @@ unknown_adaptations = sorted(set(ADAPTED_NO_EFFECT) - set(abilities))
 if unknown_adaptations:
     errors.append("stale adaptations: " + ", ".join(unknown_adaptations))
 
-if len(base) != 165:
-    errors.append(f"expected 165 Gen-I--V abilities, parsed {len(base)}")
-if len(custom) != 32:
-    errors.append(f"expected 32 custom Mega/Primal abilities, parsed {len(custom)}")
+if len(base) != 189:
+    errors.append(f"expected 189 Gen-I--VI abilities, parsed {len(base)}")
+if len(custom) != 33:
+    errors.append(f"expected 33 custom Mega/Primal abilities, parsed {len(custom)}")
 
 if errors:
     print("Ability audit failed:", file=sys.stderr)
@@ -154,7 +163,7 @@ if errors:
     raise SystemExit(1)
 
 print(
-    f"Ability audit passed: {len(base)} Gen-I--V + {len(custom)} Mega/Primal; "
+    f"Ability audit passed: {len(base)} Gen-I--VI + {len(custom)} Mega/Primal; "
     f"{len(abilities) - len(ADAPTED_NO_EFFECT)} implemented, "
     f"{len(ADAPTED_NO_EFFECT)} documented singles/manual adaptations"
 )

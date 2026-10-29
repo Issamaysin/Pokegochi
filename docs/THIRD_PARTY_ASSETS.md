@@ -34,3 +34,18 @@ cells come directly from the local pokeplatinum decomp's Trainer Case atlas.
 Each form exports the authored indexed front/back sprites, both icon frames
 and their normal and shiny palettes. No generated replacement art or runtime
 recolouring is used.
+
+## Generation 6 Mega Evolutions and late forms
+
+- Source project: **pokeemerald-expansion**
+- Local source directory: `.downloads/pokeemerald-expansion/graphics/pokemon/`
+- Mega forms: Chesnaught, Delphox, Greninja, Pyroar, Floette, Meowstic,
+  Malamar, Barbaracle, Dragalge, Hawlucha, Zygarde and Diancie
+- Other forms: Floette Eternal, Zygarde 10%/Complete and Hoopa Unbound
+- Generated assets: `pokemon/forms/mega/{species}/mega/` and
+  `pokemon/forms/kalos/{species}/{form}/`
+
+These are the authored GBA sprites and balance data available in the romhack
+source used by Pokegochi. The Mega additions include expansion forms that are
+not mainline-game forms. Normal/shiny front, back and both icon frames are
+exported without generated replacement art.

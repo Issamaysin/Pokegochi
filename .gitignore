@@ -1,4 +1,5 @@
 .pio/
+.pio-r*/
 .pio-core/
 .pio-core-sandbox/
 .tools/

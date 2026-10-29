@@ -7,6 +7,8 @@ from pathlib import Path
 
 from text_normalization import fire_red_ascii
 from unova_rom_data import expansion_text, level_moves, move_record
+from kalos_rom_data import (level_moves as y_level_moves,
+                            move_record as y_move_record)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -48,6 +50,20 @@ if not any(number == 468 for number, _ in gen5_moves):
 if len(gen5_moves) != 92 or gen5_moves[0][1] != "HONE_CLAWS" or gen5_moves[-1][1] != "FUSION_BOLT":
     raise RuntimeError("Unexpected expansion Generation-V move order")
 for number, symbol in gen5_moves:
+    moves.append((number, symbol))
+    move_ids[symbol] = number
+
+gen6_moves = sorted(
+    (int(number), symbol)
+    for symbol, number in re.findall(
+        r"\bMOVE_([A-Z0-9_]+)\s*=\s*(\d+)", expansion_move_constants)
+    if 560 <= int(number) <= 617
+)
+if not any(number == 560 for number, _ in gen6_moves):
+    gen6_moves.insert(0, (560, "FLYING_PRESS"))
+if len(gen6_moves) != 58 or gen6_moves[0][1] != "FLYING_PRESS" or gen6_moves[-1][1] != "LIGHT_OF_RUIN":
+    raise RuntimeError("Unexpected expansion Generation-VI move order")
+for number, symbol in gen6_moves:
     moves.append((number, symbol))
     move_ids[symbol] = number
 
@@ -269,12 +285,14 @@ gen5_targets = {
     "TARGET_ALL_OPPONENTS": "Selected", "TARGET_OPPONENTS_FIELD": "OpponentsField",
     "TARGET_FIELD": "User", "TARGET_USER_SIDE": "User", "TARGET_ALLY_SIDE": "User",
     "TARGET_USER": "User", "TARGET_ALLY": "User", "TARGET_ALLY_OR_USER": "User",
+    "TARGET_USER_AND_ALLY": "User",
 }
 gen5_types = [
     "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug",
     "Ghost", "Steel", "Fire", "Water", "Grass", "Electric", "Psychic",
     "Ice", "Dragon", "Dark",
 ]
+gen6_types = gen5_types + ["Fairy"]
 gen5_categories = ["Status", "Physical", "Special"]
 gen5_effect_aliases = {
     "STAT_CHANGE": "STAT_CHANGE", "PROTECT": "PROTECT", "HIT": "HIT",
@@ -330,6 +348,35 @@ gen5_move_effect_overrides = {
     555: "SPECIAL_ATTACK_DOWN_HIT", 556: "FLINCH_HIT",
     557: "V_CREATE", 558: "FUSION_COMBO", 559: "FUSION_COMBO",
 }
+
+# X/Y's 58 original moves are a versioned mechanics contract, just like the
+# White table above.  The modern expansion often decomposes an old effect
+# into callbacks (or uses later-generation behavior), so every row is pinned
+# to the compact label implemented by Pokegochi's Generation-VI resolver.
+gen6_move_effect_overrides = {
+    560: "FLYING_PRESS", 561: "MAT_BLOCK", 562: "BELCH",
+    563: "ROTOTILLER", 564: "STICKY_WEB", 565: "FELL_STINGER",
+    566: "SHADOW_FORCE", 567: "THIRD_TYPE_GHOST", 568: "NOBLE_ROAR",
+    569: "ION_DELUGE", 570: "PARABOLIC_CHARGE", 571: "THIRD_TYPE_GRASS",
+    572: "HIT", 573: "FREEZE_DRY", 574: "ALWAYS_HIT",
+    575: "PARTING_SHOT", 576: "TOPSY_TURVY", 577: "DRAINING_KISS",
+    578: "CRAFTY_SHIELD", 579: "FLOWER_SHIELD", 580: "GRASSY_TERRAIN",
+    581: "MISTY_TERRAIN", 582: "ELECTRIFY", 583: "ATTACK_DOWN_HIT",
+    584: "HIT", 585: "SPECIAL_ATTACK_DOWN_HIT", 586: "HIT",
+    587: "FAIRY_LOCK", 588: "KINGS_SHIELD", 589: "ATTACK_DOWN",
+    590: "SPECIAL_ATTACK_DOWN", 591: "DEFENSE_UP_HIT", 592: "BURN_HIT",
+    593: "ALWAYS_HIT", 594: "MULTI_HIT", 595: "SPECIAL_ATTACK_DOWN_HIT",
+    596: "SPIKY_SHIELD", 597: "AROMATIC_MIST",
+    598: "SPECIAL_ATTACK_DOWN_2", 599: "VENOM_DRENCH", 600: "POWDER",
+    601: "GEOMANCY", 602: "MAGNETIC_FLUX", 603: "HAPPY_HOUR",
+    604: "ELECTRIC_TERRAIN", 605: "HIT", 606: "CELEBRATE",
+    607: "HOLD_HANDS", 608: "ATTACK_DOWN", 609: "PARALYZE_HIT",
+    610: "FALSE_SWIPE", 611: "TRAP", 612: "ATTACK_UP_HIT",
+    613: "OBLIVION_WING", 614: "THOUSAND_ARROWS", 615: "TRAP",
+    616: "HIT", 617: "RECOIL_HALF",
+}
+if set(gen6_move_effect_overrides) != set(range(560, 618)):
+    raise RuntimeError("Generation-VI move effect contract must cover IDs 560..617")
 
 
 def gen5_effect(block: str) -> str:
@@ -401,6 +448,33 @@ for number, symbol in gen5_moves:
         f'{priority}, {effect_chance}, "{effect}", MoveTarget::{target}, '
         f'{makes_contact}, {magic_coat}, {snatch}, {protect}, {mirror}, {kings_rock}}},')
 
+# X/Y keeps the same compact move layout as Black/White, with Fairy appended
+# as type 17.  Expansion supplies readable flags/effect names while the local
+# Pokemon Y GARC remains authoritative for category, power, accuracy, PP,
+# priority and effect chances.
+for number, symbol in gen6_moves:
+    block = expansion_move_block(symbol)
+    record = y_move_record(number)
+    target_symbol = expansion_field(block, "target", "TARGET_SELECTED")
+    if target_symbol not in gen5_targets:
+        raise RuntimeError(f"Unknown Gen-VI target {target_symbol} for {symbol}")
+    priority = int.from_bytes(record[6:7], "little", signed=True)
+    effect = gen6_move_effect_overrides[number]
+    makes_contact = "true" if re.search(r"\.makesContact\s*=\s*TRUE", block) else "false"
+    magic_coat = "true" if re.search(r"\.magicCoatAffected\s*=\s*TRUE", block) else "false"
+    snatch = "true" if re.search(r"\.snatchAffected\s*=\s*TRUE", block) else "false"
+    target = gen5_targets[target_symbol]
+    protect = "false" if re.search(r"\.ignoresProtect\s*=\s*TRUE", block) else (
+        "true" if target in {"Selected", "Random", "FoesAndAlly", "Both"} else "false")
+    mirror = "false" if re.search(r"\.mirrorMoveBanned\s*=\s*TRUE", block) else "true"
+    kings_rock = "true" if record[3] else "false"
+    effect_chance = max(record[10], record[27], record[28], record[29])
+    rows.append(
+        f'    {{{number}, "{symbol.replace("_", " ")}", PokemonType::{gen6_types[record[0]]}, '
+        f'{record[3]}, {record[4]}, MoveCategory::{gen5_categories[record[2]]}, {record[5]}, '
+        f'{priority}, {effect_chance}, "{effect}", MoveTarget::{target}, '
+        f'{makes_contact}, {magic_coat}, {snatch}, {protect}, {mirror}, {kings_rock}}},')
+
 entries: list[tuple[int, int, int]] = []
 for species_symbol, array_name in re.findall(
         r"\[SPECIES_([A-Z0-9_]+)\]\s*=\s*(s[A-Za-z0-9]+LevelUpLearnset)", pointers):
@@ -441,12 +515,20 @@ for species_id in range(1, 650):
         if 0 < move <= 559 and (species_id >= 494 or move >= 468):
             entries.append((species_id, int(level), int(move), 5))
 
+# X/Y supplies a complete table through #721.  Keep only the genuinely new
+# Gen-VI rows for older species, while every Kalos species receives its full
+# canonical level-up pool.
+for species_id in range(1, 722):
+    for level, move in y_level_moves(species_id):
+        if 0 < move <= 617 and (species_id >= 650 or move >= 560):
+            entries.append((species_id, int(level), int(move), 6))
+
 out = ('// Generated from local FireRed and Platinum battle data.\n'
        'constexpr FullMoveData kFullMoves[] = {\n' + '\n'.join(rows) +
        '\n};\n\nconstexpr LearnsetEntry kLearnsets[] = {\n' +
-       '\n'.join(f'    {{{species}, {level}, {move}, {generation}}},'
+       '\n'.join(f'    {{{species}, {move}, {level}, {generation}}},'
                  for species, level, move, generation in entries) + '\n};\n')
-(ROOT / 'src/game/MoveDataGenerated.inc').write_text(out, encoding='utf-8', newline='\n')
+(ROOT / 'src/game/MoveDataGenerated.inc').write_text(out, encoding='utf-8')
 
 description_rows = [
     f'    case {number}: return "{normalized_description(symbol)}";'
@@ -475,6 +557,19 @@ for number, symbol in gen5_moves:
                                  f"Gen-V move description {symbol}")
     description_rows.append(
         f'    case {number}: return "{c_string(description.upper())}";')
+for number, symbol in gen6_moves:
+    block = expansion_move_block(symbol)
+    description_match = re.search(
+        r"\.description\s*=\s*COMPOUND_STRING\((.*?)\)\s*,", block, re.S)
+    if description_match:
+        pieces = re.findall(r'"([^"]*)"', description_match.group(1))
+        description = " ".join(piece.replace("\\n", " ") for piece in pieces)
+    else:
+        description = "GENERATION VI MOVE."
+    description = fire_red_ascii(re.sub(r"\s+", " ", description).strip(),
+                                 f"Gen-VI move description {symbol}")
+    description_rows.append(
+        f'    case {number}: return "{c_string(description.upper())}";')
 description_out = (
     '// Generated from FireRed and Platinum original move descriptions.\n'
     'const char* generatedMoveDescription(uint16_t moveId) {\n'
@@ -483,5 +578,5 @@ description_out = (
     '  }\n}\n'
 )
 (ROOT / 'src/game/MoveDescriptionsGenerated.inc').write_text(
-    description_out, encoding='utf-8', newline='\n')
+    description_out, encoding='utf-8')
 print(f"Generated {len(rows)} moves, {len(description_rows)} descriptions and {len(entries)} learnset entries")

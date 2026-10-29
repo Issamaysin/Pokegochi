@@ -25,7 +25,15 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_gen5_animation_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_gen6_animation_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_android_asset_catalog_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_kalos_asset_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_gen5_accuracy_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_kalos_rom_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_tmhm_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -41,17 +49,31 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_asset_renderer_archive_paths.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_ble_trade_bag_regression.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_ui_performance_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_theme_selector_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_league_complete_render_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_region_hub_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_region_completion_reward_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_gen5_mega_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_gen6_mega_form_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_form_lifecycle_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_unova_form_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_sinnoh_chain_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_evolution_progression_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_ble_transport_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude test/native/test_wireless_update_protocol.cpp -o "$out/wireless_update_protocol.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -109,6 +131,10 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/gen5_move_sweep.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp test/native/test_gen6_move_sweep.cpp -o "$out/gen6_move_sweep.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/gen6_move_sweep.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/GymSystem.cpp src/game/EggSystem.cpp test/native/test_ability_matrix.cpp -o "$out/ability_matrix.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/ability_matrix.exe"
@@ -136,6 +162,10 @@ try {
     & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/GymSystem.cpp src/game/MegaChallengeSystem.cpp src/game/SinnohExpedition.cpp src/game/UnovaAdventure.cpp src/game/UnovaForms.cpp src/game/UnovaTournament.cpp src/game/Economy.cpp test/native/test_unova_adventure.cpp -o "$out/unova_adventure.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/unova_adventure.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleAnimationData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/GymSystem.cpp src/game/MegaChallengeSystem.cpp src/game/SinnohExpedition.cpp src/game/UnovaAdventure.cpp src/game/KalosAdventure.cpp test/native/test_kalos_adventure.cpp -o "$out/kalos_adventure.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/kalos_adventure.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Output 'All native tests passed.'
 } finally { Pop-Location }

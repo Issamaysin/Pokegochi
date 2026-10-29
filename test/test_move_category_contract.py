@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLATINUM = ROOT / ".downloads/pokeplatinum-tree"
 sys.path.insert(0, str(ROOT / "scripts"))
 from unova_rom_data import move_record  # noqa: E402
+from kalos_rom_data import move_record as y_move_record  # noqa: E402
 
 
 generated = (ROOT / "src/game/MoveDataGenerated.inc").read_text(encoding="utf-8")
@@ -25,8 +26,8 @@ for raw_id, name, move_type, category in row_pattern.findall(generated):
     if move_id not in rows:
         rows[move_id] = (name, move_type, category)
 
-assert set(rows) == set(range(1, 560)), (
-    f"Generated category table has {len(rows)} unique moves instead of 559"
+assert set(rows) == set(range(1, 618)), (
+    f"Generated category table has {len(rows)} unique moves instead of 617"
 )
 
 platinum_symbols = [
@@ -45,6 +46,12 @@ for move_id in range(1, 468):
 white_categories = ("Status", "Physical", "Special")
 for move_id in range(468, 560):
     expected = white_categories[move_record(move_id)[2]]
+    assert rows[move_id][2] == expected, (
+        f"Move {move_id} {rows[move_id][0]} is {rows[move_id][2]}, expected {expected}"
+    )
+
+for move_id in range(560, 618):
+    expected = white_categories[y_move_record(move_id)[2]]
     assert rows[move_id][2] == expected, (
         f"Move {move_id} {rows[move_id][0]} is {rows[move_id][2]}, expected {expected}"
     )
@@ -72,7 +79,7 @@ special_from_physical_type = sum(
     for _, move_type, category in rows.values()
 )
 print(
-    "Move category contract passed: 559/559; "
+    "Move category contract passed: 617/617; "
     f"{physical_from_special_type} physical moves use formerly-special types, "
     f"{special_from_physical_type} special moves use formerly-physical types; Summary uses category data."
 )

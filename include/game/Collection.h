@@ -10,10 +10,14 @@
 // ever treating its trailing save bytes as Pokemon data.
 constexpr uint16_t kBoxCapacityV41 = 386;
 constexpr uint16_t kBoxCapacityV45 = 493;
-// 649 slots are required for one of every National species through Unova.
-// Keep a modest reserve for forms, shinies and duplicates without pushing the
-// redundant save records near their 16-bit payload limit.
-constexpr uint16_t kBoxCapacity = 720;
+constexpr uint16_t kBoxCapacityV46 = 720;
+constexpr uint16_t kBoxCapacityV47 = 800;
+// 721 slots are required for one of every National species through Kalos.
+// Keep 63 additional positions for forms, shinies and duplicates.  The
+// shipped V47 capacity of 800 exceeded the ESP32's largest contiguous heap
+// block once the renderer was resident, so V48 compacts occupied legacy
+// positions into this still-complete living-Dex capacity.
+constexpr uint16_t kBoxCapacity = 784;
 constexpr uint8_t kPartyCapacity = 3;
 constexpr uint8_t kMoveSlots = 4;
 constexpr uint32_t kEmptyPokemonUid = 0;
@@ -34,6 +38,9 @@ enum class PokemonNature : uint8_t {
 // Party membership remains stable because Party entries reference Pokemon by
 // UID rather than by their Box index.
 enum class BoxSortMode : uint8_t { DexNumber, Level, EffortValues };
+
+enum class BurmyCloak : uint8_t { Plant = 0, Sandy = 1, Trash = 2 };
+enum class PrisonBottleState : uint8_t { Unavailable, Ready, Unbound, Cooldown };
 
 struct IndividualValues {
   uint8_t hp = 0;
@@ -110,6 +117,24 @@ struct PokemonCollectionV45 {
   }
 };
 
+// Frozen Unova/V46 collection used by the V46 -> V47 migration. Kalos adds
+// space for every National species through #721 plus alternate forms and
+// duplicates without reinterpreting any shipped Box bytes.
+struct PokemonCollectionV46 {
+  OwnedPokemon box[kBoxCapacityV46]{};
+  uint32_t party[kPartyCapacity]{};
+  uint32_t nextUid = 1;
+};
+
+// Frozen Kalos/V47 collection.  V48 reduces only unused reserve positions so
+// the complete GameSave fits one contiguous ESP32 allocation.  Migration
+// compacts every occupied V47 slot instead of truncating its final 16 slots.
+struct PokemonCollectionV47 {
+  OwnedPokemon box[kBoxCapacityV47]{};
+  uint32_t party[kPartyCapacity]{};
+  uint32_t nextUid = 1;
+};
+
 struct PokemonCollection {
   OwnedPokemon box[kBoxCapacity]{};
   uint32_t party[kPartyCapacity]{};
@@ -131,6 +156,33 @@ struct PokemonCollection {
       party[index] = legacy.party[index];
     nextUid = legacy.nextUid;
     return *this;
+  }
+
+  PokemonCollection& operator=(const PokemonCollectionV46& legacy) {
+    for (uint16_t index = 0; index < kBoxCapacity; ++index)
+      box[index] = index < kBoxCapacityV46 ? legacy.box[index] : OwnedPokemon{};
+    for (uint8_t index = 0; index < kPartyCapacity; ++index)
+      party[index] = legacy.party[index];
+    nextUid = legacy.nextUid;
+    return *this;
+  }
+
+  bool importV47(const PokemonCollectionV47& legacy) {
+    uint16_t occupied = 0;
+    for (uint16_t index = 0; index < kBoxCapacityV47; ++index)
+      if (legacy.box[index].uid != kEmptyPokemonUid) ++occupied;
+    if (occupied > kBoxCapacity) return false;
+
+    uint16_t destination = 0;
+    for (uint16_t index = 0; index < kBoxCapacityV47; ++index) {
+      if (legacy.box[index].uid == kEmptyPokemonUid) continue;
+      box[destination++] = legacy.box[index];
+    }
+    while (destination < kBoxCapacity) box[destination++] = OwnedPokemon{};
+    for (uint8_t index = 0; index < kPartyCapacity; ++index)
+      party[index] = legacy.party[index];
+    nextUid = legacy.nextUid;
+    return true;
   }
 };
 
@@ -162,8 +214,9 @@ class CollectionLogic {
   static void clearMovePpUps(OwnedPokemon& pokemon, uint8_t slot);
   static void swapMovePpUps(OwnedPokemon& pokemon, uint8_t first, uint8_t second);
   // Hidden Ability provenance uses bit 14 of the old care counter. Bits 0-7
-  // are PP Ups, 8-10 Berry quantity and 11-13 Mega choice; keeping this flag
-  // here preserves the compact Pokemon/save ABI.
+  // are PP Ups, 8-10 Berry quantity, 11-13 Mega choice, bit 15 is reserved
+  // for a battle-triggered form and 16-31 hold timed-form state. Keeping all
+  // of them here preserves the compact Pokemon/save ABI.
   static bool hasHiddenAbility(const OwnedPokemon& pokemon);
   static bool setHiddenAbility(OwnedPokemon& pokemon, bool enabled,
                                uint8_t unlockedGeneration = 5);
@@ -195,6 +248,9 @@ class CollectionLogic {
   static uint16_t calculatedMaximumHp(const OwnedPokemon& pokemon);
   static uint16_t calculatedStat(const OwnedPokemon& pokemon, PokemonStat stat);
   static void refreshDerivedStats(OwnedPokemon& pokemon, bool preserveDamage = true);
+  // Form changes that substantially alter base HP sometimes need to preserve
+  // the battler's HP percentage instead of its absolute missing damage.
+  static void refreshDerivedStatsPreservingHpRatio(OwnedPokemon& pokemon);
   // The active ability pair changes with content generation. Require every
   // caller to state its context so a late-game Hidden Ability can never be
   // silently recalculated with an early-generation default.
@@ -205,15 +261,29 @@ class CollectionLogic {
   static void applyGenerationContent(PokemonCollection& collection,
                                      uint8_t unlockedGeneration);
   // Form 0 is the normal/default form. Deoxys supports explicit forms 0..3;
-  // Sinnoh adds selectable Rotom, Giratina and Shaymin forms. Arceus is
-  // derived from its held Plate (form 0 for no Plate/Pixie), and Unown
-  // remains derived from personality and therefore cannot be changed.
+  // Sinnoh adds persistent environmental/coast forms beside selectable
+  // Rotom, Giratina and Shaymin. Arceus is derived from its held Plate and
+  // Unown remains personality-derived.
   static uint8_t resolvedForm(const OwnedPokemon& pokemon);
   static uint8_t formCount(uint16_t speciesId);
   static const char* formName(uint16_t speciesId, uint8_t form);
   static bool canChangeForm(const OwnedPokemon& pokemon);
   static bool setForm(OwnedPokemon& pokemon, uint8_t form);
+  // Context-aware form picker. `worldHour` is the persistent local-world
+  // hour (not millis()) so Furfrou trims continue expiring while powered off.
+  static bool setFormForWorld(OwnedPokemon& pokemon, uint8_t form,
+                              uint32_t worldHour, bool night);
   static bool normalizeForm(OwnedPokemon& pokemon);
+  static bool applyBurmyCloak(PokemonCollection& collection, BurmyCloak cloak);
+  static PrisonBottleState prisonBottleState(const OwnedPokemon& pokemon,
+                                              uint32_t worldHour);
+  static uint8_t prisonBottleDaysRemaining(const OwnedPokemon& pokemon,
+                                           uint32_t worldHour);
+  static bool usePrisonBottle(OwnedPokemon& pokemon, uint32_t worldHour);
+  // Reverts Sky Shaymin, expired/stored Furfrou and Hoopa Unbound, and
+  // releases Hoopa's cooldown after the requested three real-time days.
+  static bool reconcileFormLifecycles(PokemonCollection& collection,
+                                      uint32_t worldHour, bool night);
   // Black/White rotate Deerling and Sawsbuck together with the current
   // season. This updates every stored member without changing individual
   // identity, damage, moves or provenance.

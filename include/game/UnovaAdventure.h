@@ -101,6 +101,7 @@ class UnovaAdventure {
   static constexpr uint16_t kLegendaryChanceDenominator =
       SinnohExpedition::kLegendaryChanceDenominator;
   static constexpr uint16_t kSpecialLegendaryChanceDenominator = 240U;
+  static constexpr uint8_t kMasterBallRewardBit = 1U << 3U;
 
   static bool available(const SinnohExpeditionState& sinnoh);
   static bool reconcile(UnovaAdventureState& state,
@@ -108,6 +109,13 @@ class UnovaAdventure {
   static bool isAreaUnlocked(const UnovaAdventureState& state, UnovaArea area);
   static bool allAreasCompleted(const UnovaAdventureState& state);
   static bool championsCompleted(const UnovaAdventureState& state);
+  static bool royalUnovaCompletedAtLeastOnce(
+      const UnovaAdventureState& state);
+  // Unova 100% means all ten area bosses, all five PWT divisions, Champions
+  // and at least one complete Royal Unova voyage.
+  static bool fullyCompleted(const UnovaAdventureState& state);
+  static bool reconcileCompletionReward(UnovaAdventureState& state,
+                                        Inventory& inventory);
   static bool white2ThemeUnlocked(const UnovaAdventureState& state);
   static bool royalUnovaUnlocked(const UnovaAdventureState& state);
   static bool setWhite2ThemeSelected(UnovaAdventureState& state, bool selected);

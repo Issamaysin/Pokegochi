@@ -1,5 +1,6 @@
 #include "game/HeldItems.h"
 #include "game/Collection.h"
+#include "game/MegaEvolution.h"
 
 namespace {
 constexpr HeldItemData kItems[] = {
@@ -145,7 +146,7 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::NeverMeltIce: return "BOOSTS ICE-TYPE MOVES BY 10%.";
     case HeldItem::DragonFang: return "BOOSTS DRAGON-TYPE MOVES BY 10%.";
     case HeldItem::BlackGlasses: return "BOOSTS DARK-TYPE MOVES BY 10%.";
-    case HeldItem::MegaStone: return "AWAKENS AN OFFICIAL MEGA OR PRIMAL FORM WHILE HELD.";
+    case HeldItem::MegaStone: return "AWAKENS A MEGA OR PRIMAL FORM WHILE HELD.";
     case HeldItem::BerryJuice: return "RESTORES 20 HP WHEN THE HOLDER FALLS BELOW HALF HP.";
     case HeldItem::MachoBrace: return "HALVES SPEED. RETAINED FOR ORIGINAL BATTLE TOWER SETS.";
     case HeldItem::SoulDew: return "BOOSTS LATIAS OR LATIOS SP. ATK AND SP. DEF BY 50%.";
@@ -322,6 +323,8 @@ uint16_t gen5DriveQuantity(const Gen5UniqueItemInventory& inventory,HeldItem ite
 bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
                    SpecialHeldItemInventory& special,uint64_t& ownedMachines){
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  if(selected==HeldItem::MegaStone&&
+     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
   if(selected==equipped){
@@ -371,6 +374,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
                    SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
                    uint64_t& ownedMachines){
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  if(selected==HeldItem::MegaStone&&
+     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
   uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:
@@ -410,6 +415,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
                    SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
                    Gen5UniqueItemInventory& gen5,uint64_t& ownedMachines){
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  if(selected==HeldItem::MegaStone&&
+     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
   uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:

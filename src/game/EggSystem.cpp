@@ -23,7 +23,7 @@ StoredEgg makeSpecialEgg(const PokedexState& pokedex,uint8_t unlockedGeneration,
   for(uint16_t species:kStarterSpecies)
     if(!PokedexLogic::hasCaught(pokedex,species))availableStarters[availableCount++]=species;
   const uint8_t generation=std::max<uint8_t>(1U,
-      std::min<uint8_t>(5U,unlockedGeneration));
+      std::min<uint8_t>(6U,unlockedGeneration));
   const uint16_t speciesLimit=PokedexLogic::generationSpeciesCount(generation);
   uint8_t legendaryCount=0;
   for(uint16_t species=1;species<=speciesLimit;++species)

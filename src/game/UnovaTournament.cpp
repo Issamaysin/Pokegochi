@@ -29,18 +29,10 @@ constexpr uint16_t kRoyalTeams[7][3]={
  {512,555,565},{538,539,534},{518,579,609},
 };
 uint32_t mix(uint32_t x){x^=x>>16U;x*=0x7FEB352DUL;x^=x>>15U;x*=0x846CA68BUL;return x^(x>>16U);}
-void healParty(PokemonCollection& collection){
-  for(uint8_t slot=0;slot<kPartyCapacity;++slot){
-    OwnedPokemon* pokemon=CollectionLogic::active(collection,slot);if(!pokemon)continue;
-    pokemon->currentHp=pokemon->maximumHp;pokemon->status=StatusCondition::None;
-    pokemon->recoverySecondsRemaining=0U;
-    for(uint8_t move=0;move<kMoveSlots;++move)
-      pokemon->movePp[move]=CollectionLogic::maximumMovePp(*pokemon,move);
-  }
-}
 bool validPlayer(const PokemonCollection& collection,uint32_t uid){
   const OwnedPokemon* pokemon=CollectionLogic::find(collection,uid);
-  return pokemon&&pokemon->currentHp&&CollectionLogic::isInParty(collection,uid);
+  return pokemon&&pokemon->currentHp&&!pokemon->recoverySecondsRemaining&&
+      CollectionLogic::isInParty(collection,uid);
 }
 }
 
@@ -88,7 +80,9 @@ const char* UnovaTournament::opponentName(const UnovaAdventureState& state){
 bool UnovaTournament::startBattle(UnovaAdventureState& state,BattleState& battle,
                                   PokemonCollection& collection,uint32_t playerUid){
   if(!active(state)||battle.active||state.tournament.round>=state.tournament.rounds)return false;
-  healParty(collection);
+  // Tournament battles use the real persistent Party. Healing here turned
+  // START BATTLE -> RUN into a free Pokecenter that also erased recovery
+  // timers. HP, status, PP and recovery now carry into and between matches.
   if(!validPlayer(collection,playerUid)){
     for(uint8_t slot=0;slot<kPartyCapacity&&!validPlayer(collection,playerUid);++slot)
       if(const OwnedPokemon* pokemon=CollectionLogic::active(collection,slot))playerUid=pokemon->uid;

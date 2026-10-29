@@ -7,6 +7,40 @@
 #include "game/SinnohExpedition.h"
 
 int main() {
+  // Kanto, Johto and Hoenn each deliver exactly one persistent Master Ball
+  // after their League (and therefore all eight Gyms) is complete. A full Bag
+  // defers delivery, while a legacy champion is marked as already rewarded.
+  GymProgress regionalProgress{};
+  GymSystem::initializeRegionRewardLedger(regionalProgress);
+  regionalProgress.leagueChampionBits = 1U;
+  Inventory regionalInventory{};
+  bool regionalLedgerChanged = false;
+  assert(GymSystem::reconcileRegionCompletionRewards(
+             regionalProgress, regionalInventory, &regionalLedgerChanged) ==
+         0x01U);
+  assert(regionalLedgerChanged &&
+         regionalInventory.balls[
+             static_cast<uint8_t>(PokeBallType::MasterBall)] == 1U);
+  assert(GymSystem::reconcileRegionCompletionRewards(
+             regionalProgress, regionalInventory) == 0U);
+  regionalProgress.leagueChampionBits |= 1U << 1U;
+  regionalInventory.balls[
+      static_cast<uint8_t>(PokeBallType::MasterBall)] = kInventoryStackLimit;
+  assert(GymSystem::reconcileRegionCompletionRewards(
+             regionalProgress, regionalInventory) == 0U);
+  regionalInventory.balls[
+      static_cast<uint8_t>(PokeBallType::MasterBall)] = 1U;
+  assert(GymSystem::reconcileRegionCompletionRewards(
+             regionalProgress, regionalInventory) == 0x02U);
+  GymProgress legacyChampion{};
+  legacyChampion.leagueChampionBits = 0x07U;
+  Inventory legacyInventory{};
+  assert(GymSystem::reconcileRegionCompletionRewards(
+             legacyChampion, legacyInventory, &regionalLedgerChanged) == 0U);
+  assert(regionalLedgerChanged &&
+         legacyInventory.balls[
+             static_cast<uint8_t>(PokeBallType::MasterBall)] == 0U);
+
   PokemonCollection collection{};
   CollectionLogic::initialize(collection);
   assert(CollectionLogic::chooseStarter(collection, 1U, 1U));
@@ -136,13 +170,29 @@ int main() {
   assert(SinnohExpedition::allSitesUnlocked(state));
   assert(SinnohExpedition::allGymsDefeated(state));
   assert(SinnohExpedition::completed(state));
+  assert(!SinnohExpedition::fullyCompleted(state));
   Inventory completionInventory{};
   const SinnohExpedition::CompletionReward completionReward =
       SinnohExpedition::reconcileCompletionReward(state, completionInventory);
   assert(completionReward.platinumThemeUnlocked &&
-         completionReward.masterBallGranted &&
+         !completionReward.masterBallGranted &&
          SinnohExpedition::platinumThemeUnlocked(state));
-  assert(completionInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)] == 1U);
+  assert(completionInventory.balls[
+             static_cast<uint8_t>(PokeBallType::MasterBall)] == 0U);
+  for (uint8_t index = 0U; index < SinnohExpedition::kSiteCount; ++index) {
+    const SinnohSite site = static_cast<SinnohSite>(index);
+    assert(!SinnohExpedition::hasExplored(state, site));
+    assert(SinnohExpedition::recordBattle(state, site, true) == 1U);
+    assert(SinnohExpedition::hasExplored(state, site));
+    assert(SinnohExpedition::exploredSiteCount(state) == index + 1U);
+  }
+  assert(SinnohExpedition::allSitesExplored(state));
+  assert(SinnohExpedition::fullyCompleted(state));
+  const SinnohExpedition::CompletionReward fullReward =
+      SinnohExpedition::reconcileCompletionReward(state, completionInventory);
+  assert(!fullReward.platinumThemeUnlocked && fullReward.masterBallGranted);
+  assert(completionInventory.balls[
+             static_cast<uint8_t>(PokeBallType::MasterBall)] == 1U);
   const SinnohExpedition::CompletionReward duplicateReward =
       SinnohExpedition::reconcileCompletionReward(state, completionInventory);
   assert(!duplicateReward.platinumThemeUnlocked && !duplicateReward.masterBallGranted &&
@@ -199,7 +249,10 @@ int main() {
   SinnohExpeditionState pendingState{};
   pendingState.unlockedSites = SinnohExpedition::kAllSitesMask;
   pendingState.gymVictoryMask = SinnohExpedition::kAllSitesMask;
-  pendingState.rewardFlags = SinnohExpedition::kGymSchemaBit;
+  pendingState.battles = 0xFF00U;
+  pendingState.rewardFlags = static_cast<uint8_t>(
+      SinnohExpedition::kGymSchemaBit |
+      SinnohExpedition::kExplorationSchemaBit);
   Inventory fullInventory{};
   fullInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)] =
       kInventoryStackLimit;
@@ -259,9 +312,11 @@ int main() {
   }
 
   const uint16_t beforeResearch = state.research;
-  assert(SinnohExpedition::recordBattle(state, false) == 0U);
+  assert(SinnohExpedition::recordBattle(
+             state, SinnohSite::LakeVerity, false) == 0U);
   assert(state.research == beforeResearch);
-  assert(SinnohExpedition::recordBattle(state, true) == 1U);
+  assert(SinnohExpedition::recordBattle(
+             state, SinnohSite::LakeVerity, true) == 1U);
   assert(state.research == beforeResearch + 1U);
 
   // A Sinnoh encounter starts as a normal, capturable Wild battle. It does
