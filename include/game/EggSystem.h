@@ -46,7 +46,8 @@ class EggSystem{
   // never owned. The nine Gen-I--III starters remain the complete starter
   // pool because later starters have normal regional acquisition. After all
   // nine are registered, legendary/mythical species are selected through the
-  // highest content generation the player has actually unlocked.
+  // highest content generation the player has actually unlocked. Ultra Beasts
+  // are excluded from this pool; Necrozma remains eligible as a Legendary.
   static bool grantBattleTowerSpecial(EggState&,const PokedexState&,
                                       uint8_t unlockedGeneration,uint32_t seed);
   // Reward Eggs wait in the dedicated Bag pocket. Their incubation clock

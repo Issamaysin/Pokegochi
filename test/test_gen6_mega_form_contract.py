@@ -9,6 +9,7 @@ MEGA = (ROOT / "src/game/MegaEvolution.cpp").read_text(encoding="utf-8")
 ENGINE = (ROOT / "src/game/BattleEngine.cpp").read_text(encoding="utf-8")
 COLLECTION = (ROOT / "src/game/Collection.cpp").read_text(encoding="utf-8")
 POKEMON_DATA = (ROOT / "src/game/PokemonData.cpp").read_text(encoding="utf-8")
+MOVE_DATA = (ROOT / "src/game/MoveDataGenerated.inc").read_text(encoding="utf-8")
 RENDERER = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
 PACKER = (ROOT / "scripts/build_sd_asset_pack.py").read_text(encoding="utf-8")
 EXPANSION = ROOT / ".downloads/pokeemerald-expansion/graphics/pokemon"
@@ -40,7 +41,7 @@ assert "kDeoxysSpeedLearnset" in POKEMON_DATA
 assert "kEternalFloetteLearnset" in POKEMON_DATA
 assert "kHoopaUnboundLearnset" in POKEMON_DATA
 assert '"HYPERSPACE FURY"' in POKEMON_DATA
-assert '"CORE ENFORCER"' in POKEMON_DATA
+assert '"CORE ENFORCER"' in MOVE_DATA
 assert '"NIHIL LIGHT"' in POKEMON_DATA
 assert "relearnableMovesForPokemon" in POKEMON_DATA
 assert "synchronizeSignatureMove" in MEGA
@@ -49,8 +50,10 @@ assert "resetBattleTriggeredForms" in ENGINE
 assert "updateZygardeAssembly" in ENGINE
 assert "refreshDerivedStatsPreservingHpRatio" in ENGINE
 assert "refreshDerivedStatsPreservingHpRatio" in COLLECTION
-assert "pokemon.currentHp)*10U" in ENGINE
-assert "pokemon.currentHp)*2U" in ENGINE
+assert "static_cast<uint64_t>(currentHp)*10U" in ENGINE
+assert "static_cast<uint64_t>(currentHp)*2U" in ENGINE
+assert "preserveExternalHpLayer" in ENGINE
+assert "projectedBossHp" in ENGINE
 assert 'effectIs(move,"NIHIL_LIGHT")' in ENGINE
 assert "species==716U||species==718U||species==720U" in RENDERER
 assert "uint8_t playerForm = 0;" in RENDERER
@@ -59,6 +62,22 @@ assert "snapshot.playerForm = CollectionLogic::resolvedForm(*player);" in RENDER
 assert "snapshot.playerMaximumHp = player->maximumHp;" in RENDERER
 assert "battleFlow.displayPlayerForm = playerFormBefore;" in RENDERER
 assert "battleFlow.displayPlayerMaximumHp = playerMaximumHpBefore;" in RENDERER
+# Move-plane preparation resets the resident sprite cache.  It must reload
+# the journal's staged forms, not the already-resolved live forms, or Zygarde
+# flashes the missing-asset placeholder between 10%, 50% and Complete.
+BATTLER_PRELOAD_START = RENDERER.index("bool preloadPresentedBattleBattlers(")
+BATTLER_PRELOAD_END = RENDERER.index(
+    "bool preloadBattleAnimationSpriteFrames", BATTLER_PRELOAD_START)
+BATTLER_PRELOAD = RENDERER[BATTLER_PRELOAD_START:BATTLER_PRELOAD_END]
+assert "OwnedPokemon visual = *player;" in BATTLER_PRELOAD
+assert "visual.form = presentedBattleForm(player, true);" in BATTLER_PRELOAD
+assert "OwnedPokemon visual = *opponent;" in BATTLER_PRELOAD
+assert "visual.form = presentedBattleForm(opponent, false);" in BATTLER_PRELOAD
+PRELOAD_START = RENDERER.index("bool preloadMoveAnimation(")
+PRELOAD_END = RENDERER.index(
+    "bool preloadMoveAnimationWithCapacityRetry", PRELOAD_START)
+PRELOAD = RENDERER[PRELOAD_START:PRELOAD_END]
+assert "preloadPresentedBattleBattlers()" in PRELOAD
 assert 'abilityIs(attacker,"FIRE MANE")' in ENGINE
 assert 'attackType==PokemonType::Fire)power=power*130U/100U' in ENGINE
 assert "canHoldMegaStone" in MEGA

@@ -7,8 +7,10 @@ constexpr uint16_t kPokedexSpeciesCountV45 = 493;
 constexpr uint8_t kPokedexBytesV45 = 62;
 constexpr uint16_t kPokedexSpeciesCountV46 = 649;
 constexpr uint8_t kPokedexBytesV46 = 82;
-constexpr uint16_t kPokedexSpeciesCount = 721;
-constexpr uint8_t kPokedexBytes = 91;
+constexpr uint16_t kPokedexSpeciesCountV48 = 721;
+constexpr uint8_t kPokedexBytesV48 = 91;
+constexpr uint16_t kPokedexSpeciesCount = 807;
+constexpr uint8_t kPokedexBytes = 101;
 
 struct PokedexStateV41 {
   uint8_t seen[kPokedexBytesV41]{};
@@ -31,6 +33,11 @@ struct PokedexStateV45 {
 struct PokedexStateV46 {
   uint8_t seen[kPokedexBytesV46]{};
   uint8_t caught[kPokedexBytesV46]{};
+};
+
+struct PokedexStateV48 {
+  uint8_t seen[kPokedexBytesV48]{};
+  uint8_t caught[kPokedexBytesV48]{};
 };
 
 struct PokedexState {
@@ -60,6 +67,14 @@ struct PokedexState {
     }
     return *this;
   }
+
+  PokedexState& operator=(const PokedexStateV48& legacy) {
+    for (uint8_t index = 0; index < kPokedexBytes; ++index) {
+      seen[index] = index < kPokedexBytesV48 ? legacy.seen[index] : 0U;
+      caught[index] = index < kPokedexBytesV48 ? legacy.caught[index] : 0U;
+    }
+    return *this;
+  }
 };
 
 struct PokedexEntryData {
@@ -77,6 +92,10 @@ class PokedexLogic {
   // Shared classification for statistics and systems that include the
   // Gen-IV legendary/mythical IDs without duplicating the table.
   static bool isLegendaryOrMythical(uint16_t speciesId);
+  static bool isUltraBeast(uint16_t speciesId);
+  // Stats and Special Eggs treat Ultra Beasts as their own category. Necrozma
+  // is not an Ultra Beast and therefore remains a Legendary in these flows.
+  static bool isLegendaryOrMythicalExcludingUltraBeasts(uint16_t speciesId);
   static void markSeen(PokedexState& pokedex, uint16_t speciesId);
   static void markCaught(PokedexState& pokedex, uint16_t speciesId);
   static bool hasSeen(const PokedexState& pokedex, uint16_t speciesId);

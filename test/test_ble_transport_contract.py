@@ -23,11 +23,27 @@ assert "serverNotifyInFlight" in android
 assert "onDescriptorWriteRequest" in android and "serverNotificationsEnabled" in android
 assert "scheduleCentralRetry" in android
 assert "INBOUND_HANDSHAKE_TIMEOUT_MS = 12_000L" in policy
-assert "MAX_CENTRAL_ATTEMPTS = 3" in policy
-assert "CENTRAL_ROLE_SETTLE_MS = 320L" in policy
+assert "MAX_CENTRAL_ATTEMPTS = 5" in policy
+assert "GATT_OPERATION_TIMEOUT_MS = 2_500L" in policy
+assert "GATT_SERVER_TO_CENTRAL_SETTLE_MS = 280L" in policy
 assert "openCentralGatt" in android
 assert "PHY_LE_1M_MASK" in android
 assert "adapter.cancelDiscovery()" in android
+assert "closeGattServer(false);" in android
+assert "restartGattServer();" in android
+assert "checkGattOperationTimeouts();" in android
+assert "checkPeripheralHandshakeTimeout();" in android
+assert "replayHandshakeIfNeeded(state);" in android
+assert "finishPeripheralClose();" in android
+assert "createScanCallback" in android and "scanRetryAtMs" in android
+assert "createAdvertiseCallback" in android and "advertisingGeneration" in android
+assert "centralGeneration != generation" in android
+assert "remoteRx != null && gatt != null && centralReady" in android
+assert "MINIMUM_GATT_MTU = 177" in policy
+assert "BLE MTU negotiation callback timed out" in android
+assert android.index("closeGattServer(false);") < android.index(
+    "openCentralGattAfterServerRelease"
+)
 
 assert "gLatestDiscovery" in firmware and "gDiscoveryPending" in firmware
 assert "event.kind == TransportEventKind::Discovered" in firmware

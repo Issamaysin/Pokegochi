@@ -258,6 +258,8 @@ for trainer_id, row in enumerate(trainer_rows):
     pool = pools[pool_name]
     if len(pool) < 3:
         raise RuntimeError(f"Trainer {trainer_id} has only {len(pool)} templates")
+    if len(pool) > 255:
+        raise RuntimeError(f"Trainer {trainer_id} pool does not fit uint8_t")
     offset = len(packed_pools)
     packed_pools.extend(pool)
     iv = 3 if trainer_id < 100 else min(31, 6 + ((trainer_id - 100) // 20) * 3)
@@ -273,9 +275,22 @@ for row in mon_rows:
     out.append(f"  {{{species}, {{{moves[0]}, {moves[1]}, {moves[2]}, {moves[3]}}}, "
                f"HeldItem::{item}, 0x{ev_mask:02X}, static_cast<PokemonNature>({nature})}},")
 out.append("};")
-out.append("static constexpr uint16_t kBattleTowerPoolEntries[] = {")
-for start in range(0, len(packed_pools), 20):
-    out.append("  " + ", ".join(str(value) for value in packed_pools[start:start + 20]) + ",")
+# All template ids fit ten bits. Packing them saves roughly 10 KiB while the
+# two zero guard bytes make the constant-time three-byte decoder safe for the
+# final entry without a branch.
+pool_bytes = bytearray((len(packed_pools) * 10 + 7) // 8 + 2)
+for index, value in enumerate(packed_pools):
+    if value >= 1024:
+        raise RuntimeError(f"Battle Tower template id {value} exceeds ten bits")
+    bit = index * 10
+    encoded = value << (bit & 7)
+    byte = bit >> 3
+    pool_bytes[byte] |= encoded & 0xFF
+    pool_bytes[byte + 1] |= (encoded >> 8) & 0xFF
+    pool_bytes[byte + 2] |= (encoded >> 16) & 0xFF
+out.append("static constexpr uint8_t kBattleTowerPoolEntries[] = {")
+for start in range(0, len(pool_bytes), 24):
+    out.append("  " + ", ".join(f"0x{value:02X}" for value in pool_bytes[start:start + 24]) + ",")
 out.append("};")
 out.append("static constexpr BattleTowerTrainerDefinition kBattleTowerTrainers[] = {")
 for trainer_class, name, asset, line1, line2, offset, count, iv in trainer_output:

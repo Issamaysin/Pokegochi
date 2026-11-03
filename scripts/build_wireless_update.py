@@ -27,7 +27,7 @@ LAST_SEQUENCE = ROOT / ".keys/pokegochi-update-sequence.txt"
 PUBLIC_HEADER = ROOT / "include/config/UpdateSigningKey.h"
 OUTPUT = ROOT / "dist/pokegochi-wireless-update.pgota"
 # Keep this guard aligned with partitions.csv and the firmware's actual OTA
-# slots. Gen I--V uses the symmetric 0x1E0000 pair in partitions.csv.
+# slots. Gen I--VII uses the symmetric 0x1E0000 pair in partitions.csv.
 OTA_SLOT_SIZE = 0x1E0000
 
 PROTOCOL_VERSION = 1

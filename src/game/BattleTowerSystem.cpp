@@ -13,6 +13,15 @@ static_assert(sizeof(kBattleTowerMons)/sizeof(kBattleTowerMons[0]) ==
 static_assert(sizeof(kBattleTowerTrainers)/sizeof(kBattleTowerTrainers[0]) ==
               BattleTowerSystem::kTrainerCount, "Emerald Tower trainer catalog changed");
 
+uint16_t towerPoolEntry(uint16_t index) {
+  const uint32_t bit = static_cast<uint32_t>(index) * 10U;
+  const uint16_t byte = static_cast<uint16_t>(bit >> 3U);
+  const uint32_t packed = static_cast<uint32_t>(kBattleTowerPoolEntries[byte]) |
+      (static_cast<uint32_t>(kBattleTowerPoolEntries[byte + 1U]) << 8U) |
+      (static_cast<uint32_t>(kBattleTowerPoolEntries[byte + 2U]) << 16U);
+  return static_cast<uint16_t>((packed >> (bit & 7U)) & 0x3FFU);
+}
+
 uint32_t next(BattleState& battle) {
   uint32_t value=battle.rngState?battle.rngState:0xB4771E5DU;
   value^=value<<13U;value^=value>>17U;value^=value<<5U;
@@ -119,14 +128,14 @@ bool loadStage(BattleState& battle,PokemonCollection& collection) {
     for(uint16_t attempt=0;attempt<definition->poolCount*3U;++attempt){
       const uint16_t packed=static_cast<uint16_t>(definition->poolOffset+
           next(battle)%definition->poolCount);
-      const uint16_t templateId=kBattleTowerPoolEntries[packed];
+      const uint16_t templateId=towerPoolEntry(packed);
       const BattleTowerMonTemplate* candidate=BattleTowerSystem::monTemplate(templateId);
       if(candidate&&!conflicts(battle,slot,*candidate)){selected=candidate;break;}
     }
     if(!selected){
       for(uint16_t entry=0;entry<definition->poolCount;++entry){
         const BattleTowerMonTemplate* candidate=BattleTowerSystem::monTemplate(
-            kBattleTowerPoolEntries[definition->poolOffset+entry]);
+            towerPoolEntry(static_cast<uint16_t>(definition->poolOffset+entry)));
         if(candidate&&!conflicts(battle,slot,*candidate)){selected=candidate;break;}
       }
     }

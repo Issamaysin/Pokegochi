@@ -218,11 +218,11 @@ int main(){
     assert(fixture.battle.opponents[0].currentHp<before);
   }
   {
-    Fixture fixture(static_cast<MoveId>(687U),false); // CORE ENFORCER
+    Fixture fixture(static_cast<MoveId>(650U),false); // CORE ENFORCER
     const uint16_t before=fixture.battle.opponents[0].currentHp;
     const BattleActionResult result=fixture.use(false);
     assert(result.accepted&&!sawEffect(
-        result,static_cast<MoveId>(687U),BattleMoveEffect::Failed));
+        result,static_cast<MoveId>(650U),BattleMoveEffect::Failed));
     assert(fixture.battle.opponents[0].currentHp<before);
   }
 

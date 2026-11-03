@@ -24,7 +24,8 @@ final class LocalSaveStore {
             if (input.readInt() != MAGIC || input.readInt() != VERSION) return SaveState.newGame();
             int length = input.readInt();
             if (length < 32) return SaveState.newGame();
-            byte[] payload = input.readNBytes(length);
+            byte[] payload = new byte[length];
+            input.readFully(payload);
             long expected = Integer.toUnsignedLong(input.readInt());
             CRC32 crc = new CRC32(); crc.update(payload);
             if (crc.getValue() != expected) return SaveState.newGame();

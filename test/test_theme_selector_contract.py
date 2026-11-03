@@ -11,6 +11,13 @@ assert "id <= static_cast<uint8_t>(UiColorTheme::Emerald)" in MAIN
 assert "SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh)" in MAIN
 assert "UnovaAdventure::white2ThemeUnlocked(gameSave.unova)" in MAIN
 assert "KalosAdventure::xThemeUnlocked(gameSave.kalos)" in MAIN
+assert "AlolaAdventure::sunThemeUnlocked(gameSave.alola)" in MAIN
+assert "AlolaAdventure::moonThemeUnlocked(gameSave.alola)" in MAIN
+assert "static_cast<uint8_t>(UiColorTheme::Moon) + 1U" in MAIN
+assert 'case UiColorTheme::Sun: return "SUN";' in MAIN
+assert 'case UiColorTheme::Moon: return "MOON";' in MAIN
+assert "theme == UiColorTheme::Moon" in MAIN
+assert "{0x48B1, 0x79F4, 0x2025, 0xCDBB}, // Moon" in MAIN
 assert "unlockedUiThemeCount() +" in MAIN
 assert "kUiThemesPerPage - 1U" in MAIN
 assert "unlockedUiThemeAt(position, candidate)" in MAIN

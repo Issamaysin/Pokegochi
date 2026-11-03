@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PARTITIONS = ROOT / "partitions.csv"
 FLASH_SCRIPT = ROOT / "scripts" / "gravar_firmware.ps1"
+PLATFORMIO = ROOT / "platformio.ini"
 
 
 def parse_number(value: str) -> int:
@@ -45,8 +46,15 @@ def main() -> None:
     assert "'0x10000', $firmware" in script
     assert "'verify-flash', '0x10000', $firmware" in script
     assert "'erase-region', '0xE000', '0x2000'" in script
+    assert "$targetOtaSlotSize = 0x1E0000" in script
+    assert "function Assert-FirmwareFitsOtaSlot" in script
+    assert "Assert-FirmwareFitsOtaSlot" in script
+    assert "A gravacao foi bloqueada antes de tocar na flash." in script
     assert "$targetSpiffsOffset = 0x3D0000" in script
     assert "$targetSpiffsSize = 0x30000" in script
+
+    platformio = PLATFORMIO.read_text(encoding="utf-8")
+    assert "use_newlib_nano.py" not in platformio
     print("USB flash-layout guard passed.")
 
 

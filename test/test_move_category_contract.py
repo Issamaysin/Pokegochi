@@ -12,6 +12,9 @@ PLATINUM = ROOT / ".downloads/pokeplatinum-tree"
 sys.path.insert(0, str(ROOT / "scripts"))
 from unova_rom_data import move_record  # noqa: E402
 from kalos_rom_data import move_record as y_move_record  # noqa: E402
+from alola_expansion_data import (move_block as alola_move_block,  # noqa: E402
+                                  move_field as alola_move_field,
+                                  move_symbols as alola_move_symbols)
 
 
 generated = (ROOT / "src/game/MoveDataGenerated.inc").read_text(encoding="utf-8")
@@ -26,8 +29,9 @@ for raw_id, name, move_type, category in row_pattern.findall(generated):
     if move_id not in rows:
         rows[move_id] = (name, move_type, category)
 
-assert set(rows) == set(range(1, 618)), (
-    f"Generated category table has {len(rows)} unique moves instead of 617"
+expected_move_ids = set(range(1, 618)) | set(range(622, 676))
+assert set(rows) == expected_move_ids, (
+    f"Generated category table has {len(rows)} unique moves instead of 671"
 )
 
 platinum_symbols = [
@@ -44,14 +48,45 @@ for move_id in range(1, 468):
     )
 
 white_categories = ("Status", "Physical", "Special")
+white_types = (
+    "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug",
+    "Ghost", "Steel", "Fire", "Water", "Grass", "Electric", "Psychic",
+    "Ice", "Dragon", "Dark",
+)
 for move_id in range(468, 560):
-    expected = white_categories[move_record(move_id)[2]]
+    record = move_record(move_id)
+    expected_type = white_types[record[0]]
+    expected = white_categories[record[2]]
+    assert rows[move_id][1] == expected_type, (
+        f"Move {move_id} {rows[move_id][0]} type is {rows[move_id][1]}, "
+        f"expected {expected_type}"
+    )
     assert rows[move_id][2] == expected, (
         f"Move {move_id} {rows[move_id][0]} is {rows[move_id][2]}, expected {expected}"
     )
 
+xy_types = white_types + ("Fairy",)
 for move_id in range(560, 618):
-    expected = white_categories[y_move_record(move_id)[2]]
+    record = y_move_record(move_id)
+    expected_type = xy_types[record[0]]
+    expected = white_categories[record[2]]
+    assert rows[move_id][1] == expected_type, (
+        f"Move {move_id} {rows[move_id][0]} type is {rows[move_id][1]}, "
+        f"expected {expected_type}"
+    )
+    assert rows[move_id][2] == expected, (
+        f"Move {move_id} {rows[move_id][0]} is {rows[move_id][2]}, expected {expected}"
+    )
+
+for move_id, symbol in sorted(alola_move_symbols().items()):
+    block = alola_move_block(symbol)
+    expected_type = alola_move_field(block, "type").removeprefix("TYPE_").title()
+    expected = alola_move_field(block, "category").removeprefix(
+        "DAMAGE_CATEGORY_").title()
+    assert rows[move_id][1] == expected_type, (
+        f"Move {move_id} {rows[move_id][0]} type is {rows[move_id][1]}, "
+        f"expected {expected_type}"
+    )
     assert rows[move_id][2] == expected, (
         f"Move {move_id} {rows[move_id][0]} is {rows[move_id][2]}, expected {expected}"
     )
@@ -67,6 +102,44 @@ summary = main[summary_start:summary_end]
 assert "moveCategoryName(move->category)" in summary
 assert "moveUsesSpecialAttack" not in main
 
+descriptions = (ROOT / "src/game/MoveDescriptionsGenerated.inc").read_text(
+    encoding="utf-8")
+
+def generated_array(name: str) -> list[int]:
+    match = re.search(
+        rf"constexpr (?:uint8_t|uint16_t) {name}(?:\[[^\]]*\])? = \{{(.*?)\}};",
+        descriptions,
+        re.DOTALL,
+    )
+    assert match, f"Missing generated array {name}"
+    return [int(token, 0) for token in re.findall(r"0x[0-9A-F]+|\d+", match.group(1))]
+
+description_offsets = generated_array("kMoveDescriptionOffsets")
+word_offsets = generated_array("kMoveDescriptionWordOffsets")
+word_bytes = generated_array("kMoveDescriptionWords")
+description_bytes = generated_array("kMoveDescriptionData")
+
+def decoded_description(move_id: int) -> str:
+    cursor = description_offsets[move_id]
+    words: list[str] = []
+    while description_bytes[cursor] != 0xFF:
+        token = description_bytes[cursor]
+        cursor += 1
+        if token:
+            start, end = word_offsets[token - 1:token + 1]
+            words.append(bytes(word_bytes[start:end]).decode("ascii"))
+        else:
+            length = description_bytes[cursor]
+            cursor += 1
+            words.append(bytes(description_bytes[cursor:cursor + length]).decode("ascii"))
+            cursor += length
+    return " ".join(words)
+
+for move_id in (473, 540, 548):
+    assert decoded_description(move_id) == (
+        "A SPECIAL ATTACK THAT CALCULATES DAMAGE USING THE TARGET'S DEFENSE."
+    )
+
 old_physical_types = {
     "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel"
 }
@@ -79,7 +152,7 @@ special_from_physical_type = sum(
     for _, move_type, category in rows.values()
 )
 print(
-    "Move category contract passed: 617/617; "
+    "Move contract passed: 671/671 categories and all 204 Gen-V--VII types; "
     f"{physical_from_special_type} physical moves use formerly-special types, "
     f"{special_from_physical_type} special moves use formerly-physical types; Summary uses category data."
 )

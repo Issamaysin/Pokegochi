@@ -6,10 +6,14 @@ import re
 import json
 from pathlib import Path
 
+from text_normalization import fire_red_ascii
+
 from unova_rom_data import (evolutions as white_evolutions, expansion_text,
                             internal_ability_id, personal_record)
 from kalos_rom_data import (evolutions as y_evolutions,
                             personal_record as y_personal_record)
+from alola_expansion_data import (evolutions as alola_evolutions,
+                                  species_rows as alola_species_rows)
 
 ROOT = Path(__file__).resolve().parent.parent
 DECOMP = ROOT / ".downloads" / "pokefirered-tree" / "pokefirered-master"
@@ -82,6 +86,24 @@ gen6_ability_ids = {
     for index, symbol in enumerate(gen6_ability_symbols)
 }
 all_ability_ids.update(gen6_ability_ids)
+
+gen7_ability_symbols = [
+    "STAMINA", "WIMP_OUT", "EMERGENCY_EXIT", "WATER_COMPACTION",
+    "MERCILESS", "SHIELDS_DOWN", "STAKEOUT", "WATER_BUBBLE",
+    "STEELWORKER", "BERSERK", "SLUSH_RUSH", "LONG_REACH",
+    "LIQUID_VOICE", "TRIAGE", "GALVANIZE", "SURGE_SURFER", "SCHOOLING",
+    "DISGUISE", "BATTLE_BOND", "POWER_CONSTRUCT", "CORROSION", "COMATOSE",
+    "QUEENLY_MAJESTY", "INNARDS_OUT", "DANCER", "BATTERY", "FLUFFY",
+    "DAZZLING", "SOUL_HEART", "TANGLING_HAIR", "RECEIVER",
+    "POWER_OF_ALCHEMY", "BEAST_BOOST", "RKS_SYSTEM", "ELECTRIC_SURGE",
+    "PSYCHIC_SURGE", "MISTY_SURGE", "GRASSY_SURGE", "FULL_METAL_BODY",
+    "SHADOW_SHIELD", "PRISM_ARMOR", "NEUROFORCE",
+]
+gen7_ability_ids = {
+    symbol: internal_ability_id(192 + index)
+    for index, symbol in enumerate(gen7_ability_symbols)
+}
+all_ability_ids.update(gen7_ability_ids)
 
 platinum_species_symbols = [line.strip().removeprefix("SPECIES_")
                             for line in (PLATINUM / "generated/species.txt").read_text(
@@ -174,10 +196,11 @@ for number, symbol in species:
     abilities = re.search(r"\.abilities\s*=\s*\{ABILITY_([A-Z0-9_]+),\s*ABILITY_([A-Z0-9_]+)\}", block)
     if not abilities: raise ValueError(f"Missing abilities {symbol}")
     rows.append(
-        f'    {{{number}, "{name}", PokemonType::{type_map[types.group(1)]}, '
+        f'    {{"{name}", {number}, {field(block,"expYield")}, '
+        f'PokemonType::{type_map[types.group(1)]}, '
         f'PokemonType::{type_map[types.group(2)]}, {field(block,"baseHP")}, '
         f'{field(block,"baseAttack")}, {field(block,"baseDefense")}, {field(block,"baseSpAttack")}, {field(block,"baseSpDefense")}, {field(block,"baseSpeed")}, '
-        f'{field(block,"catchRate")}, {field(block,"expYield")}, GrowthRate::{growth_map[field(block,"growthRate").removeprefix("GROWTH_")]}, {ability_ids[abilities.group(1)]}, {ability_ids[abilities.group(2)]}, '
+        f'{field(block,"catchRate")}, GrowthRate::{growth_map[field(block,"growthRate").removeprefix("GROWTH_")]}, {ability_ids[abilities.group(1)]}, {ability_ids[abilities.group(2)]}, '
         f'{sinnoh_ability_by_id[number][0]}, {sinnoh_ability_by_id[number][1]}, '
         f'{white_ability_triplet(number)[0]}, {white_ability_triplet(number)[1]}, '
         f'{white_ability_triplet(number)[2]}, '
@@ -213,11 +236,12 @@ for number, symbol in gen4_species:
         raise ValueError(f"Unknown Platinum gender ratio {source['gender_ratio']} for {symbol}")
     name = gen4_display_names.get(symbol, source["pokedex_data"]["en"]["name"])
     rows.append(
-        f'    {{{number}, "{name}", PokemonType::{type_map[types[0].removeprefix("TYPE_")]}, '
+        f'    {{"{name}", {number}, {source["base_exp_reward"]}, '
+        f'PokemonType::{type_map[types[0].removeprefix("TYPE_")]}, '
         f'PokemonType::{type_map[types[1].removeprefix("TYPE_")]}, {stats["hp"]}, '
         f'{stats["attack"]}, {stats["defense"]}, {stats["special_attack"]}, '
         f'{stats["special_defense"]}, {stats["speed"]}, {source["catch_rate"]}, '
-        f'{source["base_exp_reward"]}, GrowthRate::{growth_map[growth]}, '
+        f'GrowthRate::{growth_map[growth]}, '
         f'{all_ability_ids[ability_one.removeprefix("ABILITY_")]}, '
         f'{all_ability_ids[ability_two.removeprefix("ABILITY_")]}, '
         f'{all_ability_ids[ability_one.removeprefix("ABILITY_")]}, '
@@ -273,10 +297,11 @@ for number in range(494, 650):
     evs = [(ev_bits >> shift) & 0x3 for shift in (0, 2, 4, 8, 10, 6)]
     ability_one, ability_two, hidden = white_ability_triplet(number)
     rows.append(
-        f'    {{{number}, "{name}", PokemonType::{ds_types[record[6]]}, '
+        f'    {{"{name}", {number}, {int.from_bytes(record[34:36], "little")}, '
+        f'PokemonType::{ds_types[record[6]]}, '
         f'PokemonType::{ds_types[record[7]]}, {record[0]}, {record[1]}, '
         f'{record[2]}, {record[4]}, {record[5]}, {record[3]}, {record[8]}, '
-        f'{int.from_bytes(record[34:36], "little")}, GrowthRate::{ds_growth[record[21]]}, '
+        f'GrowthRate::{ds_growth[record[21]]}, '
         f'{ability_one}, {ability_two}, {ability_one}, {ability_two}, '
         f'{ability_one}, {ability_two}, {hidden}, '
         f'{evs[0]}, {evs[1]}, {evs[2]}, {evs[3]}, {evs[4]}, {evs[5]}, '
@@ -320,14 +345,33 @@ for number in range(650, 722):
     evs = [(ev_bits >> shift) & 0x3 for shift in (0, 2, 4, 8, 10, 6)]
     ability_one, ability_two, hidden = y_ability_triplet(number)
     rows.append(
-        f'    {{{number}, "{name}", PokemonType::{gen6_types[record[6]]}, '
+        f'    {{"{name}", {number}, {int.from_bytes(record[34:36], "little")}, '
+        f'PokemonType::{gen6_types[record[6]]}, '
         f'PokemonType::{gen6_types[record[7]]}, {record[0]}, {record[1]}, '
         f'{record[2]}, {record[4]}, {record[5]}, {record[3]}, {record[8]}, '
-        f'{int.from_bytes(record[34:36], "little")}, GrowthRate::{ds_growth[record[21]]}, '
+        f'GrowthRate::{ds_growth[record[21]]}, '
         f'{ability_one}, {ability_two}, {ability_one}, {ability_two}, '
         f'{ability_one}, {ability_two}, {hidden}, '
         f'{evs[0]}, {evs[1]}, {evs[2]}, {evs[3]}, {evs[4]}, {evs[5]}, '
         f'{record[18]}}},'
+    )
+
+# Generation VII uses the checked-in expansion tables as an auditable Ultra
+# Sun source. Every National species #722..807 is emitted; Let's Go's Meltan
+# and Melmetal deliberately remain outside this 3DS generation boundary.
+for alola in alola_species_rows():
+    name = alola.name.replace('"', '\\"')
+    rows.append(
+        f'    {{"{name}", {alola.species_id}, {alola.experience}, '
+        f'PokemonType::{alola.type1}, '
+        f'PokemonType::{alola.type2}, {alola.hp}, {alola.attack}, '
+        f'{alola.defense}, {alola.sp_attack}, {alola.sp_defense}, '
+        f'{alola.speed}, {alola.catch_rate}, GrowthRate::{alola.growth}, '
+        f'{alola.ability1}, {alola.ability2}, '
+        f'{alola.ability1}, {alola.ability2}, {alola.ability1}, '
+        f'{alola.ability2}, {alola.hidden_ability}, {alola.ev_hp}, '
+        f'{alola.ev_attack}, {alola.ev_defense}, {alola.ev_sp_attack}, '
+        f'{alola.ev_sp_defense}, {alola.ev_speed}, {alola.gender_ratio}}},'
     )
 
 # Keep original level evolutions. Convert stones/trades/friendship to deterministic
@@ -468,6 +512,10 @@ for source_id in range(1, 722):
         if entry not in evolutions:
             evolutions.append(entry)
 
+for entry in alola_evolutions():
+    if entry not in evolutions:
+        evolutions.append(entry)
+
 content = "// Generated by scripts/generate_pokemon_data.py from local pokefirered data.\n"
 content += "constexpr SpeciesData kSpecies[] = {\n" + "\n".join(rows) + "\n};\n\n"
 content += "constexpr EvolutionData kEvolutions[] = {\n"
@@ -570,10 +618,29 @@ for symbol in gen6_ability_symbols:
     description_match = re.search(
         r'\.description\s*=\s*COMPOUND_STRING\("([^"]*)"\)', block)
     name = (name_match.group(1) if name_match else symbol.replace("_", " ")).upper()
-    description = (description_match.group(1) if description_match else
-                   "GENERATION VI ABILITY.").replace("\\n", " ").upper()
+    description = fire_red_ascii(
+        (description_match.group(1) if description_match else
+         "GENERATION VI ABILITY.").replace("\\n", " ").upper(),
+        f"Gen-VI ability description {symbol}")
     description = description.replace('\\', '\\\\').replace('"', '\\"')
     content += f'    {{{gen6_ability_ids[symbol]}, "{name}", "{description}"}},\n'
+for symbol in gen7_ability_symbols:
+    block_match = re.search(
+        rf"\[ABILITY_{symbol}\]\s*=\s*\{{(.*?)\n\s*\}},",
+        expansion_abilities, re.S)
+    if not block_match:
+        raise RuntimeError(f"Missing expansion ability block {symbol}")
+    block = block_match.group(1)
+    name_match = re.search(r'\.name\s*=\s*_\("([^"]+)"\)', block)
+    description_match = re.search(
+        r'\.description\s*=\s*COMPOUND_STRING\("([^"]*)"\)', block)
+    name = (name_match.group(1) if name_match else symbol.replace("_", " ")).upper()
+    description = fire_red_ascii(
+        (description_match.group(1) if description_match else
+         "GENERATION VII ABILITY.").replace("\\n", " ").upper(),
+        f"Gen-VII ability description {symbol}")
+    description = description.replace('\\', '\\\\').replace('"', '\\"')
+    content += f'    {{{gen7_ability_ids[symbol]}, "{name}", "{description}"}},\n'
 content += "};\n"
 
 wild_data = json.loads((DECOMP / "src/data/wild_encounters.json").read_text(encoding="utf-8"))

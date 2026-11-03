@@ -146,12 +146,16 @@ assert '"HP / PP / STATUS STAY. ONE HEAL. NO ITEMS."' in MAIN
 assert "KalosAdventure::active(gameSave.kalos)&&!gameSave.battle.active" in MAIN
 assert '"KALOS 100%%! X/Y THEME UNLOCKED!"' in MAIN
 assert "KalosAdventure::xThemeUnlocked(gameSave.kalos)" in MAIN
-assert "KalosAdventure::setXThemeSelected(gameSave.kalos, true)" in MAIN
+assert "KalosAdventure::setXThemeSelected(" in MAIN
+assert "gameSave.kalos, theme == UiColorTheme::X" in MAIN
 assert '"--kalos-assets-only"' in PACKER
 assert '"WHITE 2 MONO"' not in MAIN
 assert '"WHITE 2 THEME + ROYAL UNOVA!"' not in MAIN
 assert '"--region-hub-assets-only"' in PACKER
 assert "merge_assets_into_archive(relatives, manifest)" in PACKER
-assert "kRequiredAssetPackVersion = 46" in PACK_VERSION
+pack_version_match = re.search(
+    r"kRequiredAssetPackVersion\s*=\s*(\d+)", PACK_VERSION
+)
+assert pack_version_match and int(pack_version_match.group(1)) >= 50
 
 print("Region hub contract passed.")

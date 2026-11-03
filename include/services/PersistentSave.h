@@ -13,6 +13,8 @@
 #include "game/SinnohExpedition.h"
 #include "game/UnovaAdventure.h"
 #include "game/KalosAdventure.h"
+#include "game/AlolaAdventure.h"
+#include "game/AlolaForms.h"
 #include "game/UnovaForms.h"
 #include "game/TowerDefenseSystem.h"
 
@@ -23,6 +25,8 @@ enum class UiColorTheme : uint8_t {
   Platinum = 3,
   White2 = 4,
   X = 5,
+  Sun = 6,
+  Moon = 7,
 };
 
 struct UserSettings {
@@ -192,6 +196,17 @@ struct GameSave {
   UnovaFormState unovaForms{};
   // V47 adds Kalos after the complete frozen V46 payload.
   KalosAdventureState kalos{};
+  // V49 expands the living-dex Box through Alola and appends the Ultra Sun
+  // campaign plus its unique Memory/Z-Crystal inventory. V48 is frozen below
+  // so installed firmware can migrate without resetting an existing game.
+  AlolaAdventureState alola{};
+  Gen7UniqueItemInventory gen7UniqueItems{};
+  // V50 persists Necrozma's removed fusion partner without changing any
+  // Pokemon record. V49 is frozen below and migrates this new tail to empty.
+  AlolaFormState alolaForms{};
+  // V51 adds stackable ordinary held items from Generations IV--VII.  The
+  // complete V50 payload remains a byte-exact prefix for safe field upgrades.
+  ModernHeldItemInventory modernHeldItems{};
 };
 // V43 added only the compact Poke Defense campaign record. The V42 and V43
 // ABIs are retained below as explicit frozen records and migrated field by
@@ -221,7 +236,7 @@ class PersistentSave {
  private:
   struct Record;
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 48;
+  static constexpr uint16_t kFormatVersion = 51;
   struct MartStateLegacy7 { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy10 { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy15 { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
@@ -981,9 +996,11 @@ class PersistentSave {
     UnovaFormState unovaForms{};
   };
   struct RecordV46 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV46 payload; uint32_t crc; };
-  // V47 is the first complete Kalos payload.  Its 800-position collection is
+  // V47 is the first complete Kalos payload. Its 800-position collection is
   // frozen here so V48 can compact occupied slots into the ESP32-safe active
   // capacity without losing Pokemon stored near the old end of the Box.
+  struct BattleStateV48 { alignas(BattleState) uint8_t bytes[984]{}; };
+  static_assert(sizeof(BattleStateV48)==984,"Frozen V48 battle ABI changed");
   struct GameSaveV47 {
     uint32_t playTimeSeconds = 0;
     uint32_t bootCount = 0;
@@ -993,8 +1010,8 @@ class PersistentSave {
     Inventory inventory{};
     EncounterCharges encounterCharges{};
     WildEncounterClock wildEncounterClock{};
-    BattleState battle{};
-    PokedexState pokedex{};
+    BattleStateV48 battle{};
+    PokedexStateV48 pokedex{};
     GymProgress gymProgress{};
     uint32_t money = 3000;
     MartState mart{};
@@ -1024,6 +1041,75 @@ class PersistentSave {
     KalosAdventureState kalos{};
   };
   struct RecordV47 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV47 payload; uint32_t crc; };
+  // V48 is the complete shipped Kalos record after compacting V47's Box.
+  // Keep it byte-exact even as the active collection, Pokedex and battle
+  // records grow for Alola.
+  struct GameSaveV48 {
+    uint32_t playTimeSeconds = 0;
+    uint32_t bootCount = 0;
+    uint8_t flags = 0;
+    uint8_t activePetSlot = 0;
+    PokemonCollectionV48 collection{};
+    Inventory inventory{};
+    EncounterCharges encounterCharges{};
+    WildEncounterClock wildEncounterClock{};
+    BattleStateV48 battle{};
+    PokedexStateV48 pokedex{};
+    GymProgress gymProgress{};
+    uint32_t money = 3000;
+    MartState mart{};
+    MoveLearningQueue moveLearning{};
+    EvolutionQueue evolutionQueue{};
+    EggState egg{};
+    UserSettings settings{};
+    uint64_t ownedMachines = 0;
+    PlayerStatistics statistics{};
+    uint32_t martSeenDay = 0;
+    PpItemInventory ppItems{};
+    HomePetPlacementState homePetPlacement{};
+    BerryGardenState berryGarden{};
+    CreativeBackgroundState creativeBackgrounds{};
+    SpecialHeldItemInventory specialHeldItems{};
+    uint32_t lastNpcGiftDay = UINT32_MAX;
+    uint32_t clockLocalEpochSeconds = 0;
+    uint32_t bossCooldownSecondsRemaining = 0;
+    BossEncounterState bossEncounter{};
+    EggInventory eggInventory{};
+    SinnohExpeditionState sinnoh{};
+    TowerDefense::CampaignState towerDefense{};
+    Gen4UniqueItemInventory gen4UniqueItems{};
+    UnovaAdventureState unova{};
+    Gen5UniqueItemInventory gen5UniqueItems{};
+    UnovaFormState unovaForms{};
+    KalosAdventureState kalos{};
+  };
+  struct RecordV48 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV48 payload; uint32_t crc; };
+  // V49 is exactly the shipped Alola prefix. Keeping it as aligned raw bytes
+  // avoids duplicating the very large current structure and guarantees that
+  // adding the V50 tail cannot accidentally reinterpret any earlier field.
+  static constexpr size_t kGameSaveV49Size = offsetof(GameSave, alolaForms);
+  struct alignas(GameSave) GameSaveV49 { uint8_t bytes[kGameSaveV49Size]{}; };
+  static_assert(sizeof(GameSaveV49) == kGameSaveV49Size,
+                "Frozen V49 save ABI changed");
+  struct RecordV49 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV49 payload; uint32_t crc; };
+  // V50 is the shipped Alola record including Necrozma fusion state.  Freeze
+  // it as a raw prefix so V51 can append the ordinary held-item inventory
+  // without duplicating the complete 784-slot collection declaration.
+  static constexpr size_t kGameSaveV50PrefixSize =
+      offsetof(GameSave, modernHeldItems);
+  // The shipped V50 GameSave ended at alolaForms and C++ rounded its payload
+  // to GameSave's 8-byte alignment. Those four tail-padding bytes are part of
+  // the on-disk ABI even though V51 reuses their offset for the appended item
+  // inventory. Copying is safe because migration clears modernHeldItems next.
+  static constexpr size_t kGameSaveV50Size =
+      (kGameSaveV50PrefixSize + alignof(GameSave) - 1U) &
+      ~(alignof(GameSave) - 1U);
+  struct alignas(GameSave) GameSaveV50 { uint8_t bytes[kGameSaveV50Size]{}; };
+  static_assert(sizeof(GameSaveV50) == kGameSaveV50Size,
+                "Frozen V50 save ABI changed");
+  struct RecordV50 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV50 payload; uint32_t crc; };
+  static_assert(kGameSaveV50Size == 54936U && sizeof(RecordV50) == 54960U,
+                "Shipped V50 record size changed");
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   uint64_t sinnohMachineOwnership_ = 0;
@@ -1066,6 +1152,9 @@ class PersistentSave {
   bool readRecordV45(const char* key, RecordV45& record);
   bool readRecordV46(const char* key, RecordV46& record);
   bool readRecordV47(const char* key, RecordV47& record);
+  bool readRecordV48(const char* key, RecordV48& record);
+  bool readRecordV49(const char* key, RecordV49& record);
+  bool readRecordV50(const char* key, RecordV50& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   uint32_t crc32Update(uint32_t state, const uint8_t* data, size_t length) const;

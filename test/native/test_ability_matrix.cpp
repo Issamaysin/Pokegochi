@@ -643,7 +643,7 @@ int main(){
   // Mega Meganium's MEGA SOL is personal sunlight. It must never replace the
   // field weather or grant an opposing Pokemon sunny recovery/charging rules.
   {
-    constexpr uint8_t megaSol=220U;
+    const uint8_t megaSol=abilityNamed("MEGA SOL");
     const MoveId synthesis=static_cast<MoveId>(235);
     Fixture holder(synthesis);
     holder.player().abilityId=megaSol;
@@ -679,7 +679,7 @@ int main(){
     assert(enemyHolder.opponent().currentHp==81U);
   }
   {
-    constexpr uint8_t megaSol=220U;
+    const uint8_t megaSol=abilityNamed("MEGA SOL");
     const MoveId solarBeam=static_cast<MoveId>(76);
 
     // Solar Beam normally presents setup on turn one and release on turn two.

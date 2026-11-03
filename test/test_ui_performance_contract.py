@@ -1,5 +1,6 @@
 """Guard measured ESP32 menu optimizations against silent regressions."""
 
+import re
 from pathlib import Path
 
 
@@ -50,6 +51,31 @@ def main() -> None:
     assert "invalidatePixels(9,48,184,160);requestRetainedFrame();" in summary_touch
     assert "if(summaryMoveSlot!=slot)" in summary_touch
 
+    # Z-POWER is contextual in the move confirmation. A normal move owns a
+    # compact two-row OK/CANCEL modal and the middle touch band becomes
+    # CANCEL; only a compatible, currently usable Z-Move gets the third row.
+    z_option_start = MAIN.index("bool battleMoveZPowerAvailable(")
+    z_option_end = MAIN.index("void drawMoveSelect()", z_option_start)
+    z_option = MAIN[z_option_start:z_option_end]
+    assert "BattleEngine::canUseZMove(" in z_option
+
+    move_draw_start = z_option_end
+    move_draw_end = MAIN.index("void queueMoveLearning(", move_draw_start)
+    move_draw = MAIN[move_draw_start:move_draw_end]
+    assert "const int16_t confirmationHeight=zAvailable?90:60;" in move_draw
+    assert "drawFireRedBattleWindow(112,42,96,confirmationHeight" in move_draw
+    assert "if(zAvailable){" in move_draw
+    assert 'fireRedText.drawString("CANCEL",132,zAvailable?109:80,1);' in move_draw
+    assert "TFT_LIGHTGREY" not in move_draw[move_draw.index("if (moveConfirmSlot >= 0)"):]
+
+    move_touch_start = MAIN.index("if (screen == Screen::MoveSelect) {")
+    move_touch_end = MAIN.index("if(screen==Screen::EvolutionChoose)", move_touch_start)
+    move_touch = MAIN[move_touch_start:move_touch_end]
+    assert "const bool zAvailable=battleMoveZPowerAvailable(" in move_touch
+    assert "if(zAvailable&&inside(p,112,72,96,30))" in move_touch
+    assert "const int16_t cancelY=zAvailable?102:72;" in move_touch
+    assert "THIS MOVE CAN'T USE THAT Z-CRYSTAL" not in move_touch
+
     font_string_start = FONT.index("void FireRedFont::drawString(")
     font_string_end = FONT.index("void FireRedFont::drawStringFitted(", font_string_start)
     font_string = FONT[font_string_start:font_string_end]
@@ -64,13 +90,19 @@ def main() -> None:
     # has been granted by obtaining Kyurem.
     assert "DNA SPLICERS APPEAR HERE WHEN KYUREM IS OWNED." not in MAIN
     assert '"CHECK BADGES AND LEAGUE PROGRESS."' in MAIN
-    contents_start = MAIN.index("void drawTrainerCardPocketContents()")
+    contents_start = MAIN.index("void drawKeyItemPocketContents()")
     contents_end = MAIN.index("void drawInventoryEntryRow(", contents_start)
     contents = MAIN[contents_start:contents_end]
-    assert "UnovaForms::hasDnaSplicers(gameSave.gen5UniqueItems)" in contents
-    assert contents.index("if (showDnaSplicers)") < contents.index('"DNA SPLICERS"')
-    assert "drawInventoryMessage(kTrainerCardPocketDescription" in contents
-    assert MAIN.count("drawTrainerCardPocketContents();") == 2
+    assert "availableKeyItems(items)" in contents
+    assert "keyItemPageCount()" in contents
+    assert "keyItemPage * kKeyItemsPerPage" in contents
+    assert "keyItemName(item)" in contents
+    assert "constexpr uint8_t kKeyItemsPerPage = 3;" in MAIN
+    assert "keyItemIconExtent(item)" in contents
+    assert "kKeyItemIconCenterX - iconExtent / 2" in contents
+    assert "centerY - iconExtent / 2" in contents
+    assert "39 - extent / 2, 204 - extent / 2" in contents
+    assert MAIN.count("drawKeyItemPocketContents();") == 2
 
     # DNA Splicers is a real Key Item action, not decorative artwork beside a
     # Trainer Card button. It must locate Kyurem's physical Box page and open
@@ -86,11 +118,48 @@ def main() -> None:
     inventory_touch_start = MAIN.index("if (screen == Screen::Inventory) {")
     inventory_touch_end = MAIN.index("if(screen==Screen::TrainerCard)", inventory_touch_start)
     inventory_touch = MAIN[inventory_touch_start:inventory_touch_end]
-    assert "inside(p, 106, kDnaSplicersY, 203, kKeyItemCompactH)" in inventory_touch
-    assert inventory_touch.count("openDnaSplicersFromInventory();") == 2
-    assert "(dnaSplicersSelected() || prisonBottleSelected()) ? \"USE\" : \"OPEN\"" in MAIN
-    assert '"PRISON BOTTLE"' in contents
-    assert "usePrisonBottleFromInventory();" in inventory_touch
+    assert "pages > 1U && inside(p, 282, 8, 27, 55)" in inventory_touch
+    assert "pages > 1U && inside(p, 282, 108, 27, 55)" in inventory_touch
+    assert inventory_touch.count("activateSelectedKeyItem();") == 2
+    assert "megaStoneKeyItemSelected() || dnaSplicersSelected() ||" in MAIN
+    assert "necrozmaFusersSelected()) ? \"USE\" : \"OPEN\"" in MAIN
+    assert '"PRISON BOTTLE"' in MAIN
+    assert '"NECROZMA FUSERS"' in MAIN
+    key_action_start = MAIN.index("void activateSelectedKeyItem()")
+    key_action_end = MAIN.index("struct BoxContextEntry", key_action_start)
+    key_action = MAIN[key_action_start:key_action_end]
+    assert "openDnaSplicersFromInventory();" in key_action
+    assert "usePrisonBottleFromInventory();" in key_action
+    assert "openNecrozmaFusersFromInventory();" in key_action
+    assert "openMegaStoneFromInventory();" in key_action
+
+    # Mega Stone is a permanent Key Item shortcut after its challenge. The
+    # current holder remains visually Mega while the player browses Party/Box;
+    # confirmation transfers the unique item, while cancellation changes
+    # nothing and a failed target restores the previous holder.
+    assert "MegaChallengeSystem::completed(gameSave.gymProgress)" in MAIN
+    mega_key_start = MAIN.index("bool openMegaStoneFromInventory()")
+    mega_key_end = MAIN.index("bool transferMegaStoneFromKeyItem(", mega_key_start)
+    mega_key = MAIN[mega_key_start:mega_key_end]
+    assert "pokemon.heldItem == HeldItem::MegaStone" in mega_key
+    assert "unequipHeldItem(" not in mega_key
+    assert "gameSave.ownedMachines |= kMegaStoneOwnershipBit" in mega_key
+    assert "inventoryMode = InventoryMode::ChooseTarget;" in mega_key
+    transfer_end = MAIN.index("void activateSelectedKeyItem()", mega_key_end)
+    transfer = MAIN[mega_key_end:transfer_end]
+    assert "if (previous == &target) return true;" in transfer
+    assert "unequipHeldItem(*previous" in transfer
+    assert "applyInventoryItem(megaEntry, target)" in transfer
+    assert "if (previous) applyInventoryItem(megaEntry, *previous);" in transfer
+    assert MAIN.count("transferMegaStoneFromKeyItem(") == 3
+    target_start = MAIN.index("void drawInventoryTarget()")
+    target_end = MAIN.index("void drawMegaFormSelect()", target_start)
+    target_picker = MAIN[target_start:target_end]
+    assert "member->speciesId" in target_picker
+    assert "member->shiny" in target_picker
+    assert "CollectionLogic::resolvedForm(*member)" in target_picker
+    assert "inventoryTargetEntry()" in MAIN
+    assert MAIN.count("inventoryEntryName(inventoryTargetEntry())") == 2
 
     mart_start = MAIN.index(
         "if (inside(p, kHomeBottomX[5], kHomeBottomY, kHomeButtonWidth, "
@@ -190,17 +259,132 @@ def main() -> None:
     # The Kalos living Dex is 53,712 bytes. On the no-PSRAM board the SD/FAT
     # mount leaves a 53,236-byte ordinary-heap block when the retained visual
     # layer table is there, causing an immediate reboot before save loading.
-    # Keep the full 36-layer table in the otherwise spare RTC slow bank.
-    assert "RTC_DATA_ATTR BattleVisualLayer" in MAIN
+    # Keep the full retained-layer table in the otherwise spare RTC slow bank.
+    assert "RTC_NOINIT_ATTR BattleVisualLayer" in MAIN
     assert "battleVisualLayerStorage[kBattleVisualLayerCapacity]" in MAIN
     assert "battleVisualLayers = battleVisualLayerStorage" in MAIN
     assert "std::memset(battleVisualLayerStorage" in MAIN
+
+    # Kids Paint clears its packed canvas every time the screen opens. Keep the
+    # zero-filled surface out of firmware.bin so production remains OTA-safe.
+    assert "RTC_NOINIT_ATTR alignas(4) uint8_t kidsPaintPixelsStorage" in MAIN
+    paint_open = MAIN.index("bool beginKidsPaintCanvas()")
+    paint_close = MAIN.index("void endKidsPaintCanvas()", paint_open)
+    assert "kidsPaintPixels = kidsPaintPixelsStorage;" in MAIN[paint_open:paint_close]
+    assert "std::memset(kidsPaintPixels, 0, kKidsCanvasBytes);" in MAIN[
+        paint_open:paint_close
+    ]
     esp_layers_start = MAIN.index(
         "#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)\n"
-        "RTC_DATA_ATTR BattleVisualLayer"
+        "// setup() clears this table before first use, so storing thousands of zero\n"
     )
     esp_layers_end = MAIN.index("#endif", esp_layers_start)
     assert "std::calloc" not in MAIN[esp_layers_start:esp_layers_end]
+    assert "std::memset(battleVisualLayerStorage" in MAIN
+
+    # The generated battle path is at most 76 bytes. Larger logical GBA OBJ
+    # sets use the generic task-child pager instead of consuming more RTC or
+    # dropping objects. Keep the catalog and retained terminator coupled.
+    assert "char path[77]{};" in MAIN
+    assert "constexpr uint8_t kBattleVisualLayerCapacity = 36;" in MAIN
+    generated_animation = (
+        ROOT / "src" / "game" / "BattleAnimationGenerated.inc"
+    ).read_text(encoding="utf-8")
+    sprite_names = re.findall(r'"([A-Za-z0-9_]+)"', generated_animation)
+    battle_prefix = "/pokegochi/assets/firered/battle_anims/sprites/"
+    assert max(len(f"{battle_prefix}{name}_00.pkg") for name in sprite_names) <= 76
+    assert "battleAnimationVisualTaskPressureCounts()" in MAIN
+    assert "battleAnimationTaskChildPagePending" in MAIN
+    assert "(taskPressureCounts & 0x8000U)" in MAIN
+
+    # The physical move sweep found a valid GBA scene which needs an opaque
+    # replacement and a task field at the same time (Trick-or-Treat: Nightmare
+    # + Scary Face). Keep those resources in the renderer's two independent
+    # banks; merging them back into one path rejects the authored program.
+    preload_start = MAIN.index("bool preloadMoveAnimation(")
+    preload_end = MAIN.index("bool preloadMoveAnimationWithCapacityRetry(", preload_start)
+    preload_move = MAIN[preload_start:preload_end]
+    assert "char replacementPlanePath[112]{};" in preload_move
+    assert "char effectPlanePath[112]{};" in preload_move
+    assert "selectBattlePlane(replacementPlanePath, path, true);" in preload_move
+    assert (
+        "selectBattlePlane(effectPlanePath, battleAnimationFieldPath(field),\n"
+        "                          false);"
+    ) in preload_move
+    assert preload_move.index("AssetRenderer::preload(replacementPlanePath)") < preload_move.index(
+        "AssetRenderer::prepareBattlePlane("
+    )
+    assert "AssetRenderer::isPreloaded(replacementPlanePath)" in preload_move
+    assert "AssetRenderer::isPreloaded(effectPlanePath)" in preload_move
+
+    # A reachable program can replace BG1 more than once (Continental Crush
+    # is the physical regression). These are sequential pages, while two task
+    # fields would still compete for the same simultaneous plane. Playback
+    # must page the later opaque background outside retained composition and
+    # rebuild every resource that can spill from the scene workspace.
+    assert "bool sequentialReplacement" in preload_move
+    assert "std::strcmp(selected, path) != 0 && !sequentialReplacement" in preload_move
+    playback_start = MAIN.index("void playBattleAnimationProgram(")
+    playback_end = MAIN.index("bool preloadMoveAnimation(", playback_start)
+    playback = MAIN[playback_start:playback_end]
+    assert "const auto ensureBackgroundPage =" in playback
+    assert "AssetRenderer::setCompositionActive(false);" in playback
+    assert "preloadPresentedBattleBattlers()" in playback
+    assert "preloadBattleAnimationSpriteManifest(" in playback
+    assert "case BattleAnimationOpcode::ChangeBackground:" in playback
+    assert "if (!ensureBackgroundPage(" in playback
+
+    # Gen VII scripts legitimately exceed the GBA's 64 simultaneous OBJ
+    # records before the physical 36-layer presenter pages them. The logical
+    # ledger must retain every authored emission rather than recycling slots.
+    assert "constexpr uint8_t kBattleAnimationParticleCapacity = 192;" in MAIN
+
+    # Dense 3x programs repeatedly resolve the same immutable resident paths.
+    # The fixed cache has no LRU eviction, so its existing stamp word is a path
+    # hash and avoids a full strcmp against almost every slot on every stripe.
+    assert "entry.stamp == hash" in RENDERER
+    assert "slot->stamp = assetPathHash(path);" in RENDERER
+    assert "cacheStamp" not in RENDERER
+
+    # Full-field backgrounds must use mapped rows and precomputed palettes;
+    # falling back to per-pixel division/palette transforms made 3x stutter.
+    scrolled_start = RENDERER.index("bool drawIndexedScrolled(")
+    scrolled_end = RENDERER.index("bool drawIndexedTransformed(", scrolled_start)
+    scrolled = RENDERER[scrolled_start:scrolled_end]
+    assert "uint16_t* sourceXMap" in scrolled
+    assert "const bool directLinearIndexed" in scrolled
+    assert "const bool directTiled4" in scrolled
+
+    composite_start = RENDERER.index("bool AssetRenderer::drawPlaneComposite(")
+    composite_end = RENDERER.index("bool AssetRenderer::drawRegion(", composite_start)
+    composite = RENDERER[composite_start:composite_end]
+    assert "uint16_t* baseXMap" in composite
+    assert "uint16_t* overlayXMap" in composite
+    assert "directPalette" in composite
+    assert "scratch.stream.pixels" in composite
+
+    # Alola grows GameSave beyond the largest post-FAT block. The scene bank
+    # is still empty at this point, so boot must lend and restore that exact
+    # allocation around GameSave before PersistentSave obtains its migration
+    # scratch. This preserves both the full Box and the full renderer arena.
+    game_save_allocation = MAIN.index(
+        "gameSaveStorage = static_cast<GameSave*>(heap_caps_calloc"
+    )
+    loan = MAIN.rfind(
+        "AssetRenderer::releaseSceneWorkspaceForStorage();",
+        0,
+        game_save_allocation,
+    )
+    restore = MAIN.index(
+        "AssetRenderer::restoreSceneWorkspace(false)", game_save_allocation
+    )
+    persistent_begin = MAIN.index("saves.begin(", restore)
+    assert loan != -1 and loan < game_save_allocation < restore < persistent_begin
+    # The production build keeps this diagnostic deliberately short to stay
+    # inside the OTA slot; pin the restore guard itself, not old prose.
+    assert "if (!AssetRenderer::restoreSceneWorkspace(false))" in MAIN[
+        game_save_allocation:persistent_begin
+    ]
 
     commit_start = SAVE.index("bool PersistentSave::commit(")
     commit_end = SAVE.index("bool PersistentSave::reset(", commit_start)

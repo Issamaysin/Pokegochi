@@ -7,6 +7,901 @@
 - Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
 - Nunca publicar um APK Android somente porque o Gradle terminou em `BUILD SUCCESSFUL`. Antes de assinar ou subir, abrir o APK final e comparar o `pokegochi.pak` interno com o pacote canônico por versão, quantidade/tamanho e SHA-256. Essa classe de falha já ocorreu duas vezes: R20261028-239 e R20261029-253.
 
+## R20261103-317 - release Android 3.0 e firmware 4.0 pós-Sun/Moon
+
+```mermaid
+graph LR
+    S["Suíte completa"] --> F["Firmware 4.0 ALOLA"]
+    S --> A["Android 3.0 / code 104"]
+    P["PAK canônico v54"] --> A
+    P --> O["OTAP P-256"]
+    F --> O
+    F --> R["Pacote final + hashes"]
+    A --> R
+    O --> R
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-317 | 2026-11-03 | Fechar a versão pós-Sun/Moon como aplicativo 3.0 e firmware 4.0 | Concluído e empacotado | A identidade coordenada passou a ser Android `3.0`, versionCode `104`, build `r317`, e firmware `4.0 ALOLA`; save V51, protocolo BLE 7 e pack 54 permaneceram compatíveis. Foi criada a release note V4 e um contrato impede divergência futura entre código, Settings, Gradle, pack, save, protocolo e documentação. A suíte integral regenerou 807 espécies, 671 golpes, 134 máquinas, 710 programas de animação e terminou em `All native tests passed.`. O firmware usa 112.096/327.680 bytes de RAM e 1.939.284/1.966.080 bytes de flash; `firmware.bin` tem 1.944.192 bytes e SHA-256 `AE3A9F861BEF5D226A2D02CABCD58997E6F7BEB3C914F1BF39FF8FA493C0680C`. O OTAP de 33.648.753 bytes foi assinado e reaberto com P-256/SHA-256, versão `4.0 ALOLA`, pack 54 e sequência `1793727604`. O APK final arm64-v8a/x86_64 tem 11.540.266 bytes, SHA-256 `66A92E97835CC42A1069C478AFEC515804ACAA9977819A0481E540F43FC9DDAD`, alinhamento de 16 KiB e assinatura v2/v3 pelo certificado histórico `B292...CE7D`; seu PAK interno foi comparado byte a byte com o canônico de 30.219.114 bytes (`3B19...9950`). A instalação incremental no emulador preservou os dados, confirmou 3.0/104, abriu a MainActivity e permaneceu viva sem fatal/ANR. APK, firmware normal/factory, OTAP, ZIP do SD, release note e checksums estão reunidos em `artifacts/release-app-3.0-fw-4.0`; o bundle único `Pokegochi-App-3.0-Firmware-4.0-Release.zip` tem 20.675.715 bytes e SHA-256 `B9442AE9EDEDD5EBCF525DA77BF2822A59E7B8F115D1A9098ECF97866A0F87E8`. |
+
+## R20261103-316 - atualização visual da Mega Stone e Key Items em três linhas
+
+```mermaid
+graph LR
+    M["Mega Stone no portador atual"] --> S["Seletor preserva a forma Mega"]
+    S --> C["Confirma outro alvo"]
+    C --> T["Transferência atômica com rollback"]
+    K["Key Items"] --> P["Três itens por página"]
+    P --> I["Ícones 16x16 e 24x24 centralizados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-316 | 2026-11-03 | Fazer o Pokémon que já segura a Mega Stone continuar aparecendo Mega ao reutilizar o Key Item pela Box; reduzir Key Items para três itens por página e recentralizar o símbolo do Trainer Card e os demais ícones | Implementado, testado e compilado | O atalho deixou de recolher a Mega Stone antes de abrir o seletor: o portador permanece inalterado e com o sprite Mega durante a comparação, cancelar não muda o save e a pedra só é transferida após confirmar outro Pokémon. A transferência agora é atômica e restaura o portador anterior se o novo alvo não puder devolver seu held item à Bag; espécies com duas Megas mantêm a pedra até a variante ser confirmada. Os caches do seletor de Party e da prévia da Box passaram a considerar espécie, shiny e forma resolvida, evitando reutilização do ícone normal após uma mudança. Key Items agora mostra no máximo três cartões por página, com mais altura e espaçamento, e centraliza geometricamente tanto o badge 16x16 do Trainer Card quanto os itens 24x24 nas linhas e no painel inferior. O contrato de UI passou e o firmware ESP32 compilou com sucesso: 112.096 bytes de RAM e 1.939.284/1.966.080 bytes de flash. Nenhum firmware foi gravado e nenhum APK foi gerado nesta etapa. |
+
+## R20261103-315 - APK no Drive e release gravada na placa
+
+```mermaid
+graph LR
+    B["Build final"] --> V["Suíte, assinatura e hashes"]
+    V --> U["Firmware app0 por USB"]
+    U --> O["Pack v54 + app1 por update autenticado"]
+    O --> T["Autoteste físico e save preservado"]
+    V --> D["APK versionCode 103 no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-315 | 2026-11-03 | Subir o APK no Drive e gravar a release atual na placa conectada | Concluído, publicado e validado na placa | A CH340 foi confirmada na `COM7`, com MAC Wi-Fi `B4:BF:E9:21:3C:E4`. Antes da entrega, a compilação expôs e corrigiu o alinhamento real do save V50 de 54.960 bytes e a declaração ESP32-only do canvas RTC no build Android; as 671 descrições de golpes foram compactadas sem perda para manter o firmware dentro do slot OTA. A suíte completa terminou com `All native tests passed`. O firmware final possui 1.943.840 bytes, 22.240 bytes livres no slot e SHA-256 `11F06EF7C9DB6E3D2E7C196386462BC770D468E611C29EB57F61CC4361356191`; a app0 foi gravada e verificada por USB. O pacote assinado enviou por BLE/MTU 517 o PAK v54 canônico de 30.219.114 bytes e SHA-256 `3B19D7D06BA84060B53116758FD593C381997F7C6E1DC9212C9FCF64D7CB9950`, metadados e o mesmo firmware para a app1. O commit selecionou a app1 e o boot físico confirmou `Save OK`, `archive probe OK`, `sprite asset pack OK`, velocidade 3x preservada, candidato aceito com `ESP_OK`, player 56925 e `[BOOT] Ready`. O APK release `Pokegochi-Android-2.0-r315.apk`, versionCode 103, foi alinhado, assinado e validado nos esquemas v2/v3; o PAK interno foi comparado byte a byte com o canônico. Tamanho 11.540.266 bytes, SHA-256 `502D7256D3CC691575FA5F31925517008067532EE68E257B9E64135BCC8152B9`. Nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1fi17auZ-7Moj04ePb1mK_YyU_nSwnsBy/view?usp=drivesdk |
+
+## R20261103-314 - paginação de Key Items e atalho da Mega Stone
+
+```mermaid
+graph LR
+    K["Key Items desbloqueados"] --> P["Até 4 itens por página"]
+    P --> W["Setas circulares e contador"]
+    M["Mega Stone conquistada"] --> R["Recolhe do portador atual"]
+    R --> S["Salva a pedra na Bag"]
+    S --> T["Seletor compartilhado Party/Box"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-314 | 2026-11-03 | Paginar Key Items quando houver muitos e adicionar uma entrada da Mega Stone que permita transferi-la diretamente para qualquer Pokémon da Party ou Box | Implementado e validado estaticamente; compilação adiada por solicitação | A aba Key Items passou a montar dinamicamente as entradas desbloqueadas, exibir até quatro por página e, quando necessário, mostrar contador e setas circulares para avançar ou voltar inclusive entre a primeira e a última página. Trainer Card, DNA Splicers, Prison Bottle e Necrozma Fusers continuam usando suas ações anteriores. Depois de concluir o desafio da Mega Stone, uma entrada permanente `MEGA STONE` aparece com o ícone autêntico já existente, independentemente de a pedra estar na Bag ou equipada. Ao usá-la, o jogo recolhe a pedra de qualquer portador, atualiza habilidade/stats, restaura o único bit de posse e salva antes de abrir o seletor compartilhado de Party/Box. Pokémon incompatíveis aparecem como `NOT ABLE`; espécies com duas Megas continuam abrindo o seletor de variante. Cancelar no alvo ou na variante deixa a pedra segura na Bag, enquanto confirmar equipa exatamente a mesma unidade sem duplicação. O preload da Bag foi atualizado para o novo ícone/estado de página e o contrato estático de UI passou. Nenhum firmware ou APK foi compilado. |
+
+## R20261103-313 - held items comuns das Gerações IV-VII
+
+```mermaid
+graph LR
+    R["Sprites e regras do romhack"] --> C["23 held items autênticos"]
+    C --> M["Market cumulativo por região"]
+    C --> B["Efeitos completos em batalha"]
+    C --> S["Inventário persistente V51"]
+    S --> V["Migração preserva saves V50"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-313 | 2026-11-03 | Verificar no romhack os held items comuns posteriores à Geração III e implementá-los no Pokegochi | Implementado e validado estaticamente; compilação adiada por solicitação | Foram confirmados no `pokeemerald-expansion` e integrados com seus sprites/paletas reais 23 itens: Gen IV — Life Orb, Focus Sash, Choice Scarf, Choice Specs, Expert Belt, Black Sludge, Toxic Orb e Flame Orb; Gen V — Eviolite, Rocky Helmet, Air Balloon, Red Card e Eject Button; Gen VI — Assault Vest, Weakness Policy e Safety Goggles; Gen VII — Terrain Extender, Protective Pads, Adrenaline Orb e Electric/Grassy/Misty/Psychic Seed. Cada grupo entra no pool cumulativo do Market somente quando Sinnoh, Unova, Kalos ou Alola, respectivamente, estiver desbloqueada. Bag, compra, equipar/tirar e UI aceitam os novos IDs; o conflito histórico entre IDs altos de item e a codificação de máquinas do Market foi eliminado por discriminação explícita. Os efeitos foram ligados ao motor de batalha, incluindo consumos, Choice lock, imunidades, contato, clima/terreno, trocas forçadas e interações especiais de Assault Vest/Me First, Air Balloon com Substitute/Disguise, Toxic Orb com Corrosion e Protective Pads. O save passou de V50 para V51 com um sidecar de inventário de 46 bytes e migração que preserva todo o prefixo antigo. O asset pack exporta `held_128.pkg` a `held_150.pkg`. O contrato estático confirmou os 23 registros na fonte do romhack, enums, efeitos, imagens, paletas, faixas regionais, assets e migração; `py_compile` e `git diff --check` também passaram. Nenhum firmware/APK foi compilado nesta etapa, conforme a ordem de aguardar antes de compilar. |
+
+## R20261103-312 - auditar liberação de itens e TMs no Market por geração
+
+```mermaid
+graph LR
+    G["Região desbloqueada"] --> T["TMs Gen IV-VII entram no pool"]
+    T --> R["Aparecem na próxima rotação do Market"]
+    B["Insígnias"] --> I["Itens comuns/equipáveis atuais"]
+    U["Itens únicos regionais"] --> Q["Recompensa, espécie ou campanha; fora do Market"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-312 | 2026-11-03 | Conferir se itens e TMs novos entram no Market conforme o jogador abre as gerações | Auditado, sem alteração | O comportamento atual é parcial. As 42 máquinas de Sinnoh, 25 de Unova, 5 de Kalos e 4 de Alola possuem portões regionais explícitos e não podem aparecer antes da região correspondente; ofertas antigas incompatíveis são descartadas. Depois do desbloqueio elas entram no conjunto cumulativo de TMs ainda não compradas, com uma máquina garantida por rotação e chance de outras, mas a rotação existente não é renovada imediatamente: a novidade aparece somente na próxima rotação normal de quatro horas do endgame. As 58 máquinas legadas de Gerações I-III ficam disponíveis desde o início e não possuem separação Kanto/Johto/Hoenn. O Market de itens comuns/equipáveis também não usa geração: usa quantidade de insígnias. Os itens regionais únicos implementados, como Plates/Orbs, Drives, Memories, Z-Crystals e key items, têm peso zero no Market e são entregues por captura/espécie, campanha ou recompensa. A comparação com os jogos principais confirmou que isso não significa que as gerações posteriores tenham apenas itens especiais: faltam no Pokegochi diversos held items comuns de Gen IV-VII, como Life Orb, Focus Sash, Choice Scarf/Specs, Eviolite, Rocky Helmet, Air Balloon, Assault Vest, Weakness Policy, Safety Goggles, Terrain Extender, Protective Pads e Adrenaline Orb. Portanto, ainda não existe um catálogo geral de novos itens comuns de cada geração sendo acrescentado ao shop no momento em que ela abre. |
+
+## R20261102-311 - gravar na placa somente a correção BLE/Home
+
+```mermaid
+graph LR
+    U["ESP32 na COM7"] --> F["Firmware r309 nos dois slots"]
+    F --> M["Boot detecta SD v52 / firmware v53"]
+    M --> O["Pack v53 enviado por OTAP com MTU 517"]
+    O --> V["Hash, commit e autoteste aprovados"]
+    V --> H["Save preservado e placa deixada na Home"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-311 | 2026-11-02 | Atualizar a placa conectada somente com a correção da desconexão BLE que travava o retorno à tela inicial, sem novo trabalho nas animações | Concluído, gravado e validado na placa | A CH340 foi confirmada na `COM7`, com MAC Wi-Fi `B4:BF:E9:21:3C:E4`. O firmware final r309/r310 de 1.963.888 bytes e SHA-256 `F448A99056FD6CB553F07178C10C4DA79EC46ACC61E4D6CBB48ECE294355D085` foi gravado e verificado por digest nos dois slots (`app0` em `0x10000` e `app1` em `0x1F0000`), sem tocar em NVS/SPIFFS. O primeiro boot preservou o save, mas revelou corretamente que o microSD ainda tinha pack v52 enquanto o firmware atual exige v53. Pelo comando de manutenção no cabo, a placa abriu OTAP e recebeu o pacote assinado `pokegochi-r309-ble-disconnect-home.pgota` pelo BLE `B4:BF:E9:21:3C:E6`, negociando MTU 517 e blocos de 508 bytes. O PAK v53 de 30.211.478 bytes foi verificado na placa, os quatro objetos de assets e o firmware foram validados, o commit atômico selecionou `app1` e o autoteste aceitou o candidato com `ESP_OK`. O boot final confirmou `3.0 UNOVA`, `Save OK`, `archive probe OK`, `sprite asset pack OK`, player `56925`, rádio desligado e `[BOOT] Ready`; o START serial levou `screen=0` para `screen=7`, deixando a unidade na Home. Save, configuração 3x e progresso foram mantidos. Nenhuma animação foi alterada neste atendimento. |
+
+## R20261102-310 - PGOTA r309 no Drive
+
+```mermaid
+graph LR
+    B["Firmware r309"] --> F["Ajuste do canvas RTC"]
+    F --> O["2.192 bytes livres no slot OTA"]
+    O --> P["PGOTA assinado e reaberto"]
+    P --> D["Arquivo publicado e relido no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-310 | 2026-11-02 | Gerar um pacote `.pgota` da correção mais recente e publicar no Drive | Concluído, validado e publicado | O primeiro empacotamento foi bloqueado corretamente porque o `firmware.bin` excedia o slot OTA de 1.966.080 bytes em 400 bytes. O canvas vazio do Kids Paint, que já é zerado explicitamente sempre que a tela abre, foi movido de `RTC_DATA` para `RTC_NOINIT`; isso removeu 2.590 zeros do arquivo sem alterar conteúdo ou comportamento. O firmware final tem 1.963.888 bytes, 2.192 bytes de margem e SHA-256 `F448A99056FD6CB553F07178C10C4DA79EC46ACC61E4D6CBB48ECE294355D085`. O gerador canônico criou a sequência `1793661990`, assinou o manifesto com P-256/SHA-256 e reabriu o ZIP para validar assinatura, tabela de objetos e hashes. O pacote contém o PAK v53 canônico de 30.211.478 bytes, SHA-256 `FAEC7BDF10984C6E4250576F85452C2C52B9EE2C43D48A5DB8E7E04A0EE25289`. `test_wireless_update_package.py`, `test_usb_flash_layout.py` e o contrato de desempenho/RTC passaram. O arquivo `pokegochi-r309-ble-disconnect-home.pgota` tem 33.657.489 bytes e SHA-256 `B9434A00C1CA20426574B94BBE0AAD779ADCA2C3C43962DE3C086873D73D5952`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/16b3BogUkUKLTZQT6vERsANw74rDq0pch/view?usp=drivesdk |
+
+## R20261102-309 - recuperar Home após perda abrupta do Bluetooth
+
+```mermaid
+graph LR
+    T["Trade app + placa"] --> X["Bluetooth do celular desligado"]
+    X --> E["Evento físico de desconexão"]
+    E --> V["Cancela somente estado volátil"]
+    V --> R["Desliga rádio e restaura arena gráfica"]
+    R --> H["Home redesenhado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-309 | 2026-11-02 | Corrigir a placa que ficava presa sem voltar à tela inicial quando o Bluetooth do app era desligado após/durante um trade | Concluído e validado; gravação física pendente porque a placa não está no USB | A desconexão física já limpava o protocolo, porém não possuía uma borda própria para a UI: fora da página Multiplayer, Box, Party ou a cinemática de trade continuavam donas da tela, e o rádio permanecia reservando a arena reduzida do renderer. O núcleo compartilhado agora distingue perda inesperada de fechamento local intencional, expõe um evento consumível uma única vez e limpa ofertas, confirmação, commit e snapshots apenas voláteis. O loop consome esse evento antes de aplicar qualquer commit de trade, restaura a Party de PvP quando necessário, zera seletores temporários de Bag/Box, desliga o rádio, recupera a arena gráfica completa e só então redesenha Home com `PLAYER DISCONNECTED.`. Fechamentos locais não geram falsa recuperação quando o callback físico chega depois. A regressão reproduz Bluetooth desligado em `TradeConfirming`, confirma zero oferta/commit residual, evento único e retorno estrutural ao Home; `scripts/test.ps1` terminou em `All native tests passed.`. Android 2.0 avançou para `versionCode 102`/build `r309`; o APK arm64-v8a+x86_64 passou lint/build, alinhamento de 16 KiB, assinatura v2/v3 e contém exatamente o PAK v53 canônico (30.211.478 bytes, SHA-256 `FAEC7BDF10984C6E4250576F85452C2C52B9EE2C43D48A5DB8E7E04A0EE25289`). O APK local `Pokegochi-Android-2.0-ble-disconnect-r309.apk` tem 11.540.067 bytes e SHA-256 `EF4599D00469145515E9392D6A30142E95A9CE3CC0FCE60D98DA52E289A4CFCA`. O firmware ESP32 compilou com 111.808/327.680 bytes de RAM e 1.958.976/1.966.080 bytes de flash; `firmware.bin` tem 1.966.480 bytes e SHA-256 `ECD5A5B5FABC5D5A360D7E910E35D16EC2569AA54935E7B4DD07AD56916E3366`. `COM6`, `COM7` e `Get-PnpDevice -Class Ports` foram verificados, mas nenhuma placa estava conectada para gravação. |
+
+## R20261102-308 - passivas e movesets das novas Megas
+
+```mermaid
+graph LR
+    U["Relato: só aparência e stats mudam"] --> A["Auditoria das 11 formas"]
+    A --> H["3 habilidades diferentes no romhack"]
+    A --> L["11 learnsets iguais à forma base"]
+    H --> D["Darkrai: Bad Dreams nas duas formas"]
+    L --> D
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-308 | 2026-11-02 | Corrigir as novas Megas porque passivas e movesets aparentemente não mudam | Diagnosticado; decisão de design pendente | O fluxo compartilhado já reaplica a habilidade resolvida ao equipar/tirar a Mega Stone, entrar/sair de batalha e carregar o Pokémon, e as regressões confirmam os IDs das 11 formas. A fonte `pokeemerald-expansion` define habilidade diferente somente para Mega Staraptor (`Contrary`), Mega Froslass (`Snow Warning`) e Mega Crabominable (`Iron Fist`); Garchomp Z, Lucario Z, Heatran, Darkrai, Golisopod, Drampa, Magearna e Zeraora conservam a habilidade base. Todas as 11 definições Mega apontam para o mesmo level-up learnset da espécie base. Darkrai, em particular, usa `Bad Dreams` e `sDarkraiLevelUpLearnset` nas duas formas. Portanto, inventar novas passivas ou movesets seria uma mudança autoral de balanceamento, não correção de importação, e precisa ser definida explicitamente antes de substituir o comportamento fiel à fonte. |
+
+## R20261102-307 - APK com o catálogo completo de Megas no Drive
+
+```mermaid
+graph LR
+    M["90 Mega/Primal integradas"] --> P["Pack v53 verificado no APK"]
+    P --> A["Android 2.0 / versionCode 101 / r306"]
+    A --> S["16 KiB + assinatura v2/v3"]
+    S --> D["APK publicado e relido no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-307 | 2026-11-02 | Subir no Drive o APK com a varredura e implementação de todas as Megas ausentes | Concluído, validado e publicado | Foi gerado um release Android normal, sem os fixtures temporários de Pokémon na Box. O app avançou para `versionCode 101`, versão 2.0 e build nativo `r306`, com arm64-v8a+x86_64. O APK foi alinhado para páginas de 16 KiB e assinado em v2/v3 com o certificado de atualização SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O arquivo final foi reaberto e o PAK interno coincide exatamente com o canônico v53: 30.211.478 bytes e SHA-256 `FAEC7BDF10984C6E4250576F85452C2C52B9EE2C43D48A5DB8E7E04A0EE25289`. O APK `Pokegochi-Android-2.0-megas-completas-r306.apk` possui 11.540.067 bytes e SHA-256 `125D9C4B2B539F6542A7AA45B93DB1C32BD5E2087FC3034F3AF53685D7B37000`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1k_HM3elIWRYLokSHEjOg84Qe4GbinzAQ/view?usp=drivesdk |
+
+## R20261102-306 - varredura e integração completa das Megas ausentes
+
+```mermaid
+graph LR
+    S["RomHack: 90 Mega/Primal até #807"] --> C["Pokegochi antes: 79"]
+    C --> A["11 formas ausentes integradas"]
+    A --> P["Pack v53: +96 assets"]
+    A --> T["Catálogo e regras de batalha"]
+    P --> V["App + ESP32 validados"]
+    T --> V
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-306 | 2026-11-02 | Varrer todos os Pokémon disponíveis e implementar todas as Megas que faltavam | Concluído e validado | A comparação automática entre `pokeemerald-expansion`, `MegaEvolution::kForms` e `MEGA_FORMS` encontrou e integrou 11 formas: Staraptor, Garchomp Z, Lucario Z, Froslass, Heatran, Darkrai, Crabominable, Golisopod, Drampa, Magearna e Zeraora. Stats, tipos e habilidades seguem os blocos autorais do romhack. Garchomp/Lucario agora oferecem duas escolhas; saves antigos continuam no primeiro Mega por compatibilidade. Magearna Original Color recebeu seu conjunto visual Mega próprio sem perder a forma persistente. O catálogo passou de 79 para 90 Mega/Primal e o Boss Battle passa a incluí-las conforme a geração desbloqueada. Foram promovidos 96 assets completos (frente/costas/ícones, normal e shiny), elevando o pack para v53, 15.504 assets, 30.211.478 bytes e SHA-256 `FAEC7BDF10984C6E4250576F85452C2C52B9EE2C43D48A5DB8E7E04A0EE25289`. O novo contrato `test_complete_mega_catalog_contract.py` varre a fonte e impede futuras omissões; `scripts/test.ps1` terminou em `All native tests passed.`. O release Android arm64-v8a+x86_64 validou dentro do APK exatamente o pack v53. A build física `esp32-2432S028R` passou com 1.958.568/1.966.080 bytes de flash, 111.933 bytes de DRAM e firmware SHA-256 `56BC76F06C63D55F90ED84C9F6A8330E3783903B78E5C1E4BBB498C3746EA6AC`. |
+
+## R20261102-305 - Mega Darkrai ausente no Pokegochi
+
+```mermaid
+graph LR
+    R["RomHack fonte"] --> A["Sprites Mega Darkrai presentes"]
+    R --> D["Stats, habilidade e Darkranite definidos"]
+    A --> P["Importação ausente no Pokegochi"]
+    D --> P
+    P --> C["Darkrai #491 fora do catálogo kForms"]
+    C --> M["Mega Stone recusada"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-305 | 2026-11-02 | Verificar por que Darkrai não aceita a Mega Stone | Diagnosticado | O romhack-fonte possui Mega Darkrai completa, incluindo sprites, stats 70/120/130/165/130/85, tipo Dark, Bad Dreams, learnsets e o item Darkranite. A integração do Pokegochi omitiu a espécie #491 tanto do catálogo `MegaEvolution::kForms` quanto de `MEGA_FORMS` no gerador de assets; por isso `canTransform()` rejeita a Mega Stone. Não é falha do save nem do APK especial: a forma ainda não foi importada para o jogo. |
+
+## R20261102-304 - APK de teste com cinco lendários no nível 100
+
+```mermaid
+graph LR
+    A["APK especial r304"] --> D["Deoxys Lv.100"]
+    A --> R["Rayquaza Lv.100"]
+    A --> G["Groudon Lv.100"]
+    A --> K["Kyogre Lv.100"]
+    A --> X["Darkrai Lv.100"]
+    D --> O["Recibos únicos 0x1F"]
+    R --> O
+    G --> O
+    K --> O
+    X --> O
+    O --> S["Save preservado; sem duplicação"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-304 | 2026-11-02 | Criar novamente um APK que injete Pokémon na Box, agora Deoxys, Rayquaza, Groudon, Kyogre e Darkrai no nível 100, e publicar no Drive | Concluído, validado e publicado | Foi criada a variante Android isolada `legendaryBoxFixture`; builds normais e firmware ESP32 não executam o grant. No primeiro boot de um save iniciado, o APK adiciona exatamente Deoxys #386, Rayquaza #384, Groudon #383, Kyogre #382 e Darkrai #491 normais no Lv.100, com movesets e atributos derivados dos dados completos até a Gen IV. Cinco recibos independentes usam `creativeBackgrounds.reserved[1]`, separado do fixture X/Y anterior: cada concessão ocorre no máximo uma vez, uma Box cheia deixa somente os pendentes para o boot seguinte e Pokémon já concedidos não reaparecem se forem soltos. Os Pokémon e recibos são persistidos imediatamente. A flag temporária de build foi removida após preservar o artefato especial. `scripts/test.ps1` terminou em `All native tests passed.`. A instalação incremental no emulador preservou o save, adicionou as cinco espécies no Lv.100 com UIDs 4–8 e recibo `0x1F`, carregou o pack e chegou a `[BOOT] Ready`; o segundo boot mostrou zero grants, `Ready` e nenhum fatal/ANR. Android 2.0 usa `versionCode 100` e build nativo `r303`, arm64-v8a+x86_64, alinhamento de 16 KiB e assinatura v2/v3 com certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno coincide com o canônico v52: 30.083.990 bytes e SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. O APK `Pokegochi-Android-2.0-lv100-legendaries-r303.apk` possui 11.507.498 bytes e SHA-256 `D3E8F585B75803D57BEF561556D8C729B336286343E747A3B41610D6B7AC5207`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1imhqNqAhBG5l38NUOXGg6OkWbqh3uS14/view?usp=drivesdk |
+
+## R20261102-303 - varredura física e otimização genérica das animações
+
+```mermaid
+graph LR
+    C["710 programas auditados"] --> P["Golpes 1-675 na COM7"]
+    P --> E["Motor compartilhado corrigido"]
+    E --> Z["Z-Moves densos e fundos sequenciais"]
+    Z --> V["1x / 3x e ambos os lados validados"]
+    V --> F["Mesmo firmware em app0 e app1"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-303 | 2026-11-02 | Aproveitar a placa conectada para testar o máximo possível de golpes, encontrar problemas no motor e otimizar genericamente, evitando correções individuais | Concluído, medido, gravado e validado na placa | A varredura física executou em sequência os golpes 1–675 na COM7/MAC `B4:BF:E9:21:3C:E4`, cobrindo o catálogo comum inteiro no apresentador real. A auditoria regenerou 710 programas a partir de 1.089 tags visuais, 908 callbacks de sprite, 212 callbacks de tarefa e 2.809 frames, com zero fallback. Em vez de remendos por golpe, o runtime recebeu perfis compartilhados para famílias de callbacks, movimento/lifetime de 16 bits, lookup de cache por hash, paginação dos emissores lógicos e um ledger de 192 partículas; os Z-Moves medidos chegaram a 69/93 partículas sem reciclagem nem substituição. O preload agora diferencia um campo simultâneo de múltiplos fundos opacos sequenciais: a próxima página é carregada exatamente no `changebg`/fade escrito pela ROM e o manifesto de battlers, formas apresentadas e sprites alcançáveis é reconstruído fora da composição retida. Isso corrigiu genericamente Continental Crush e protege os demais programas multi-cena sem reduzir partículas no 2x/3x. Os testes finais encadeados cobriram fundos pesados, clima, formas, ambos os lados, 1x e 3x; os logs `engine-r302-z-final-3x.log`, `engine-r302-key-final-3x.log`, `engine-r302-foe-final-3x.log` e `engine-r302-exact-final-1x.log` não contêm cache miss, placeholder, safety replacement, panic ou reset. A telemetria serial síncrona do caminho quente de HP/turno foi reservada a builds de profiling/Android; diagnósticos de falha via BLE permanecem, removendo escrita serial do gameplay normal. A suíte completa terminou em `All native tests passed.` e a auditoria confirmou os 710 golpes e zero fallback. O firmware final tem 1.965.936 bytes, 144 bytes livres em cada slot e SHA-256 `6F7DF7D4391B48D078DC7D27BB0C65F07C6BC232046AE4173B90FA9178B526A2`; a mesma imagem foi gravada e verificada por digest em `app0` (`0x10000`) e `app1` (`0x1F0000`), sem tocar em NVS, SPIFFS, save ou microSD. O boot real confirmou `3.0 UNOVA`, `app0`, SD a 20 MHz, `Save OK`, `archive probe OK`, jogador `56925`, BLE íntegro e `[BOOT] Ready`. |
+
+## R20261102-302 - validar críticos contra mudanças de stats
+
+```mermaid
+graph LR
+    C["Thunder crítico"] --> A["Ignora Sp.Atk negativo"]
+    C --> D["Ignora Sp.Def positivo"]
+    C --> P["Preserva Sp.Atk positivo"]
+    C --> N["Preserva Sp.Def negativo"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-302 | 2026-11-02 | Verificar se críticos ignorarem stacks de Sp.Def é comportamento original e corrigir somente se fosse bug | Validado; regra correta, sem mudança de balanceamento | O Pokegochi já reproduzia a regra direcional de FireRed/Emerald: um crítico ignora estágios ofensivos negativos do atacante e estágios defensivos positivos do alvo, mas mantém bônus ofensivos e reduções defensivas. Portanto, Thunder crítico atravessar `+Sp.Def` é esperado; ele não ignora `-Sp.Def`. A regra de dano permaneceu intacta e recebeu comentário explícito. Foi adicionada uma regressão determinística com Thunder cobrindo as quatro direções de `Sp.Atk`/`Sp.Def`; o teste focado passou e `scripts/test.ps1` terminou em `All native tests passed.`. Referências auditadas: decompilações de [Pokémon Ruby](https://github.com/pret/pokeruby/blob/master/src/calculate_base_damage.c) e [Pokémon Emerald](https://github.com/pret/pokeemerald/blob/master/src/battle_script_commands.c). |
+
+## R20261102-301 - restaurar sprites clássicos das formas de Kanto
+
+```mermaid
+graph LR
+    K["Forma 0 - Kanto"] --> C["front/back/icons clássicos"]
+    A["Forma 1 - A.NOME"] --> R["forms/alola autênticos"]
+    C --> S["Normal e shiny preservados"]
+    R --> S
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-301 | 2026-11-02 | Fazer Rattata normal voltar ao sprite original e corrigir o mesmo problema nas formas normais relacionadas | Concluído no código e compilado; placa não conectada nesta etapa | O roteador de assets agora deixa a forma Kanto (`form 0`) das 18 espécies regionais cair nos caminhos clássicos `pokemon/front`, `pokemon/back`, `pokemon/icons` e equivalentes shiny. Somente indivíduos regionais `A.NOME` (`form 1`) usam `pokemon/forms/alola`; as demais espécies multiformes de Alola mantêm o comportamento anterior. Assim, Rattata, Raticate, Raichu, Sandshrew, Sandslash, Vulpix, Ninetales, Diglett, Dugtrio, Meowth, Persian, Geodude, Graveler, Golem, Grimer, Muk, Exeggutor e Marowak normais recuperam exatamente os sprites já usados pelo Pokegochi antes da expansão. O pacote do SD não precisa ser refeito porque os dois conjuntos já estão presentes. A regressão de identidade garante o fallthrough clássico e a permanência de `A.NOME`; os contratos de identidade, 1.617 assets de Alola e formas passaram. O firmware ESP32 compilou com sucesso; o binário possui 1.965.968 bytes e SHA-256 `67ADF3FD28E4C7F586A5B139F5A83A6D2069D75E41DECE4B195077C4E26F5787`. Não havia CH340/placa conectada, portanto nada foi gravado. |
+
+## R20261102-300 - diagnóstico dos sprites de Rattata e Raticate
+
+```mermaid
+graph LR
+    K["Rattata/Raticate de Kanto - form 0"] --> A["Roteador de formas de Alola"]
+    A --> N["Atlas mais novo em forms/alola"]
+    N --> D["Sprite visualmente diferente do clássico"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261102-300 | 2026-11-02 | Confirmar se os sprites de Rattata e Raticate haviam mudado | Diagnosticado; nenhuma alteração solicitada nesta etapa | Sim. A implementação das formas regionais passou a rotear também a forma Kanto (`form 0`) das espécies com variante de Alola para `pokemon/forms/alola`, cujo formulário raiz vem do atlas mais novo. Por isso Rattata e Raticate normais deixaram de usar o sprite clássico já existente em `pokemon/front`, `pokemon/back` e `pokemon/icons`. A mesma diferença potencial afeta as 18 linhas de Kanto que possuem forma de Alola: Rattata, Raticate, Raichu, Sandshrew, Sandslash, Vulpix, Ninetales, Diglett, Dugtrio, Meowth, Persian, Geodude, Graveler, Golem, Grimer, Muk, Exeggutor e Marowak. A otimização de animações R299 não alterou o pacote de sprites; ela apenas tornou esse roteamento mais perceptível durante os testes. O ajuste correto é manter `form 0` nos assets clássicos e usar `forms/alola/.../1` somente para os indivíduos `A.NOME`. |
+
+## R20261101-299 - diagnóstico e otimização das animações 3x na placa
+
+```mermaid
+graph LR
+    P["Perfil físico na COM7"] --> G["Dano exato por camada"]
+    G --> B["Fundos rolantes e paletas retidos"]
+    B --> C["Cadência 1x / 2x / 3x"]
+    C --> Z["Formas do Zygarde preservadas"]
+    Z --> F["Firmware normal gravado e boot validado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261101-299 | 2026-11-01 | Usar a placa conectada para diagnosticar e otimizar as animações de batalha, ainda muito travadas em 3x, considerando também o vídeo do Zygarde | Concluído, medido e gravado na placa | O vídeo foi inspecionado quadro a quadro e mostrou o Zygarde virando o placeholder roxo durante Earthquake/Leaf Storm e perdendo quadros entre 50% e Complete Forme. A causa era o preload reconstruir os sprites pela forma viva enquanto o apresentador ainda exibia a forma anterior; agora os assets usam a forma apresentada em cada lado até a transição terminar. No renderer, a área suja de cada sprite afim passou de um quadrado superdimensionado para o AABB exato da transformação, fundos rolantes 4/8 bpp ganharam caminho direto sem remontar o bitmap intermediário, e fundo/paleta são retidos entre amostras físicas. Em 3x todos os emissores lógicos continuam rodando, mas a apresentação usa stride de 36 ticks e não apaga partículas antes de elas aparecerem. Na COM7, Core Enforcer caiu de 15.861 ms de composição/48 apresentações em 1x para 8.729 ms/27 em 2x e 4.379 ms/13 em 3x; Blizzard 3x ficou em 1.634 ms/6, Earthquake em 1.175 ms/7, Aura Sphere em 436 ms/3, Leaf Storm em 728 ms/6 e Roar of Time em 2.119 ms/14. Os dois lados da batalha foram perfilados sem overflow, panic ou reset. A suíte completa terminou em `All native tests passed.`; os contratos de formas Gen VI, recuperação/capacidade do renderer e desempenho de UI também passaram após o fechamento. O firmware normal possui 1.965.936 bytes, SHA-256 `68B77B36EB3AA6BD68D582AABC5EFF5D09898C98FD5211DBE5EDE8D90F86A6C8`, foi gravado somente em `0x10000` na COM7/MAC `B4:BF:E9:21:3C:E4` e verificado byte a byte, preservando save/NVS/SD. O boot final confirmou `3.0 UNOVA`, `app0`, microSD a 20 MHz, `Save OK`, `archive probe OK`, `sprite asset pack OK` e `[BOOT] Ready`, sem loop ou pânico. |
+
+## R20261101-298 - APK de teste com Shiny Xerneas e Shiny Yveltal
+
+```mermaid
+graph LR
+    A["Instalação do APK especial"] --> X["Shiny Xerneas Lv.50"]
+    A --> Y["Shiny Yveltal Lv.50"]
+    X --> R["Recibos persistentes independentes"]
+    Y --> R
+    R --> N["Nunca duplica em boots futuros"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261101-298 | 2026-11-01 | Criar um APK que coloque uma única vez um Shiny Xerneas e um Shiny Yveltal na Box para testes | Concluído, validado e publicado | Foi criada uma variante Android especial, habilitada somente por `-PxyShinyFixture=true`; builds comuns e o firmware da placa não executam o grant. No primeiro boot com um save iniciado, ela adiciona Xerneas #716 e Yveltal #717 shiny no Lv.50 usando os dados completos da Gen VI. Esse nível preserva os movesets naturais dos encontros de X/Y, incluindo Geomancy e Oblivion Wing. Dois recibos independentes usam bytes reservados do Map Maker aposentado, sem ampliar a ABI: cada Pokémon é concedido no máximo uma vez; se a Box lotar entre eles, apenas o pendente é tentado novamente; liberar ou trocar um já concedido não cria outro. Espécimes shiny já existentes são reconhecidos e não duplicados. O emulador foi atualizado sem limpar o save: o primeiro boot registrou espécies 716/717 com UIDs 2/3 e recibos `0x03`; o segundo boot chegou a `[BOOT] Ready` sem nenhuma nova linha de grant, confirmando a idempotência. `scripts/test.ps1` terminou em `All native tests passed.`, o contrato específico do fixture passou e o APK contém o fixture em arm64-v8a e x86_64. Android 2.0 avançou para `versionCode 99`/build `r298`; assinatura v2/v3 usa o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno coincide com o canônico v52: 30.083.990 bytes e SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. O APK `Pokegochi-Android-2.0-shiny-xy-test-r298.apk` possui 11.478.826 bytes e SHA-256 `21FEB2DB3EB56EF445F27F526326A935C0C5CB106583BB788D01939242C2F1A1`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1HkAvEgEBDc0Uo0HPlFfFc7JrSV0YhimA/view?usp=drivesdk |
+
+## R20261101-297 - primeiro Boss com 50 mil HP
+
+```mermaid
+graph LR
+    M["Mega Stone"] --> B1["Primeiro Boss: 50.000 HP"]
+    B1 --> S["Primeira vitória abre Sinnoh"]
+    S --> BN["Bosses seguintes: 200.000 HP"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261101-297 | 2026-11-01 | Deixar o primeiro Boss com 50 mil HP para facilitar a abertura de Sinnoh e manter os seguintes em 200 mil | Concluído e validado | O Boss cuja primeira vitória alimenta o gate de Sinnoh usa agora exatamente 50.000 HP; sua identidade, vida restante e dificuldade introdutória persistem entre tentativas e reboots. A vitória limpa o encontro como antes e, como a flag durável de Boss vencido já está ativa, todo Boss sorteado dali em diante volta ao pool padrão de 200.000 HP. Saves que já tinham sorteado ou até salvado em andamento o primeiro Boss antigo de 200 mil são reconciliados para no máximo 50 mil sem trocar espécie, forma, personalidade ou dano já causado. Convite, card do Challenge Hub, status numérico, animação de HP, camadas de 16 bits e limiares de forma usam o total dinâmico correto; a ABI do save não cresceu, pois foram reutilizados campos previamente reservados. A regressão cobre 50k, persistência, retomada, migração do encontro/batalha antiga e retorno a 200k depois da primeira vitória. `scripts/test.ps1` terminou em `All native tests passed.` e o firmware ESP32 de produção compilou com sucesso. Nenhuma placa foi gravada e nenhum release foi publicado. |
+
+## R20261101-296 - recuperação robusta do multiplayer BLE pelo APK
+
+```mermaid
+graph LR
+    A["App ou placa inicia o convite"] --> R["Papéis BLE isolados e gerações de sessão"]
+    R --> M["MTU 185 + CCCD confirmado"]
+    M --> P["Protocolo v7 inalterado"]
+    P --> C["Trade, cancelamento e reconexão"]
+    C --> W["Watchdogs + reconstrução limpa do GATT"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261101-296 | 2026-11-01 | Tornar a conexão multiplayer entre aplicativo e placa robusta nos dois sentidos, recuperar depois de trade/cancelamento e publicar um APK que funcione sem atualizar a placa | Concluído, validado e publicado | A correção ficou integralmente no Android e manteve o protocolo da placa em v7. A camada BLE deixou de misturar papéis central/periférico e de reutilizar servidor, CCCD ou callbacks de sessões encerradas: cada tentativa agora possui geração própria, a conexão de saída fecha o GATT server antes de `connectGatt`, a entrada prevalece numa disputa simultânea e o servidor periférico é reconstruído após desconexão ou falha. Scan e advertising recuperam de erro sem manter objetos inválidos; MTU mínimo 177 é exigido (pedido 185), descoberta de serviço e assinatura CCCD têm prazos explícitos, pacotes só saem depois da sessão central estar realmente pronta e há watchdog para callbacks de write/notify que o Android eventualmente perde. Trade, cancelamento, app/placa iniciando primeiro e falhas no meio do handshake agora convergem para teardown físico completo, limpam filas e aceitam nova conexão; `Invite`/`InviteAccept` têm replay limitado e compatível com o firmware atual. Os contratos Java do protocolo v7, transporte BLE, trade/bag e toda a suíte nativa passaram; `lintRelease` também passou. O APK Android 2.0 avançou para `versionCode 98`/build `r296`, possui arm64-v8a e x86_64, alinhamento de 16 KiB e assinatura v2/v3 pelo mesmo certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. A instalação por cima do versionCode 97 preservou os dados, abriu sem crash/ANR e carregou a nova camada BLE. O PAK interno assinado coincide com o canônico v52: 30.083.990 bytes e SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. O APK `Pokegochi-Android-2.0-ble-recovery-r296.apk` possui 11.470.435 bytes e SHA-256 `54BECB8E9E922DD790D4AEC02FAB41CA3F9346A2B124AFFE1489270C2F13D808`; nome, MIME, tamanho e pasta foram relidos depois do upload: https://drive.google.com/file/d/1DElFIBb04cKfZeu9LxBrsv1xGJT5xPkp/view?usp=drivesdk |
+
+## R20261030-295 - Ultra Beasts fora de Stats e Special Egg
+
+```mermaid
+graph TD
+    U["Ultra Beasts #793-799 e #803-806"] --> X["Não contam como lendários em Stats"]
+    U --> E["Não entram no Special Egg"]
+    N["Necrozma #800"] --> L["Continua lendário nos dois fluxos"]
+    U --> W["Wormholes/Bosses/encontros preservados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-295 | 2026-10-30 | Ultra Beasts não devem contar como lendários em Stats nem aparecer no Special Egg, exceto Necrozma | Concluído e validado | Foi mantida a classificação ampla usada por wormholes, encontros e Boss Battle, mas criada uma classificação específica para Stats e Special Egg. Os onze Ultra Beasts oficiais (`793--799` e `803--806`) deixam de incrementar `LEGENDARIES FOUND/CAPTURED` e não podem ser sorteados no Special Egg; Necrozma #800 permanece elegível como lendário. A regressão varreu os Ultra Beasts, confirmou Necrozma no pool Gen VII e conferiu que os dois fluxos usam a nova regra. `scripts/test.ps1` terminou em `All native tests passed.`, incluindo Alola, wormholes, Boss Battle e 16.384 sorteios de Special Egg Gen VII sem vazamento. O Android arm64-v8a/x86_64 recompilou e verificou o pack canônico v52. Contadores históricos agregados não foram alterados, pois o save não registra a espécie de cada encontro/captura passado. Nenhum APK foi publicado neste pedido. |
+
+## R20261030-294 - animações de batalha 2x/3x otimizadas na placa
+
+```mermaid
+graph LR
+    A["Todos os emissores lógicos"] --> R["Retenção até apresentação real"]
+    R --> C["Cadência adaptativa 1x / 2x / 3x"]
+    C --> P["Frames físicos agrupados sem apagar partículas"]
+    P --> H["Teste bilateral na COM7"]
+    H --> F["Firmware de produção gravado e verificado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-294 | 2026-10-30 | Otimizar mais as animações de batalha na placa, especialmente em 2x/3x, acelerando sem reduzir partículas | Concluído, medido e gravado na placa | O renderer físico passou a separar tempo lógico de apresentação: partículas e tarefas curtas que atravessam um salto temporal ficam retidas numa pose visível até aparecerem de fato, com prioridade para emissões ainda não mostradas; depois são aposentadas normalmente. Assim, 2x/3x não descartam partículas para ganhar velocidade. Golpes com fundo/tela inteira usam cadência física adaptativa de 12/24/36 ticks e os demais preservam 8/12/16. Em Blizzard 3x, o pico apresentado subiu de 12 para 24 partículas enquanto o tempo físico caiu de cerca de 2,80 s para 1,73 s. O defeito patológico do Core Enforcer, causado por uma partícula curta presa numa fase invisível entre amostras, caiu de 80,7 s para 4,90 s em 3x; em 1x/2x mediu 11,10/6,35 s, próximo dos alvos 10,87/6,03 s. A regressão física bilateral cobriu Pound, Double-Edge, Blizzard, Solar Beam, Curse, Sandstorm, Extreme Speed, Refresh, Luster Purge, Aura Sphere, X-Scissor, Roar of Time e Core Enforcer; todos terminaram com `ready=1`, `overflow=0`, sem reset, panic ou travamento. A suíte completa terminou em `All native tests passed.`. O firmware de produção usa 1.953.448/1.966.080 bytes pelo relatório do linker; o binário real possui 1.965.120 bytes, deixa 960 bytes livres no slot OTA e tem SHA-256 `D079454F31D1E25360C5086174864A98EBF3F412B5EF821F1510273DCF1B04D6`. Ele foi gravado e verificado byte a byte na COM7/MAC `B4:BF:E9:21:3C:E4`, preservando save e SD. O boot final confirmou `3.0 UNOVA`, `app0`, microSD a 20 MHz, `Save OK`, `archive probe OK`, `sprite asset pack OK`, velocidade salva em 3x e `[BOOT] Ready`. |
+
+## R20261030-293 - APK r292 no Drive
+
+```mermaid
+graph LR
+    B["Android 2.0 / versionCode 97 / r292"] --> S["16 KiB + assinatura v2/v3"]
+    S --> P["PAK v52 canônico"]
+    P --> E["Instalação e BOOT Ready"]
+    E --> D["Upload e releitura no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-293 | 2026-10-30 | Gerar o APK atualizado e subir no Drive | Concluído, validado e publicado | O Android 2.0 avançou para `versionCode 97` e build `r292`, incluindo o Psycho Cut normal corrigido e o tema Moon roxo escuro. O release arm64-v8a/x86_64 foi alinhado para páginas de 16 KiB e assinado em v2/v3 com o mesmo certificado das versões anteriores, SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno foi reaberto após a assinatura e coincide byte a byte com o canônico v52: 30.083.990 bytes e SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. O APK `Pokegochi-Android-2.0-moon-purple-r292.apk` possui 11.474.730 bytes e SHA-256 `6DCB3F40984DD1EE246B326B1D72E60EC2AAC044FE82B6F0275EFBE763E11976`; a instalação por cima da versão existente confirmou `versionCode 97`, `Save OK`, `archive probe OK`, `sprite asset pack OK` e `[BOOT] Ready`, sem sinal fatal. Nome, MIME, tamanho e pasta foram relidos após o upload: https://drive.google.com/file/d/1nz1fZZknUMEHLMvp-h6foX6KjUkAALUn/view?usp=drivesdk |
+
+## R20261030-292 - tema Moon roxo escuro
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-292 | 2026-10-30 | Refinar o Moon para um roxo mais escuro | Concluído e validado | A paleta viva do R291 foi fechada para violeta noturno, roxo médio apagado, ameixa quase preta e lavanda acinzentada (`48B1/79F4/2025/CDBB`). O contraste dos textos e dos painéis claros foi preservado. Os contratos do seletor e da interface passaram, e o build Android arm64-v8a/x86_64 verificou novamente o pack canônico v52. Nenhum APK foi publicado neste pedido. |
+
+## R20261030-291 - tema Moon roxo
+
+```mermaid
+graph LR
+    M["Moon azul/índigo"] --> P["Violeta + roxo + ameixa + lavanda"]
+    P --> D["Distinto de Sapphire e X/Y"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-291 | 2026-10-30 | Deixar o tema `MOON` roxo para não parecer com os demais temas azuis | Concluído e validado | A paleta RGB565 do Moon mudou de índigo/azul (`31BA/9CDF/10A8/DF7F`) para violeta profundo, roxo luminoso, ameixa escuro e lavanda clara (`78F4/AA37/2847/EEBE`). Sun, Sapphire, X/Y e as demais paletas não foram alteradas. Os contratos do seletor expansível e de desempenho da interface passaram; o Android recompilou arm64-v8a/x86_64 e verificou o pack canônico v52 de 30.083.990 bytes, SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. Nenhum APK foi publicado neste pedido. |
+
+## R20261030-290 - travamento do Psycho Cut normal no Android
+
+```mermaid
+graph TD
+    R290["R20261030-290: Psycho Cut normal"]
+    R290 --> D["Delay original: 30 ticks"]
+    D --> B["Buffer estático era sobrescrito durante a primeira renderização"]
+    B --> C["Delay corrompido: 10285 ticks / aparente travamento"]
+    C --> F["Decodificação reentrante em buffer local por comando"]
+    F --> T["Emulador: 210 ticks / 1.756 ms a 2x"]
+    F --> A["Build Android + pack v52 verificados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-290 | 2026-10-30 | Corrigir o travamento do `Psycho Cut` normal, sem Z, no app | Concluído e validado | O golpe normal #427 foi reproduzido diretamente no runtime Android. O script estava correto (`delay 30`), mas o decodificador devolvia um ponteiro para um único buffer estático; a apresentação do primeiro frame fazia decodificações aninhadas e sobrescrevia esse argumento com `RGB_PURPLE` (`10285`). Assim, o app aguardava cerca de 85 segundos antes de continuar e parecia travado. O interpretador agora decodifica cada comando em armazenamento local do chamador, tanto na travessia quanto no playback, eliminando a sobreposição para Psycho Cut e para os demais programas sem alterar o fluxo de Z-Moves nem o firmware. A regressão nativa preserva o valor 30 mesmo após outra decodificação; a suíte completa terminou em `All native tests passed`, cobrindo 710 programas, as Gen V--VII e todos os Z-Moves. No emulador, o Psycho Cut normal executou as duas fases e terminou em 210 ticks/71 frames, 1.756 ms no modo 2x, contra alvo de 1.750 ms. Os ganchos temporários foram removidos, o build Android arm64-v8a/x86_64 concluiu e o APK debug reabriu o pack canônico v52 com 30.083.990 bytes e SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. Nenhum APK foi publicado neste pedido. |
+
+## R20261030-289 - travamento do Psycho Cut com Psychium Z
+
+```mermaid
+graph TD
+    R289["R20261030-289: Psycho Cut Z"]
+    R289 --> M["Psycho Cut continua sendo o move mecanico #427"]
+    R289 --> Z["Shattered Psyche usa o programa visual #861"]
+    Z --> G["18 Z-Moves genericos + 17 de assinatura importados do romhack"]
+    G --> P["PAK v52: fundos canonicos 27-80 e 710 programas"]
+    R289 --> T["Runtime Android: ready=1 / 98 comandos / retorno responsivo"]
+    T --> A["Android 2.0 / versionCode 96 / build r289"]
+    A --> D["APK assinado, validado e publicado no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-289 | 2026-10-30 | Corrigir o travamento do jogo e do app ao usar `Psycho Cut (Z)` | Concluido, validado e publicado | A investigacao encontrou duas falhas estruturais. Os Z-Moves genericos 848--865 nao eram importados, e o pack exportava apenas um fundo de expansao com ID local incorreto; agora os 18 genericos e os 17 de assinatura usam os programas exatos do romhack e os fundos canonicos 27--80. Depois disso, um ensaio real revelou que o runtime tentava procurar o ID visual 861 na tabela mecanica de moves, fazendo o preload recusar `Shattered Psyche`; o fluxo agora conserva `Psycho Cut` #427 para tipo, alvo, poder e efeito e passa #861 apenas como programa visual. O ensaio Android direto terminou com `ready=1`, 98 comandos, 399 ticks e 3.330 ms a 2x, retornou do golpe e aceitou novo toque; o gancho temporario foi removido antes da release. `scripts/test.ps1` terminou em `All native tests passed.`, incluindo o caso `Psycho Cut + Psychium Z`, os 35 Z-Moves e 710 programas. O firmware final usa 107.456/327.680 bytes de RAM e 1.953.532/1.966.080 bytes de flash, deixando 12.548 bytes livres; `firmware.bin` possui 1.965.200 bytes e SHA-256 `5509BD5FAC8C400FE381F0D9FEDB59E76D8515F29A7899122F13B9BACA082A2E`, e a factory possui 2.030.736 bytes e SHA-256 `1377F9A7DC1DC743608EE0808A1D9485282945BD215ECA768A46560F53BDAD71`. O APK Android 2.0 avancou para `versionCode 96`/build `r289`, contem arm64-v8a e x86_64 alinhados a 16 KiB e foi assinado em v2/v3 com o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno coincide byte a byte com o canonico v52: 15.408 assets, 30.083.990 bytes, catalogo `1bb7f9b7357e8c19` e SHA-256 `EFC63D2508E4B0E08A199E16C6AC28A7624C41461CAFAFA7D39F2ED141E2BE7C`. O APK `Pokegochi-Android-2.0-zmove-fix-r289.apk` possui 11.470.435 bytes e SHA-256 `A837D936235FCFB0647FACDEA1E2B814BF617FE2EEC5E21D2D18D22DDAACA5D3`; a instalacao final confirmou `archive probe OK`, `sprite asset pack OK` e `[BOOT] Ready`, sem ANR ou sinal fatal, e nome/MIME/tamanho foram relidos no Drive: https://drive.google.com/file/d/15xb1WZt3s5e6YI7EEqkPts3Y545IBQ1_/view?usp=drivesdk |
+
+## R20261030-288 - auditoria física do firmware e pack Gen VII
+
+```mermaid
+graph TD
+    R288["R20261030-288: auditoria na COM7"]
+    R288 --> E["Extrasensory: falso MINIMIZE encontrado e corrigido"]
+    R288 --> O["OTA atômico: firmware + pack v51 verificados"]
+    O --> B["Boot app1 / Save OK / asset pack OK"]
+    B --> T["Batalha real: Extrasensory, Thunder, Rage e Uproar"]
+    T --> U["HP, held item, faint, fuga e retorno ao Home"]
+    B --> N["Settings, Pokédex, Box, Mart e Bag"]
+    U --> S["Sem crash, fallback, overflow ou falha de asset"]
+    N --> S
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-288 | 2026-10-30 | Aproveitar a placa conectada para executar testes e procurar outras quebras | Concluído, corrigido e validado na placa | A auditoria encontrou um defeito real na resolução bilateral de efeitos: `Extrasensory` usa a tag `FLINCH_MINIMIZE_HIT`, e três caminhos tratavam qualquer substring `MINIMIZE` como o golpe Minimize, aumentando a evasão do atacante. As comparações foram tornadas exatas em `BattleEngine.cpp`, e a matriz nativa agora cobre jogador e oponente; a suíte completa terminou em `All native tests passed.`. Para acomodar o catálogo Gen VII no slot OTA, os 20.572 comandos foram deduplicados em 5.223 entradas com índices de 13 bits, e os 13.258 argumentos passaram a usar tuplas compartilhadas e varint zig-zag com acesso aleatório, sem expansão permanente em RAM. O PGOTA atômico `pokegochi-r283-hardware-audit.pgota` (30.404.761 bytes; SHA-256 `5C48165935EEEDDA2D772A65C5B265058D827830F202E20EAD12B0DBF31B2DC0`) instalou e verificou na CH340/MAC `B4:BF:E9:21:3C:E4`, COM7, o firmware de 1.950.304 bytes (SHA-256 `890013EC9D6CD9463D1C090628F2B31422428EBF724A5B36E9EF8015F85D90AF`) e o pack v51 de 27.026.630 bytes (catálogo `c618a2abf205ee9a`; SHA-256 `61003B6E970DDCB24A059DE28EBCB7572471764E5C71316E99099DDF2407D9A8`). O boot em `app1` confirmou `Save OK`, archive probe, sprite pack e self-test OTA. Em batalha real, Extrasensory animou e não elevou evasão; Thunder, Rage e Uproar apresentaram seus programas, os dois lados do renderer, barra de HP progressiva e cura de held item, todos com `ready=1` e `overflow=0`. Também passaram faint/vitória, fuga, restauração da batalha salva após reboot, retorno Battle -> Home e navegação por Settings, Pokédex com troca de página, Box, Mart e Bag. O estado final ficou no Home, sem batalha ativa, com stack livre 3.568 bytes, heap 15.684 bytes, maior bloco 5.364 bytes e 12 aberturas de SD; o log não contém panic, reset espontâneo, fallback, I/O fail, corrupção, sprite default ou asset read fail. O monitor serial precisa de `--keepalive-seconds 5` para testes autônomos após o light sleep normal da tela; isso não alterou o firmware nem o save. |
+
+## R20261030-287 - release Android consolidado da Gen VII
+
+```mermaid
+graph TD
+    R287["R20261030-287: build consolidado"]
+    R287 --> T["Suite completa / 807 especies / 671 moves"]
+    R287 --> F["Firmware ESP32: 27.348 bytes livres no slot OTA"]
+    R287 --> A["Android 2.0 / versionCode 95 / arm64-v8a + x86_64"]
+    A --> P["PAK v51 reaberto no APK assinado"]
+    P --> D["Upload e releitura no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-287 | 2026-10-30 | Consolidar tambem as mudancas feitas na outra aba, compilar tudo e subir o APK | Concluido, validado e publicado | Todo o estado atual foi recompilado sem descartar mudancas concorrentes. `scripts/test.ps1` regenerou as tabelas e terminou em `All native tests passed.`, cobrindo 807 especies, 671 golpes, 231 passivas Gen I--VII, 692 programas de animacao e os contratos completos de Alola/Gen VII. O firmware ESP32 compilou com 107.456/327.680 bytes de RAM e 1.938.732/1.966.080 bytes de flash, deixando 27.348 bytes livres; `firmware.bin` possui 1.950.400 bytes e SHA-256 `791B9D8684224A5CD22840240D747EE41C14DCC2ED8F7C6C90BFA758837BE552`, e a imagem factory possui 2.015.936 bytes e SHA-256 `D4071D0759D886B1CCB9D1C57F76E0B0786E4F741066CBAEA7D355A3CDD332C5`. O Android 2.0 avancou para `versionCode 95`/build `r287`; o release arm64-v8a/x86_64 foi alinhado para paginas de 16 KiB e assinado em v2/v3 com o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno foi reaberto no APK assinado e coincide exatamente com o canonico v51: 15.116 assets, 27.026.630 bytes, catalogo `c618a2abf205ee9a` e SHA-256 `61003B6E970DDCB24A059DE28EBCB7572471764E5C71316E99099DDF2407D9A8`. O APK `Pokegochi-Android-2.0-gen7-r287.apk` possui 11.093.603 bytes e SHA-256 `3029D8828D335BFCAA5A2948A5787018AF419B40D30E2E78A152C6C12AAA9AFF`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1NfTgvS3OJJcvakkq4glYBdciC_YyLi1P/view?usp=drivesdk |
+
+## R20261030-286 - animacoes exatas da Gen VII e Light That Burns the Sky
+
+```mermaid
+graph TD
+    R286["R20261030-286: animacoes Gen VII exatas"]
+    R286 --> G["54 moves normais / IDs 622-675"]
+    R286 --> Z["17 Z-Moves assinatura / IDs 866-882"]
+    Z --> L["Light That Burns the Sky #881 / 152 comandos"]
+    R286 --> V["692 programas auditados sem alias Gen VII"]
+    V --> C["Dicionario: 20.572 comandos -> 5.223 unicos"]
+    C --> F["firmware.bin cabe no slot OTA com 9.712 bytes livres"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-286 | 2026-10-30 | Corrigir `Light That Burns the Sky`, que parecia sem animacao, e conferir todas as animacoes da nova geracao usando o romhack | Concluido e validado | A causa era estrutural: as moves Gen VII ainda eram roteadas para animacoes antigas apenas parecidas, e o Z-Move de Ultra Necrozma mantinha somente nome/power sem selecionar o programa visual proprio. O gerador agora importa os 54 scripts exatos de IDs 622--675 e os 17 Z-Moves assinatura de IDs 866--882 diretamente do `pokeemerald-expansion`; `Light That Burns the Sky` usa o ID canonico 881, com 152 comandos, 72 spawns e nove tarefas visuais. A apresentacao resolve o ID assinatura no evento `ZMoveUsed` sem alterar MoveId, PP, dano ou save. Foram traduzidos os callbacks/movimentos proprios de Mind Blown, Core Enforcer, Photon Geyser, Light, Soul-Stealing 7-Star Strike, Extreme Evoboost, Oceanic Operetta e demais scripts alcancaveis, sem placeholder/alias Gen VII. A auditoria fecha em 692 programas, 20.572 comandos, 829 recursos de sprite, 1.214 sequencias de frames, 715 sequencias affine, 191 tarefas e 1.007 tags exatas. Os comandos repetidos foram armazenados como 5.223 entradas unicas mais indice de 13 bits; no ESP32, somente o resumo legado que nao participa do playback foi omitido. `scripts/test.ps1` terminou em `All native tests passed.`; os contratos finais Gen VII, sweep bilateral das 54 moves e campanha de Alola passaram novamente. O pack v51 tem 15.116 assets, 2.622 frames runtime, 27.026.630 bytes, catalogo `c618a2abf205ee9a` e SHA-256 `61003B6E970DDCB24A059DE28EBCB7572471764E5C71316E99099DDF2407D9A8`. O `firmware.bin` final possui 1.956.368/1.966.080 bytes, 9.712 bytes livres no slot, SHA-256 `0C3C4F6C9E62567EE137D8D117BFCDF0AC66411C131AA6F8BE1A59FF4B7FC254`; factory de 2.021.904 bytes, SHA-256 `B6DE9F3E57C80D9B75B28827441A4772E5A35DB535CD261BDFE2A6C0C4BC9BC9`. Nenhuma placa, APK ou Drive foi alterado neste pedido. |
+
+## R20261030-285 - wild regional final para Unova, Kalos e Alola
+
+```mermaid
+graph TD
+    R285["R20261030-285: site wild pos-regiao"]
+    R285 --> U["Unova completa: Gen V / 1-50 / lendario 1:265"]
+    R285 --> K["Kalos completa: Gen VI / 1-50 / lendario 1:240"]
+    R285 --> A["Alola completa: Gen VII / 1-50 / lendario 1:240"]
+    A --> X["Ultra Beasts excluidas"]
+    R285 --> C["Seletor e encadeamento compartilhados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-285 | 2026-10-30 | Depois de concluir o ultimo site de Unova, Kalos ou Alola, abrir um site wild regional com selecao de ate 50 batalhas; manter a raridade lendaria correta e excluir Ultra Beasts do wild de Alola | Implementado e validado por regressao nativa; release aguarda a compactacao coordenada de R283 | Cada campanha ganhou uma pagina adicional que so entra no carrossel depois de todos os bosses/sites da regiao serem vencidos. `UNOVA WILDS`, `KALOS WILDS` e `ALOLA WILDS` reutilizam o seletor de 1/5/10/25/50 encontros, congelam a geracao durante toda a sequencia e retornam ao site regional ao terminar, capturar, fugir, perder ou ficar sem o battler escolhido. O pool usa exatamente os intervalos da National Dex da geracao: 494--649, 650--721 e 722--807. A rolagem de raridade foi separada da escolha da especie, preservando exatamente `1/265` em Unova e `1/240` em Kalos/Alola independentemente do numero de lendarios. A cobertura encontrou 143 comuns e 13 lendarios/miticos de Gen V, 66 comuns e 6 lendarios/miticos de Gen VI e, em Alola, 61 comuns e 14 lendarios/miticos; as 11 Ultra Beasts foram rejeitadas antes da selecao e continuam exclusivas do Ultra Wormhole. O fluxo e transiente e nao altera a ABI do save. O contrato compartilhado de UI passou, `test_unova_adventure` compilou/executou com sucesso e o firmware ESP32 completo linkou. A imagem combinada com o trabalho simultaneo de R283 ficou em 1.977.584 bytes para um slot OTA de 1.966.080 (11.504 bytes acima); portanto nenhum artefato de release foi marcado como valido ou publicado nesta etapa. |
+
+## R20261030-284 - pools lendarios regionais de Alola
+
+```mermaid
+graph TD
+    R284["R20261030-284: raros de Alola"]
+    R284 --> L["11 lendarios + 3 miticos da Gen VII"]
+    L --> S["Pares tematicos nos 13 primeiros sites"]
+    L --> R["Rainbow Rocket usa os 14"]
+    R284 --> U["Ultra Beasts fora da roleta dos sites"]
+    U --> W["Captura preservada nas salas de Ultra Wormhole"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-284 | 2026-10-30 | Refazer os pools lendarios dos sites de Alola para conter apenas especies da propria geracao, deixando Ultra Beasts na mecanica de Ultra Wormhole | Concluido e validado | As rolagens raras de `1/240` agora aceitam somente os 11 lendarios oficiais e os 3 miticos de Alola: Type: Null, Silvally, os quatro Tapus, Cosmog, Cosmoem, Solgaleo, Lunala, Necrozma, Magearna, Marshadow e Zeraora. Os 13 primeiros sites receberam pares tematicos, com repeticoes intencionais para distribuir melhor as especies; Rainbow Rocket usa o conjunto completo de 14 e nao possui mais Mewtwo, Kyogre, Groudon, Giratina, Reshiram, Kyurem ou Yveltal na roleta capturavel. As 11 Ultra Beasts foram bloqueadas em todos os pools raros dos sites e continuam capturaveis pela sala explicita de Ultra Wormhole: dez no conjunto comum, com Poipole no par raro de `1/240` ao lado de Necrozma. A selecao rara da sala foi separada da selecao rara do site para impedir novo vazamento. As assercoes de compilacao exigem cobertura dos 14 nativos e rejeitam especies externas; a regressao percorreu as 14 areas, encontrou os 14 resultados do Rainbow Rocket, todas as 11 Ultra Beasts no wormhole e passou. Save, chance e progressao nao mudaram. |
+
+## R20261030-280 - corrigir livelock do Surf e recuperar a placa
+
+```mermaid
+graph TD
+    R280["R20261030-280: renderer recuperavel"]
+    R280 --> T["Surf/Muddy Water: 28.672 B -> 4,5 KiB"]
+    T --> P["Tiles 8x8 deduplicados sem perda"]
+    R280 --> F["Falha de promocao restaura arena anterior"]
+    F --> C["Fallback opaco mantem journal e HP progredindo"]
+    R280 --> H["COM7: save + PAK v50 + firmware final"]
+    H --> V["Surf #57 executado ao vivo; batalha continuou"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-280 | 2026-10-30 | Corrigir a placa travada depois do diagnostico R276 | Concluido, gravado e validado na placa | A causa foi corrigida no motor, sem tratamento especial por golpe: os planos exatos de Surf e Muddy Water agora usam um PKG 4-bpp com mapa de tiles 8x8 deduplicados. Os mesmos 512x112 pixels passaram de 28.672 bytes para 4.588/4.524 bytes, com 114/112 tiles unicos; um validador reconstruiu cada pixel e comparou com a fonte. A promocao destrutiva do scene bank agora recompõe a capacidade anterior e o terreno retido nos dois caminhos de falha; scratch e paletas Home economizam 1.536 bytes estaticos; se um plano ainda faltar, uma arena opaca procedural permite que animacao, texto, HP e journal avancem. O builder ganhou o modo incremental `--compact-battle-waves-only`, que nao exige a ROM proprietaria. O PAK v50 foi reconstruido com 14.536 assets, 26.685.382 bytes e SHA-256 `C7B126F1D7CB228E1DFADF4E34900387B21109C1398AE36AC29CFFA07B99608D`. A suite completa terminou em `All native tests passed.` e os contratos direcionados passaram novamente depois do ajuste final. A CH340/MAC `B4:BF:E9:21:3C:E4` foi recuperada na COM7 sem apagar SPIFFS; o boot final aprovou SD, PGA3 v50 e `Save OK`, preservando inclusive as 3 Master Balls. A imagem final app0 possui 1.965.952 bytes, 128 bytes livres no slot e SHA-256 `006B84B2DAC1291DB99DDEFC30C9F4CE5447164554FD2A91DEDB90F7A02E4D1E`; a leitura da flash confirmou o digest. No caso real Latias vs Whiscash, Surf #57 carregou com `ready=1`, apresentou 5 frames em 862 ms, concluiu a barra de HP e a batalha seguiu por Thunder, Shadow Ball, faint e troca de Pokemon, sem `battle-plane-capacity`, `arena restore deferred`, reboot ou livelock. |
+
+## R20261030-282 - variantes de Alola como identidades permanentes
+
+```mermaid
+graph TD
+    R282["R20261030-282: Alolans separados"]
+    R282 --> I["Mesmo numero da National Dex; identidade salva no individuo"]
+    R282 --> F["Sem acao FORM entre Kanto e Alola"]
+    R282 --> N["Nome A.NOME em Home, Box, Summary, batalha e trade"]
+    I --> E["Evolucao regional preserva a variante"]
+    I --> T["Trade e save preservam a variante"]
+    E --> V["Suite completa + firmware ESP32"]
+    T --> V
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-282 | 2026-10-30 | Tratar Pokemon de Alola como Pokemon diferentes, sem transformacao por `FORM`, e usar nomes como `A.MAROWAK` | Concluido e validado | As variantes regionais continuam compartilhando o numero oficial da National Dex internamente, mas a variante agora e uma identidade permanente do individuo: Kanto nao pode virar Alola nem Alola pode virar Kanto pelo menu da Box. Encontros de Alola nascem regionais; cadeias como A.Rattata -> A.Raticate preservam a identidade; Pikachu, Exeggcute e Cubone continuam produzindo a evolucao regional quando evoluem com o conteudo de Alola aberto; trade/save mantem o byte regional sem conversao. A apresentacao usa `A.NOME` em Home, selecao pre-batalha, HUD e mensagens de batalha, Party, Box, Summary, Bag/TM/Rare Candy, multiplayer/trade e evolucao, e o seletor de evolucao tambem carrega o icone regional correto. Foi criada regressao nativa para bloqueio do seletor, evolucao e trade, alem de contrato de cobertura visual. `scripts/test.ps1` terminou em `All native tests passed.` e o firmware ESP32 compilou com sucesso. Depois da compactacao de mensagens diagnosticas de R280, a mesma imagem funcional final tem 1.965.952/1.966.080 bytes, 128 bytes livres, SHA-256 `006B84B2DAC1291DB99DDEFC30C9F4CE5447164554FD2A91DEDB90F7A02E4D1E`. Nenhum APK foi publicado neste pedido; a placa recebeu a imagem consolidada em R280. |
+
+## R20261030-281 - tema Moon para Alola
+
+```mermaid
+graph TD
+    R281["R20261030-281: tema Moon"]
+    R281 --> U["Desbloqueia junto ao Sun apos o campeao de Alola"]
+    R281 --> P["Midnight indigo + lunar lavender + moonlit pale"]
+    R281 --> S["Seletor paginado de Settings"]
+    S --> M["Sun/Moon e temas especiais sao mutuamente exclusivos"]
+    M --> V["Persistencia em bit livre; ABI do save preservada"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-281 | 2026-10-30 | Adicionar tambem um tema Moon | Concluido e validado | `MOON` entrou no catalogo extensivel de temas logo depois de `SUN`, com paleta propria em azul-indigo noturno, lavanda lunar, violeta escuro e tom claro frio. Os dois temas desbloqueiam ao derrotar o campeao de Alola, aparecem como cartoes normais no seletor de tres itens por pagina e o aviso final passou a anunciar ambos. A selecao de Moon usa o bit livre 3 de `AlolaAdventureState::flags`, sem aumentar estruturas nem mudar a ABI; escolher Moon desativa Sun, e qualquer escolha especial continua exclusiva em relacao a Black e X/Y. A regressao de Alola validou bloqueio antes do campeao, desbloqueio simultaneo, persistencia logica e alternancia Sun -> Moon -> Sun; o contrato do seletor e a suite completa passaram, terminando em `All native tests passed.`. A primeira imagem compilada revelou 16 bytes alem do slot OTA apesar do sucesso do PlatformIO; o roteamento foi compactado e a imagem final passou a ter 1.966.032/1.966.080 bytes, 48 bytes livres, SHA-256 `358287B3610EFCD161B90899CE68393A83366A3628E998416133A4E19DDC5329`. Nenhum APK foi gerado ou publicado neste pedido. |
+
+## R20261030-280 - APK da correcao do Ultra Necrozma
+
+```mermaid
+graph TD
+    R280["R20261030-280: Android 2.0 / versionCode 94"]
+    R280 --> U["Inclui a correcao do Ultra Necrozma de R279"]
+    R280 --> B["Release arm64-v8a + x86_64"]
+    B --> P["PAK v50 comparado ao canonico"]
+    B --> S["Alinhamento 16 KiB e assinatura v2/v3"]
+    P --> D["Upload e releitura no Google Drive"]
+    S --> D
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-280 | 2026-10-30 | Depois de corrigir o Ultra Necrozma, gerar e subir o APK atualizado | Concluido, validado e publicado | O Android 2.0 avancou para `versionCode 94` e incorporou R279. O release arm64-v8a/x86_64 passou pelo verificador Gradle, foi alinhado para paginas de 16 KiB e assinado em v2/v3 com o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno v50 foi reaberto no APK assinado e coincide com o canonico: 26.685.382 bytes, SHA-256 `C7B126F1D7CB228E1DFADF4E34900387B21109C1398AE36AC29CFFA07B99608D`. O APK `Pokegochi-Android-2.0-ultra-necrozma-r280.apk` possui 11.105.891 bytes e SHA-256 `09DDBB136CB5B860279F4CEA821D343D5D035700F34E6189806E0FD2DA84ACFF`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1mjryjiASw001EYP0_ifjKX07NPMNAJVp/view?usp=drivesdk |
+
+## R20261030-279 - carga devolvida do Ultra Burst e golpe assinatura visivel
+
+```mermaid
+graph TD
+    R279["R20261030-279: Ultra Necrozma corrigido"]
+    R279 --> U["Primeiro Z-Move ativa Ultra Burst e acerta"]
+    U --> C["Uma carga Z e devolvida"]
+    C --> O["Carga reservada ao mesmo Ultra Necrozma"]
+    O --> S["Segundo Z-Move consome a reserva"]
+    R279 --> P["Psychium Z + Photon Geyser"]
+    P --> L["Light That Burns the Sky / power 200"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-279 | 2026-10-30 | Corrigir Ultra Necrozma sem o reset/devolucao do Z-Move e confirmar a substituicao de Photon Geyser pelo golpe assinatura | Concluido e validado | Foi restaurada a regra de R265 que R271 havia removido: o Z-Move que transforma Dusk Mane/Dawn Wings em Ultra Necrozma executa normalmente e devolve exatamente uma carga. Essa reserva so pode ser usada pelo mesmo Necrozma enquanto ele permanece na forma Ultra; outro membro da party nao consegue usa-la, trocar encerra a oportunidade e o segundo Z-Move a consome definitivamente. `Photon Geyser + Psychium Z` continua resolvendo mecanicamente com power 200 como `LIGHT THAT BURNS THE SKY`, e agora a batalha anuncia esse nome em vez de aparentar que executou apenas Photon Geyser. `Prismatic Laser` permanece um golpe separado e nao participa dessa transformacao. As regressoes `test_alola_adventure` e `test_gen7_move_sweep` passaram; o firmware ESP32 compilou com sucesso usando 1.954.364 de 1.966.080 bytes de flash. A imagem final possui 1.966.032 bytes e SHA-256 `D6F9BEC66AC429636CE874E1BEB239976EBB84BC47C3E49CA05AA2B48CB3F903`. |
+
+## R20261030-278 - entregar Solgaleo e Lunala ao app por trade BLE
+
+```mermaid
+sequenceDiagram
+    participant PC as Peer BLE do PC
+    participant APP as Pokegochi Android
+    PC->>APP: Invite + Trade Solgaleo
+    APP-->>PC: TradeCommitApplied EF764464
+    PC->>APP: Trade Lunala
+    APP-->>PC: TradeCommitApplied 33B4A3E0
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-278 | 2026-10-30 | Simular um peer BLE, conectar ao multiplayer do app e entregar Solgaleo e Lunala em dois trades | Concluido e confirmado pelo save do app | O PC encontrou o anuncio PGCH v7 do Player 12345, conectou como Player 1 com MTU 517 e executou duas transacoes completas no mesmo link. O app enviou Bellsprout (species 69, UID 41) e respondeu `TradeCommitApplied` para Solgaleo Lv.70 na transacao `EF764464`; depois enviou Cubone (species 104, UID 36) e respondeu `TradeCommitApplied` para Lunala Lv.70 na transacao `33B4A3E0`. Esses acknowledgements so sao enviados depois de `tradeReplace`, atualizacao da Pokedex e commit bem-sucedido do save. Foi adicionado `scripts/ble_multiplayer_trade.py`, que implementa convite, oferta, confirmacao e commit em duas fases e trata desconexao posterior aos dois commits apenas como limpeza. O script passou `py_compile` e `git diff --check`; SHA-256 `1F2CF0059F423F933C880870540610651E22814E514472FE8F8B0F86CA945DB5`. |
+
+## R20261030-277 - progressao do Lucky Egg por ginasio
+
+```mermaid
+graph TD
+    R277["R20261030-277: Lucky Egg por insignia"]
+    R277 --> K["Kanto: 8 x +10% = +80%"]
+    R277 --> J["Johto: 8 x +5% = +40%"]
+    R277 --> H["Hoenn: 8 x +5% = +40%"]
+    K --> T["Total: +160% / multiplicador 2,60x"]
+    J --> T
+    H --> T
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-277 | 2026-10-30 | Trocar os saltos fixos do Lucky Egg por +10% em cada ginasio de Kanto e +5% em cada ginasio de Johto e Hoenn | Concluido e validado | O primeiro ginasio de Kanto concede o Lucky Egg permanente. Os oito de Kanto levam o bonus de +10% a +80%; Johto leva de +85% a +120%; Hoenn leva de +125% a +160%. Liga, Sinnoh e regioes posteriores nao acrescentam saltos. O bonus continua sendo aplicado antes da divisao igual da EXP entre a party. Textos, tela da Liga, design e migracao de saves foram alinhados. A regressao nativa percorreu os 24 ginasios e validou o calculo real em +10%, +80% e +160%; `test_battle_collection`, contrato visual da LeagueComplete, auditoria de textos e `git diff --check` passaram. |
+
+## R20261030-276 - diagnostico do travamento da placa em batalha
+
+```mermaid
+graph TD
+    R276["R20261030-276: placa na COM7"]
+    R276 --> B["Boot limpo: SD, pack, save e tela OK"]
+    B --> T["Latias vs Whiscash reproduzido"]
+    T --> S["Surf inimigo requer bloco de 58.144 bytes"]
+    S --> M["Maior bloco disponivel: 57.332 bytes"]
+    M --> F["Falha battle-plane-capacity"]
+    F --> L["Restore da arena e HP entram em livelock"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261030-276 | 2026-10-30 | Verificar a placa travada | Diagnosticado, sem gravacao | A CH340 foi encontrada na `COM7`. A conexao ao monitor serial reiniciou a placa e o boot completou normalmente ate `[BOOT] Ready`, com microSD, pack, save e display aprovados e sem backtrace ou ciclo de reboot. O travamento foi entao reproduzido durante Latias contra Whiscash: depois de Dragon Breath, a animacao de `Surf` do oponente tentou promover o workspace para 58.144 bytes, mas o maior bloco contiguo tinha 57.332 bytes (diferenca de 812 bytes). O asset `surf_opponent.pkg` falhou com `battle-plane-capacity`, a composicao perdeu a base retida da arena e o fluxo passou a repetir indefinidamente `arena restore deferred`, preload do terreno e `HP_ANIM deferred before start`. A placa continua executando o loop, portanto nao e crash nem save corrompido: e um livelock do renderizador provocado pela falha de alocacao e pela recuperacao sem saida. Nenhum firmware foi gravado e nenhum arquivo do jogo foi alterado. Tambem foram encontrados processos antigos de compilacao PlatformIO no PC, iniciados em 2026-10-28, mas eles nao ocupavam a COM7 e nao causaram o travamento observado. |
+
+## R20261029-275 - APK da confirmacao contextual de Z-Power
+
+```mermaid
+graph TD
+    R275["R20261029-275: Android 2.0 / versionCode 93"]
+    R275 --> B["Release arm64-v8a + x86_64"]
+    B --> P["PAK v49 comparado ao canonico"]
+    B --> S["Alinhamento 16 KiB e assinatura v2/v3"]
+    P --> D["Upload e releitura no Google Drive"]
+    S --> D
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-275 | 2026-10-29 | Gerar o APK com a confirmacao contextual de Z-Power e subir no Drive | Concluido, validado e publicado | O Android 2.0 avancou para `versionCode 93` e incorporou R274. O release arm64-v8a/x86_64 passou pelo verificador Gradle, foi alinhado para paginas de 16 KiB e assinado em v2/v3 com o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno v49 foi reaberto no APK assinado e coincide com o canonico: 26.782.022 bytes, SHA-256 `DBF011BE94DDF71156708A4508CF5F383B8EEB611BF26DF017924E7CA0C6AA08`. O APK `Pokegochi-Android-2.0-contextual-z-power-r275.apk` possui 11.109.987 bytes e SHA-256 `BFA65CA8E7929A6605F774060C536F6EBD386242FAAC1E749913E7F3657A718F`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1ciI_81GUVBmwJ4VXF6P-zApxy_RYq5u6/view?usp=drivesdk |
+
+## R20261029-274 - Z-Power contextual na confirmacao de golpes
+
+```mermaid
+graph TD
+    R274["R20261029-274: confirmacao contextual"]
+    R274 --> N["Golpe normal: OK + CANCEL"]
+    R274 --> Z["Z-Power disponivel: OK + Z-POWER + CANCEL"]
+    Z --> C["Desenho e toque usam canUseZMove"]
+    N --> T["Modal compacto de duas linhas"]
+    C --> V["Suite completa aprovada"]
+    T --> V
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-274 | 2026-10-29 | Mostrar a opcao especial no modal de golpe somente quando ela puder ser usada; golpes normais devem ter apenas OK e CANCEL | Concluido e validado | A confirmacao de golpe passou a consultar uma unica funcao contextual baseada em `BattleEngine::canUseZMove`. Sem Z-Power compativel, o modal encolhe para 60 px e mostra apenas `OK` e `CANCEL`; quando o golpe, o cristal e o estado da batalha permitem, ele mantem as tres linhas atuais e `Z-POWER`/`Z-ARMED` aparece no meio. O roteamento de toque usa a mesma condicao: a segunda faixa cancela no modal compacto e somente arma/desarma Z-Power quando a terceira opcao esta visivel. O contrato de UI cobre desenho e hitbox, e a suite completa terminou em `All native tests passed.`. |
+
+## R20261029-273 - limpar item removido preso no Necrozma e publicar APK
+
+```mermaid
+graph TD
+    R273["R20261029-273: migracao do tombstone no save"]
+    R273 --> L["Limpeza universal no carregamento"]
+    L --> B["Box, batalha e doador de fusao"]
+    L --> I["Bag e claimedMask sem bit aposentado"]
+    R273 --> E["Trocar ou tirar item descarta o tombstone"]
+    B --> D["Android 2.0 / versionCode 92 no Drive"]
+    I --> D
+    E --> D
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-273 | 2026-10-29 | Corrigir Necrozma preso ao `REMOVED ITEM`, permitir remover/substituir e subir APK no Drive | Concluido, validado e publicado | A limpeza deixou de depender de abrir Alola e agora roda durante todo carregamento de save atual e na migracao V49--V50. O tombstone e descartado da Box, dos oponentes de batalha persistidos, dos overrides locais de batalha, do doador de fusao e dos masks da Bag, sem apagar cristais validos; o fluxo de equipar/tirar item tambem o descarta defensivamente e a UI passa a exibir `NONE`. A regressao serializa todos esses estados, recarrega, confirma a limpeza e confirma a persistencia apos novo commit; a suite completa terminou em `All native tests passed.`. O Android 2.0 avancou para `versionCode 92`; o APK arm64-v8a/x86_64 foi alinhado para paginas de 16 KiB e assinado em v2/v3 com o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno v49 possui 26.782.022 bytes e SHA-256 `DBF011BE94DDF71156708A4508CF5F383B8EEB611BF26DF017924E7CA0C6AA08`. O APK `Pokegochi-Android-2.0-removed-item-fix-r273.apk` possui 11.109.987 bytes e SHA-256 `927A50D0462BD4555A65727E7A2B612C288D0F031AE0D215DD3CBEC0464CA49C`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1BF5HlshgR57vxlBWy5eilj-u48e-T63L/view?usp=drivesdk |
+
+## R20261029-271 - Ultra Necrozma sem item privado, Recover e auditoria de golpes
+
+```mermaid
+graph TD
+    R271["R20261029-271: regras de batalha corrigidas"]
+    R271 --> U["Ultranecrozium Z removido do gameplay"]
+    U --> Z["Cristal Z elemental compativel ativa Ultra Burst"]
+    Z --> O["O mesmo uso consome a unica carga Z"]
+    R271 --> H["Recover inimigo cura 50% sem Sleep"]
+    R271 --> M["671 categorias e 204 tipos Gen V-VII auditados"]
+    M --> P["Psyshock/Psystrike/Secret Sword: Special contra Defense"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-271 | 2026-10-29 | Remover a dependencia de Ultranecrozium Z, fazer Ultra Necrozma nascer do Z-Move normal, corrigir Recover do inimigo e revisar tipo/categoria/texto dos golpes novos | Concluido e validado | Ultranecrozium Z foi retirado do inventario, catalogo e pack; seu valor serializado ficou apenas como tombstone para limpar bags, equipamentos e doadores fundidos de saves antigos. Dusk Mane/Dawn Wings agora usa qualquer cristal Z elemental compativel e ativa Ultra Burst imediatamente antes do mesmo golpe, sem devolver uma segunda carga; Psychium Z + Photon Geyser resolve como Light That Burns the Sky. Recover do inimigo deixou de casar parcialmente com `REST` e agora cura exatamente 50% sem Sleep, enquanto Rest continua curando tudo e dormindo nos dois lados. O contrato compara as 671 categorias e os tipos dos 204 golpes de Gen V--VII com Platinum, White, Y e Ultra Sun; Psyshock, Psystrike e Secret Sword continuam Special e seus textos agora explicam que calculam dano pela Defense. O pack v49 contem 14.536 assets, 26.782.022 bytes e SHA-256 `DBF011BE94DDF71156708A4508CF5F383B8EEB611BF26DF017924E7CA0C6AA08`. A suite completa terminou em `All native tests passed.`; o firmware compilou com sucesso em 1.965.680 bytes, 400 bytes livres no slot OTA, SHA-256 `84D465E53BF4E45B9CC6B5F850184D43EDA22E634C294548F4392AA4C38BF417`. |
+
+## R20261029-272 - APK das correcoes de Ultra Necrozma, Recover e golpes
+
+```mermaid
+graph TD
+    R272["R20261029-272: Android 2.0 / versionCode 91"]
+    R272 --> B["Release arm64-v8a + x86_64"]
+    B --> P["PAK v49 reaberto e comparado ao canonico"]
+    B --> S["Alinhamento 16 KiB e assinatura v2/v3"]
+    P --> D["Upload e releitura no Google Drive"]
+    S --> D
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-272 | 2026-10-29 | Gerar o APK com as correcoes de Ultra Necrozma, Recover e auditoria dos golpes e subir no Drive | Concluido, validado e publicado | O Android 2.0 avancou para `versionCode 91` e incorporou R271. O release arm64-v8a/x86_64 passou pelo verificador Gradle, foi alinhado para paginas de 16 KiB e assinado em v2/v3 com o certificado de atualizacao SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno foi reaberto depois da assinatura e coincide com o canonico v49: 26.782.022 bytes, SHA-256 `DBF011BE94DDF71156708A4508CF5F383B8EEB611BF26DF017924E7CA0C6AA08`. O APK `Pokegochi-Android-2.0-ultra-recover-r272.apk` possui 11.105.891 bytes e SHA-256 `FBAFD7C7411C381DC4853E103E5DF6CB8BD3FCBD8F8EF29CCEBCC8888A851008`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1AiwVzOT6UsJ7IV7-I2qcQHfTsu7QtpIn/view?usp=drivesdk |
+
+## R20261029-269 - APK com a auditoria dos encontros de Alola
+
+```mermaid
+graph TD
+    R269["R20261029-269: APK atualizado"]
+    R269 --> B["Android 2.0 / versionCode 90"]
+    B --> P["PAK v48 relido e comparado ao canonico"]
+    B --> S["Alinhamento 16 KiB e assinatura v2/v3"]
+    P --> D["Upload e releitura no Google Drive"]
+    S --> D
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-269 | 2026-10-29 | Gerar o APK com as correcoes de raridade de Alola e subir no Drive | Concluido, validado e publicado | O Android 2.0 avancou para `versionCode 90` e incorporou R266--R268. O release arm64-v8a/x86_64 foi alinhado para paginas de 16 KiB e assinado em v2/v3 com o certificado de atualizacao SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno foi reaberto no APK final e coincide com o canonico v48: 26.782.360 bytes, SHA-256 `54767DB7552C7526D9E2EFF15CBE81716D48F8BC5A899A915CFAE165150E1D84`. O APK `Pokegochi-Android-2.0-alola-encounters-r269.apk` possui 10.999.594 bytes e SHA-256 `E4F2A2B31A4A59274A4BD7101D42B7FD417BE34CF58299504174DB0DBBF11D39`; o upload e a releitura de nome, MIME, tamanho e pasta foram confirmados no Drive: https://drive.google.com/file/d/1AV-6thaIZa0vwUSwHIvst8Z1dNcw2JFa/view?usp=drivesdk |
+
+## R20261029-268 - Necrozma e Poipole raros dentro do wormhole
+
+```mermaid
+graph TD
+    R268["R20261029-268: raridade no Ultra Wormhole"]
+    R268 --> C["Dez Ultra Beasts no pool comum"]
+    R268 --> D["Rolagem rara de 1/240 em toda sala de wormhole"]
+    D --> N["Necrozma ou Poipole"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-268 | 2026-10-29 | Tratar Necrozma e Poipole como especiais raros mesmo dentro de salas de Ultra Wormhole | Concluido e validado | Toda sala explicita de Ultra Wormhole agora aplica a rolagem rara global de `1/240`: quando ela acerta, seleciona Necrozma ou Poipole, aproximadamente `1/480` para cada; quando falha, seleciona uma das dez Ultra Beasts comuns. Isso tambem vale para wormholes oferecidos dentro de outras areas, sem alterar seus pools raros normais. A regressao percorreu 500.000 seeds, encontrou as dez especies comuns e os dois raros, confirmou frequencia rara abaixo de 1% e `test_alola_adventure` passou. |
+
+## R20261029-267 - auditoria completa dos encontros raros de Alola
+
+```mermaid
+graph TD
+    R267["R20261029-267: pools de Alola"]
+    R267 --> A["Akala: Gigalith substitui Nihilego comum"]
+    R267 --> U["Ultra Wormhole: dez Ultra Beasts comuns"]
+    U --> N["Necrozma e Poipole somente no raro 1/240"]
+    R267 --> T["Regressao percorre todas as 14 areas"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-267 | 2026-10-29 | Corrigir todos os vazamentos restantes de lendarios e especiais nos encontros comuns de Alola | Concluido e validado | Nihilego deixou o pool comum do Akala Grand Trial e foi substituido por Gigalith. O Ultra Wormhole recebeu um pool selvagem independente com as dez Ultra Beasts comuns; Necrozma e Poipole foram removidos tanto dos encontros comuns da area quanto das salas explicitas de wormhole e permanecem juntos na rolagem rara de `1/240`, aproximadamente `1/480` para cada. Os rosters de treinadores e chefes foram preservados. A regressao agora audita as 14 areas, rejeita qualquer especial em pools comuns fora do Ultra Wormhole, confirma a separacao de Necrozma/Poipole e percorre as dez especies das salas de wormhole. `test_alola_adventure` compilou e passou. |
+
+## R20261029-270 - atualizar placa e microSD para a versao mais recente
+
+```mermaid
+graph TD
+    R270["R20261029-270: placa conectada + SD"]
+    R270 --> B["Backup integral antes da gravacao"]
+    R270 --> F["Firmware mais recente na particao OTA"]
+    R270 --> S["Pack canonico v48 no microSD"]
+    F --> H["Boot fisico e autoteste da candidata"]
+    S --> H
+    H --> P["Player, save e batalha preservados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-270 | 2026-10-29 | Atualizar a placa conectada para a versao mais nova, incluindo o conteudo do microSD | Concluido e validado na placa | A `USB-SERIAL CH340` foi confirmada na `COM7` como ESP32-D0WD-V3 rev3.1, MAC `B4:BF:E9:21:3C:E4`. Antes de escrever, flash, NVS, OTA data, SPIFFS e os dois saves foram preservados em `backups/r264-20261029-163050-COM7`; hashes principais: particao completa `57CB4E39F2545B736E3F622E04AC05E2C5E3082F6720F16B52C81A31DC3E1214`, NVS `A613FB1022D7DE544E4E22791E7024F81BE842E9EDB78ACA4C6F7BCE10CEF115` e SPIFFS `DE49D8682769F8CDA842E46561D85CECED7425B47BA5CB903FBA1E884DC4FB9A`. O build mais recente foi recompilado depois de detectar que o codigo ja exigia pack v48, evitando deixar na placa o v47 intermediario. Para a imagem caber e iniciar com o save atual, o comando de animacao foi compactado de 6 para 5 bytes sem truncar IDs, o cache de paths foi dimensionado pelo maior path real do pack, o workspace de cena passou a ser emprestado durante a alocacao do `GameSave` e o gravador ganhou guarda pelo tamanho real do slot OTA. O firmware final tem 1.965.712 bytes, deixa 368 bytes livres no slot de 1.966.080 e possui SHA-256 `B7C085BDED1C944DE9F955E44E703077C93538100C2E75F1023DDC50DE6EFE05`. O PAK v48 tem 26.782.360 bytes e SHA-256 `54767DB7552C7526D9E2EFF15CBE81716D48F8BC5A899A915CFAE165150E1D84`; o PGOTA P-256/SHA-256 de sequencia `1793307456` tem 30.033.964 bytes e SHA-256 `B3FD724F3A4C57BD8C562B150E319F1B103A1D2AD0B19AC7B0C4226CDCB65B5C`. A atualizacao atomica terminou em `app0`; o boot fisico confirmou SD a 20 MHz, `archive probe OK`, `Save OK`, candidata aceita com `ESP_OK`, Player ID `56925` e save migrado sem reset. A batalha persistida permaneceu ativa e identica (`kind=8`, `359/359`, indice `0/1`). A suite completa terminou em `All native tests passed.`. |
+
+## R20261029-266 - raridade correta no Rainbow Rocket
+
+```mermaid
+graph TD
+    R266["R20261029-266: encontros do Rainbow Rocket"]
+    R266 --> T["Roster de treinadores preservado"]
+    R266 --> C["Pool comum sem lendarios"]
+    R266 --> S["Uma rolagem rara de 1/240"]
+    S --> E["11 lendarios e especiais equiprovaveis"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-266 | 2026-10-29 | Corrigir a chance excessiva de lendarios capturaveis no Rainbow Rocket | Concluido e validado | O roster de treinadores, que inclui os parceiros lendarios dos viloes, foi separado do pool selvagem. Encontros comuns agora usam 12 especies nao lendarias tematicas; Mewtwo, Kyogre, Groudon, Giratina, Reshiram, Kyurem, Yveltal, Solgaleo, Lunala, Naganadel e Stakataka compartilham uma unica rolagem rara de `1/240`, aproximadamente `1/2640` por especie. O teste nativo percorre os 11 resultados raros e rejeita qualquer lendario que volte ao pool comum. `test_alola_adventure` passou. |
+
+## R20261029-265 - fusoes e Ultra Burst completos de Necrozma
+
+```mermaid
+graph TD
+    R265["R20261029-265: Necrozma completo"]
+    R265 --> C["Captura concede Ultranecrozium Z e fusers"]
+    C --> F["Solgaleo -> Dusk Mane; Lunala -> Dawn Wings"]
+    F --> S["Parceiro preservado em sidecar do save V50"]
+    F --> U["Qualquer Z-Move ativa Ultra Burst em batalha"]
+    U --> L["Photon Geyser -> Light That Burns the Sky"]
+    U --> Z2["Ultra Burst devolve uma unica carga extra de Z-Move"]
+    U --> R["Troca/fim da batalha restaura a forma fundida"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-265 | 2026-10-29 | Implementar todas as formas de Necrozma: Ultranecrozium Z ao capturar, fusoes condicionadas a Solgaleo/Lunala, Photon Geyser, Ultra Burst ao usar qualquer Z-Move e uma segunda carga de Z-Move na forma Ultra | Concluido e validado | Capturar/possuir Necrozma concede uma unica Ultranecrozium Z e libera o Key Item `NECROZMA FUSERS`. Dusk Mane exige e preserva o Solgaleo inteiro num sidecar; Dawn Wings faz o mesmo com Lunala; separar restaura o parceiro sem clonar, e Necrozma fundido nao pode ser trocado nem liberado. Ultra deixou de ser uma forma selecionavel: qualquer Z-Move com a pedra transforma Dusk/Dawn no meio da batalha, preserva HP, habilidade, stats e Photon Geyser, e Photon Geyser na forma Ultra resolve como Light That Burns the Sky. O primeiro Z-Move paga a transformacao e devolve exatamente uma carga reservada ao proprio Ultra Necrozma; o segundo e consumido definitivamente, com marcador persistente no BattleState para impedir roubo da carga por outro Pokemon, repeticao por troca ou reabertura do app. O save avancou de V49 para V50 com migracao byte-exata e reparo de formas antigas ilegais. A aba Key Items comporta Trainer Card, DNA Splicers, Prison Bottle e os fusers sem sobreposicao. O pack v48 possui 14.537 assets/26.782.360 bytes, SHA-256 `54767DB7552C7526D9E2EFF15CBE81716D48F8BC5A899A915CFAE165150E1D84`, incluindo os 36 icones Gen VII e o fuser autentico. A suite completa terminou em `All native tests passed.`; depois do ajuste final da carga reservada, os sweeps de Alola e Z-Moves passaram novamente. O Android compilou arm64-v8a/x86_64 com verificacao do PAK interno; APK debug de validacao: 16.138.159 bytes, SHA-256 `F60F36A2197EF520BA03AD405BB276CBE59080456E085191F4FD47D4DBCB0482`. |
+
+## R20261029-264 - Boss Battle acompanha geracoes desbloqueadas
+
+```mermaid
+graph TD
+    R20261029_264["R20261029-264: catalogo progressivo de Boss Battle"]
+    R20261029_264 --> G1["Geracao real desbloqueada: III ate VII"]
+    G1 --> L1["Lendarios e miticos liberados entram no pool"]
+    G1 --> M1["Megas oficiais liberadas entram no pool"]
+    M1 --> R1["Rayquaza ativa Mega com Dragon Ascent"]
+    M1 --> Z1["Zygarde progride 10% -> 50% -> Complete/Mega"]
+    Z1 --> H1["HP global do boss preservado sem cura por transformacao"]
+    R1 --> H1
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-264 | 2026-10-29 | Expandir o catalogo da Boss Battle conforme as geracoes desbloqueadas, adicionando seus lendarios e Megas; permitir a transformacao de Zygarde por vida sem recuperar HP por ser boss; gerar e subir o APK | Concluido, validado e publicado | O Boss Battle deixou de usar a lista fixa de lendarios das geracoes I--III e o corte antigo de Megas ate #386. Cada novo encontro agora recebe a geracao real de conteudo desbloqueada e enumera pela classificacao compartilhada todos os lendarios/miticos e todas as Mega Evolucoes oficiais disponiveis ate aquele limite; formas Primal continuam fora do catalogo de Megas. Encontros ja persistidos nao sao trocados no meio do ciclo, e o pool ampliado vale no proximo sorteio. Zygarde boss com Mega Stone inicia em 10%, passa para 50% ao terminar um turno com no maximo 90% da vida e chega a Complete Mega ao terminar um turno posterior com no maximo 50%; os limiares usam os 200.000 HP reais do boss, e cada refresh de forma preserva exatamente o HP global e a camada visual de 16 bits, sem cura. Mega Rayquaza inicia na forma base, sem pedra, e ativa ao usar Dragon Ascent, tambem preservando o HP global. A regressao varreu os pools das geracoes III--VII, bloqueou vazamento de especies futuras e validou as transformacoes especiais e o HP exato; a suite completa terminou em `All native tests passed.`. O Android 2.0 avancou para `versionCode 89`; o release foi alinhado para paginas de 16 KiB, assinado em v2/v3 com o certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D` e relido. O PAK interno coincide com o canonico v47: 26.769.708 bytes, SHA-256 `D8398BEC9472AC69BC4C9C1AC52FBEAD0FA67599576AB4A533359D72F06318E0`. O APK `Pokegochi-Android-2.0-boss-pool-r264.apk` tem 11.003.690 bytes e SHA-256 `4C0B4EEB9EF88CF2F1E5CBB4C6B8CBD0EB267F4E8F45B93CEEF258B138A7D`; upload e releitura de metadados confirmados no Drive: https://drive.google.com/file/d/1ie2Eap-h23t3gVNMbd_qVb36Pu8lzudb/view?usp=drivesdk |
+
+## R20261029-263 - todos os especiais de Alola encontraveis sem Special Egg
+
+```mermaid
+graph TD
+    R20261029_263["R20261029-263: cacadas especiais de Alola"]
+    R20261029_263 --> P1["14 pools regionais com chance 1/240"]
+    P1 --> L1["Type: Null, Silvally, Tapus e linha Cosmog"]
+    P1 --> U1["Todas as Ultra Beasts e Necrozma"]
+    P1 --> M1["Magearna, Marshadow e Zeraora"]
+    L1 --> V1["Encontros selvagens capturaveis"]
+    U1 --> V1
+    M1 --> V1
+    V1 --> T1["Special Egg permanece apenas como alternativa"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-263 | 2026-10-29 | Permitir encontrar todos os lendarios e especiais da Gen VII normalmente, como nas geracoes anteriores, sem depender do Special Egg | Concluido e validado | Cada uma das 14 areas de Alola recebeu um pool raro de duas especies com a mesma chance de caca de Kalos, `1/240` por encontro selvagem elegivel. A cobertura direta inclui Type: Null, Silvally, os quatro Tapus, Cosmog, Cosmoem, Solgaleo, Lunala, todas as Ultra Beasts, Necrozma, Magearna, Marshadow e Zeraora; o Ultra Wormhole continua sendo a rota frequente para Ultra Beasts e o Special Egg permanece como alternativa. Type: Null e Silvally tambem passaram a ser classificados corretamente pelos sistemas compartilhados de lendarios. Uma assercao de compilacao impede remover qualquer uma das 25 especies dos pools e o teste nativo percorre todas as areas, confirma os dois resultados raros de cada uma e valida que todos os IDs 772, 773 e 785--807 aparecem em batalhas selvagens capturaveis. A suite completa terminou em `All native tests passed.` e o firmware `esp32-2432S028R` compilou com 113.552/327.680 bytes de RAM e 1.964.460/1.966.080 bytes de flash. A estrutura do save nao mudou. |
+
+## R20261029-262 - publicar APK Android da expansão de Alola
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-262 | 2026-10-29 | Gerar o APK mais recente com a expansão completa de Alola e subir no Drive | Concluído, validado e publicado | O Android 2.0 avançou para `versionCode 88` e foi recompilado em release com todo o conteúdo de R20261029-261. O APK foi alinhado para páginas de 16 KiB, assinado em v2/v3 com o certificado de atualização SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D` e relido após a assinatura. O PAK interno é exatamente o canônico v47: 26.769.708 bytes e SHA-256 `D8398BEC9472AC69BC4C9C1AC52FBEAD0FA67599576AB4A533359D72F06318E0`. O APK final `Pokegochi-Android-2.0-alola-r262.apk` possui 11.003.690 bytes e SHA-256 `E1A01C35D003A34914E77C328F7BB1586D53D8A8A6BD5BC3F5DAE2C417970EE9`; upload e metadados foram confirmados no Drive: https://drive.google.com/file/d/1BV6avC8O6ZKSjAMNLaBwxiUHF119KCLB/view?usp=drivesdk |
+
+## R20261029-261 - expansao completa de Alola / Ultra Sun
+
+```mermaid
+graph TD
+    R20261029_261["R20261029-261: Alola / Ultra Sun"]
+    R20261029_261 --> D1["Dados Gen VII: especies, formas, moves, abilities e evolucoes"]
+    R20261029_261 --> M1["Mecanicas: formas de Alola, Totem, Z-Moves, Ultra Beasts e Ultra Burst"]
+    R20261029_261 --> P1["Progressao: ilhas, trials, kahunas, League e pos-game"]
+    R20261029_261 --> T1["Tema Sun inspirado em Ultra Sun"]
+    D1 --> V1["Save compativel + PAK compacto + auditorias"]
+    M1 --> V1
+    P1 --> V1
+    T1 --> V1
+    V1 --> B1["Android e firmware"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261029-261 | 2026-10-29 | Usar o Pokemon Ultra Sun enviado ao Drive como proxima etapa e implementar todos os Pokemon, formas, mecanicas, moves e demais conteudos da Gen VII, com uma progressao criativa baseada em Alola e um tema `Sun` | Concluido e validado no Android e firmware | A expansao leva o National Dex a 807 especies, 671 golpes efetivos, 231 habilidades geradas e 16.092 entradas de learnset, com evolucoes, Pokedex e save V49 migravel sem apagar saves V48. Foram integradas as formas de Alola e especiais de Greninja, Oricorio, Lycanroc, Wishiwashi, Silvally, Minior, Mimikyu, Necrozma e Magearna; Memories/RKS, Battle Bond, Schooling, Shields Down, Disguise, Power Construct, terrenos, Dancer, Wimp Out/Emergency Exit, habilidades de Ultra Beasts, Z-status e Z-Moves exclusivos. A campanha possui 14 areas: trials com auras Totem, kahunas, Team Skull, Aether, Liga, Ultra Wormholes e Rainbow Rocket, com SOS de hidden abilities, Island Scan, 18 Z-Crystals, uma cura sem reviver, Master Ball por 100% e tema Sun. O catalogo possui 134 maquinas e 30.898 compatibilidades, incluindo Nature Power e as TMs de Alola Leech Life, Brutal Swing, Smart Strike e Aurora Veil. O pack v47 ganhou 1.581 assets auditados de Alola e totaliza 14.500 entradas/26.769.708 bytes, SHA-256 `D8398BEC9472AC69BC4C9C1AC52FBEAD0FA67599576AB4A533359D72F06318E0`; o APK debug foi relido e contem exatamente esse pacote. A suite completa terminou em `All native tests passed.`, incluindo varredura dos 54 golpes Gen VII nos dois lados, formas, Dancer, Z-Moves, campanha, save e arquivo PGA3. O firmware preserva a particao OTA e compilou com 113.424/327.680 bytes de RAM e 1.964.368/1.966.080 bytes de flash apos compactacao sem perda de learnsets, pools da Battle Tower, especies e bitsets de maquinas. |
+
+Fontes e artefatos auditados de R20261029-261:
+
+- O leitor `scripts/alola_rom_data.py` valida diretamente o RomFS do Ultra Sun: personal com 976 linhas, especies ate #807 e bitsets TM01--TM100. SHA-256 dos GARCs: moves `F5F2CDC538087AE07F61DA5EA32229E6E4B17AAF4828B07ED8EAF16FDD37F1DA`, personal `463069F2EB69EF77D613C67BE6EB7585B0533E5CB32B73DD406FEC92960181B6`, learnsets `77BB831620496B6753C4C92BBD510EDAEA029528A77B51C744C67190235F17CC` e evolucoes `E091A5C41D4E626EA3CD7C9A8D1C437190F21418EA693BA0C5D76640B4496B4C`.
+- Firmware local: `firmware.bin`, 1.976.032 bytes, SHA-256 `5B8521C3084CC845E954A110DFC7593AE44AEEF1AF907AAD42DCB12C44B9DB48`; factory, 2.041.568 bytes, SHA-256 `12B649EE8C70A31085BEE298B4480F0F80CF8F83BB8B431D902301C6A26694A1`.
+- APK debug local: 12.785.846 bytes, SHA-256 `40E002716E0CCD1E76E32CF84897CFE550BD997BDBC550050AC49E6136A440D0`; `BUILD SUCCESSFUL` com PAK v47 relido por versao, tamanho e hash.
+
 ## R20261029-260 - publicar APK, firmware e código final
 
 ```mermaid

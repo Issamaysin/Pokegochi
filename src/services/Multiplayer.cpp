@@ -375,6 +375,12 @@ void Multiplayer::setState(State next, const char* status) {
 
 bool Multiplayer::takeChanged() { const bool value = changed_; changed_ = false; return value; }
 
+bool Multiplayer::takeUnexpectedDisconnect() {
+  const bool value = unexpectedDisconnectPending_;
+  unexpectedDisconnectPending_ = false;
+  return value;
+}
+
 bool Multiplayer::setEnabled(bool enable) {
   if (enable == enabled_) return true;
 #if defined(ARDUINO_ARCH_ESP32)
@@ -394,10 +400,14 @@ bool Multiplayer::setEnabled(bool enable) {
     gOutboundPhysicalLink = false; gOutboundConnectPending = false;
 #endif
     initialized_ = false; enabled_ = false; transportConnected_ = false;
+    localTransportClosePending_ = false;
+    unexpectedDisconnectPending_ = false;
     setState(State::Off, "TURN BLUETOOTH ON TO PLAY.");
     return true;
   }
   enabled_ = true;
+  localTransportClosePending_ = false;
+  unexpectedDisconnectPending_ = false;
   if (!startTransport()) {
     enabled_ = false;
     setState(State::Error, "BLUETOOTH COULD NOT START.");
@@ -612,11 +622,19 @@ bool Multiplayer::connectTransport(const PeerRecord& peer) {
 }
 
 void Multiplayer::transportConnected(bool outbound) {
-  transportConnected_ = true; outbound_ = outbound; changed_ = true;
+  transportConnected_ = true; outbound_ = outbound;
+  localTransportClosePending_ = false;
+  unexpectedDisconnectPending_ = false;
+  changed_ = true;
 }
 
 void Multiplayer::transportDisconnected() {
   transportConnected_ = false;
+  if (localTransportClosePending_) {
+    localTransportClosePending_ = false;
+    return;
+  }
+  unexpectedDisconnectPending_ = enabled_;
   if (enabled_) { resetSession(true); setState(State::Advertising, "PLAYER DISCONNECTED."); }
 }
 
@@ -962,6 +980,10 @@ void Multiplayer::disconnect() {
 }
 
 void Multiplayer::closeTransportLink() {
+  // Mark the close before invoking NimBLE: an outbound disconnect callback may
+  // run synchronously from disconnect(). Its later event must not be mistaken
+  // for the peer disappearing and force the UI through the recovery path.
+  if (transportConnected_) localTransportClosePending_ = true;
 #if defined(ARDUINO_ARCH_ESP32)
   if (gClient && gClient->isConnected()) {
     Serial.println("[BLE] closing outbound physical link");
@@ -1331,6 +1353,7 @@ void Multiplayer::update() {
     if (gTransportQueue) xQueueReset(gTransportQueue);
     closeTransportLink();
     resetSession(true);
+    unexpectedDisconnectPending_ = true;
     setState(State::Advertising, "BLUETOOTH OVERLOADED. TRY AGAIN.");
     NimBLEDevice::startAdvertising();
     return;

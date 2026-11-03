@@ -203,10 +203,11 @@ struct GameSaveV46Test {
 struct RecordV46Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV46Test payload;uint32_t crc;};
 // Exact shipped Kalos/V47 record. V48 compacts occupied positions from this
 // 800-slot collection into the ESP32-safe active collection.
+struct BattleStateV48Test {alignas(BattleState) uint8_t bytes[984]{};};
 struct GameSaveV47Test {
   uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
   PokemonCollectionV47 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
-  WildEncounterClock wildEncounterClock{};BattleState battle{};PokedexState pokedex{};
+  WildEncounterClock wildEncounterClock{};BattleStateV48Test battle{};PokedexStateV48 pokedex{};
   GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
   MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
   uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
@@ -220,6 +221,33 @@ struct GameSaveV47Test {
   UnovaFormState unovaForms{};KalosAdventureState kalos{};
 };
 struct RecordV47Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV47Test payload;uint32_t crc;};
+// Exact shipped Kalos/V48 record. V49 expands only the active Box/Pokedex and
+// appends clean Alola state.
+struct GameSaveV48Test {
+  uint32_t playTimeSeconds=0,bootCount=0;uint8_t flags=0,activePetSlot=0;
+  PokemonCollectionV48 collection{};Inventory inventory{};EncounterCharges encounterCharges{};
+  WildEncounterClock wildEncounterClock{};BattleStateV48Test battle{};PokedexStateV48 pokedex{};
+  GymProgress gymProgress{};uint32_t money=3000;MartState mart{};
+  MoveLearningQueue moveLearning{};EvolutionQueue evolutionQueue{};EggState egg{};UserSettings settings{};
+  uint64_t ownedMachines=0;PlayerStatistics statistics{};uint32_t martSeenDay=0;
+  PpItemInventory ppItems{};HomePetPlacementState homePetPlacement{};
+  BerryGardenState berryGarden{};CreativeBackgroundState creativeBackgrounds{};
+  SpecialHeldItemInventory specialHeldItems{};uint32_t lastNpcGiftDay=UINT32_MAX;
+  uint32_t clockLocalEpochSeconds=0,bossCooldownSecondsRemaining=0;
+  BossEncounterState bossEncounter{};EggInventory eggInventory{};SinnohExpeditionState sinnoh{};
+  TowerDefense::CampaignState towerDefense{};Gen4UniqueItemInventory gen4UniqueItems{};
+  UnovaAdventureState unova{};Gen5UniqueItemInventory gen5UniqueItems{};
+  UnovaFormState unovaForms{};KalosAdventureState kalos{};
+};
+struct RecordV48Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV48Test payload;uint32_t crc;};
+constexpr size_t kGameSaveV49TestSize=offsetof(GameSave,alolaForms);
+struct alignas(GameSave) GameSaveV49Test {uint8_t bytes[kGameSaveV49TestSize]{};};
+struct RecordV49Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV49Test payload;uint32_t crc;};
+constexpr size_t kGameSaveV50PrefixTestSize=offsetof(GameSave,modernHeldItems);
+constexpr size_t kGameSaveV50TestSize=(kGameSaveV50PrefixTestSize+alignof(GameSave)-1U)&
+    ~(alignof(GameSave)-1U);
+struct alignas(GameSave) GameSaveV50Test {uint8_t bytes[kGameSaveV50TestSize]{};};
+struct RecordV50Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV50Test payload;uint32_t crc;};
 static_assert(sizeof(BattleStateV33Test)==684);
 static_assert(sizeof(GameSaveV33Test)==25912);
 static_assert(sizeof(RecordV33Test)==25936);
@@ -248,7 +276,12 @@ static_assert(sizeof(GameSaveV42Test) < sizeof(GameSave));
 static_assert(sizeof(GameSaveV45Test) < sizeof(GameSave));
 static_assert(sizeof(BattleStateV46Test)==944U);
 static_assert(sizeof(GameSaveV46Test) < sizeof(GameSave));
-static_assert(sizeof(GameSaveV47Test) > sizeof(GameSave));
+static_assert(sizeof(BattleStateV48Test)==984U);
+static_assert(sizeof(GameSaveV48Test) < sizeof(GameSave));
+static_assert(sizeof(GameSaveV49Test)==kGameSaveV49TestSize);
+static_assert(sizeof(GameSaveV50Test)==kGameSaveV50TestSize);
+static_assert(sizeof(GameSaveV50Test)==54936U);
+static_assert(sizeof(RecordV50Test)==54960U);
 uint32_t crc32(const uint8_t* data,size_t length){uint32_t crc=0xFFFFFFFFU;for(size_t i=0;i<length;++i){crc^=data[i];for(uint8_t bit=0;bit<8;++bit)crc=(crc>>1U)^(0xEDB88320U&(0U-(crc&1U)));}return ~crc;}
 
 PokemonCollectionV41 legacyCollectionWithStarter(uint16_t speciesId) {
@@ -945,10 +978,165 @@ int main() {
   assert(v48Reload.loadOrCreate(v48Reloaded)==SaveLoadResult::Loaded);
   assert(CollectionLogic::find(v48Reloaded.collection,tailV47.uid)->speciesId==721U);
 
-  PokemonCollectionV47 overfullV47{};
-  for(uint16_t i=0;i<=kBoxCapacity;++i)overfullV47.box[i].uid=static_cast<uint32_t>(i)+1U;
-  PokemonCollection rejectedV47{};
-  assert(!rejectedV47.importV47(overfullV47));
+  // A real V48 Kalos save must migrate to V49 without changing its active
+  // battle or any collected Pokemon. Only the Alola tail starts fresh.
+  Preferences::resetTestStorage();
+  GameSaveV48Test v48Prefix{};
+  v48Prefix.playTimeSeconds=480049U;v48Prefix.money=807000U;
+  OwnedPokemon kalosV48=CollectionLogic::createPokemon(4800U,718U,91U,true,0x718U,6U);
+  v48Prefix.collection.box[0]=kalosV48;
+  v48Prefix.collection.party[0]=kalosV48.uid;
+  v48Prefix.collection.nextUid=4801U;
+  BattleState battleV48{};
+  battleV48.active=true;battleV48.kind=BattleKind::KalosAdventure;
+  battleV48.playerUid=kalosV48.uid;battleV48.turn=48U;battleV48.unlockedGeneration=6U;
+  std::memcpy(v48Prefix.battle.bytes,&battleV48,sizeof(v48Prefix.battle.bytes));
+  v48Prefix.pokedex.caught[(718U-1U)/8U]|=static_cast<uint8_t>(1U<<((718U-1U)%8U));
+  v48Prefix.kalos.unlockedAreas=KalosAdventure::kAllAreasMask;
+  RecordV48Test old48{};old48.magic=0x504F4B45;old48.version=48U;
+  old48.payloadSize=sizeof(GameSaveV48Test);old48.sequence=101448U;old48.payload=v48Prefix;
+  old48.crc=crc32(reinterpret_cast<const uint8_t*>(&old48),offsetof(RecordV48Test,crc));
+  assert(raw.putBytes("save_a",&old48,sizeof(old48))==sizeof(old48));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v48Migrator;assert(v48Migrator.begin());GameSave v49Migrated;
+  assert(v48Migrator.loadOrCreate(v49Migrated)==SaveLoadResult::Loaded);
+  assert(v49Migrated.playTimeSeconds==480049U&&v49Migrated.money==807000U);
+  assert(CollectionLogic::find(v49Migrated.collection,kalosV48.uid)->speciesId==718U);
+  assert(PokedexLogic::hasCaught(v49Migrated.pokedex,718U));
+  assert(v49Migrated.battle.active&&v49Migrated.battle.turn==48U&&
+         v49Migrated.battle.playerUid==kalosV48.uid);
+  assert(v49Migrated.kalos.unlockedAreas==KalosAdventure::kAllAreasMask);
+  assert(v49Migrated.alola.unlockedAreas==0U&&
+         v49Migrated.alola.rngState==0x414C4F4CUL&&
+         v49Migrated.gen7UniqueItems.bagMask==0U);
+
+  // V50 appends only the Necrozma fusion sidecar. A shipped V49 Alola save
+  // must retain its complete byte prefix while initializing that donor empty.
+  Preferences::resetTestStorage();
+  GameSave v49Source{};
+  v49Source.playTimeSeconds=500049U;v49Source.money=800800U;
+  v49Source.alola.unlockedAreas=AlolaAdventure::kAllAreasMask;
+  v49Source.gen7UniqueItems.bagMask=0x12345U;
+  CollectionLogic::initialize(v49Source.collection);
+  uint32_t v49NecrozmaUid=0U;
+  assert(CollectionLogic::add(v49Source.collection,
+      CollectionLogic::createPokemon(0U,800U,65U,false,0x80049U,7U),
+      &v49NecrozmaUid));
+  assert(CollectionLogic::setPartySlot(v49Source.collection,0U,v49NecrozmaUid));
+  RecordV49Test old49{};old49.magic=0x504F4B45;old49.version=49U;
+  old49.payloadSize=sizeof(GameSaveV49Test);old49.sequence=101449U;
+  std::memcpy(old49.payload.bytes,&v49Source,sizeof(old49.payload.bytes));
+  old49.crc=crc32(reinterpret_cast<const uint8_t*>(&old49),offsetof(RecordV49Test,crc));
+  assert(raw.putBytes("save_a",&old49,sizeof(old49))==sizeof(old49));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v49Migrator;assert(v49Migrator.begin());GameSave v50Migrated;
+  assert(v49Migrator.loadOrCreate(v50Migrated)==SaveLoadResult::Loaded);
+  assert(v50Migrated.playTimeSeconds==500049U&&v50Migrated.money==800800U);
+  assert(v50Migrated.alola.unlockedAreas==AlolaAdventure::kAllAreasMask);
+  assert(v50Migrated.gen7UniqueItems.bagMask==0x12345U);
+  assert(v50Migrated.alolaForms.fusedDonor.uid==kEmptyPokemonUid&&
+         v50Migrated.alolaForms.fusedNecrozmaUid==0U);
+
+  // V51 appends only the counted ordinary held-item inventory. A real V50
+  // save keeps its entire campaign/collection/form prefix and starts every
+  // newly purchasable stack at zero.
+  Preferences::resetTestStorage();
+  GameSave v50Source{};
+  v50Source.playTimeSeconds=510050U;v50Source.money=999001U;
+  v50Source.alola.unlockedAreas=AlolaAdventure::kAllAreasMask;
+  v50Source.alolaForms.fusedNecrozmaUid=0x80500001U;
+  v50Source.alolaForms.fusedDonor=CollectionLogic::createPokemon(
+      0x80500002U,791U,80U,true,0x80500003U,7U);
+  CollectionLogic::initialize(v50Source.collection);
+  assert(CollectionLogic::chooseStarter(v50Source.collection,7U));
+  RecordV50Test old50{};old50.magic=0x504F4B45;old50.version=50U;
+  old50.payloadSize=sizeof(GameSaveV50Test);old50.sequence=101450U;
+  std::memcpy(old50.payload.bytes,&v50Source,sizeof(old50.payload.bytes));
+  old50.crc=crc32(reinterpret_cast<const uint8_t*>(&old50),
+                  offsetof(RecordV50Test,crc));
+  assert(raw.putBytes("save_a",&old50,sizeof(old50))==sizeof(old50));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v50Migrator;assert(v50Migrator.begin());GameSave v51Migrated;
+  assert(v50Migrator.loadOrCreate(v51Migrated)==SaveLoadResult::Loaded);
+  assert(v51Migrated.playTimeSeconds==510050U&&v51Migrated.money==999001U);
+  assert(v51Migrated.alola.unlockedAreas==AlolaAdventure::kAllAreasMask);
+  assert(v51Migrated.alolaForms.fusedNecrozmaUid==0x80500001U&&
+         v51Migrated.alolaForms.fusedDonor.speciesId==791U);
+  for(uint8_t i=0;i<kModernHeldItemCount;++i)
+    assert(v51Migrated.modernHeldItems.quantities[i]==0U);
+
+  PokemonCollectionV47 fullV47{};
+  for(uint16_t i=0;i<kBoxCapacityV47;++i)fullV47.box[i].uid=static_cast<uint32_t>(i)+1U;
+  PokemonCollection importedV47{};
+  assert(importedV47.importV47(fullV47));
+  assert(CollectionLogic::count(importedV47)==kBoxCapacityV47);
+
+  // A current save may still contain the retired custom Ultranecrozium Z in
+  // its Bag, Box, fusion donor or a resumed battle. Loading must sanitize all
+  // of them before any Alola screen is opened, while preserving valid items.
+  Preferences::resetTestStorage();
+  PersistentSave retiredWriter;assert(retiredWriter.begin());GameSave retiredSave;
+  assert(retiredWriter.loadOrCreate(retiredSave)==SaveLoadResult::FirstStart);
+  assert(CollectionLogic::chooseStarter(retiredSave.collection,7U));
+  uint32_t retiredNecrozmaUid=0U;
+  assert(CollectionLogic::add(retiredSave.collection,
+      CollectionLogic::createPokemon(0U,800U,70U,false,0x80000273U,7U),
+      &retiredNecrozmaUid));
+  OwnedPokemon* retiredNecrozma=
+      CollectionLogic::find(retiredSave.collection,retiredNecrozmaUid);
+  assert(retiredNecrozma);
+  retiredNecrozma->heldItem=HeldItem::RemovedUltranecroziumZ;
+  const int8_t normaliumIndex=gen7UniqueItemIndex(HeldItem::NormaliumZ);
+  assert(normaliumIndex>=0);
+  const uint64_t normaliumBit=uint64_t{1}<<static_cast<uint8_t>(normaliumIndex);
+  retiredSave.gen7UniqueItems.bagMask=
+      normaliumBit|kRemovedUltranecroziumZBit;
+  retiredSave.gen7UniqueItems.claimedMask=
+      normaliumBit|kRemovedUltranecroziumZBit;
+  retiredSave.alolaForms.fusedDonor=CollectionLogic::createPokemon(
+      0x79200273U,792U,70U,false,0x79200273U,7U);
+  retiredSave.alolaForms.fusedDonor.heldItem=
+      HeldItem::RemovedUltranecroziumZ;
+  retiredSave.battle.active=true;
+  retiredSave.battle.kind=BattleKind::Trainer;
+  retiredSave.battle.outcome=BattleOutcome::Ongoing;
+  retiredSave.battle.playerUid=retiredNecrozmaUid;
+  retiredSave.battle.opponentCount=1U;
+  retiredSave.battle.opponents[0]=CollectionLogic::createPokemon(
+      0x15000273U,150U,70U,false,0x15000273U,7U);
+  retiredSave.battle.opponents[0].heldItem=HeldItem::RemovedUltranecroziumZ;
+  retiredSave.battle.playerVolatile.heldItemOverride=
+      HeldItem::RemovedUltranecroziumZ;
+  retiredSave.battle.playerVolatile.hasHeldItemOverride=true;
+  retiredSave.battle.opponentVolatiles[0].heldItemOverride=
+      HeldItem::RemovedUltranecroziumZ;
+  retiredSave.battle.opponentVolatiles[0].hasHeldItemOverride=true;
+  retiredSave.battle.playerHeldItems[0].pokemonUid=retiredNecrozmaUid;
+  retiredSave.battle.playerHeldItems[0].heldItemOverride=
+      HeldItem::RemovedUltranecroziumZ;
+  retiredSave.battle.playerHeldItems[0].hasHeldItemOverride=true;
+  assert(retiredWriter.commit(retiredSave));
+
+  PersistentSave retiredReader;assert(retiredReader.begin());GameSave repairedRetired;
+  assert(retiredReader.loadOrCreate(repairedRetired)==SaveLoadResult::Loaded);
+  const OwnedPokemon* repairedNecrozma=
+      CollectionLogic::find(repairedRetired.collection,retiredNecrozmaUid);
+  assert(repairedNecrozma&&repairedNecrozma->heldItem==HeldItem::None);
+  assert(repairedRetired.gen7UniqueItems.bagMask==normaliumBit);
+  assert(repairedRetired.gen7UniqueItems.claimedMask==normaliumBit);
+  assert(repairedRetired.alolaForms.fusedDonor.heldItem==HeldItem::None);
+  assert(repairedRetired.battle.opponents[0].heldItem==HeldItem::None);
+  assert(!repairedRetired.battle.playerVolatile.hasHeldItemOverride&&
+         repairedRetired.battle.playerVolatile.heldItemOverride==HeldItem::None);
+  assert(!repairedRetired.battle.opponentVolatiles[0].hasHeldItemOverride&&
+         repairedRetired.battle.opponentVolatiles[0].heldItemOverride==HeldItem::None);
+  assert(!repairedRetired.battle.playerHeldItems[0].hasHeldItemOverride&&
+         repairedRetired.battle.playerHeldItems[0].heldItemOverride==HeldItem::None);
+  assert(retiredReader.commit(repairedRetired));
+  PersistentSave retiredReload;assert(retiredReload.begin());GameSave durableRepair;
+  assert(retiredReload.loadOrCreate(durableRepair)==SaveLoadResult::Loaded);
+  assert(CollectionLogic::find(durableRepair.collection,retiredNecrozmaUid)->heldItem==
+         HeldItem::None);
 
   // User-requested reset writes a new, complete blank record instead of
   // deleting the two redundant slots first. It must survive a fresh loader.

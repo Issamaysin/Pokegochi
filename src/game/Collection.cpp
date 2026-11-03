@@ -1,5 +1,6 @@
 #include "game/Collection.h"
 #include "game/MegaEvolution.h"
+#include "game/AlolaForms.h"
 #include <algorithm>
 
 namespace {
@@ -158,6 +159,11 @@ void synchronizeRotomFormMove(OwnedPokemon& pokemon, uint8_t form) {
   }
 }
 
+uint8_t generationForSpecies(uint16_t speciesId) {
+  return speciesId >= 722U ? 7U : speciesId >= 650U ? 6U :
+      speciesId >= 494U ? 5U : speciesId >= 387U ? 4U : 3U;
+}
+
 constexpr uint8_t kFormLifecyclePhaseShift = 16U;
 constexpr uint32_t kFormLifecyclePhaseMask = 0x03UL << kFormLifecyclePhaseShift;
 constexpr uint8_t kFormLifecycleHourShift = 18U;
@@ -211,8 +217,7 @@ bool applyPersistentForm(OwnedPokemon& pokemon, uint8_t form) {
   pokemon.form = form;
   synchronizeRotomFormMove(pokemon, CollectionLogic::resolvedForm(pokemon));
   synchronizeHoopaSignatureMove(pokemon);
-  CollectionLogic::refreshAbility(pokemon, pokemon.speciesId >= 650U ? 6U :
-      pokemon.speciesId >= 494U ? 5U : 4U);
+  CollectionLogic::refreshAbility(pokemon, generationForSpecies(pokemon.speciesId));
   CollectionLogic::refreshDerivedStats(pokemon, true);
   return true;
 }
@@ -274,12 +279,14 @@ OwnedPokemon CollectionLogic::createPokemon(uint32_t uid, uint16_t speciesId, ui
   // 10% Forme. The 50% and Complete records are battle-local assembly stages
   // reached from HP thresholds, never independently selected specimens.
   if(speciesId==718U) pokemon.form=1U;
+  if(AlolaForms::supports(speciesId))
+    pokemon.form=AlolaForms::initialForm(speciesId,pokemon.personality);
   pokemon.shiny = shiny;
   pokemon.level = level;
   pokemon.experience = experienceForLevel(species->growthRate, level);
   pokemon.maximumHp = calculatedMaximumHp(pokemon);
   pokemon.currentHp = pokemon.maximumHp;
-  const uint8_t contentGeneration = std::min<uint8_t>(6U, unlockedGeneration);
+  const uint8_t contentGeneration = std::min<uint8_t>(7U, unlockedGeneration);
   refreshAbility(pokemon, contentGeneration);
   const uint8_t moveCount = movesForForm(speciesId, pokemon.form, level, pokemon.moves,
                                           contentGeneration);
@@ -319,7 +326,7 @@ bool CollectionLogic::ensureUsableMoves(OwnedPokemon& pokemon) {
 
   MoveId recovered[kMoveSlots]{};
   const uint8_t moveCount = movesForForm(pokemon.speciesId, resolvedForm(pokemon),
-                                         pokemon.level, recovered);
+      pokemon.level, recovered, generationForSpecies(pokemon.speciesId));
   if (!moveCount) recovered[0] = defaultMoveForSpecies(pokemon.speciesId);
   for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
     clearMovePpUps(pokemon, slot);
@@ -660,10 +667,13 @@ uint8_t CollectionLogic::resolvedForm(const OwnedPokemon& pokemon) {
   if(pokemon.speciesId==720U)return std::min<uint8_t>(pokemon.form,1U);
   if(pokemon.speciesId==710U||pokemon.speciesId==711U)
     return std::min<uint8_t>(pokemon.form,3U);
+  if(AlolaForms::supports(pokemon.speciesId))
+    return AlolaForms::resolvedForm(pokemon,0U);
   return 0;
 }
 
 uint8_t CollectionLogic::formCount(uint16_t speciesId) {
+  if(AlolaForms::supports(speciesId))return AlolaForms::formCount(speciesId);
   if (speciesId == 201) return 28U;
   if (speciesId == 351 || speciesId == 386) return 4U;
   if (speciesId == 412U || speciesId == 413U) return 3U;
@@ -689,6 +699,7 @@ uint8_t CollectionLogic::formCount(uint16_t speciesId) {
 }
 
 const char* CollectionLogic::formName(uint16_t speciesId, uint8_t form) {
+  if(AlolaForms::supports(speciesId))return AlolaForms::formName(speciesId,form);
   static constexpr const char* kUnownForms[] = {
       "A","B","C","D","E","F","G","H","I","J","K","L","M","N",
       "O","P","Q","R","S","T","U","V","W","X","Y","Z","!","?"};
@@ -756,7 +767,8 @@ bool CollectionLogic::canChangeForm(const OwnedPokemon& pokemon) {
          (pokemon.speciesId == 487U && pokemon.heldItem != HeldItem::GriseousOrb) ||
          pokemon.speciesId == 492U || pokemon.speciesId == 641U ||
          pokemon.speciesId == 642U || pokemon.speciesId == 645U ||
-         pokemon.speciesId == 676U || pokemon.speciesId == 670U;
+         pokemon.speciesId == 676U || pokemon.speciesId == 670U ||
+         AlolaForms::canSelectForm(pokemon.speciesId);
 }
 
 bool CollectionLogic::setForm(OwnedPokemon& pokemon, uint8_t form) {
@@ -803,6 +815,8 @@ bool CollectionLogic::normalizeForm(OwnedPokemon& pokemon) {
           pokemon.speciesId==711U||pokemon.speciesId==716U||
           pokemon.speciesId==720U)
     normalized=resolvedForm(pokemon);
+  else if(AlolaForms::supports(pokemon.speciesId))
+    normalized=AlolaForms::resolvedForm(pokemon,0U);
   else if(pokemon.speciesId==718U)
     normalized=1U;
   else if (pokemon.speciesId == 201) {
@@ -818,8 +832,7 @@ bool CollectionLogic::normalizeForm(OwnedPokemon& pokemon) {
   synchronizeRotomFormMove(pokemon, resolvedForm(pokemon));
   synchronizeHoopaSignatureMove(pokemon);
   MegaEvolution::synchronizeSignatureMove(pokemon);
-  refreshAbility(pokemon, pokemon.speciesId >= 650U ? 6U :
-      pokemon.speciesId >= 494U ? 5U : 4U);
+  refreshAbility(pokemon, generationForSpecies(pokemon.speciesId));
   if (changed) {
     if (pokemon.speciesId == 718U)
       refreshDerivedStatsPreservingHpRatio(pokemon);
@@ -1047,21 +1060,31 @@ bool CollectionLogic::evolve(PokemonCollection& collection, uint32_t uid,
       (oldSpeciesId==665U&&newSpeciesId==666U)||
       (oldSpeciesId==669U&&newSpeciesId==670U)||
       (oldSpeciesId==670U&&newSpeciesId==671U)||
-      (oldSpeciesId==710U&&newSpeciesId==711U);
+      (oldSpeciesId==710U&&newSpeciesId==711U)||
+      (oldSpeciesId==19U&&newSpeciesId==20U)||
+      (oldSpeciesId==27U&&newSpeciesId==28U)||
+      (oldSpeciesId==37U&&newSpeciesId==38U)||
+      (oldSpeciesId==50U&&newSpeciesId==51U)||
+      (oldSpeciesId==52U&&newSpeciesId==53U)||
+      (oldSpeciesId==74U&&(newSpeciesId==75U||newSpeciesId==76U))||
+      (oldSpeciesId==75U&&newSpeciesId==76U)||
+      (oldSpeciesId==88U&&newSpeciesId==89U);
   pokemon->form=preserveForm?oldForm:0U;
+  if(unlockedGeneration>=7U&&(newSpeciesId==26U||newSpeciesId==103U||
+      newSpeciesId==105U))pokemon->form=1U;
   if(oldSpeciesId==677U&&newSpeciesId==678U){
     const SpeciesData* meowstic=findSpecies(678U);
     pokemon->form=meowstic&&
         static_cast<uint8_t>(pokemon->personality&0xFFU)<meowstic->genderRatio?1U:0U;
   }
-  refreshAbility(*pokemon, std::min<uint8_t>(6U, unlockedGeneration));
+  refreshAbility(*pokemon, std::min<uint8_t>(7U, unlockedGeneration));
   refreshDerivedStats(*pokemon);
 
   if (createsShedinja) {
     shedinjaSource.uid = kEmptyPokemonUid;
     shedinjaSource.speciesId = 292U;
     shedinjaSource.form = 0;
-    refreshAbility(shedinjaSource, std::min<uint8_t>(6U, unlockedGeneration));
+    refreshAbility(shedinjaSource, std::min<uint8_t>(7U, unlockedGeneration));
     refreshDerivedStats(shedinjaSource, false);
     add(collection, shedinjaSource, bonusUid);
   }
@@ -1074,7 +1097,7 @@ RareCandyProgression CollectionLogic::applyRareCandy(
   const SpeciesData* species = findSpecies(pokemon.speciesId);
   if (!species) return result;
 
-  const uint8_t generation = std::min<uint8_t>(6U, unlockedGeneration);
+  const uint8_t generation = std::min<uint8_t>(7U, unlockedGeneration);
   if (pokemon.level < 100U) {
     ++pokemon.level;
     pokemon.experience = std::max<uint32_t>(

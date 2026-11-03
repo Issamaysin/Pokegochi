@@ -32,7 +32,9 @@ struct BattleTowerTrainerDefinition {
   const char* introLine1;
   const char* introLine2;
   uint16_t poolOffset;
-  uint16_t poolCount;
+  // No authored trainer pool reaches 256 entries. Keeping both trailing
+  // values byte-sized removes four bytes of padding from every trainer row.
+  uint8_t poolCount;
   uint8_t fixedIv;
 };
 

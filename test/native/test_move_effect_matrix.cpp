@@ -88,6 +88,14 @@ bool sawCannotMove(const BattleActionResult& result,BattleSide side,uint16_t rea
   return false;
 }
 
+bool sawHeldItem(const BattleActionResult& result,HeldItem item,BattleSide side){
+  for(uint8_t i=0;i<result.eventCount;++i)
+    if(result.events[i].type==BattleEventType::HeldItemActivated&&
+       result.events[i].side==side&&
+       result.events[i].value==static_cast<uint16_t>(item))return true;
+  return false;
+}
+
 void symmetricFlag(MoveId move,bool DedicatedMoveEffectState::*member,
                    BattleMoveEffect event){
   Fixture player(move,static_cast<MoveId>(150));
@@ -157,6 +165,49 @@ int main(){
     assert(opponentResult.accepted && opponentDrain.opponent().currentHp > opponentBefore &&
            countEvents(opponentResult, BattleEventType::HpChanged,
                        BattleSide::Opponent) == 1U);
+  }
+
+  // RESTORE_HP contains the substring REST. The opponent resolver must use
+  // an exact effect match: Recover heals half max HP without causing Sleep,
+  // while the real Rest still fully heals and sleeps on both battle sides.
+  for(bool enemy:{false,true}){
+    const MoveId recover=static_cast<MoveId>(105);
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture healing(enemy?splash:recover,enemy?recover:splash);
+    OwnedPokemon& healer=enemy?healing.opponent():healing.player();
+    healer.maximumHp=400U;healer.currentHp=100U;
+    healer.status=StatusCondition::None;
+    const BattleActionResult recovered=enemy?healing.opponentUses():healing.playerUses();
+    assert(recovered.accepted&&healer.currentHp==300U&&
+           healer.status==StatusCondition::None);
+
+    const MoveId rest=static_cast<MoveId>(156);
+    Fixture resting(enemy?splash:rest,enemy?rest:splash);
+    OwnedPokemon& sleeper=enemy?resting.opponent():resting.player();
+    sleeper.maximumHp=400U;sleeper.currentHp=100U;
+    sleeper.status=StatusCondition::None;
+    const BattleActionResult rested=enemy?resting.opponentUses():resting.playerUses();
+    const CombatVolatile& sleeperState=enemy?
+        resting.battle.opponentVolatiles[0]:resting.battle.playerVolatile;
+    assert(rested.accepted&&sleeper.currentHp==400U&&
+           sleeper.status==StatusCondition::Sleep&&sleeperState.sleepTurns==3U);
+  }
+
+  // Extrasensory's FLINCH_MINIMIZE_HIT effect name contains MINIMIZE because
+  // it deals extra damage to a minimized target. It must not execute the
+  // Minimize setup script and raise the attacker's Evasion. Cover both battle
+  // sides because their post-hit handlers are intentionally symmetric.
+  for(bool enemy:{false,true}){
+    const MoveId extrasensory=static_cast<MoveId>(326);
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture fixture(enemy?splash:extrasensory,enemy?extrasensory:splash);
+    CombatVolatile& attacker=enemy?fixture.battle.opponentVolatiles[0]:
+                                      fixture.battle.playerVolatile;
+    attacker.evasionStage=0;
+    const BattleActionResult result=enemy?fixture.opponentUses():fixture.playerUses();
+    assert(result.accepted&&sawMove(result,extrasensory,
+        enemy?BattleSide::Opponent:BattleSide::Player));
+    assert(attacker.evasionStage==0);
   }
 
   // FireRed's internal 0..12 stages map to Pokegochi's signed -6..+6.
@@ -3174,6 +3225,232 @@ int main(){
     assert(switched.accepted&&f.battle.playerMoveEffects.ingrained&&
            incoming->currentHp==1000U&&
            incoming->status==StatusCondition::None);
+  }
+
+  // Ordinary held items introduced after Emerald are sourced from the
+  // expansion ROM, but each one must also be live in Pokegochi's resolver.
+  // These checks cover every one of the 23 region-gated items rather than
+  // merely proving that their names exist in the Bag.
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture plain(MoveId::Tackle,splash),orb(MoveId::Tackle,splash);
+    plain.player().abilityId=orb.player().abilityId=0U;
+    plain.opponent().abilityId=orb.opponent().abilityId=0U;
+    plain.opponent().maximumHp=plain.opponent().currentHp=2000U;
+    orb.opponent().maximumHp=orb.opponent().currentHp=2000U;
+    plain.player().maximumHp=plain.player().currentHp=1000U;
+    orb.player().maximumHp=orb.player().currentHp=1000U;
+    orb.player().heldItem=HeldItem::LifeOrb;
+    plain.battle.rngState=orb.battle.rngState=0x11FE0ABU;
+    const BattleActionResult ordinary=plain.playerUses();
+    const BattleActionResult boosted=orb.playerUses();
+    assert(boosted.damageDealt>ordinary.damageDealt&&
+           orb.player().currentHp<orb.player().maximumHp&&
+           orb.player().heldItem==HeldItem::LifeOrb&&
+           sawHeldItem(boosted,HeldItem::LifeOrb,BattleSide::Player));
+
+    Fixture sash(MoveId::Tackle,splash);
+    sash.player().level=100U;sash.opponent().maximumHp=sash.opponent().currentHp=10U;
+    sash.opponent().heldItem=HeldItem::FocusSash;
+    const BattleActionResult survived=sash.playerUses();
+    assert(survived.accepted&&sash.opponent().currentHp==1U&&
+           sash.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(survived,HeldItem::FocusSash,BattleSide::Opponent));
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150),psychic=static_cast<MoveId>(94);
+    Fixture plain(psychic,splash),specs(psychic,splash);
+    plain.player().abilityId=specs.player().abilityId=0U;
+    plain.opponent().maximumHp=plain.opponent().currentHp=4000U;
+    specs.opponent().maximumHp=specs.opponent().currentHp=4000U;
+    specs.player().heldItem=HeldItem::ChoiceSpecs;
+    plain.battle.rngState=specs.battle.rngState=0x5EEC5001U;
+    assert(specs.playerUses().damageDealt>plain.playerUses().damageDealt);
+
+    Fixture scarf(MoveId::Tackle,MoveId::Tackle);
+    scarf.player().heldItem=HeldItem::ChoiceScarf;
+    scarf.player().ivs.speed=0U;scarf.opponent().ivs.speed=31U;
+    scarf.player().maximumHp=scarf.player().currentHp=10U;
+    scarf.opponent().maximumHp=scarf.opponent().currentHp=10U;
+    scarf.player().moves[1]=static_cast<MoveId>(7);scarf.player().movePp[1]=15U;
+    const BattleActionResult scarfTurn=scarf.opponentUses();
+    assert(scarfTurn.accepted&&scarf.opponent().currentHp==0U&&
+           scarf.player().currentHp!=0U&&
+           !BattleEngine::moveIsSelectable(scarf.battle,scarf.collection,
+                scarf.player().moves[1],BattleSide::Player));
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150),thunderbolt=static_cast<MoveId>(85);
+    Fixture plain(thunderbolt,splash),belt(thunderbolt,splash);
+    plain.opponent().speciesId=belt.opponent().speciesId=7U;
+    plain.opponent().maximumHp=plain.opponent().currentHp=4000U;
+    belt.opponent().maximumHp=belt.opponent().currentHp=4000U;
+    belt.player().heldItem=HeldItem::ExpertBelt;
+    plain.battle.rngState=belt.battle.rngState=0xE8E17001U;
+    assert(belt.playerUses().damageDealt>plain.playerUses().damageDealt);
+
+    Fixture poison(splash,splash),nonPoison(splash,splash);
+    poison.player().speciesId=1U;
+    poison.player().maximumHp=nonPoison.player().maximumHp=1000U;
+    poison.player().currentHp=nonPoison.player().currentHp=500U;
+    poison.player().heldItem=nonPoison.player().heldItem=HeldItem::BlackSludge;
+    const BattleActionResult poisonTurn=poison.playerUses();
+    const BattleActionResult nonPoisonTurn=nonPoison.playerUses();
+    assert(poison.player().currentHp>500U&&nonPoison.player().currentHp<500U&&
+           sawHeldItem(poisonTurn,HeldItem::BlackSludge,BattleSide::Player)&&
+           sawHeldItem(nonPoisonTurn,HeldItem::BlackSludge,BattleSide::Player));
+
+    Fixture toxic(splash,splash),flame(splash,splash);
+    toxic.player().heldItem=HeldItem::ToxicOrb;
+    flame.player().heldItem=HeldItem::FlameOrb;
+    const BattleActionResult toxicTurn=toxic.playerUses();
+    const BattleActionResult flameTurn=flame.playerUses();
+    assert(toxic.player().status==StatusCondition::BadlyPoisoned&&
+           flame.player().status==StatusCondition::Burn&&
+           sawHeldItem(toxicTurn,HeldItem::ToxicOrb,BattleSide::Player)&&
+           sawHeldItem(flameTurn,HeldItem::FlameOrb,BattleSide::Player));
+    Fixture corrosion(splash,splash);
+    corrosion.player().speciesId=81U; // Steel-type Magnemite
+    corrosion.player().abilityId=213U; // CORROSION
+    corrosion.player().heldItem=HeldItem::ToxicOrb;
+    corrosion.playerUses();
+    assert(corrosion.player().status==StatusCondition::BadlyPoisoned);
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150),psychic=static_cast<MoveId>(94);
+    Fixture plain(psychic,splash),eviolite(psychic,splash),vest(psychic,splash);
+    plain.opponent().speciesId=eviolite.opponent().speciesId=vest.opponent().speciesId=1U;
+    plain.opponent().maximumHp=plain.opponent().currentHp=5000U;
+    eviolite.opponent().maximumHp=eviolite.opponent().currentHp=5000U;
+    vest.opponent().maximumHp=vest.opponent().currentHp=5000U;
+    eviolite.opponent().heldItem=HeldItem::Eviolite;
+    vest.opponent().heldItem=HeldItem::AssaultVest;
+    plain.battle.rngState=eviolite.battle.rngState=vest.battle.rngState=0xE710117EU;
+    const uint16_t ordinary=plain.playerUses().damageDealt;
+    assert(eviolite.playerUses().damageDealt<ordinary&&
+           vest.playerUses().damageDealt<ordinary);
+    Fixture vestStatus(splash,splash);
+    vestStatus.player().heldItem=HeldItem::AssaultVest;
+    assert(!BattleEngine::moveIsSelectable(vestStatus.battle,
+        vestStatus.collection,splash,BattleSide::Player));
+    vestStatus.player().moves[0]=static_cast<MoveId>(382); // Me First
+    vestStatus.player().movePp[0]=20U;
+    assert(BattleEngine::moveIsSelectable(vestStatus.battle,
+        vestStatus.collection,static_cast<MoveId>(382),BattleSide::Player));
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture helmet(MoveId::Tackle,splash),pads(MoveId::Tackle,splash);
+    helmet.player().maximumHp=helmet.player().currentHp=1000U;
+    pads.player().maximumHp=pads.player().currentHp=1000U;
+    helmet.opponent().maximumHp=helmet.opponent().currentHp=2000U;
+    pads.opponent().maximumHp=pads.opponent().currentHp=2000U;
+    helmet.opponent().heldItem=pads.opponent().heldItem=HeldItem::RockyHelmet;
+    pads.player().heldItem=HeldItem::ProtectivePads;
+    const BattleActionResult helmetTurn=helmet.playerUses();
+    pads.playerUses();
+    assert(helmet.player().currentHp<1000U&&pads.player().currentHp==1000U&&
+           sawHeldItem(helmetTurn,HeldItem::RockyHelmet,BattleSide::Opponent));
+
+    Fixture ground(static_cast<MoveId>(89),splash);
+    ground.opponent().heldItem=HeldItem::AirBalloon;
+    assert(ground.playerUses().damageDealt==0U&&
+           ground.opponent().heldItem==HeldItem::AirBalloon);
+    Fixture popped(MoveId::Tackle,splash);
+    popped.opponent().maximumHp=popped.opponent().currentHp=2000U;
+    popped.opponent().heldItem=HeldItem::AirBalloon;
+    const BattleActionResult poppedTurn=popped.playerUses();
+    assert(popped.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(poppedTurn,HeldItem::AirBalloon,BattleSide::Opponent));
+    Fixture substitute(MoveId::Tackle,splash);
+    substitute.opponent().maximumHp=substitute.opponent().currentHp=2000U;
+    substitute.opponent().heldItem=HeldItem::AirBalloon;
+    substitute.battle.opponentVolatiles[0].substituteHp=100U;
+    const BattleActionResult substituteTurn=substitute.playerUses();
+    assert(substitute.opponent().currentHp==2000U&&
+           substitute.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(substituteTurn,HeldItem::AirBalloon,
+                       BattleSide::Opponent));
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150),thunderbolt=static_cast<MoveId>(85);
+    Fixture policy(thunderbolt,splash);
+    policy.opponent().speciesId=7U;
+    policy.opponent().maximumHp=policy.opponent().currentHp=5000U;
+    policy.opponent().heldItem=HeldItem::WeaknessPolicy;
+    const BattleActionResult policyTurn=policy.playerUses();
+    assert(policy.battle.opponentVolatiles[0].attackStage==2&&
+           policy.battle.opponentVolatiles[0].spAttackStage==2&&
+           policy.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(policyTurn,HeldItem::WeaknessPolicy,BattleSide::Opponent));
+
+    Fixture goggles(static_cast<MoveId>(79),splash);
+    goggles.opponent().heldItem=HeldItem::SafetyGoggles;
+    assert(goggles.playerUses().accepted&&
+           goggles.opponent().status==StatusCondition::None);
+    Fixture sand(static_cast<MoveId>(201),splash);
+    sand.player().maximumHp=sand.player().currentHp=1000U;
+    sand.player().heldItem=HeldItem::SafetyGoggles;
+    sand.playerUses();
+    assert(sand.player().currentHp==1000U);
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture extender(static_cast<MoveId>(604),splash);
+    extender.player().heldItem=HeldItem::TerrainExtender;
+    assert(extender.playerUses().accepted&&extender.battle.gen6TerrainTurns==7U);
+
+    const MoveId terrainMoves[]{static_cast<MoveId>(604),static_cast<MoveId>(580),
+        static_cast<MoveId>(581),static_cast<MoveId>(641)};
+    const HeldItem seeds[]{HeldItem::ElectricSeed,HeldItem::GrassySeed,
+        HeldItem::MistySeed,HeldItem::PsychicSeed};
+    for(uint8_t i=0;i<4U;++i){
+      Fixture seed(terrainMoves[i],splash);
+      seed.opponent().heldItem=seeds[i];
+      const BattleActionResult seeded=seed.playerUses();
+      assert(seed.opponent().heldItem==HeldItem::None&&
+             sawHeldItem(seeded,seeds[i],BattleSide::Opponent));
+      if(i<2U)assert(seed.battle.opponentVolatiles[0].defenseStage==1);
+      else assert(seed.battle.opponentVolatiles[0].spDefenseStage==1);
+    }
+
+    Fixture adrenaline(splash,splash);
+    adrenaline.player().heldItem=HeldItem::AdrenalineOrb;
+    adrenaline.opponent().abilityId=22U; // INTIMIDATE
+    BattleActionResult entry{};
+    BattleEngine::applyEntryAbilities(adrenaline.battle,adrenaline.collection,
+        BattleEntryScope::Opponent,&entry);
+    assert(adrenaline.battle.playerVolatile.attackStage==-1&&
+           adrenaline.battle.playerVolatile.speedStage==1&&
+           adrenaline.player().heldItem==HeldItem::None&&
+           sawHeldItem(entry,HeldItem::AdrenalineOrb,BattleSide::Player));
+  }
+  {
+    const MoveId splash=static_cast<MoveId>(150);
+    Fixture redCard(MoveId::Tackle,splash);
+    uint32_t reserveUid=0U;
+    assert(CollectionLogic::add(redCard.collection,
+        CollectionLogic::createPokemon(0U,4U,50U,false,0xEDCA0001U),
+        &reserveUid));
+    assert(CollectionLogic::setPartySlot(redCard.collection,1U,reserveUid));
+    const uint32_t originalUid=redCard.player().uid;
+    redCard.opponent().maximumHp=redCard.opponent().currentHp=3000U;
+    redCard.opponent().heldItem=HeldItem::RedCard;
+    const BattleActionResult cardTurn=redCard.playerUses();
+    assert(redCard.battle.playerUid!=originalUid&&
+           redCard.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(cardTurn,HeldItem::RedCard,BattleSide::Opponent));
+
+    Fixture eject(MoveId::Tackle,splash);
+    eject.battle.opponentCount=2U;
+    eject.battle.opponents[1]=CollectionLogic::createPokemon(
+        0xE1EC7002U,4U,50U,false,0xE1EC7003U);
+    const uint32_t outgoingUid=eject.opponent().uid;
+    eject.opponent().maximumHp=eject.opponent().currentHp=3000U;
+    eject.opponent().heldItem=HeldItem::EjectButton;
+    const BattleActionResult ejectTurn=eject.playerUses();
+    assert(eject.opponent().uid!=outgoingUid&&
+           sawHeldItem(ejectTurn,HeldItem::EjectButton,BattleSide::Opponent));
   }
 
   static Fixture sleepTalk(static_cast<MoveId>(214),MoveId::Tackle);

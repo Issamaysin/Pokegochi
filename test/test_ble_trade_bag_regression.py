@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import struct
 from pathlib import Path
 
@@ -57,6 +58,9 @@ def test_complete_held_item_icon_catalogue() -> None:
     assert "for index in range(1,66)" in source
     assert '"firered/items/held_67.pkg"' in source
     assert "for index in range(68,92)" in source
+    assert len(tuple_assignment(tree, "gen7_unique_icons")) == 35
+    assert "enumerate(gen7_unique_icons, start=92)" in source
+    assert "for index in range(92,127)" in source
 
     header = struct.Struct("<4sHHH2xIII")
     entry = struct.Struct("<III")
@@ -64,7 +68,12 @@ def test_complete_held_item_icon_catalogue() -> None:
     magic, revision, entry_size, version, count, index_offset, _ = (
         header.unpack_from(archive)
     )
-    assert (magic, revision, entry_size, version) == (b"PGA1", 3, entry.size, 46)
+    version_source = (ROOT / "include/config/AssetPackVersion.h").read_text(
+        encoding="ascii")
+    expected_version = int(re.search(
+        r"kRequiredAssetPackVersion\s*=\s*(\d+)", version_source).group(1))
+    assert (magic, revision, entry_size, version) == (
+        b"PGA1", 3, entry.size, expected_version)
     entries = {
         key: (offset, length)
         for index in range(count)
@@ -72,7 +81,7 @@ def test_complete_held_item_icon_catalogue() -> None:
             entry.unpack_from(archive, index_offset + index * entry.size),
         )
     }
-    for item_id in (*range(1, 66), *range(67, 92)):
+    for item_id in (*range(1, 66), *range(67, 127)):
         relative = f"firered/items/held_{item_id:02}.pkg"
         loose = (ASSET_ROOT / relative).read_bytes()
         offset, length = entries[asset_hash(relative)]
@@ -111,7 +120,38 @@ def test_ble_trade_refreshes_display_deadline() -> None:
     assert "now - lastInteractionMs" not in timeout
 
 
+def test_unexpected_disconnect_rebuilds_home() -> None:
+    source = MAIN_PATH.read_text(encoding="utf-8")
+    recovery = function_body(
+        source,
+        "void serviceMultiplayerConnectionAndLaunch()",
+        "void servicePvpSynchronization(uint32_t now)",
+    )
+    assert "multiplayer.takeUnexpectedDisconnect()" in recovery
+    assert "restorePartyAfterPvp();" in recovery
+    assert "inventoryMode = InventoryMode::Browse;" in recovery
+    assert "boxOverlay = BoxOverlay::None;" in recovery
+    assert 'disableMultiplayerRadioAndRestoreGraphics(' in recovery
+    assert 'unexpectedDisconnect ? "Peer disconnected"' in recovery
+    assert '"PLAYER DISCONNECTED."' in recovery
+    assert "screen = Screen::Home;" in recovery
+    assert "drawHome();" in recovery
+    assert recovery.index("disableMultiplayerRadioAndRestoreGraphics(") < recovery.index(
+        "drawHome();"
+    )
+
+    loop = function_body(
+        source,
+        "void loop()",
+        'extern "C" uint32_t pokegochi_android_frame_generation()',
+    )
+    assert loop.index("serviceMultiplayerConnectionAndLaunch();") < loop.index(
+        "serviceMultiplayerTradeCommit();"
+    )
+
+
 if __name__ == "__main__":
     test_complete_held_item_icon_catalogue()
     test_ble_trade_refreshes_display_deadline()
+    test_unexpected_disconnect_rebuilds_home()
     print("BLE trade and Bag asset regression checks passed")

@@ -8,6 +8,7 @@ namespace BattlePresentationTiming {
 constexpr uint8_t kMinimumSpeed = 1U;
 constexpr uint8_t kMaximumSpeed = 3U;
 constexpr uint16_t kSourceFramesPerSecond = 60U;
+constexpr uint16_t kNoSampledChildAge = 0xFFFFU;
 
 inline uint8_t normalizeSpeed(uint8_t speed) {
   return std::clamp<uint8_t>(speed, kMinimumSpeed, kMaximumSpeed);
@@ -34,6 +35,40 @@ inline uint8_t panelSampleStride(uint8_t speed,
                                  uint8_t sourceTicksAt1x = 4U) {
   return static_cast<uint8_t>(std::max<uint8_t>(1U, sourceTicksAt1x) *
                               normalizeSpeed(speed));
+}
+
+// A linear stride keeps the exact same physical frame rate at every speed,
+// but 3x then collapses three times as many authored ticks into each frame.
+// Let faster modes attempt progressively more LCD samples. The deadline
+// guard can still drop a continuous-motion sample when SPI is genuinely
+// late, while sparse/cheap moves become visibly smoother.
+inline uint8_t compressedPanelSampleStride(uint8_t speed,
+                                           uint8_t sourceTicksAt1x = 8U) {
+  const uint8_t base = std::max<uint8_t>(1U, sourceTicksAt1x);
+  const uint8_t normalized = normalizeSpeed(speed);
+  return static_cast<uint8_t>(base +
+      ((normalized - 1U) * static_cast<uint16_t>(base) + 1U) / 2U);
+}
+
+// Procedural FireRed tasks can create and destroy a child OBJ entirely
+// between two sustainable LCD samples at 2x/3x. Return its exact current age
+// while it is alive; if the complete lifetime was crossed since the previous
+// physical frame, retain its final authored pose for this sample exactly
+// once. This compresses the timeline without deleting an emission.
+inline uint16_t sampledChildAge(uint16_t currentTaskAge,
+                                uint16_t previousPresentedTaskAge,
+                                bool previousPresentedTaskAgeValid,
+                                uint16_t bornAtTaskAge,
+                                uint16_t lifetime) {
+  if (!lifetime || currentTaskAge < bornAtTaskAge)
+    return kNoSampledChildAge;
+  const uint16_t currentChildAge = static_cast<uint16_t>(
+      currentTaskAge - bornAtTaskAge);
+  if (currentChildAge < lifetime) return currentChildAge;
+  if (!previousPresentedTaskAgeValid ||
+      previousPresentedTaskAge < bornAtTaskAge)
+    return static_cast<uint16_t>(lifetime - 1U);
+  return kNoSampledChildAge;
 }
 
 // Command boundaries normally collapse into the next sustainable panel

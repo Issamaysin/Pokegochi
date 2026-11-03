@@ -121,7 +121,9 @@ enum class BattleKind : uint8_t {
   // stable while an interrupted Sinnoh challenge can still resume safely.
   SinnohGym,
   // Generation-VI route, Gym and League battles. Appended for save ABI.
-  KalosAdventure
+  KalosAdventure,
+  // Generation-VII island trials, Ultra Wormholes and Rainbow Rocket.
+  AlolaAdventure
 };
 enum class BattleWeather : uint8_t { Clear, Rain, Sun, Sandstorm, Hail, HeavyRain, HarshSun, StrongWinds };
 // The first ten values intentionally match FireRed's gBattleTerrain indices.
@@ -303,6 +305,25 @@ enum class Gen6Terrain : uint8_t {
   Grassy,
   Misty,
   Electric,
+  Psychic,
+};
+
+// Generation-VII battle-local state. This is appended after the complete
+// frozen V48 BattleState prefix so an interrupted Kalos battle migrates
+// byte-for-byte while Alola mechanics have explicit persistent state.
+struct Gen7BattlerEffectState {
+  bool disguiseIntact = false;
+  bool laserFocus = false;
+  bool burnedUp = false;
+  bool beakBlastPrimed = false;
+  bool shellTrapPrimed = false;
+  bool shellTrapTriggered = false;
+  bool banefulBunker = false;
+  bool berserkTriggered = false;
+  bool thresholdExitTriggered = false;
+  uint8_t throatChopTurns = 0;
+  uint16_t lastFailedMoveTurn = 0;
+  uint16_t speedOverride = 0;
 };
 
 struct BattleRecyclableItemState {
@@ -457,6 +478,20 @@ struct BattleState {
   bool opponentStickyWeb = false;
   bool ionDeluge = false;
   bool happyHour = false;
+  // Everything below this point is the V49 / Generation-VII extension.
+  Gen7BattlerEffectState playerGen7Effects{};
+  Gen7BattlerEffectState opponentGen7Effects[kOpponentTeamCapacity]{};
+  uint8_t playerAuroraVeilTurns = 0;
+  uint8_t opponentAuroraVeilTurns = 0;
+  bool plasmaFists = false;
+  bool playerZMoveUsed = false;
+  bool opponentZMoveUsed = false;
+  bool playerZMoveArmed = false;
+  bool playerZMoveExecuting = false;
+  // Serialized marker for Ultra Burst's one-time refunded Z charge. Once set,
+  // the unused charge is reserved exclusively for the active Ultra Necrozma;
+  // switching cannot transfer it to another party member or trigger it again.
+  bool playerLegacyUltraBurstBonusGranted = false;
 };
 static_assert(offsetof(BattleState, playerGen5Effects) == 856,
               "The frozen V45 battle prefix changed");
@@ -544,7 +579,9 @@ enum class BattleMoveEffect : uint8_t {
   StickyWebSet, TerrainSet, TerrainEnded, FairyLockSet,
   KingsShieldSet, SpikyShieldSet, MatBlockSet, CraftyShieldSet,
   Powdered, Electrified, HappyHourSet, ThirdTypeAdded, StatsInverted,
-  IonDelugeSet, Celebrated
+  IonDelugeSet, Celebrated,
+  LaserFocusSet, ThroatChopped, AuroraVeilSet, AuroraVeilEnded,
+  TypeBurnedAway, StatsStolen, Purified, ZMoveUsed
 };
 
 enum class BattleSide : uint8_t { Player, Opponent };
@@ -675,6 +712,20 @@ class BattleEngine {
   static bool startWild(BattleState& battle, PokemonCollection& collection,
                         uint32_t playerUid, uint32_t seed, uint8_t unlockedGeneration = 1,
                         bool beginnerProtection = false, uint8_t worldTimePeriod = 0xFF);
+  // Repeatable post-region wilds draw from exactly one National-Dex
+  // generation. Rarity and species rolls are kept separate so adding more
+  // Legendary species never inflates the configured regional chance.
+  static uint16_t regionalWildSpecies(uint8_t generation,
+                                      uint32_t rarityRoll,
+                                      uint32_t speciesRoll,
+                                      uint16_t legendaryChanceDenominator,
+                                      bool excludeUltraBeasts = false);
+  static bool startRegionalWild(BattleState& battle,
+                                PokemonCollection& collection,
+                                uint32_t playerUid, uint32_t seed,
+                                uint8_t generation,
+                                uint16_t legendaryChanceDenominator,
+                                bool excludeUltraBeasts = false);
   static bool startTrainer(BattleState& battle, EncounterCharges& charges,
                            PokemonCollection& collection, uint32_t playerUid,
                            uint32_t seed, uint8_t unlockedGeneration = 1);
@@ -693,6 +744,24 @@ class BattleEngine {
                                MoveId move,BattleSide userSide);
   static bool moveIsSelectable(const BattleState& battle,const PokemonCollection& collection,
                                MoveId move,BattleSide userSide);
+  static bool canUseZMove(const BattleState& battle,const OwnedPokemon& pokemon,
+                           MoveId move,BattleSide side=BattleSide::Player);
+  static bool armPlayerZMove(BattleState& battle,const PokemonCollection& collection,
+                              MoveId move);
+  // Signature Z-Moves keep their base MoveId for mechanics. The Z-Move
+  // journal event stores a compact presentation code in `after`; these
+  // helpers expose the resolved authored name and animation to the UI.
+  static const char* signatureZMoveName(uint16_t presentationCode);
+  // Resolve a signature Z-Move's presentation-only animation id while the
+  // battle journal retains the base MoveId for mechanics and save stability.
+  static uint16_t signatureZMoveAnimationMoveId(
+      uint16_t presentationCode, MoveId baseMove);
+  // Generic damaging Z-Moves store their canonical 848..865 presentation id
+  // directly; signatures retain the compact ABI above. These unified helpers
+  // are the only presentation entry point the UI should use.
+  static const char* zMovePresentationName(uint16_t presentationCode);
+  static uint16_t zMovePresentationAnimationMoveId(
+      uint16_t presentationCode, MoveId baseMove);
   static BattleActionResult fight(BattleState& battle, PokemonCollection& collection, uint8_t moveSlot);
   // Stack-safe form used by the ESP32 UI. BattleActionResult contains a
   // 40-event journal and should be supplied from persistent scratch storage,
@@ -762,12 +831,8 @@ class BattleEngine {
   static void applyMoveStatus(BattleState& battle, OwnedPokemon& source, MoveId move,
                               OwnedPokemon& target, BattleActionResult& result,
                               bool targetHadSubstitute = false);
-
- private:
-  static uint32_t random(BattleState& battle);
-  static uint16_t confusionSelfDamage(BattleState& battle,
-                                  const OwnedPokemon& pokemon,
-                                  const CombatVolatile& volatileState);
+  // Shared by the compact Instruct/called-move resolver so repeated attacks
+  // use the exact same damage pipeline as an ordinary selected move.
   static uint16_t calculateDamage(BattleState& battle, const OwnedPokemon& attacker,
                                   const OwnedPokemon& defender, MoveId move,
                                   const CombatVolatile& attackerVolatile,
@@ -778,6 +843,12 @@ class BattleEngine {
                                   bool targetAlreadyActed=false,
                                   bool targetDamagedThisTurn=false,
                                   uint8_t commandMovePp=0xFFU);
+
+ private:
+  static uint32_t random(BattleState& battle);
+  static uint16_t confusionSelfDamage(BattleState& battle,
+                                  const OwnedPokemon& pokemon,
+                                  const CombatVolatile& volatileState);
   static uint8_t chooseDamageHitCount(BattleState& battle,
                                   const OwnedPokemon& attacker, MoveId move);
   static uint16_t calculateDelayedBaseDamage(const BattleState& battle,

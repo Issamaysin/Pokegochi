@@ -6,14 +6,20 @@
 #include "game/Economy.h"
 #include "game/MegaChallengeSystem.h"
 #include "game/MegaEvolution.h"
+#include "game/Pokedex.h"
 
 namespace {
 
-constexpr uint16_t kLegendaryAndMythicalSpecies[] = {
-    144, 145, 146, 150, 151,
-    243, 244, 245, 249, 250, 251,
-    377, 378, 379, 380, 381, 382, 383, 384, 385, 386,
-};
+constexpr uint16_t kIntroductoryEncounterFlag = 1U << 0U;
+
+uint8_t contentGeneration(uint8_t unlockedGeneration) {
+  return std::max<uint8_t>(1U, std::min<uint8_t>(7U, unlockedGeneration));
+}
+
+uint16_t generationSpeciesLimit(uint8_t unlockedGeneration) {
+  return PokedexLogic::generationSpeciesCount(
+      contentGeneration(unlockedGeneration));
+}
 
 uint32_t nextRandom(uint32_t& state) {
   if (!state) state = 0x424F5353U;
@@ -44,11 +50,12 @@ uint16_t moveScore(const FullMoveData& move, PokemonType type1, PokemonType type
 }
 
 void chooseMoves(OwnedPokemon& boss, PokemonType type1, PokemonType type2,
-                 bool physicalBoss) {
+                 bool physicalBoss, uint8_t unlockedGeneration) {
   MoveId candidates[64]{};
-  const uint8_t count = relearnableMovesForLine(
-      boss.speciesId, boss.level, candidates,
-      static_cast<uint8_t>(sizeof(candidates) / sizeof(candidates[0])));
+  const uint8_t count = relearnableMovesForPokemon(
+      boss, candidates,
+      static_cast<uint8_t>(sizeof(candidates) / sizeof(candidates[0])),
+      contentGeneration(unlockedGeneration));
   MoveId selected[kMoveSlots]{};
   uint16_t selectedScores[kMoveSlots]{};
 
@@ -96,55 +103,90 @@ void chooseMoves(OwnedPokemon& boss, PokemonType type1, PokemonType type2,
   }
 }
 
-const MegaFormData* megaCandidate(uint16_t wanted) {
+const MegaFormData* megaCandidate(uint16_t wanted,
+                                  uint8_t unlockedGeneration) {
+  const uint16_t speciesLimit=generationSpeciesLimit(unlockedGeneration);
   uint16_t found = 0;
   for (uint8_t index = 0; index < MegaEvolution::officialFormCount(); ++index) {
     const MegaFormData* form = MegaEvolution::officialForm(index);
-    // Sinnoh's Megas belong to the expedition reward loop; the established
-    // Boss pool stays exactly on the original Gen-I--III roster.
-    if (!form || form->speciesId > 386U || form->variant == MegaVariant::Primal) continue;
+    // Primal Reversion remains its own mechanic. Every actual Mega whose base
+    // species belongs to unlocked content joins the Boss catalog.
+    if (!form || form->speciesId > speciesLimit ||
+        form->variant == MegaVariant::Primal) continue;
     if (found++ == wanted) return form;
   }
   return nullptr;
 }
 
-uint16_t megaCandidateCount() {
+uint16_t megaCandidateCount(uint8_t unlockedGeneration) {
+  const uint16_t speciesLimit=generationSpeciesLimit(unlockedGeneration);
   uint16_t count = 0;
   for (uint8_t index = 0; index < MegaEvolution::officialFormCount(); ++index) {
     const MegaFormData* form = MegaEvolution::officialForm(index);
-    if (form && form->speciesId <= 386U && form->variant != MegaVariant::Primal) ++count;
+    if (form && form->speciesId <= speciesLimit &&
+        form->variant != MegaVariant::Primal) ++count;
   }
   return count;
 }
 
-BossEncounterState chooseEncounter(uint32_t& randomState) {
-  constexpr uint16_t legendaryCount = static_cast<uint16_t>(
-      sizeof(kLegendaryAndMythicalSpecies) / sizeof(kLegendaryAndMythicalSpecies[0]));
-  const uint16_t megaCount = megaCandidateCount();
+uint16_t legendaryCandidateCount(uint8_t unlockedGeneration) {
+  const uint16_t limit=generationSpeciesLimit(unlockedGeneration);
+  uint16_t count=0U;
+  for(uint16_t species=1U;species<=limit;++species)
+    if(PokedexLogic::isLegendaryOrMythical(species))++count;
+  return count;
+}
+
+uint16_t legendaryCandidate(uint16_t wanted,uint8_t unlockedGeneration) {
+  const uint16_t limit=generationSpeciesLimit(unlockedGeneration);
+  uint16_t found=0U;
+  for(uint16_t species=1U;species<=limit;++species){
+    if(!PokedexLogic::isLegendaryOrMythical(species))continue;
+    if(found++==wanted)return species;
+  }
+  return 0U;
+}
+
+BossEncounterState chooseEncounter(uint32_t& randomState,
+                                   uint8_t unlockedGeneration,
+                                   bool introductory) {
+  const uint8_t generation=contentGeneration(unlockedGeneration);
+  const uint16_t legendaryCount=legendaryCandidateCount(generation);
+  const uint16_t megaCount=megaCandidateCount(generation);
   const uint16_t roll = static_cast<uint16_t>(
       nextRandom(randomState) % static_cast<uint32_t>(legendaryCount + megaCount));
   const MegaFormData* mega = roll >= legendaryCount
-      ? megaCandidate(static_cast<uint16_t>(roll - legendaryCount)) : nullptr;
+      ? megaCandidate(static_cast<uint16_t>(roll - legendaryCount),generation)
+      : nullptr;
   BossEncounterState encounter;
-  encounter.speciesId = mega ? mega->speciesId : kLegendaryAndMythicalSpecies[roll];
+  encounter.speciesId = mega ? mega->speciesId :
+      legendaryCandidate(roll,generation);
   encounter.personality = nextRandom(randomState);
-  encounter.currentHp = BossSystem::kMaximumHp;
+  encounter.currentHp = introductory ? BossSystem::kIntroductoryMaximumHp
+                                     : BossSystem::kMaximumHp;
+  if (introductory) encounter.reserved |= kIntroductoryEncounterFlag;
   encounter.megaVariant = mega ? mega->variant : MegaVariant::None;
   const OwnedPokemon identity = CollectionLogic::createPokemon(
-      0, encounter.speciesId, 100, false, encounter.personality);
+      0, encounter.speciesId, 100, false, encounter.personality,generation);
   encounter.form = identity.form;
   return encounter;
 }
 
-OwnedPokemon createBoss(const BossEncounterState& encounter) {
+OwnedPokemon createBoss(const BossEncounterState& encounter,
+                        uint8_t unlockedGeneration) {
+  const uint8_t generation=contentGeneration(unlockedGeneration);
   OwnedPokemon boss = CollectionLogic::createPokemon(
-      0, encounter.speciesId, 100, false, encounter.personality);
+      0, encounter.speciesId, 100, false, encounter.personality,generation);
   boss.form = encounter.form;
   const MegaFormData* mega = MegaEvolution::formData(
       encounter.speciesId, encounter.megaVariant);
 
   if (mega) {
-    boss.heldItem = HeldItem::MegaStone;
+    // Rayquaza still earns its Mega form by using Dragon Ascent. Zygarde may
+    // hold the stone in 10% Forme, but it activates only after its HP-driven
+    // 10% -> 50% -> Complete assembly reaches the final stage.
+    boss.heldItem = encounter.speciesId==384U
+        ? HeldItem::None : HeldItem::MegaStone;
     MegaEvolution::setVariantChoice(boss, mega->variant);
   } else {
     boss.heldItem = HeldItem::None;
@@ -161,12 +203,12 @@ OwnedPokemon createBoss(const BossEncounterState& encounter) {
   boss.evs = physicalBoss ? EffortValues{0, 252, 0, 0, 4, 252}
                           : EffortValues{0, 0, 0, 252, 4, 252};
   boss.nature = physicalBoss ? PokemonNature::Adamant : PokemonNature::Modest;
-  CollectionLogic::refreshAbility(boss, 3U);
+  CollectionLogic::refreshAbility(boss, generation);
   CollectionLogic::refreshDerivedStats(boss, false);
 
   const PokemonType type1 = mega ? mega->type1 : species ? species->type1 : PokemonType::Normal;
   const PokemonType type2 = mega ? mega->type2 : species ? species->type2 : type1;
-  chooseMoves(boss, type1, type2, physicalBoss);
+  chooseMoves(boss, type1, type2, physicalBoss, generation);
   boss.maximumHp = BossSystem::kBattleHpLayer;
   boss.currentHp = static_cast<uint16_t>(std::min<uint32_t>(
       BossSystem::kBattleHpLayer,std::max<uint32_t>(1U,encounter.currentHp)));
@@ -205,19 +247,89 @@ bool BossSystem::hasEncounter(const BossEncounterState& encounter) {
                                encounter.megaVariant) != nullptr);
 }
 
-void BossSystem::ensureEncounter(BossEncounterState& encounter, uint32_t seed) {
-  if (hasEncounter(encounter)) return;
+void BossSystem::ensureEncounter(BossEncounterState& encounter, uint32_t seed,
+                                 uint8_t unlockedGeneration,
+                                 bool introductory) {
+  if (hasEncounter(encounter)) {
+    // A player who had already rolled the first 200k Boss on an older build
+    // receives the new 50k opening difficulty immediately. Once marked, the
+    // encounter stays introductory across retries even if surrounding state
+    // is repaired later.
+    if (introductory &&
+        (encounter.reserved & kIntroductoryEncounterFlag) == 0U) {
+      encounter.reserved = static_cast<uint16_t>(
+          encounter.reserved | kIntroductoryEncounterFlag);
+      encounter.currentHp = std::min<uint32_t>(
+          encounter.currentHp, kIntroductoryMaximumHp);
+    }
+    return;
+  }
   uint32_t randomState = seed ? seed : 0x424F5353U;
-  encounter = chooseEncounter(randomState);
+  encounter = chooseEncounter(randomState,unlockedGeneration,introductory);
 }
 
-OwnedPokemon BossSystem::encounterPokemon(const BossEncounterState& encounter) {
-  return hasEncounter(encounter) ? createBoss(encounter) : OwnedPokemon{};
+uint32_t BossSystem::encounterMaximumHp(
+    const BossEncounterState& encounter) {
+  return (encounter.reserved & kIntroductoryEncounterFlag) != 0U
+      ? kIntroductoryMaximumHp : kMaximumHp;
+}
+
+OwnedPokemon BossSystem::encounterPokemon(const BossEncounterState& encounter,
+                                          uint8_t unlockedGeneration) {
+  return hasEncounter(encounter)
+      ? createBoss(encounter,unlockedGeneration) : OwnedPokemon{};
 }
 
 uint32_t BossSystem::battleCurrentHp(const BattleState& battle) {
   if(battle.kind!=BattleKind::Boss)return 0U;
-  return std::min<uint32_t>(kMaximumHp,battle.payDayMoney);
+  return std::min<uint32_t>(battleMaximumHp(battle),battle.payDayMoney);
+}
+
+uint32_t BossSystem::battleMaximumHp(const BattleState& battle) {
+  return battle.kind == BattleKind::Boss &&
+      battle.trainerProfileId == BossSystem::kIntroductoryBattleProfile
+      ? kIntroductoryMaximumHp : kMaximumHp;
+}
+
+bool BossSystem::reconcileDifficulty(BossEncounterState& encounter,
+                                     BattleState& battle,
+                                     bool introductoryPending) {
+  bool changed = false;
+  if (hasEncounter(encounter) && introductoryPending &&
+      (encounter.reserved & kIntroductoryEncounterFlag) == 0U) {
+    encounter.reserved = static_cast<uint16_t>(
+        encounter.reserved | kIntroductoryEncounterFlag);
+    encounter.currentHp = std::min<uint32_t>(
+        encounter.currentHp, kIntroductoryMaximumHp);
+    changed = true;
+  }
+  if (!battle.active || battle.kind != BattleKind::Boss) return changed;
+  const bool introductory = introductoryPending ||
+      battle.trainerProfileId == kIntroductoryBattleProfile ||
+      (hasEncounter(encounter) &&
+       encounterMaximumHp(encounter) == kIntroductoryMaximumHp);
+  if (!introductory) return changed;
+  if (battle.trainerProfileId != kIntroductoryBattleProfile) {
+    battle.trainerProfileId = kIntroductoryBattleProfile;
+    changed = true;
+  }
+  const uint32_t reducedHp = std::min<uint32_t>(
+      battle.payDayMoney, kIntroductoryMaximumHp);
+  if (battle.payDayMoney != reducedHp) {
+    battle.payDayMoney = reducedHp;
+    changed = true;
+  }
+  if (battle.opponentCount && battle.opponentIndex < battle.opponentCount) {
+    OwnedPokemon& boss = battle.opponents[battle.opponentIndex];
+    const uint16_t layer = static_cast<uint16_t>(std::min<uint32_t>(
+        kBattleHpLayer, reducedHp));
+    if (boss.maximumHp != kBattleHpLayer || boss.currentHp > layer) {
+      boss.maximumHp = kBattleHpLayer;
+      boss.currentHp = layer;
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 void BossSystem::recordAttempt(BossEncounterState& encounter,
@@ -285,9 +397,7 @@ BossRewardResult BossSystem::awardVictoryReward(
 }
 
 bool BossSystem::isLegendaryOrMythical(uint16_t speciesId) {
-  for (uint16_t candidate : kLegendaryAndMythicalSpecies)
-    if (candidate == speciesId) return true;
-  return false;
+  return PokedexLogic::isLegendaryOrMythical(speciesId);
 }
 
 bool BossSystem::moveAllowed(MoveId move) {
@@ -314,12 +424,14 @@ bool BossSystem::moveAllowed(MoveId move) {
 bool BossSystem::start(BattleState& battle, PokemonCollection& collection,
                        uint32_t playerUid, const GymProgress& progress,
                        uint32_t cooldownSecondsRemaining,
-                       BossEncounterState& encounter, uint32_t seed) {
+                       BossEncounterState& encounter, uint32_t seed,
+                       uint8_t unlockedGeneration, bool introductory) {
   OwnedPokemon* player = CollectionLogic::find(collection, playerUid);
   if (battle.active || !ready(progress, cooldownSecondsRemaining) || !player ||
       !CollectionLogic::isInParty(collection, playerUid) || !player->currentHp ||
       player->recoverySecondsRemaining) return false;
-  ensureEncounter(encounter, seed);
+  const uint8_t generation=contentGeneration(unlockedGeneration);
+  ensureEncounter(encounter,seed,generation,introductory);
   if (!hasEncounter(encounter)) return false;
 
   BattleEngine::clear(battle);
@@ -327,19 +439,22 @@ bool BossSystem::start(BattleState& battle, PokemonCollection& collection,
   battle.kind = BattleKind::Boss;
   battle.outcome = BattleOutcome::Ongoing;
   battle.playerUid = playerUid;
-  battle.unlockedGeneration = progress.unlockedGeneration;
+  battle.unlockedGeneration = generation;
   battle.rngState = (seed ? seed : 0x424F5353U) ^ encounter.personality ^
       (static_cast<uint32_t>(encounter.speciesId) << 16U);
   if (!battle.rngState) battle.rngState = 0x424F5353U;
   battle.opponentCount = 1U;
   battle.opponentIndex = 0U;
+  battle.trainerProfileId = encounterMaximumHp(encounter) ==
+          kIntroductoryMaximumHp
+      ? kIntroductoryBattleProfile : 0xFFU;
   battle.opponentItemUses = 0U;
   battle.rewardMoney = 0U;
   // Boss raid HP uses this otherwise monetary battle-local counter. The
   // engine explicitly excludes it from Pay Day and prize-money calculations
   // in Boss battles, preserving the frozen BattleState/save ABI.
   battle.payDayMoney=encounter.currentHp;
-  battle.opponents[0] = createBoss(encounter);
+  battle.opponents[0] = createBoss(encounter,generation);
   BattleEngine::ensureOpponentUids(battle);
   BattleEngine::applyEntryAbilities(battle, collection);
   return true;

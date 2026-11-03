@@ -52,7 +52,7 @@ public final class MainActivity extends Activity {
     private static final String ANDROID_ASSET_REVISION =
             BuildConfig.VERSION_NAME + "-" + BuildConfig.VERSION_CODE;
     private static final String NATIVE_BUILD_ID =
-            "android-app-" + BuildConfig.VERSION_NAME + "-r233-" + BuildConfig.BUILD_TYPE;
+            "android-app-" + BuildConfig.VERSION_NAME + "-r317-" + BuildConfig.BUILD_TYPE;
     // Release builds must not create private or public diagnostic artifacts.
     // Debug builds keep the existing dump path for development diagnostics.
     private static final boolean DIAGNOSTICS_ENABLED =
@@ -752,7 +752,7 @@ public final class MainActivity extends Activity {
         }
 
         private void configureSurfaceFrameRate(SurfaceHolder holder) {
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
                 try {
                     holder.getSurface().setFrameRate(60.0f,
                             Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
@@ -761,6 +761,11 @@ public final class MainActivity extends Activity {
                     // Frame-rate hints are optional and unavailable on some
                     // vendor Surface implementations.
                 }
+            } else if (android.os.Build.VERSION.SDK_INT >= 30) {
+                try {
+                    holder.getSurface().setFrameRate(60.0f,
+                            Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+                } catch (Throwable ignored) {}
             }
         }
 

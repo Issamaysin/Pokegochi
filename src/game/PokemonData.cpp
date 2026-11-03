@@ -8,6 +8,17 @@ namespace {
 #include "PokemonDataGenerated.inc"
 #include "MoveDataGenerated.inc"
 #include "MoveDescriptionsGenerated.inc"
+#include "ZMoveDataGenerated.inc"
+
+LearnsetEntry decodedLearnsetEntry(uint16_t row) {
+  const uint32_t byte = static_cast<uint32_t>(row) * 3U;
+  const uint32_t packed = static_cast<uint32_t>(kLearnsetRows[byte]) |
+      (static_cast<uint32_t>(kLearnsetRows[byte + 1U]) << 8U) |
+      (static_cast<uint32_t>(kLearnsetRows[byte + 2U]) << 16U);
+  return {static_cast<uint16_t>(packed & 0x3FFU),
+          static_cast<uint8_t>((packed >> 10U) & 0x7FU),
+          static_cast<uint8_t>((packed >> 17U) & 0x07U)};
+}
 
 // Pokemon Y ends at Light of Ruin (#617). Keep later signature moves beside,
 // rather than forged into, the generated cartridge table. #618-621 are the
@@ -26,9 +37,6 @@ constexpr FullMoveData kPostXyMoves[] = {
     {621, "HYPERSPACE FURY", PokemonType::Dark, 100, 101,
      MoveCategory::Physical, 5, 0, 0, "HYPERSPACE_FURY",
      MoveTarget::Selected, false, false, false, false, true, true},
-    {687, "CORE ENFORCER", PokemonType::Dragon, 100, 100,
-     MoveCategory::Special, 10, 0, 0, "CORE_ENFORCER",
-     MoveTarget::Both, false, false, false, true, true, true},
     {920, "NIHIL LIGHT", PokemonType::Dragon, 200, 100,
      MoveCategory::Special, 10, 0, 0, "NIHIL_LIGHT",
      MoveTarget::Both, false, false, false, false, true, false},
@@ -93,10 +101,10 @@ uint8_t evolutionChoices(uint16_t speciesId,uint8_t level,uint16_t attack,uint16
   // Gen-IV branches are Sinnoh content. Reaching Hoenn must not silently
   // expose them; the expedition raises the content generation to 4 only
   // after the player has opened Sinnoh.
-  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(6U,unlockedGeneration);
+  const uint8_t evolutionGenerationLimit=std::min<uint8_t>(7U,unlockedGeneration);
   const auto generationFor=[](uint16_t id){
     return id<=151U?1U:id<=251U?2U:id<=386U?3U:id<=493U?4U:
-        id<=649U?5U:6U;
+        id<=649U?5U:id<=721U?6U:7U;
   };
   uint8_t familyLevel=255;
   for(const auto& evolution:kEvolutions){
@@ -188,6 +196,10 @@ const char* moveDescription(MoveId id) {
   return generatedMoveDescription(static_cast<uint16_t>(id));
 }
 
+ZStatusEffect zStatusEffectForMove(MoveId id) {
+  return generatedZStatusEffect(static_cast<uint16_t>(id));
+}
+
 bool isMoveAvailableInSingleBattle(MoveId id) {
   // These moves require a partner or, for Heal Pulse, can only benefit the
   // opposing target. None has a useful local role in Pokegochi's 1x1 battles.
@@ -196,18 +208,21 @@ bool isMoveAvailableInSingleBattle(MoveId id) {
   return id != MoveId::None && id != static_cast<MoveId>(266) &&
          id != static_cast<MoveId>(270) && id != static_cast<MoveId>(476) &&
          id != static_cast<MoveId>(502) && id != static_cast<MoveId>(505) &&
-         id != static_cast<MoveId>(597) && id != static_cast<MoveId>(607);
+         id != static_cast<MoveId>(597) && id != static_cast<MoveId>(607) &&
+         id != static_cast<MoveId>(629) && id != static_cast<MoveId>(634);
 }
 
 uint8_t movesForLevel(uint16_t speciesId, uint8_t level, MoveId output[4],
                       uint8_t unlockedGeneration) {
   uint8_t count = 0;
+  if (!speciesId || speciesId > kPokedexSpeciesCount) return 0;
   // A #387-493 species is intrinsically Platinum content. Older species keep
   // their FireRed learnset until the Sinnoh unlock is explicitly supplied.
-  const uint8_t availableGeneration = std::min<uint8_t>(6U, unlockedGeneration);
-  for (const auto& entry : kLearnsets) {
-    if (entry.speciesId != speciesId || entry.level > level ||
-        entry.generation > availableGeneration) continue;
+  const uint8_t availableGeneration = std::min<uint8_t>(7U, unlockedGeneration);
+  for (uint16_t row = kLearnsetOffsets[speciesId];
+       row < kLearnsetOffsets[speciesId + 1U]; ++row) {
+    const LearnsetEntry entry = decodedLearnsetEntry(row);
+    if (entry.level > level || entry.generation > availableGeneration) continue;
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (!isMoveAvailableInSingleBattle(move)) continue;
     bool duplicate = false; for (uint8_t i = 0; i < count; ++i) if (output[i] == move) duplicate = true;
@@ -333,6 +348,14 @@ uint8_t relearnableFromFormLearnset(const FormLearnsetEntry entries[],
 }
 
 MoveId formSignatureMove(uint16_t speciesId, uint8_t form) {
+  // Fused Necrozma keeps Photon Geyser and gains its partner's signature
+  // attack through the relearn surface. Ultra is battle-only and deliberately
+  // does not rewrite the trained set when Ultra Burst begins or ends.
+  if (speciesId == 800U) {
+    if (form == 1U) return static_cast<MoveId>(667U); // Sunsteel Strike
+    if (form == 2U) return static_cast<MoveId>(668U); // Moongeist Beam
+    return MoveId::None;
+  }
   if (speciesId != 479U || form == 0U || form > 5U) return MoveId::None;
   // Platinum appliance order: Heat, Wash, Frost, Fan, Mow.
   static constexpr uint16_t kRotomMoves[] = {0, 315, 56, 59, 403, 437};
@@ -415,10 +438,11 @@ void collectRelearnableMoves(uint16_t speciesId, uint8_t level, MoveId output[],
     if (evolution.toSpeciesId == speciesId)
       collectRelearnableMoves(evolution.fromSpeciesId, level, output, maximum,
                               count, visitedSpecies, unlockedGeneration);
-  for (const auto& entry : kLearnsets) {
-    const uint8_t availableGeneration = std::min<uint8_t>(6U, unlockedGeneration);
-    if (entry.speciesId != speciesId || entry.level > level ||
-        entry.generation > availableGeneration) continue;
+  const uint8_t availableGeneration = std::min<uint8_t>(7U, unlockedGeneration);
+  for (uint16_t row = kLearnsetOffsets[speciesId];
+       row < kLearnsetOffsets[speciesId + 1U]; ++row) {
+    const LearnsetEntry entry = decodedLearnsetEntry(row);
+    if (entry.level > level || entry.generation > availableGeneration) continue;
     const MoveId move = static_cast<MoveId>(entry.moveId);
     if (!isMoveAvailableInSingleBattle(move)) continue;
     bool duplicate = false;
@@ -517,7 +541,7 @@ uint8_t relearnableMovesForForm(uint16_t speciesId, uint8_t form,
     if(speciesId==382U&&level>=45U)laterSignature=static_cast<MoveId>(618U);
     else if(speciesId==383U&&level>=45U)laterSignature=static_cast<MoveId>(619U);
     else if(speciesId==384U)laterSignature=static_cast<MoveId>(620U);
-    else if(speciesId==718U)laterSignature=static_cast<MoveId>(687U);
+    else if(speciesId==718U)laterSignature=static_cast<MoveId>(650U);
   }
   if(laterSignature!=MoveId::None&&!hasMove(output,count,laterSignature)&&
      count<maximum)
@@ -533,7 +557,7 @@ uint8_t relearnableMovesForPokemon(const OwnedPokemon& pokemon,
       output,maximum,unlockedGeneration);
   if(pokemon.speciesId!=718U||
      MegaEvolution::variantFor(pokemon)!=MegaVariant::Mega)return count;
-  const MoveId core=static_cast<MoveId>(687U);
+  const MoveId core=static_cast<MoveId>(650U);
   const MoveId nihil=static_cast<MoveId>(920U);
   for(uint8_t index=0U;index<count;++index){
     if(output[index]==core){output[index]=nihil;return count;}
@@ -545,11 +569,13 @@ uint8_t relearnableMovesForPokemon(const OwnedPokemon& pokemon,
 MoveId moveLearnedAtLevel(uint16_t speciesId, uint8_t level,
                           uint8_t unlockedGeneration) {
   MoveId learned = MoveId::None;
-  const uint8_t availableGeneration = std::min<uint8_t>(6U, unlockedGeneration);
-  for (const auto& entry : kLearnsets) {
+  if (!speciesId || speciesId > kPokedexSpeciesCount) return learned;
+  const uint8_t availableGeneration = std::min<uint8_t>(7U, unlockedGeneration);
+  for (uint16_t row = kLearnsetOffsets[speciesId];
+       row < kLearnsetOffsets[speciesId + 1U]; ++row) {
+    const LearnsetEntry entry = decodedLearnsetEntry(row);
     const MoveId move = static_cast<MoveId>(entry.moveId);
-    if (entry.speciesId == speciesId && entry.level == level &&
-        entry.generation <= availableGeneration &&
+    if (entry.level == level && entry.generation <= availableGeneration &&
         isMoveAvailableInSingleBattle(move)) learned = move;
   }
   return learned;

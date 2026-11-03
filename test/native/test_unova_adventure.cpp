@@ -58,6 +58,46 @@ bool sawFormChange(const BattleActionResult& result, BattleSide side,
   return false;
 }
 
+bool isUltraBeast(uint16_t species) {
+  return (species >= 793U && species <= 799U) ||
+      (species >= 803U && species <= 806U);
+}
+
+void verifyRegionalWildPool(uint8_t generation, uint16_t denominator,
+                            bool excludeUltraBeasts,
+                            uint16_t expectedCommon,
+                            uint16_t expectedLegendary) {
+  bool commonSeen[808]{}, legendarySeen[808]{};
+  uint16_t commonCount = 0U, legendaryCount = 0U;
+  for (uint32_t pick = 0U; pick < 808U; ++pick) {
+    const uint16_t common = BattleEngine::regionalWildSpecies(
+        generation, 1U, pick, denominator, excludeUltraBeasts);
+    const uint16_t legendary = BattleEngine::regionalWildSpecies(
+        generation, 0U, pick, denominator, excludeUltraBeasts);
+    assert(common && legendary);
+    assert(!PokedexLogic::isLegendaryOrMythical(common));
+    assert(PokedexLogic::isLegendaryOrMythical(legendary));
+    if (excludeUltraBeasts) {
+      assert(!isUltraBeast(common));
+      assert(!isUltraBeast(legendary));
+    }
+    if (!commonSeen[common]) { commonSeen[common] = true; ++commonCount; }
+    if (!legendarySeen[legendary]) {
+      legendarySeen[legendary] = true;
+      ++legendaryCount;
+    }
+  }
+  assert(commonCount == expectedCommon);
+  assert(legendaryCount == expectedLegendary);
+  // The rarity decision is a separate exact 1/N roll, independent from how
+  // many species live in either side of the pool.
+  for (uint32_t rarity = 0U; rarity < denominator; ++rarity) {
+    const uint16_t species = BattleEngine::regionalWildSpecies(
+        generation, rarity, rarity * 17U, denominator, excludeUltraBeasts);
+    assert(PokedexLogic::isLegendaryOrMythical(species) == (rarity == 0U));
+  }
+}
+
 void completeArea(UnovaAdventureState& state, UnovaArea area,
                   PokemonCollection& collection, uint32_t playerUid,
                   BattleState* completedBoss = nullptr) {
@@ -123,6 +163,9 @@ int main() {
   for (uint16_t legendary : {494U, 638U, 639U, 640U, 641U, 642U,
                              643U, 644U, 645U, 646U, 647U, 648U, 649U})
     assert(PokedexLogic::isLegendaryOrMythical(legendary));
+  verifyRegionalWildPool(5U, 265U, false, 143U, 13U);
+  verifyRegionalWildPool(6U, 240U, false, 66U, 6U);
+  verifyRegionalWildPool(7U, 240U, true, 61U, 14U);
 
   // The generated National-Dex names must identify the species, never the
   // base form. Otherwise every alternate sprite is paired with a stale label
@@ -187,6 +230,15 @@ int main() {
   assert(starter);
   starter->level = 80U;
   CollectionLogic::refreshDerivedStats(*starter, false);
+  BattleState regionalWild{};
+  assert(BattleEngine::startRegionalWild(
+      regionalWild, collection, starter->uid, 0x5100A11DU, 5U,
+      UnovaAdventure::kLegendaryChanceDenominator));
+  assert(regionalWild.kind == BattleKind::Wild &&
+         regionalWild.unlockedGeneration == 5U &&
+         regionalWild.opponents[0].speciesId >= 494U &&
+         regionalWild.opponents[0].speciesId <= 649U);
+  BattleEngine::clear(regionalWild);
 
   SinnohExpeditionState sinnoh{};
   UnovaAdventureState unova{};

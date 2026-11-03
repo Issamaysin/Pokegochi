@@ -38,7 +38,11 @@ static_assert(sizeof(BossEncounterState) == 16,
 class BossSystem {
  public:
   static constexpr uint32_t kMaximumHp = 200000UL;
+  static constexpr uint32_t kIntroductoryMaximumHp = 50000UL;
   static constexpr uint16_t kBattleHpLayer = UINT16_MAX;
+  // Boss battles do not use trainer profiles. This sentinel persists the
+  // reduced first-Boss pool in the frozen BattleState layout.
+  static constexpr uint8_t kIntroductoryBattleProfile = 0xFEU;
   static constexpr uint32_t kCooldownSeconds = 12U * 60U * 60U;
   static constexpr uint8_t kRewardBucketCount = 10U;
   static constexpr uint8_t kMasterBallRewardBuckets = 1U;
@@ -50,9 +54,20 @@ class BossSystem {
   static void advanceCooldown(uint32_t& cooldownSecondsRemaining,
                               uint32_t elapsedSeconds);
   static bool hasEncounter(const BossEncounterState& encounter);
-  static void ensureEncounter(BossEncounterState& encounter, uint32_t seed);
-  static OwnedPokemon encounterPokemon(const BossEncounterState& encounter);
+  static void ensureEncounter(BossEncounterState& encounter, uint32_t seed,
+                              uint8_t unlockedGeneration = 3U,
+                              bool introductory = false);
+  static uint32_t encounterMaximumHp(const BossEncounterState& encounter);
+  static OwnedPokemon encounterPokemon(const BossEncounterState& encounter,
+                                        uint8_t unlockedGeneration = 3U);
+  static uint32_t battleMaximumHp(const BattleState& battle);
   static uint32_t battleCurrentHp(const BattleState& battle);
+  // Repairs an encounter or an already-running Boss battle from an older
+  // build when the first-victory Sinnoh gate is still pending. The marker is
+  // stored in fields that were already reserved by the save ABI.
+  static bool reconcileDifficulty(BossEncounterState& encounter,
+                                  BattleState& battle,
+                                  bool introductoryPending);
   static void recordAttempt(BossEncounterState& encounter,
                             const BattleState& battle, bool defeated);
   // With both destinations available, one of ten equally sized buckets gives
@@ -65,7 +80,9 @@ class BossSystem {
   static bool start(BattleState& battle, PokemonCollection& collection,
                     uint32_t playerUid, const GymProgress& progress,
                     uint32_t cooldownSecondsRemaining,
-                    BossEncounterState& encounter, uint32_t seed);
+                    BossEncounterState& encounter, uint32_t seed,
+                    uint8_t unlockedGeneration = 3U,
+                    bool introductory = false);
 
   static bool isLegendaryOrMythical(uint16_t speciesId);
   static bool moveAllowed(MoveId move);

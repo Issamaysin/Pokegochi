@@ -94,6 +94,14 @@ only when the engine state is `Wild`; hiding the Ball button is not the rule.
   screen until victory; choosing `LATER`, losing, or powering off cannot discard it.
 - The Trainer Card lives in the Bag's Key Items pocket and displays all eight
   original Kanto Badges, money, Badge count, and the next Gym target.
+- Key Items are displayed four per page. A page counter and wraparound arrows
+  appear automatically once progression has unlocked more than four entries,
+  preventing later regional tools from overflowing the Bag panel.
+- Completing the one-time Mega Stone challenge permanently adds a Mega Stone
+  shortcut to Key Items, even while the unique stone is held by a Pokemon.
+  Using it first returns the stone from its current holder to the Bag and saves
+  that state, then opens the shared Party/Box target picker. Choosing a valid
+  Pokemon equips the same unique stone; cancelling safely leaves it in the Bag.
 - Gym invitations show the Leader, Badge reward, fixed recommended level range,
   and the three-battle warning before the player commits. They never consume a
   VS Seeker charge.
@@ -114,14 +122,13 @@ Gym content and level gating remain separate from the generic battle engine.
 - Losing ends the attempt; the next attempt begins again with the first member.
 - Defeating the Champion is saved permanently and is required before the next
   regional starter can be chosen.
-- Defeating Koga, Kanto's fifth Gym Leader, awards the one-and-only Lucky Egg
-  and permanently increases the battle's total XP award by 50% before it is
-  divided equally among every selected party member. It is account-wide and
-  does not need to be equipped.
-- The first Kanto League clear upgrades that same Lucky Egg bonus from +50% to
-  +100%. It replaces the earlier tier rather than stacking with it.
-- Unlocking Generation IV/Sinnoh adds another 25 percentage points, raising
-  the permanent party-wide bonus from +100% to +125% (2.25x total XP).
+- The first Kanto badge awards the one-and-only Lucky Egg. Every Kanto Gym
+  permanently adds +10% to the battle's total XP award, reaching +80% after
+  all eight badges. Every Johto and Hoenn Gym adds another +5%, reaching
+  +120% after Johto and +160% after Hoenn. It is account-wide, applies before
+  the equal party split, and does not need to be equipped.
+- League clears and later-region unlocks do not add separate Lucky Egg jumps;
+  its progression is derived entirely from the 24 Kanto/Johto/Hoenn badges.
 - The Pokedex does not expand when the League is cleared. It expands only after
   the new starter is selected and the Pokedex update message is shown.
 
@@ -147,7 +154,8 @@ Gym content and level gating remain separate from the generic battle engine.
 - A Special Egg chooses uniformly from the nine regional starters the player
   has never obtained. `seen` is insufficient: only the Pokedex `caught` record
   removes a starter from this pool. Once all nine have been obtained, the Egg
-  chooses a random Legendary or Mythical Pokemon from Generations I-III.
+  chooses a random Legendary or Mythical Pokemon through the highest unlocked
+  generation. Ultra Beasts are excluded; Necrozma remains eligible.
 - Special Eggs enter the dedicated Egg pocket in the Bag. Their rare 96-hour
   timer begins only when the player selects one while the incubator is empty.
 
@@ -160,9 +168,10 @@ Gym content and level gating remain separate from the generic battle engine.
   The panel uses its real front sprite and name rather than a fixed Mewtwo
   placeholder. The same Boss remains selected across every attempt and reboot.
 - Damage is cumulative between attempts: defeat or surrender stores the Boss's
-  exact remaining HP, and the next battle resumes from that value out of 200,000.
-  Only reducing it to zero clears the encounter and allows a different Boss to
-  be selected after the cooldown.
+  exact remaining HP. The first Boss, whose victory is required to open Sinnoh,
+  has 50,000 total HP; after that first victory every new Boss has 200,000.
+  Only reducing the active pool to zero clears the encounter and allows a
+  different Boss to be selected after the cooldown.
 - A victory starts a persistent twelve-hour cooldown. Losing or abandoning an
   attempt does not start it. The shared Home hub remains visible while the Boss
   card inside its selector shows the rounded-up hour/minute countdown and stays
@@ -170,7 +179,8 @@ Gym content and level gating remain separate from the generic battle engine.
 - Every victory also gives exactly one Boss prize: 90% for the same stored
   Special Egg used by the Battle Tower's 0.5% reward and 10% for a
   Master Ball. With every regional starter already caught, that Special Egg uses
-  the Generation I-III Legendary/Mythical pool. If the selected destination is
+  the unlocked Legendary/Mythical pool without Ultra Beasts, while retaining
+  Necrozma. If the selected destination is
   full, delivery falls back to the other prize without overwriting an Egg or
   overflowing an inventory stack; if both destinations are full, the result screen warns
   the player.
@@ -180,8 +190,9 @@ Gym content and level gating remain separate from the generic battle engine.
 - A Boss is Lv.100, has six perfect 31 IVs, a legal 508-point EV spread and a
   matching physical or special Nature. Its normal Attack, Defense, Sp. Attack,
   Sp. Defense and Speed formulas remain unchanged; maximum and current HP are
-  explicitly replaced with 200,000. Internally, the frozen 16-bit combatant
-  format processes safe HP layers while a 32-bit raid total remains authoritative.
+  explicitly replaced with the active 50,000/200,000 raid pool. Internally, the
+  frozen 16-bit combatant format processes safe HP layers while a 32-bit raid
+  total remains authoritative.
 - Boss moves come from that species' inherited level-up pool and are limited to
   legal one-on-one damaging moves. Recovery, draining, target-healing, OHKO,
   percentage-HP and self-destruct moves are excluded. Boss trainers/items do not
@@ -192,13 +203,14 @@ Gym content and level gating remain separate from the generic battle engine.
   a Ball is consumed.
 - OHKO moves, Perish Song and Destiny Bond cannot instantly faint a Boss. Their
   battle journal reports `THE BOSS IS IMMUNE!` so the failure is explicit.
-- Super Fang, Endeavor and Pain Split cannot derive damage from the 200,000-HP
+- Super Fang, Endeavor and Pain Split cannot derive damage from the raid HP
   pool. Percentage-based residual damage is also suppressed, including poison,
   Toxic, burn, Leech Seed, trapping, Curse, Nightmare, damaging weather,
   Solar Power, Spikes and Rough Skin recoil. Ordinary formula damage and fixed
   values such as Dragon Rage remain valid.
 - The Boss's battle status box replaces the normal HP meter with the exact
-  numeric value `current/200000`, including staged damage animation values.
+  numeric value `current/50000` for the first Boss and `current/200000`
+  thereafter, including staged damage animation values.
 - The battle engine grants its normal shared XP/EV result, then commits the Boss
   prize and persistent cooldown in the same victory save transaction.
 
@@ -320,6 +332,15 @@ Gym content and level gating remain separate from the generic battle engine.
   that have not unlocked the required generation reject unavailable content by
   the same regional-compatibility rule used before Unova.
 
+### Alola color themes
+
+- Defeating the Alola Champion unlocks both `Sun` and `Moon` in the paginated
+  Settings theme selector. `Sun` uses the warm solar/orange identity; `Moon`
+  uses midnight indigo, lunar lavender and a cold moonlit paper tone.
+- The two Alola themes are mutually exclusive and also clear the selected
+  Unova/Kalos special theme. Their choice is persisted in spare Alola campaign
+  flag bits, so existing saves remain compatible and the save ABI does not grow.
+
 ## Bluetooth multiplayer
 
 Multiplayer is a sixth Bag pocket. BLE remains active during the activity-specific
@@ -402,9 +423,23 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
 - Permanent effects include Leftovers, Shell Bell, Choice Band, Quick Claw, Scope Lens,
   BrightPowder, Focus Band, King's Rock, Amulet Coin, Smoke Ball, and all 17 Generation
   III type-boosting items. Effects follow FireRed values where applicable.
-- Lucky Egg is a unique Kanto progression reward. Koga grants its permanent
-  party-wide +50% XP tier, and the first Kanto League clear upgrades it to
-  +100%. Unlocking Generation IV raises the same bonus to +125%. It never
+- The ordinary held-item catalog expands cumulatively with each unlocked region, using
+  the matching item art from pokeemerald-expansion. Sinnoh adds Life Orb, Focus Sash,
+  Choice Scarf, Choice Specs, Expert Belt, Black Sludge, Toxic Orb and Flame Orb. Unova
+  adds Eviolite, Rocky Helmet, Air Balloon, Red Card and Eject Button. Kalos adds Assault
+  Vest, Weakness Policy and Safety Goggles. Alola adds Terrain Extender, Protective Pads,
+  Adrenaline Orb and the Electric, Grassy, Misty and Psychic Seeds. These items cannot
+  rotate into the Mart before their region is unlocked; afterward they join the normal
+  cumulative held-item pool.
+- Modern held items use their original battle rules rather than cosmetic placeholders:
+  consumable items are removed only after their trigger, Choice items share one move-lock
+  state, Air Balloon pops even when Substitute or Disguise absorbs the hit, Assault Vest
+  permits Me First while rejecting ordinary status moves, and seeds/terrain duration use
+  the active terrain state. Their inventory is a save-compatible sidecar introduced in
+  save format 51; loading format 50 preserves the old save and initializes it empty.
+- Lucky Egg is a unique badge-progression reward. The first Kanto badge grants
+  it; Kanto badges add +10% party-wide XP each, while Johto and Hoenn badges
+  add +5% each, for a permanent +160% ceiling after all 24 badges. It never
   enters Mart stock, cannot be duplicated, equipped or traded, and applies
   before Pokegochi performs its normal equal XP split.
 - Thief, Covet, Trick and Knock Off use the held-item state during a battle. In
@@ -457,7 +492,8 @@ EVs or money, and restore both local Parties exactly when the battle or BLE sess
 - Egg pools contain unlocked-region basic forms only. Starters, evolved forms,
   Legendary and Mythical Pokemon are excluded; baby Pokemon receive extra weight.
 - Battle Tower Special Eggs are the sole exception to that normal pool: their
-  starter/Legendary contents are selected by the completion reward rules above.
+  starter/Legendary contents are selected by the completion reward rules above;
+  Ultra Beasts are excluded and Necrozma remains eligible.
 - The Bag has a dedicated Egg pocket with 32 stored-Egg slots. Stored rewards
   are never discarded because another Egg is incubating; `USE` moves the chosen
   Egg into the incubator only when that active slot is empty.

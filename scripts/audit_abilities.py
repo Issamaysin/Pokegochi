@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail the build when a declared Pokemon Ability has no audited behavior.
 
-Generation I-VI abilities are sourced from the generated ROM tables; Mega
+Generation I-VII abilities are sourced from the generated ROM tables; Mega
 abilities are the explicitly supported expansion-form extensions. A literal
 reference in the battle/field engine is required unless the ability has a
 documented Pokegochi adaptation below.
@@ -41,17 +41,21 @@ HANDLER_GROUPS = {
         "DRIZZLE", "INTIMIDATE", "TRACE", "FORECAST", "SAND STREAM",
         "DROUGHT", "PRIMORDIAL SEA", "DESOLATE LAND", "DELTA STREAM",
         "MEGA SOL", "SNOW WARNING", "DOWNLOAD", "MULTITYPE", "IMPOSTER",
-        "ILLUSION", "ZEN MODE", "STANCE CHANGE",
+        "ILLUSION", "ZEN MODE", "STANCE CHANGE", "SCHOOLING",
+        "SHIELDS DOWN", "BATTLE BOND", "POWER CONSTRUCT", "DISGUISE",
+        "PSYCHIC SURGE", "MISTY SURGE", "GRASSY SURGE",
     },
     "end-turn/cadence": {
         "SPEED BOOST", "RAIN DISH", "SHED SKIN", "TRUANT", "SOLAR POWER",
         "HYDRATION", "ICE BODY", "DRY SKIN", "POISON HEAL", "BAD DREAMS",
-        "HARVEST", "MOODY", "REGENERATOR",
+        "HARVEST", "MOODY", "REGENERATOR", "BERSERK", "SOUL-HEART",
+        "BEAST BOOST",
     },
     "accuracy/priority/PP": {
         "SAND VEIL", "COMPOUND EYES", "PRESSURE", "HUSTLE", "NO GUARD",
         "PRANKSTER", "TANGLED FEET", "SNOW CLOAK", "QUICK FEET", "STALL",
         "UNBURDEN", "VICTORY STAR", "WONDER SKIN", "GALE WINGS",
+        "TRIAGE", "QUEENLY MAJESTY", "DAZZLING", "SURGE SURFER",
     },
     "damage and critical modifiers": {
         "BATTLE ARMOR", "SHELL ARMOR", "STURDY", "DAMP", "SHIELD DUST",
@@ -70,30 +74,33 @@ HANDLER_GROUPS = {
         "ANALYTIC", "INFILTRATOR", "TURBOBLAZE", "TERAVOLT",
         "PIERCING DRILL", "UNSEEN FIST", "FUR COAT", "BULLETPROOF",
         "GRASS PELT", "DARK AURA", "FAIRY AURA", "AURA BREAK",
-        "PROTEAN", "FIRE MANE",
+        "PROTEAN", "FIRE MANE", "MERCILESS", "STAKEOUT", "WATER BUBBLE",
+        "STEELWORKER", "FLUFFY", "SHADOW SHIELD", "PRISM ARMOR",
+        "NEUROFORCE", "GALVANIZE", "LIQUID VOICE", "LONG REACH",
     },
     "type immunity/absorption/weather suppression": {
         "CLOUD NINE", "AIR LOCK", "VOLT ABSORB", "WATER ABSORB",
         "FLASH FIRE", "LEVITATE", "MOTOR DRIVE", "SAP SIPPER", "OVERCOAT",
-        "LIGHTNING ROD", "STORM DRAIN", "EELEVATE",
+        "LIGHTNING ROD", "STORM DRAIN", "EELEVATE", "RKS SYSTEM",
     },
     "status immunity/cure": {
         "LIMBER", "OBLIVIOUS", "INSOMNIA", "IMMUNITY", "OWN TEMPO",
         "INNER FOCUS", "MAGMA ARMOR", "WATER VEIL", "VITAL SPIRIT",
         "NATURAL CURE", "STEADFAST", "EARLY BIRD", "LEAF GUARD",
-        "SWEET VEIL", "AROMA VEIL",
+        "SWEET VEIL", "AROMA VEIL", "CORROSION", "COMATOSE",
     },
     "contact/post-damage": {
         "STATIC", "COLOR CHANGE", "ROUGH SKIN", "EFFECT SPORE",
         "SYNCHRONIZE", "POISON POINT", "FLAME BODY", "CUTE CHARM",
         "LIQUID OOZE", "PICKPOCKET", "CURSED BODY", "WEAK ARMOR",
         "POISON TOUCH", "MUMMY", "JUSTIFIED", "RATTLED", "IRON BARBS",
-        "GOOEY",
+        "GOOEY", "STAMINA", "WATER COMPACTION", "TANGLING HAIR",
+        "WIMP OUT", "EMERGENCY EXIT", "DANCER",
     },
     "stat-loss prevention": {
         "CLEAR BODY", "KEEN EYE", "HYPER CUTTER", "WHITE SMOKE",
         "CONTRARY", "DEFIANT", "BIG PECKS", "MOXIE", "FLOWER VEIL",
-        "COMPETITIVE",
+        "COMPETITIVE", "FULL METAL BODY",
     },
     "sound/forced switch/trapping": {
         "SUCTION CUPS", "SHADOW TAG", "MAGNET PULL", "SOUNDPROOF",
@@ -103,7 +110,7 @@ HANDLER_GROUPS = {
         "RUN AWAY", "PICKUP", "STICKY HOLD", "GLUTTONY", "KLUTZ",
         "UNNERVE", "CHEEK POUCH", "MAGICIAN",
     },
-    "weather speed": {"SWIFT SWIM", "CHLOROPHYLL", "SAND RUSH"},
+    "weather speed": {"SWIFT SWIM", "CHLOROPHYLL", "SAND RUSH", "SLUSH RUSH"},
     "secondary effects/reflection": {"SERENE GRACE", "MAGIC BOUNCE", "STENCH"},
 }
 
@@ -124,10 +131,19 @@ ADAPTED_NO_EFFECT = {
     "FRIEND GUARD": "reduces damage to allies and Pokegochi battles are one-on-one",
     "TELEPATHY": "avoids allied attacks and Pokegochi battles are one-on-one",
     "SYMBIOSIS": "passes an item to an ally and Pokegochi battles are one-on-one",
+    "BATTERY": "boosts an ally's special attacks and Pokegochi battles are one-on-one",
+    "RECEIVER": "copies a fainted ally's Ability and Pokegochi battles are one-on-one",
+    "POWER OF ALCHEMY": "copies a fainted ally's Ability and Pokegochi battles are one-on-one",
 }
 
 errors: list[str] = []
 classified: dict[str, str] = {}
+IMPLEMENTATION_TOKENS = {
+    # These mechanics are intentionally species/form-driven and therefore do
+    # not need a repeated display-name string in their C++ hot paths.
+    "POWER CONSTRUCT": "updateZygardeAssembly(",
+    "RKS SYSTEM": "memoryType(",
+}
 for group, names in HANDLER_GROUPS.items():
     for name in names:
         if name in classified:
@@ -140,7 +156,8 @@ for name in abilities:
     if name not in classified:
         errors.append(f"{name}: engine token exists but behavior is not classified")
         continue
-    if f'"{name}"' not in engine:
+    token = IMPLEMENTATION_TOKENS.get(name, f'"{name}"')
+    if token not in engine:
         errors.append(f"{name}: no engine handler and no documented adaptation")
 
 unknown_classifications = sorted(set(classified) - set(abilities))
@@ -151,10 +168,10 @@ unknown_adaptations = sorted(set(ADAPTED_NO_EFFECT) - set(abilities))
 if unknown_adaptations:
     errors.append("stale adaptations: " + ", ".join(unknown_adaptations))
 
-if len(base) != 189:
-    errors.append(f"expected 189 Gen-I--VI abilities, parsed {len(base)}")
-if len(custom) != 33:
-    errors.append(f"expected 33 custom Mega/Primal abilities, parsed {len(custom)}")
+if len(base) != 231:
+    errors.append(f"expected 231 generated Gen-I--VII abilities, parsed {len(base)}")
+if len(custom) != 11:
+    errors.append(f"expected 11 custom/reserved Mega/Primal abilities, parsed {len(custom)}")
 
 if errors:
     print("Ability audit failed:", file=sys.stderr)
@@ -163,7 +180,8 @@ if errors:
     raise SystemExit(1)
 
 print(
-    f"Ability audit passed: {len(base)} Gen-I--VI + {len(custom)} Mega/Primal; "
+    f"Ability audit passed: {len(base)} generated Gen-I--VII + "
+    f"{len(custom)} custom/reserved Mega/Primal; "
     f"{len(abilities) - len(ADAPTED_NO_EFFECT)} implemented, "
     f"{len(ADAPTED_NO_EFFECT)} documented singles/manual adaptations"
 )

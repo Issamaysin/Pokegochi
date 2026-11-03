@@ -1,4 +1,4 @@
-"""Generate all 721 National Pokedex rows through Pokemon Y/Kalos."""
+"""Generate all 807 National Pokedex rows through Ultra Sun/Alola."""
 from __future__ import annotations
 
 import re
@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from text_normalization import fire_red_ascii
 from unova_rom_data import expansion_text
+from alola_expansion_data import species_rows as alola_species_rows
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / ".downloads/pokefirered-tree/pokefirered-master/src/data/pokemon"
@@ -193,6 +194,52 @@ for species_id in range(650, 722):
 
 if len(rows) != 721:
     raise RuntimeError(f"Expected 721 National Pokedex rows, found {len(rows)}")
+
+gen7_source = expansion_text("src/data/pokemon/species_info/gen_7_families.h")
+gen7_shared_descriptions = dict(shared_dex_descriptions)
+for match in re.finditer(
+        r"const u8\s+(g\w+PokedexText)\[\]\s*=\s*_\((.*?)\);",
+        gen7_source, re.S):
+    gen7_shared_descriptions[match.group(1)] = "".join(
+        piece.replace("\\n", " ")
+        for piece in re.findall(r'"([^"]*)"', match.group(2))
+    )
+gen7_macro_metadata = {
+    "SILVALLY_NORMAL": ("Synthetic", 23, 1005, "gSilvallyNormalPokedexText"),
+    "MINIOR_METEOR_RED": ("Meteor", 3, 400, "gMiniorMeteorPokedexText"),
+}
+for alola in alola_species_rows():
+    macro = gen7_macro_metadata.get(alola.symbol)
+    if macro:
+        category, height, weight, description_name = macro
+        description = gen7_shared_descriptions.get(description_name, "")
+        if not description:
+            raise RuntimeError(f"Missing shared Gen-VII Pokedex text for {alola.symbol}")
+        rows.append((category, height, weight, description))
+        continue
+    body = alola.block
+    category = re.search(r'\.categoryName\s*=\s*_\("([^"]+)"\)', body)
+    height = re.search(r"\.height\s*=\s*(\d+)", body)
+    weight = re.search(r"\.weight\s*=\s*(\d+)", body)
+    description_block = re.search(
+        r"\.description\s*=\s*COMPOUND_STRING\((.*?)\)\s*,", body, re.S)
+    description_symbol = re.search(r"\.description\s*=\s*(g\w+PokedexText)", body)
+    if not all((category, height, weight)) or not (description_block or description_symbol):
+        raise RuntimeError(f"Incomplete Gen-VII Pokedex metadata for {alola.symbol}")
+    if description_block:
+        description = " ".join(
+            piece.replace("\\n", " ")
+            for piece in re.findall(r'"([^"]*)"', description_block.group(1))
+        )
+    else:
+        description = gen7_shared_descriptions.get(description_symbol.group(1), "")
+        if not description:
+            raise RuntimeError(f"Missing shared Gen-VII Pokedex text for {alola.symbol}")
+    rows.append((category.group(1), int(height.group(1)),
+                 int(weight.group(1)), description))
+
+if len(rows) != 807:
+    raise RuntimeError(f"Expected 807 National Pokedex rows, found {len(rows)}")
 
 lines = ["static constexpr PokedexEntryData kPokedexEntries[] = {"]
 for category, height, weight, description in rows:

@@ -12,8 +12,12 @@ enum class GrowthRate : uint8_t { MediumFast, Erratic, Fluctuating, MediumSlow, 
 constexpr uint8_t kEvolutionChoiceCapacity = 5;
 
 struct SpeciesData {
-  uint16_t id;
   const char* name;
+  // Keep the pointer and the two 16-bit values together. On the ESP32 this
+  // makes each immutable species row 32 rather than 36 bytes without packing
+  // or unaligned reads (807 rows save 3,228 bytes of OTA flash).
+  uint16_t id;
+  uint16_t baseExperience;
   PokemonType type1;
   PokemonType type2;
   uint8_t baseHp;
@@ -23,7 +27,6 @@ struct SpeciesData {
   uint8_t baseSpDefense;
   uint8_t baseSpeed;
   uint8_t catchRate;
-  uint16_t baseExperience;
   GrowthRate growthRate;
   // The first pair is the original FireRed/Gen-III identity. The second pair
   // is Platinum's ability pair and is enabled only once Sinnoh is unlocked.
@@ -74,6 +77,16 @@ enum class MoveTarget : uint8_t {
 // uses White's category byte. Never infer a move's category from its type.
 enum class MoveCategory : uint8_t { Physical, Special, Status };
 
+// Gen-VII status Z-Moves keep the base move's ordinary effect and apply one
+// compact bonus before it. This enum is generated from the expansion's
+// canonical move table rather than being inferred from names at runtime.
+enum class ZStatusEffect : uint8_t {
+  None, ResetStats, RecoverHp, AttackUp1, AttackUp2, AttackUp3,
+  DefenseUp1, SpAttackUp1, SpAttackUp2, SpDefenseUp1, SpDefenseUp2,
+  SpeedUp1, SpeedUp2, AccuracyUp1, EvasionUp1, AllStatsUp1,
+  BoostCritical, Curse, FollowMe, RestoreReplacementHp
+};
+
 struct MoveData {
   MoveId id;
   const char* name;
@@ -95,20 +108,14 @@ struct FullMoveData {
   bool kingsRockAffected;
 };
 struct LearnsetEntry {
-  // National species through #721 and custom move rows through #920 need ten
-  // bits each.
-  // Levels fit in seven bits and the authored generation in three, so one
-  // row fits exactly in a uint32_t without losing any X/Y data.
-  uint32_t speciesId : 10;
-  uint32_t moveId : 10;
-  uint32_t level : 7;
-  // 1 = the original FireRed/Hoenn-era learnset, 4 = Platinum additions.
-  uint32_t generation : 3;
+  uint16_t moveId;
+  uint8_t level;
+  uint8_t generation;
 };
-// This table has almost fifteen thousand rows after Kalos. Expanding it by a
-// single byte costs more flash than many gameplay systems, so guard the
-// packed representation at compile time.
-static_assert(sizeof(LearnsetEntry) == 4, "LearnsetEntry must remain flash-packed");
+// Generated level-up rows omit the repeated species id and store the remaining
+// 20 bits in three bytes. Per-species offsets make lookups faster as well as
+// saving flash; this decoded object exists only in registers/stack.
+static_assert(sizeof(LearnsetEntry) == 4, "Decoded learnset row changed");
 
 struct EvolutionData { uint16_t fromSpeciesId; uint16_t toSpeciesId; uint8_t level; };
 struct EncounterSpecies { uint16_t speciesId; uint8_t unlockLevel; uint8_t weight; uint8_t generation; };
@@ -117,6 +124,7 @@ const SpeciesData* findSpecies(uint16_t id);
 const MoveData* findMove(MoveId id);
 const FullMoveData* findFullMove(MoveId id);
 const char* moveDescription(MoveId id);
+ZStatusEffect zStatusEffectForMove(MoveId id);
 // Returns whether a move has a legal target in Pokegochi's strictly
 // one-on-one battle format. Doubles-only moves remain in the canonical data
 // and battle engine, but are not offered to players or selected by the AI.

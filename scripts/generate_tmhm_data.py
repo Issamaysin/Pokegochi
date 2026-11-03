@@ -14,6 +14,7 @@ from pathlib import Path
 
 from unova_rom_data import personal_record
 from kalos_rom_data import personal_record as y_personal_record
+from alola_rom_data import can_learn_tm as usum_can_learn_tm
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -46,9 +47,10 @@ UNOVA_TM_PRICES = [3000,3000,2500,3000,3000,3000,3000,3000,2500,2500,
                    4000,4000,3000,5500,5000]
 assert len(BW_TM_MOVES) == 95 and len(UNOVA_TM_MOVES) == 25
 
-# X/Y's complete TM01..TM100/HM01..HM05 order. The first 96 moves are already
-# represented by the stable Emerald/Platinum/Unova catalog. Only the four
-# genuinely new Kalos machines are appended, preserving all existing IDs.
+# X/Y's complete TM01..TM100/HM01..HM05 order. Append only moves not already
+# represented by the stable Emerald/Platinum/Unova catalog, preserving every
+# shipped machine ID. Nature Power became a TM in Kalos and is therefore part
+# of this list alongside the four Generation-VI moves.
 XY_TM_MOVES = [
     468,337,473,347,46,92,258,339,474,237,241,269,58,59,63,113,182,240,
     355,219,218,76,479,85,87,89,216,91,94,247,280,104,115,482,53,188,
@@ -58,10 +60,31 @@ XY_TM_MOVES = [
     138,447,207,214,369,164,430,433,528,249,555,267,399,612,605,590,
 ]
 XY_HM_MOVES = [15, 19, 57, 70, 127]
-KALOS_TM_NUMBERS = [83, 98, 99, 100]
+KALOS_TM_NUMBERS = [83, 96, 98, 99, 100]
 KALOS_TM_MOVES = [XY_TM_MOVES[number - 1] for number in KALOS_TM_NUMBERS]
-KALOS_TM_PRICES = [4000, 5000, 7000, 3000]
-assert len(XY_TM_MOVES) == 100 and KALOS_TM_MOVES == [611, 612, 605, 590]
+KALOS_TM_PRICES = [4000, 4000, 5000, 7000, 3000]
+assert len(XY_TM_MOVES) == 100 and KALOS_TM_MOVES == [611, 267, 612, 605, 590]
+
+# Ultra Sun's TM01..TM100 order, sourced from the extracted personal-table
+# bitset contract. Canonical Gen-VII move ids 693/684/694 map to Pokegochi's
+# compact regular-move ids 656/647/657 because Z-Moves are runtime actions,
+# not ordinary selectable move rows in this project.
+USUM_TM_MOVES_CANONICAL = [
+    526,337,473,347,46,92,258,339,474,237,241,269,58,59,63,113,182,240,
+    355,219,218,76,479,85,87,89,216,141,94,247,280,104,115,482,53,188,
+    201,126,317,332,259,263,488,156,213,168,490,496,497,315,211,411,
+    412,206,503,374,451,507,693,511,261,512,373,153,421,371,684,416,
+    397,694,444,521,86,360,14,19,244,523,524,157,404,525,611,398,138,
+    447,207,214,369,164,430,433,528,57,555,267,399,127,605,590,
+]
+USUM_PROJECT_MOVE_IDS = {693: 656, 684: 647, 694: 657}
+USUM_TM_MOVES = [USUM_PROJECT_MOVE_IDS.get(move, move)
+                 for move in USUM_TM_MOVES_CANONICAL]
+ALOLA_TM_NUMBERS = [28, 59, 67, 70]
+ALOLA_TM_MOVES = [USUM_TM_MOVES[number - 1] for number in ALOLA_TM_NUMBERS]
+ALOLA_TM_PRICES = [7000, 5000, 5000, 7000]
+assert len(USUM_TM_MOVES) == 100
+assert ALOLA_TM_MOVES == [141, 656, 647, 657]
 
 
 def white_can_learn(species_id: int, move_id: int) -> bool:
@@ -82,6 +105,12 @@ def y_can_learn(species_id: int, move_id: int) -> bool:
                     if candidate == move_id]
     return any((record[40 + index // 8] >> (index % 8)) & 1
                for index in bit_indices)
+
+
+def usum_can_learn(species_id: int, move_id: int) -> bool:
+    return any(usum_can_learn_tm(species_id, index + 1)
+               for index, candidate in enumerate(USUM_TM_MOVES)
+               if candidate == move_id)
 
 
 def macro_body(source: str, name: str, next_name: str) -> str:
@@ -173,7 +202,7 @@ legacy_masks = [0]
 sinnoh_masks = [0]
 unova_masks = [0]
 compatibility_count = 0
-for species_id in range(1, 722):
+for species_id in range(1, 808):
     platinum_allowed: set[str] = set()
     if species_id <= 493:
         platinum_data = json.loads(
@@ -198,7 +227,9 @@ for species_id in range(1, 722):
                       ((label in allowed) if species_id <= 493 else
                        (white_can_learn(species_id, move_ids[machine_symbol])
                         if species_id <= 649 else
-                        y_can_learn(species_id, move_ids[machine_symbol]))))
+                        (y_can_learn(species_id, move_ids[machine_symbol])
+                         if species_id <= 721 else
+                         usum_can_learn(species_id, move_ids[machine_symbol])))))
         if compatible:
             mask |= 1 << machine_id
             compatibility_count += 1
@@ -210,18 +241,29 @@ for species_id in range(1, 722):
                       if species_id <= 493 else
                       (white_can_learn(species_id, platinum_move_ids[machine_id])
                        if species_id <= 649 else
-                       y_can_learn(species_id, platinum_move_ids[machine_id])))
+                       (y_can_learn(species_id, platinum_move_ids[machine_id])
+                        if species_id <= 721 else
+                        usum_can_learn(species_id, platinum_move_ids[machine_id]))))
         if compatible:
             sinnoh_mask |= 1 << machine_id
             compatibility_count += 1
     sinnoh_masks.append(sinnoh_mask)
 
     unova_mask = 0
-    regional_moves = UNOVA_TM_MOVES + KALOS_TM_MOVES
+    regional_moves = UNOVA_TM_MOVES + KALOS_TM_MOVES + ALOLA_TM_MOVES
     for machine_id, move_id in enumerate(regional_moves):
-        compatible = (white_can_learn(species_id, move_id)
-                      if species_id <= 649 and machine_id < len(UNOVA_TM_MOVES)
-                      else y_can_learn(species_id, move_id))
+        if machine_id < len(UNOVA_TM_MOVES):
+            compatible = (white_can_learn(species_id, move_id)
+                          if species_id <= 649 else
+                          (y_can_learn(species_id, move_id)
+                           if species_id <= 721 else
+                           usum_can_learn(species_id, move_id)))
+        elif machine_id < len(UNOVA_TM_MOVES) + len(KALOS_TM_MOVES):
+            compatible = (y_can_learn(species_id, move_id)
+                          if species_id <= 721 else
+                          usum_can_learn(species_id, move_id))
+        else:
+            compatible = usum_can_learn(species_id, move_id)
         if compatible:
             unova_mask |= 1 << machine_id
             compatibility_count += 1
@@ -229,26 +271,24 @@ for species_id in range(1, 722):
 
 move_rows = []
 all_machine_moves = ([move_ids[symbol] for symbol in machine_symbols] +
-                     platinum_move_ids + UNOVA_TM_MOVES + KALOS_TM_MOVES)
+                     platinum_move_ids + UNOVA_TM_MOVES + KALOS_TM_MOVES +
+                     ALOLA_TM_MOVES)
 for offset in range(0, len(all_machine_moves), 10):
     move_rows.append("  " + ", ".join(str(value) for value in all_machine_moves[offset:offset + 10]) + ",")
 price_values = ([3000] * 50 + [5000] * 8 + platinum_prices +
-                UNOVA_TM_PRICES + KALOS_TM_PRICES)
+                UNOVA_TM_PRICES + KALOS_TM_PRICES + ALOLA_TM_PRICES)
 price_rows = []
 for offset in range(0, len(price_values), 10):
     price_rows.append("  " + ", ".join(str(value) for value in price_values[offset:offset + 10]) + ",")
-legacy_mask_rows = [f"  UINT64_C(0x{mask:016X}), // {index:03d}" for index, mask in enumerate(legacy_masks)]
-sinnoh_mask_rows = [
-    "  {" + ", ".join(f"0x{(mask >> (8 * byte)) & 0xFF:02X}" for byte in range(6)) +
-    f"}}, // {index:03d}"
-    for index, mask in enumerate(sinnoh_masks)
-]
-unova_mask_rows = [
-    "  {" + ", ".join(f"0x{(mask >> (8 * byte)) & 0xFF:02X}" for byte in range(4)) +
-    f"}}, // {index:03d}"
-    for index, mask in enumerate(unova_masks)
-]
-payload = "\n".join(move_rows + price_rows + legacy_mask_rows + sinnoh_mask_rows + unova_mask_rows)
+machine_mask_rows = []
+for index, (legacy, sinnoh, regional) in enumerate(
+        zip(legacy_masks, sinnoh_masks, unova_masks)):
+    mask = legacy | (sinnoh << 58) | (regional << 100)
+    machine_mask_rows.append(
+        "  {" + ", ".join(
+            f"0x{(mask >> (8 * byte)) & 0xFF:02X}" for byte in range(17)) +
+        f"}}, // {index:03d}")
+payload = "\n".join(move_rows + price_rows + machine_mask_rows)
 catalog_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 output = (
     "// Generated from pokeemerald and pokeplatinum machine data.\n"
@@ -259,13 +299,9 @@ output = (
     "constexpr uint16_t machinePrices[kMachineCount] = {\n"
     + "\n".join(price_rows)
     + "\n};\n"
-    "// Index is the National Pokédex number; bit is TM01..TM50, HM01..HM08.\n"
-    "constexpr uint64_t machineLearnsets[722] = {\n"
-    + "\n".join(legacy_mask_rows)
-    + "\n};\n"
-    "// New Sinnoh machines are TM51..TM92, mapped to bits 0..41.\n"
-    "constexpr uint8_t sinnohMachineLearnsets[722][6] = {\n"
-    + "\n".join(sinnoh_mask_rows)
+    "// National-Dex row followed by one bit for every contiguous machine id.\n"
+    "constexpr uint8_t machineLearnsets[808][17] = {\n"
+    + "\n".join(machine_mask_rows)
     + "\n};\n"
     "// Unova-only additions retain their canonical TM numbers.\n"
     "constexpr uint8_t unovaMachineNumbers[kUnovaMachineCount] = {\n  "
@@ -275,13 +311,14 @@ output = (
     "constexpr uint8_t kalosMachineNumbers[kKalosMachineCount] = {\n  "
     + ", ".join(str(number) for number in KALOS_TM_NUMBERS)
     + ",\n};\n"
-    "// Bits 0..24 are Unova additions; bits 25..28 are Kalos additions.\n"
-    "constexpr uint8_t unovaMachineLearnsets[722][4] = {\n"
-    + "\n".join(unova_mask_rows)
-    + "\n};\n"
+    "// Alola-only additions retain Ultra Sun's canonical TM numbers.\n"
+    "constexpr uint8_t alolaMachineNumbers[kAlolaMachineCount] = {\n  "
+    + ", ".join(str(number) for number in ALOLA_TM_NUMBERS)
+    + ",\n};\n"
     f"constexpr uint16_t machineCompatibilityCount = {compatibility_count};\n"
 )
-OUTPUT.write_text(output, encoding="utf-8", newline="\n")
+with OUTPUT.open("w", encoding="utf-8", newline="\n") as generated:
+    generated.write(output)
 
 # Stamp the owning translation unit because PlatformIO's Windows dependency
 # scanner has previously linked stale generated includes in this project.
@@ -290,11 +327,13 @@ stamp = f"// Emerald/Platinum TM/HM catalog: {catalog_hash}"
 stamp_pattern = r"// (?:Emerald|Emerald/Platinum) TM/HM catalog: [0-9a-f]{16}"
 stamped = re.sub(stamp_pattern, stamp, owner) if re.search(stamp_pattern, owner) else owner.rstrip() + f"\n\n{stamp}\n"
 if stamped != owner:
-    OWNER.write_text(stamped, encoding="utf-8", newline="\n")
+    with OWNER.open("w", encoding="utf-8", newline="\n") as source:
+        source.write(stamped)
 
 print(
     f"Generated {len(all_machine_moves)} machines ({len(platinum_move_ids)} Sinnoh + "
-    f"{len(UNOVA_TM_MOVES)} Unova + {len(KALOS_TM_MOVES)} Kalos TMs) and "
-    f"{compatibility_count} species-machine compatibilities through Kalos "
+    f"{len(UNOVA_TM_MOVES)} Unova + {len(KALOS_TM_MOVES)} Kalos + "
+    f"{len(ALOLA_TM_MOVES)} Alola TMs) and {compatibility_count} "
+    f"species-machine compatibilities through Alola "
     f"({catalog_hash})"
 )

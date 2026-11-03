@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from text_normalization import fire_red_ascii
 from unova_rom_data import expansion_text, level_moves, move_record
 from kalos_rom_data import (level_moves as y_level_moves,
                             move_record as y_move_record)
+from alola_expansion_data import (level_moves as alola_level_moves,
+                                  move_block as alola_move_block,
+                                  move_field as alola_move_field,
+                                  move_int as alola_move_int,
+                                  move_symbols as alola_move_symbols)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +70,14 @@ if not any(number == 560 for number, _ in gen6_moves):
 if len(gen6_moves) != 58 or gen6_moves[0][1] != "FLYING_PRESS" or gen6_moves[-1][1] != "LIGHT_OF_RUIN":
     raise RuntimeError("Unexpected expansion Generation-VI move order")
 for number, symbol in gen6_moves:
+    moves.append((number, symbol))
+    move_ids[symbol] = number
+
+gen7_moves = sorted(alola_move_symbols().items())
+if (len(gen7_moves) != 54 or gen7_moves[0] != (622, "SHORE_UP") or
+        gen7_moves[-1] != (675, "PHOTON_GEYSER")):
+    raise RuntimeError("Unexpected expansion Generation-VII move order")
+for number, symbol in gen7_moves:
     moves.append((number, symbol))
     move_ids[symbol] = number
 
@@ -378,6 +392,32 @@ gen6_move_effect_overrides = {
 if set(gen6_move_effect_overrides) != set(range(560, 618)):
     raise RuntimeError("Generation-VI move effect contract must cover IDs 560..617")
 
+# Ultra Sun's complete 54-move mechanics contract. Labels intentionally map
+# every row to a battle-engine handler instead of trusting a modern expansion
+# callback whose decomposition may change upstream.
+gen7_move_effect_overrides = {
+    622: "SHORE_UP", 623: "FIRST_IMPRESSION", 624: "BANEFUL_BUNKER",
+    625: "SPIRIT_SHACKLE", 626: "DARKEST_LARIAT", 627: "SPARKLING_ARIA",
+    628: "ICE_HAMMER", 629: "FLORAL_HEALING", 630: "HIT",
+    631: "STRENGTH_SAP", 632: "SOLAR_BLADE", 633: "HIT",
+    634: "FOLLOW_ME", 635: "TOXIC_THREAD", 636: "LASER_FOCUS",
+    637: "GEAR_UP", 638: "THROAT_CHOP", 639: "POLLEN_PUFF",
+    640: "ANCHOR_SHOT", 641: "PSYCHIC_TERRAIN", 642: "ATTACK_DOWN_HIT",
+    643: "DEFENSE_DOWN_HIT", 644: "POWER_TRIP", 645: "BURN_UP",
+    646: "SPEED_SWAP", 647: "ALWAYS_HIT", 648: "PURIFY",
+    649: "REVELATION_DANCE", 650: "CORE_ENFORCER", 651: "ATTACK_DOWN_HIT",
+    652: "INSTRUCT", 653: "BEAK_BLAST", 654: "CLANGING_SCALES",
+    655: "HIT", 656: "HIT", 657: "AURORA_VEIL", 658: "SHELL_TRAP",
+    659: "FLEUR_CANNON", 660: "PSYCHIC_FANGS", 661: "STOMPING_TANTRUM",
+    662: "DEFENSE_DOWN_HIT", 663: "QUICK_ATTACK", 664: "DEFENSE_DOWN_HIT",
+    665: "RECHARGE", 666: "SPECTRAL_THIEF", 667: "SUNSTEEL_STRIKE",
+    668: "MOONGEIST_BEAM", 669: "TEARFUL_LOOK", 670: "FLINCH_HIT",
+    671: "NATURES_MADNESS", 672: "MULTI_ATTACK", 673: "MIND_BLOWN",
+    674: "PLASMA_FISTS", 675: "PHOTON_GEYSER",
+}
+if set(gen7_move_effect_overrides) != set(range(622, 676)):
+    raise RuntimeError("Generation-VII move effect contract must cover IDs 622..675")
+
 
 def gen5_effect(block: str) -> str:
     effect = expansion_field(block, "effect", "EFFECT_HIT").removeprefix("EFFECT_")
@@ -475,6 +515,35 @@ for number, symbol in gen6_moves:
         f'{priority}, {effect_chance}, "{effect}", MoveTarget::{target}, '
         f'{makes_contact}, {magic_coat}, {snatch}, {protect}, {mirror}, {kings_rock}}},')
 
+for number, symbol in gen7_moves:
+    block = alola_move_block(symbol)
+    target_symbol = alola_move_field(block, "target", "TARGET_SELECTED")
+    if target_symbol not in gen5_targets:
+        raise RuntimeError(f"Unknown Gen-VII target {target_symbol} for {symbol}")
+    type_symbol = alola_move_field(block, "type").removeprefix("TYPE_").title()
+    category_symbol = alola_move_field(block, "category").removeprefix(
+        "DAMAGE_CATEGORY_").title()
+    if category_symbol not in {"Physical", "Special", "Status"}:
+        raise RuntimeError(f"Unknown Gen-VII category {category_symbol} for {symbol}")
+    target = gen5_targets[target_symbol]
+    makes_contact = "true" if re.search(r"\.makesContact\s*=\s*TRUE", block) else "false"
+    magic_coat = "true" if re.search(r"\.magicCoatAffected\s*=\s*TRUE", block) else "false"
+    snatch = "true" if re.search(r"\.snatchAffected\s*=\s*TRUE", block) else "false"
+    protect = "false" if re.search(r"\.ignoresProtect\s*=\s*TRUE", block) else (
+        "true" if target in {"Selected", "Random", "FoesAndAlly", "Both"} else "false")
+    mirror = "false" if re.search(r"\.mirrorMoveBanned\s*=\s*TRUE", block) else "true"
+    kings_rock = "false" if (category_symbol == "Status" or
+                             re.search(r"\.kingsRockBanned\s*=\s*TRUE", block)) else "true"
+    chances = [int(value) for value in re.findall(r"\.chance\s*=\s*(\d+)", block)]
+    effect_chance = max(chances, default=0)
+    rows.append(
+        f'    {{{number}, "{symbol.replace("_", " ")}", PokemonType::{type_symbol}, '
+        f'{alola_move_int(block, "power")}, {alola_move_int(block, "accuracy")}, '
+        f'MoveCategory::{category_symbol}, {alola_move_int(block, "pp")}, '
+        f'{alola_move_int(block, "priority")}, {effect_chance}, '
+        f'"{gen7_move_effect_overrides[number]}", MoveTarget::{target}, '
+        f'{makes_contact}, {magic_coat}, {snatch}, {protect}, {mirror}, {kings_rock}}},')
+
 entries: list[tuple[int, int, int]] = []
 for species_symbol, array_name in re.findall(
         r"\[SPECIES_([A-Z0-9_]+)\]\s*=\s*(s[A-Za-z0-9]+LevelUpLearnset)", pointers):
@@ -523,17 +592,58 @@ for species_id in range(1, 722):
         if 0 < move <= 617 and (species_id >= 650 or move >= 560):
             entries.append((species_id, int(level), int(move), 6))
 
+for species_id in range(722, 808):
+    for level, move in alola_level_moves(species_id):
+        if 0 < move <= 675:
+            entries.append((species_id, int(level), int(move), 7))
+
+# Rows used to repeat a ten-bit species id 16,092 times. Keep each species'
+# authored append order, but group rows so a compact offset table can replace
+# that repetition. The remaining move/level/generation tuple is exactly 20
+# bits and is emitted little-endian in three bytes.
+entries.sort(key=lambda row: row[0])
+learnset_offsets = [0] * 809
+learnset_bytes: list[int] = []
+entry_index = 0
+for species_id in range(1, 808):
+    learnset_offsets[species_id] = entry_index
+    while entry_index < len(entries) and entries[entry_index][0] == species_id:
+        _, level, move, generation = entries[entry_index]
+        packed = move | (level << 10) | (generation << 17)
+        learnset_bytes.extend((packed & 0xFF, (packed >> 8) & 0xFF,
+                               (packed >> 16) & 0xFF))
+        entry_index += 1
+learnset_offsets[808] = entry_index
+if entry_index != len(entries) or len(entries) >= 65536:
+    raise RuntimeError("Learnset offset table overflow")
+
 out = ('// Generated from local FireRed and Platinum battle data.\n'
        'constexpr FullMoveData kFullMoves[] = {\n' + '\n'.join(rows) +
-       '\n};\n\nconstexpr LearnsetEntry kLearnsets[] = {\n' +
-       '\n'.join(f'    {{{species}, {move}, {level}, {generation}}},'
-                 for species, level, move, generation in entries) + '\n};\n')
+       '\n};\n\nconstexpr uint16_t kLearnsetOffsets[809] = {\n' +
+       '\n'.join('    ' + ', '.join(str(value) for value in
+                                    learnset_offsets[start:start + 16]) + ','
+                 for start in range(0, len(learnset_offsets), 16)) +
+       '\n};\n\nconstexpr uint8_t kLearnsetRows[] = {\n' +
+       '\n'.join('    ' + ', '.join(f'0x{value:02X}' for value in
+                                    learnset_bytes[start:start + 24]) + ','
+                 for start in range(0, len(learnset_bytes), 24)) +
+       '\n};\n')
 (ROOT / 'src/game/MoveDataGenerated.inc').write_text(out, encoding='utf-8')
 
-description_rows = [
-    f'    case {number}: return "{normalized_description(symbol)}";'
+description_overrides = {
+    # These three moves are Special-category attacks that calculate damage
+    # against the target's physical Defense. The upstream prose says they do
+    # "physical damage", which contradicts the Summary category label and can
+    # be read as Physical-category damage. Spell out the actual mechanic.
+    473: "A SPECIAL ATTACK THAT CALCULATES DAMAGE USING THE TARGET'S DEFENSE.",
+    540: "A SPECIAL ATTACK THAT CALCULATES DAMAGE USING THE TARGET'S DEFENSE.",
+    548: "A SPECIAL ATTACK THAT CALCULATES DAMAGE USING THE TARGET'S DEFENSE.",
+}
+
+descriptions = {
+    number: normalized_description(symbol)
     for number, symbol in moves if number <= 354
-]
+}
 for number, symbol in moves:
     if number <= 354 or number > 467:
         continue
@@ -541,8 +651,7 @@ for number, symbol in moves:
     description = fire_red_ascii(description, f"Platinum move description {symbol}")
     description = description.replace("\r", " ").replace("\n", " ")
     description = re.sub(r"\s+", " ", description).strip()
-    description_rows.append(
-        f'    case {number}: return "{c_string(description.upper())}";')
+    descriptions[number] = description.upper()
 
 for number, symbol in gen5_moves:
     block = expansion_move_block(symbol)
@@ -553,10 +662,10 @@ for number, symbol in gen5_moves:
         description = " ".join(piece.replace("\\n", " ") for piece in pieces)
     else:
         description = "GENERATION V MOVE."
+    description = description_overrides.get(number, description)
     description = fire_red_ascii(re.sub(r"\s+", " ", description).strip(),
                                  f"Gen-V move description {symbol}")
-    description_rows.append(
-        f'    case {number}: return "{c_string(description.upper())}";')
+    descriptions[number] = description.upper()
 for number, symbol in gen6_moves:
     block = expansion_move_block(symbol)
     description_match = re.search(
@@ -568,15 +677,173 @@ for number, symbol in gen6_moves:
         description = "GENERATION VI MOVE."
     description = fire_red_ascii(re.sub(r"\s+", " ", description).strip(),
                                  f"Gen-VI move description {symbol}")
-    description_rows.append(
-        f'    case {number}: return "{c_string(description.upper())}";')
+    descriptions[number] = description.upper()
+for number, symbol in gen7_moves:
+    block = alola_move_block(symbol)
+    description_match = re.search(
+        r"\.description\s*=\s*COMPOUND_STRING\((.*?)\)\s*,", block, re.S)
+    if description_match:
+        pieces = re.findall(r'"([^"]*)"', description_match.group(1))
+        description = " ".join(piece.replace("\\n", " ") for piece in pieces)
+    else:
+        description = "GENERATION VII MOVE."
+    description = fire_red_ascii(re.sub(r"\s+", " ", description).strip(),
+                                 f"Gen-VII move description {symbol}")
+    descriptions[number] = description.upper()
+
+# Move prose used to be emitted as 671 independent C strings behind a switch.
+# That spent tens of kilobytes of the ESP32 OTA slot repeating words such as
+# THE, USER, FOE and ATTACK.  Keep the exact authored text while encoding each
+# space-separated word as one byte from a generated dictionary. Rare words use
+# a length-prefixed literal. The decoder below needs only one small UI buffer.
+word_counts = Counter(
+    word for description in descriptions.values() for word in description.split())
+word_candidates = []
+for word, count in word_counts.items():
+    # One dictionary token replaces len(word) bytes on each occurrence. The
+    # dictionary itself stores the word once plus a uint16 offset entry.
+    saving = count * (len(word) - 1) - len(word) - 2
+    if saving > 0:
+        word_candidates.append((saving, count, word))
+word_candidates.sort(reverse=True)
+dictionary = [word for _, _, word in word_candidates[:240]]
+dictionary_index = {word: index + 1 for index, word in enumerate(dictionary)}
+
+dictionary_offsets = []
+dictionary_bytes: list[int] = []
+for word in dictionary:
+    dictionary_offsets.append(len(dictionary_bytes))
+    dictionary_bytes.extend(word.encode('ascii'))
+dictionary_offsets.append(len(dictionary_bytes))
+
+maximum_move_id = max(descriptions)
+description_offsets = [0xFFFF] * (maximum_move_id + 1)
+description_bytes: list[int] = []
+for move_id, description in sorted(descriptions.items()):
+    description_offsets[move_id] = len(description_bytes)
+    for word in description.split():
+        token = dictionary_index.get(word)
+        if token is not None:
+            description_bytes.append(token)
+        else:
+            encoded = word.encode('ascii')
+            if len(encoded) > 254:
+                raise RuntimeError(f'Move description word too long: {word}')
+            description_bytes.extend((0, len(encoded), *encoded))
+    description_bytes.append(0xFF)
+
+if len(description_bytes) >= 0xFFFF or len(dictionary_bytes) >= 0xFFFF:
+    raise RuntimeError('Compressed move-description table exceeds uint16 offsets')
+
+def decode_description(move_id: int) -> str:
+    cursor = description_offsets[move_id]
+    decoded = []
+    while description_bytes[cursor] != 0xFF:
+        token = description_bytes[cursor]
+        cursor += 1
+        if token:
+            decoded.append(dictionary[token - 1])
+        else:
+            length = description_bytes[cursor]
+            cursor += 1
+            decoded.append(bytes(description_bytes[cursor:cursor + length]).decode('ascii'))
+            cursor += length
+    return ' '.join(decoded)
+
+for move_id, description in descriptions.items():
+    if decode_description(move_id) != description:
+        raise RuntimeError(f'Move description compression mismatch for {move_id}')
+
+def cpp_values(values: list[int], width: int, hexadecimal: bool = False) -> str:
+    formatter = (lambda value: f'0x{value:02X}') if hexadecimal else str
+    return '\n'.join(
+        '    ' + ', '.join(formatter(value) for value in values[start:start + width]) + ','
+        for start in range(0, len(values), width))
+
 description_out = (
-    '// Generated from FireRed and Platinum original move descriptions.\n'
+    '// Generated from FireRed/Platinum descriptions; exact word-token compression.\n'
+    f'constexpr uint16_t kMoveDescriptionOffsets[{len(description_offsets)}] = {{\n' +
+    cpp_values(description_offsets, 16) +
+    '\n};\n\nconstexpr uint16_t kMoveDescriptionWordOffsets[] = {\n' +
+    cpp_values(dictionary_offsets, 16) +
+    '\n};\n\nconstexpr uint8_t kMoveDescriptionWords[] = {\n' +
+    cpp_values(dictionary_bytes, 24, True) +
+    '\n};\n\nconstexpr uint8_t kMoveDescriptionData[] = {\n' +
+    cpp_values(description_bytes, 24, True) +
+    '\n};\n\n'
     'const char* generatedMoveDescription(uint16_t moveId) {\n'
-    '  switch (moveId) {\n' + '\n'.join(description_rows) +
-    '\n    default: return "NO DESCRIPTION AVAILABLE.";\n'
-    '  }\n}\n'
+    '  static char output[160];\n'
+    '  if (moveId >= sizeof(kMoveDescriptionOffsets) / sizeof(kMoveDescriptionOffsets[0]) ||\n'
+    '      kMoveDescriptionOffsets[moveId] == 0xFFFFU)\n'
+    '    return "NO DESCRIPTION AVAILABLE.";\n'
+    '  uint16_t cursor = kMoveDescriptionOffsets[moveId];\n'
+    '  uint16_t written = 0;\n'
+    '  bool first = true;\n'
+    '  while (kMoveDescriptionData[cursor] != 0xFFU && written + 1U < sizeof(output)) {\n'
+    '    if (!first && written + 1U < sizeof(output)) output[written++] = \' \';\n'
+    '    first = false;\n'
+    '    const uint8_t token = kMoveDescriptionData[cursor++];\n'
+    '    if (token) {\n'
+    '      uint16_t offset = kMoveDescriptionWordOffsets[token - 1U];\n'
+    '      const uint16_t end = kMoveDescriptionWordOffsets[token];\n'
+    '      while (offset < end && written + 1U < sizeof(output))\n'
+    '        output[written++] = static_cast<char>(kMoveDescriptionWords[offset++]);\n'
+    '    } else {\n'
+    '      uint8_t length = kMoveDescriptionData[cursor++];\n'
+    '      while (length-- && written + 1U < sizeof(output))\n'
+    '        output[written++] = static_cast<char>(kMoveDescriptionData[cursor++]);\n'
+    '    }\n'
+    '  }\n'
+    '  output[written] = \'\\0\';\n'
+    '  return output;\n'
+    '}\n'
 )
 (ROOT / 'src/game/MoveDescriptionsGenerated.inc').write_text(
     description_out, encoding='utf-8')
-print(f"Generated {len(rows)} moves, {len(description_rows)} descriptions and {len(entries)} learnset entries")
+
+z_effect_names = {
+    "Z_EFFECT_RESET_STATS": "ResetStats",
+    "Z_EFFECT_RECOVER_HP": "RecoverHp",
+    "Z_EFFECT_ATK_UP_1": "AttackUp1",
+    "Z_EFFECT_ATK_UP_2": "AttackUp2",
+    "Z_EFFECT_ATK_UP_3": "AttackUp3",
+    "Z_EFFECT_DEF_UP_1": "DefenseUp1",
+    "Z_EFFECT_SPATK_UP_1": "SpAttackUp1",
+    "Z_EFFECT_SPATK_UP_2": "SpAttackUp2",
+    "Z_EFFECT_SPDEF_UP_1": "SpDefenseUp1",
+    "Z_EFFECT_SPDEF_UP_2": "SpDefenseUp2",
+    "Z_EFFECT_SPD_UP_1": "SpeedUp1",
+    "Z_EFFECT_SPD_UP_2": "SpeedUp2",
+    "Z_EFFECT_ACC_UP_1": "AccuracyUp1",
+    "Z_EFFECT_EVSN_UP_1": "EvasionUp1",
+    "Z_EFFECT_ALL_STATS_UP_1": "AllStatsUp1",
+    "Z_EFFECT_BOOST_CRITS": "BoostCritical",
+    "Z_EFFECT_CURSE": "Curse",
+    "Z_EFFECT_FOLLOW_ME": "FollowMe",
+    "Z_EFFECT_RESTORE_REPLACEMENT_HP": "RestoreReplacementHp",
+}
+z_rows = []
+for number, symbol in moves:
+    canonical_symbol = next((candidate for candidate, candidate_number in re.findall(
+        r"\bMOVE_([A-Z0-9_]+)\s*=\s*(\d+)", expansion_move_constants)
+        if int(candidate_number) == number), symbol)
+    block = expansion_move_block(canonical_symbol)
+    match = re.search(
+        r"\.zMove\s*=\s*\{[^}]*\.effect\s*=\s*(Z_EFFECT_[A-Z0-9_]+)",
+        block, re.S)
+    if not match:
+        continue
+    effect = match.group(1)
+    if effect not in z_effect_names:
+        raise RuntimeError(f"Unknown Z status effect for {symbol}: {effect}")
+    z_rows.append(
+        f"    case {number}: return ZStatusEffect::{z_effect_names[effect]};")
+z_out = (
+    '// Generated from pokeemerald-expansion canonical Z-Move metadata.\n'
+    'ZStatusEffect generatedZStatusEffect(uint16_t moveId) {\n'
+    '  switch (moveId) {\n' + '\n'.join(z_rows) +
+    '\n    default: return ZStatusEffect::None;\n'
+    '  }\n}\n'
+)
+(ROOT / 'src/game/ZMoveDataGenerated.inc').write_text(z_out, encoding='utf-8')
+print(f"Generated {len(rows)} moves, {len(descriptions)} descriptions and {len(entries)} learnset entries")

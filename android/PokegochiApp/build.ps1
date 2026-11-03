@@ -1,4 +1,5 @@
-param([switch]$EnableNativeCore, [switch]$Release)
+param([switch]$EnableNativeCore, [switch]$Release, [switch]$XyShinyFixture,
+      [switch]$LegendaryBoxFixture)
 $ErrorActionPreference = 'Stop'
 # Kept for compatibility with older local commands. The firmware runtime is
 # mandatory now; there is no simplified Java/fallback game in this module.
@@ -30,7 +31,11 @@ if (Test-Path -LiteralPath $ndk) {
 Push-Location $appRoot
 try {
     $task = if ($Release) { ':app:verifyReleaseApkAssetPack' } else { ':app:verifyDebugApkAssetPack' }
-    & $wrapper '-p' $appRoot $task
+    $arguments = @('-p', $appRoot)
+    if ($XyShinyFixture) { $arguments += '-PxyShinyFixture=true' }
+    if ($LegendaryBoxFixture) { $arguments += '-PlegendaryBoxFixture=true' }
+    $arguments += $task
+    & $wrapper @arguments
     if ($LASTEXITCODE -ne 0) { throw "Gradle terminou com codigo $LASTEXITCODE." }
 } finally { Pop-Location }
 Write-Host ("PokegochiApp compilado ({0})." -f $(if ($Release) { 'release' } else { 'debug' })) -ForegroundColor Green

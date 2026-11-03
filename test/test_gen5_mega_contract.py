@@ -2,6 +2,7 @@
 """Keep the eight Unova Mega forms complete across engine and asset pack."""
 
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 MEGA = (ROOT / "src/game/MegaEvolution.cpp").read_text(encoding="utf-8")
@@ -39,6 +40,7 @@ assert ENGINE.count("hasGroundImmunityAbility(") >= 8
 assert "groundImmunityAbilityApplies" in ENGINE
 assert 'abilityIs(attacker,"EELEVATE")' in ENGINE
 assert '"--gen5-mega-assets-only"' in PACKER
-assert "kRequiredAssetPackVersion = 46" in PACK_VERSION
+pack_version = re.search(r"kRequiredAssetPackVersion\s*=\s*(\d+)", PACK_VERSION)
+assert pack_version and int(pack_version.group(1)) >= 50
 
 print("Generation 5 Mega contract passed: 8 forms, 3 abilities, 64 assets.")

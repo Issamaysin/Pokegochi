@@ -60,10 +60,49 @@ void initializeNewSave(GameSave& save) {
   save.sinnoh.rngState = 0x53494E4EU;
   save.unova.rngState = 0x554E4F56UL;
   save.unova.royalUnovaLastDay = UINT32_MAX;
+  save.alola.rngState = 0x414C4F4CUL;
   save.towerDefense.rngState = 0x544F5745UL;
   save.towerDefense.unlockedStages = 1U;
   save.towerDefense.enabledDefendersMask = 0x07U;
   save.lastNpcGiftDay = UINT32_MAX;
+}
+
+// Ultranecrozium Z existed briefly as a project-private held item. Its enum
+// value remains as a tombstone for save ABI compatibility, but loaded saves
+// must never expose it as equipment or battle-local state. This repair is
+// deliberately independent of region/UI gates.
+bool discardRetiredHeldItems(GameSave& save) {
+  bool changed = false;
+  const uint64_t retiredBits =
+      (save.gen7UniqueItems.bagMask | save.gen7UniqueItems.claimedMask) &
+      kRemovedUltranecroziumZBit;
+  if (retiredBits) {
+    save.gen7UniqueItems.bagMask &= ~kRemovedUltranecroziumZBit;
+    save.gen7UniqueItems.claimedMask &= ~kRemovedUltranecroziumZBit;
+    changed = true;
+  }
+  for (OwnedPokemon& pokemon : save.collection.box)
+    changed = discardRetiredHeldItem(pokemon) || changed;
+  for (OwnedPokemon& pokemon : save.battle.opponents)
+    changed = discardRetiredHeldItem(pokemon) || changed;
+  changed = discardRetiredHeldItem(save.alolaForms.fusedDonor) || changed;
+
+  const auto discardVolatile = [&changed](CombatVolatile& volatileState) {
+    if (!heldItemIsRetired(volatileState.heldItemOverride)) return;
+    volatileState.heldItemOverride = HeldItem::None;
+    volatileState.hasHeldItemOverride = false;
+    changed = true;
+  };
+  discardVolatile(save.battle.playerVolatile);
+  for (CombatVolatile& volatileState : save.battle.opponentVolatiles)
+    discardVolatile(volatileState);
+  for (BattleHeldItemState& itemState : save.battle.playerHeldItems) {
+    if (!heldItemIsRetired(itemState.heldItemOverride)) continue;
+    itemState.heldItemOverride = HeldItem::None;
+    itemState.hasHeldItemOverride = false;
+    changed = true;
+  }
+  return changed;
 }
 
 // A new physical Pokegochi must not start on the same deterministic random
@@ -126,7 +165,9 @@ bool PersistentSave::begin(void* migrationScratch, size_t migrationScratchBytes)
   // Current records are read and committed as streams, so no permanent
   // Record-sized heap allocation is needed. The renderer's still-unused boot
   // arena is borrowed only if an older save must be migrated.
-  const size_t requiredMigrationBytes = std::max(sizeof(Record), sizeof(RecordV47));
+  const size_t requiredMigrationBytes = std::max(sizeof(Record), std::max(
+      sizeof(RecordV50), std::max(sizeof(RecordV49),
+      std::max(sizeof(RecordV47), sizeof(RecordV48)))));
   scratch_ = migrationScratchBytes >= requiredMigrationBytes
                  ? reinterpret_cast<Record*>(migrationScratch)
                  : nullptr;
@@ -134,13 +175,16 @@ bool PersistentSave::begin(void* migrationScratch, size_t migrationScratchBytes)
   Serial.printf("[SAVE] storage ready migration-scratch=%s/%u record=%u legacy=%u heap=%u block=%u\n",
                 scratch_ ? "OK" : "NONE", static_cast<unsigned>(migrationScratchBytes),
                 static_cast<unsigned>(sizeof(Record)),
-                static_cast<unsigned>(sizeof(RecordV47)),
+                static_cast<unsigned>(std::max(sizeof(RecordV50), std::max(
+                    sizeof(RecordV49), std::max(sizeof(RecordV47), sizeof(RecordV48))))),
                 static_cast<unsigned>(ESP.getFreeHeap()),
                 static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #else
   (void)migrationScratch;
   (void)migrationScratchBytes;
-  const size_t requiredMigrationBytes = std::max(sizeof(Record), sizeof(RecordV47));
+  const size_t requiredMigrationBytes = std::max(sizeof(Record), std::max(
+      sizeof(RecordV50), std::max(sizeof(RecordV49),
+      std::max(sizeof(RecordV47), sizeof(RecordV48)))));
   if (!scratch_)
     scratch_ = reinterpret_cast<Record*>(::operator new(requiredMigrationBytes, std::nothrow));
   if (!scratch_) return false;
@@ -210,7 +254,8 @@ bool PersistentSave::inspectAnyFileRecord(const char* key, uint32_t& sequence) c
   if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) != sizeof(header) ||
       header.magic != kMagic || header.version < 21U ||
       header.version > kFormatVersion || !header.payloadSize ||
-      header.payloadSize > std::max(sizeof(GameSave), sizeof(GameSaveV47)) ||
+      header.payloadSize > std::max(sizeof(GameSave), std::max(sizeof(GameSaveV50),
+          std::max(sizeof(GameSaveV49), std::max(sizeof(GameSaveV47), sizeof(GameSaveV48))))) ||
       file.size() != sizeof(CurrentSaveHeader) + header.payloadSize +
                          2U * sizeof(uint32_t)) {
     file.close();
@@ -263,6 +308,7 @@ bool PersistentSave::loadCurrentRecord(const char* key, GameSave& save, uint32_t
       reinterpret_cast<const uint8_t*>(&header), sizeof(header));
   crc = crc32Update(crc, reinterpret_cast<const uint8_t*>(&save), sizeof(save));
   if (!complete || storedCrc != ~crc) return false;
+  discardRetiredHeldItems(save);
   sequence = header.sequence;
   return true;
 }
@@ -732,6 +778,54 @@ bool PersistentSave::readRecordV47(const char* key, RecordV47& record) {
   return read && record.magic == kMagic && record.version == 47 &&
          record.payloadSize == sizeof(GameSaveV47) && record.crc == calculatedCrc;
 }
+bool PersistentSave::readRecordV48(const char* key, RecordV48& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV48)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV48) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV48, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 48 &&
+         record.payloadSize == sizeof(GameSaveV48) && record.crc == calculatedCrc;
+}
+bool PersistentSave::readRecordV49(const char* key, RecordV49& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV49)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV49) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV49, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 49 &&
+         record.payloadSize == sizeof(GameSaveV49) && record.crc == calculatedCrc;
+}
+bool PersistentSave::readRecordV50(const char* key, RecordV50& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV50)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV50) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV50, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 50 &&
+         record.payloadSize == sizeof(GameSaveV50) && record.crc == calculatedCrc;
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -949,6 +1043,121 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     std::memset(save.battle.opponentEncoreTurns,0,sizeof(save.battle.opponentEncoreTurns));
   };
   if (!found) {
+    // V51 appends only the counted Gen-IV--VII held-item inventory. Copy the
+    // complete shipped V50 payload and leave every new quantity at zero.
+    if (scratchBytes_ >= sizeof(RecordV50)) {
+      RecordV50* legacy50 = reinterpret_cast<RecordV50*>(record);
+      bool legacy50Found = false;
+      uint32_t legacy50Sequence = 0;
+      for (const char* key : {"save_a", "save_b"}) {
+        std::memset(legacy50, 0, sizeof(*legacy50));
+        if (!readRecordV50(key, *legacy50) ||
+            (legacy50Found && !isNewer(legacy50->sequence, legacy50Sequence))) continue;
+        initializeNewSave(save);
+        std::memcpy(&save, legacy50->payload.bytes, sizeof(legacy50->payload.bytes));
+        save.modernHeldItems = ModernHeldItemInventory{};
+        legacy50Sequence = legacy50->sequence;
+        legacy50Found = true;
+      }
+      if (legacy50Found) {
+        sequence_ = legacy50Sequence;
+        nextSlotA_ = true;
+        discardRetiredHeldItems(save);
+        if (!commit(save)) return SaveLoadResult::StorageError;
+        return SaveLoadResult::Loaded;
+      }
+    }
+  }
+  if (!found) {
+    // V50 appends only the Necrozma fusion sidecar. Copy the byte-exact V49
+    // prefix and leave the new state empty, preserving every active battle,
+    // collection slot and Alola progression field.
+    if (scratchBytes_ >= sizeof(RecordV49)) {
+      RecordV49* legacy49 = reinterpret_cast<RecordV49*>(record);
+      bool legacy49Found = false;
+      uint32_t legacy49Sequence = 0;
+      for (const char* key : {"save_a", "save_b"}) {
+        std::memset(legacy49, 0, sizeof(*legacy49));
+        if (!readRecordV49(key, *legacy49) ||
+            (legacy49Found && !isNewer(legacy49->sequence, legacy49Sequence))) continue;
+        initializeNewSave(save);
+        std::memcpy(&save, legacy49->payload.bytes, sizeof(legacy49->payload.bytes));
+        save.alolaForms = AlolaFormState{};
+        legacy49Sequence = legacy49->sequence;
+        legacy49Found = true;
+      }
+      if (legacy49Found) {
+        sequence_ = legacy49Sequence;
+        nextSlotA_ = true;
+        discardRetiredHeldItems(save);
+        if (!commit(save)) return SaveLoadResult::StorageError;
+        return SaveLoadResult::Loaded;
+      }
+    }
+  }
+  if (!found) {
+    // V49 expands the living-dex Box/Pokedex through Alola and appends the
+    // Ultra Sun campaign. V48 is copied field-by-field so every Kalos save,
+    // including a battle in progress, resumes exactly where it stopped.
+    if (scratchBytes_ >= sizeof(RecordV48)) {
+      RecordV48* legacy48 = reinterpret_cast<RecordV48*>(record);
+      bool legacy48Found = false;
+      uint32_t legacy48Sequence = 0;
+      for (const char* key : {"save_a", "save_b"}) {
+        std::memset(legacy48, 0, sizeof(*legacy48));
+        if (!readRecordV48(key, *legacy48) ||
+            (legacy48Found && !isNewer(legacy48->sequence, legacy48Sequence))) continue;
+        initializeNewSave(save);
+        const GameSaveV48& old = legacy48->payload;
+        save.playTimeSeconds = old.playTimeSeconds;
+        save.bootCount = old.bootCount;
+        save.flags = old.flags;
+        save.activePetSlot = old.activePetSlot;
+        save.collection = old.collection;
+        save.inventory = old.inventory;
+        save.encounterCharges = old.encounterCharges;
+        save.wildEncounterClock = old.wildEncounterClock;
+        std::memcpy(&save.battle, old.battle.bytes, sizeof(old.battle.bytes));
+        save.pokedex = old.pokedex;
+        save.gymProgress = old.gymProgress;
+        save.money = old.money;
+        save.mart = old.mart;
+        save.moveLearning = old.moveLearning;
+        save.evolutionQueue = old.evolutionQueue;
+        save.egg = old.egg;
+        save.settings = old.settings;
+        save.ownedMachines = old.ownedMachines;
+        save.statistics = old.statistics;
+        save.martSeenDay = old.martSeenDay;
+        save.ppItems = old.ppItems;
+        save.homePetPlacement = old.homePetPlacement;
+        save.berryGarden = old.berryGarden;
+        save.creativeBackgrounds = old.creativeBackgrounds;
+        save.specialHeldItems = old.specialHeldItems;
+        save.lastNpcGiftDay = old.lastNpcGiftDay;
+        save.clockLocalEpochSeconds = old.clockLocalEpochSeconds;
+        save.bossCooldownSecondsRemaining = old.bossCooldownSecondsRemaining;
+        save.bossEncounter = old.bossEncounter;
+        save.eggInventory = old.eggInventory;
+        save.sinnoh = old.sinnoh;
+        save.towerDefense = old.towerDefense;
+        save.gen4UniqueItems = old.gen4UniqueItems;
+        save.unova = old.unova;
+        save.gen5UniqueItems = old.gen5UniqueItems;
+        save.unovaForms = old.unovaForms;
+        save.kalos = old.kalos;
+        legacy48Sequence = legacy48->sequence;
+        legacy48Found = true;
+      }
+      if (legacy48Found) {
+        sequence_ = legacy48Sequence;
+        nextSlotA_ = true;
+        if (!commit(save)) return SaveLoadResult::StorageError;
+        return SaveLoadResult::Loaded;
+      }
+    }
+  }
+  if (!found) {
     // V48 keeps the complete Kalos payload but compacts V47's occupied Box
     // positions into 784 slots. Reject a genuinely overfull legacy Box
     // instead of silently dropping any Pokemon.
@@ -978,7 +1187,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
         save.inventory = old.inventory;
         save.encounterCharges = old.encounterCharges;
         save.wildEncounterClock = old.wildEncounterClock;
-        save.battle = old.battle;
+        std::memcpy(&save.battle, old.battle.bytes, sizeof(old.battle.bytes));
         save.pokedex = old.pokedex;
         save.gymProgress = old.gymProgress;
         save.money = old.money;
@@ -2070,6 +2279,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     return SaveLoadResult::FirstStart;
   }
   sequence_ = selectedSequence;
+  discardRetiredHeldItems(save);
   // Alternate the next record after the most recently observed sequence.
   nextSlotA_ = (selectedSequence & 1U) == 0U;
   if (!gameWasStarted && preferences_.putBool("started", true) != 1) return SaveLoadResult::StorageError;

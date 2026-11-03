@@ -58,7 +58,7 @@ def main() -> None:
         )
 
     for species, name in GENERIC_NAMES.items():
-        assert f'{{{species}, "{name}",' in GENERATED, (
+        assert f'{{"{name}", {species},' in GENERATED, (
             f"#{species} still exposes a base-form suffix as its species name"
         )
 

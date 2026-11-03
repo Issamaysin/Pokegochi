@@ -12,12 +12,12 @@ constexpr uint16_t kBoxCapacityV41 = 386;
 constexpr uint16_t kBoxCapacityV45 = 493;
 constexpr uint16_t kBoxCapacityV46 = 720;
 constexpr uint16_t kBoxCapacityV47 = 800;
-// 721 slots are required for one of every National species through Kalos.
-// Keep 63 additional positions for forms, shinies and duplicates.  The
-// shipped V47 capacity of 800 exceeded the ESP32's largest contiguous heap
-// block once the renderer was resident, so V48 compacts occupied legacy
-// positions into this still-complete living-Dex capacity.
-constexpr uint16_t kBoxCapacity = 784;
+constexpr uint16_t kBoxCapacityV48 = 784;
+// Alola raises the National Dex to #807. Keep a small reserve above a full
+// living Dex while regional variants persist on their shared National record.
+// The save buffer is reserved before the renderer starts, avoiding
+// the late fragmented allocation that forced V48's temporary reduction.
+constexpr uint16_t kBoxCapacity = 816;
 constexpr uint8_t kPartyCapacity = 3;
 constexpr uint8_t kMoveSlots = 4;
 constexpr uint32_t kEmptyPokemonUid = 0;
@@ -135,6 +135,13 @@ struct PokemonCollectionV47 {
   uint32_t nextUid = 1;
 };
 
+// Frozen Kalos/V48 collection after the contiguous-allocation compaction.
+struct PokemonCollectionV48 {
+  OwnedPokemon box[kBoxCapacityV48]{};
+  uint32_t party[kPartyCapacity]{};
+  uint32_t nextUid = 1;
+};
+
 struct PokemonCollection {
   OwnedPokemon box[kBoxCapacity]{};
   uint32_t party[kPartyCapacity]{};
@@ -161,6 +168,15 @@ struct PokemonCollection {
   PokemonCollection& operator=(const PokemonCollectionV46& legacy) {
     for (uint16_t index = 0; index < kBoxCapacity; ++index)
       box[index] = index < kBoxCapacityV46 ? legacy.box[index] : OwnedPokemon{};
+    for (uint8_t index = 0; index < kPartyCapacity; ++index)
+      party[index] = legacy.party[index];
+    nextUid = legacy.nextUid;
+    return *this;
+  }
+
+  PokemonCollection& operator=(const PokemonCollectionV48& legacy) {
+    for (uint16_t index = 0; index < kBoxCapacity; ++index)
+      box[index] = index < kBoxCapacityV48 ? legacy.box[index] : OwnedPokemon{};
     for (uint8_t index = 0; index < kPartyCapacity; ++index)
       party[index] = legacy.party[index];
     nextUid = legacy.nextUid;

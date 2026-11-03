@@ -23,18 +23,20 @@ StoredEgg makeSpecialEgg(const PokedexState& pokedex,uint8_t unlockedGeneration,
   for(uint16_t species:kStarterSpecies)
     if(!PokedexLogic::hasCaught(pokedex,species))availableStarters[availableCount++]=species;
   const uint8_t generation=std::max<uint8_t>(1U,
-      std::min<uint8_t>(6U,unlockedGeneration));
+      std::min<uint8_t>(7U,unlockedGeneration));
   const uint16_t speciesLimit=PokedexLogic::generationSpeciesCount(generation);
   uint8_t legendaryCount=0;
   for(uint16_t species=1;species<=speciesLimit;++species)
-    if(PokedexLogic::isLegendaryOrMythical(species))++legendaryCount;
+    if(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(species))
+      ++legendaryCount;
   StoredEgg egg;
   egg.speciesId=availableCount?availableStarters[rng(seed)%availableCount]:
       0U;
   if(!egg.speciesId&&legendaryCount){
     uint8_t pick=static_cast<uint8_t>(rng(seed)%legendaryCount);
     for(uint16_t species=1;species<=speciesLimit;++species){
-      if(!PokedexLogic::isLegendaryOrMythical(species))continue;
+      if(!PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(species))
+        continue;
       if(!pick){egg.speciesId=species;break;}
       --pick;
     }

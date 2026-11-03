@@ -27,6 +27,7 @@ $environmentName = 'esp32-2432S028R'
 $esptool = Join-Path $platformIoCore 'packages\tool-esptoolpy\esptool.py'
 $partitionTool = Join-Path $platformIoCore 'packages\framework-arduinoespressif32\tools\gen_esp32part.py'
 $mkspiffs = Join-Path $projectRoot '.tools\mkspiffs-0.2.3\mkspiffs-0.2.3-arduino-esp32-win32\mkspiffs.exe'
+$targetOtaSlotSize = 0x1E0000
 $targetSpiffsOffset = 0x3D0000
 $targetSpiffsSize = 0x30000
 
@@ -234,6 +235,23 @@ function Verify-FlashedFirmware([string]$SerialPort) {
         'verify-flash', '0x10000', $firmware)
 }
 
+function Assert-FirmwareFitsOtaSlot {
+    $firmware = Join-Path $projectRoot ".pio\build\$environmentName\firmware.bin"
+    if (-not (Test-Path -LiteralPath $firmware)) {
+        throw "Firmware compilado nao encontrado: '$firmware'."
+    }
+    $firmwareBytes = (Get-Item -LiteralPath $firmware).Length
+    if ($firmwareBytes -gt $targetOtaSlotSize) {
+        throw (("Firmware real possui {0} bytes e excede o slot OTA de {1} bytes por {2} bytes. " +
+                "A gravacao foi bloqueada antes de tocar na flash.") -f
+                $firmwareBytes, $targetOtaSlotSize,
+                ($firmwareBytes - $targetOtaSlotSize))
+    }
+    Write-Host ("Imagem OTA validada: {0}/{1} bytes ({2} bytes livres)." -f
+        $firmwareBytes, $targetOtaSlotSize,
+        ($targetOtaSlotSize - $firmwareBytes)) -ForegroundColor DarkGray
+}
+
 function Write-UsbFirmware([string]$SerialPort) {
     $buildDir = Join-Path $projectRoot ".pio\build\$environmentName"
     $bootloader = Join-Path $buildDir 'bootloader.bin'
@@ -333,6 +351,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao gerar os treinadores da Battle Tower do Emerald.' }
     & $python @arguments
     if ($LASTEXITCODE -ne 0) { throw "PlatformIO terminou com codigo $LASTEXITCODE." }
+    Assert-FirmwareFitsOtaSlot
     if (-not $BuildOnly) {
         Write-UsbFirmware $Port
         Restore-MigratedSave $saveMigration $Port

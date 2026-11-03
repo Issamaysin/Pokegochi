@@ -239,7 +239,7 @@ int main() {
   assert(containsMove(kyogrePool,kyogreCount,static_cast<MoveId>(618U)));
   assert(containsMove(groudonPool,groudonCount,static_cast<MoveId>(619U)));
   assert(containsMove(rayquazaPool,rayquazaCount,static_cast<MoveId>(620U)));
-  assert(containsMove(zygardePool,zygardeCount,static_cast<MoveId>(687U)));
+  assert(containsMove(zygardePool,zygardeCount,static_cast<MoveId>(650U)));
   assert(MegaEvolution::canTransform(384U)&&
          !MegaEvolution::canHoldMegaStone(384U));
   assert(MegaEvolution::canHoldMegaStone(382U)&&
@@ -279,7 +279,7 @@ int main() {
   assert(sawRayFormChange);
   assert(MegaEvolution::resetRayquazaBattleMega(*megaRay)&&
          MegaEvolution::variantFor(*megaRay)==MegaVariant::None);
-  for(uint16_t move:{618U,619U,620U,621U,687U,920U}){
+  for(uint16_t move:{618U,619U,620U,621U,650U,920U}){
     assert(findFullMove(static_cast<MoveId>(move)));
     assert(findBattleAnimation(move));
     assert(findBattleAnimationProgram(move));
@@ -310,9 +310,9 @@ int main() {
         candidate,megaPool,64U,6U);
     assert(baseCount==megaCount);
     if(candidate.speciesId==718U){
-      assert(containsMove(basePool,baseCount,static_cast<MoveId>(687U)));
+      assert(containsMove(basePool,baseCount,static_cast<MoveId>(650U)));
       assert(!containsMove(basePool,baseCount,static_cast<MoveId>(920U)));
-      assert(!containsMove(megaPool,megaCount,static_cast<MoveId>(687U)));
+      assert(!containsMove(megaPool,megaCount,static_cast<MoveId>(650U)));
       assert(containsMove(megaPool,megaCount,static_cast<MoveId>(920U)));
     }else{
       for(uint8_t move=0U;move<baseCount;++move)assert(basePool[move]==megaPool[move]);
@@ -321,20 +321,20 @@ int main() {
 
   OwnedPokemon megaZygarde=CollectionLogic::createPokemon(
       0U,718U,100U,false,0x718920U,6U);
-  megaZygarde.moves[0]=static_cast<MoveId>(687U);
+  megaZygarde.moves[0]=static_cast<MoveId>(650U);
   megaZygarde.movePp[0]=10U;
   assert(CollectionLogic::setHeldItemQuantity(
       megaZygarde,HeldItem::MegaStone,1U));
   assert(CollectionLogic::resolvedForm(megaZygarde)==1U);
   assert(MegaEvolution::variantFor(megaZygarde)==MegaVariant::None);
-  assert(megaZygarde.moves[0]==static_cast<MoveId>(687U));
+  assert(megaZygarde.moves[0]==static_cast<MoveId>(650U));
   megaZygarde.form=2U;
   assert(MegaEvolution::synchronizeSignatureMove(megaZygarde));
   assert(MegaEvolution::variantFor(megaZygarde)==MegaVariant::Mega);
   assert(megaZygarde.moves[0]==static_cast<MoveId>(920U));
   assert(CollectionLogic::setHeldItemQuantity(
       megaZygarde,HeldItem::None,0U));
-  assert(megaZygarde.moves[0]==static_cast<MoveId>(687U));
+  assert(megaZygarde.moves[0]==static_cast<MoveId>(650U));
 
   // Zygarde assembles exactly one stage per completed living turn. The
   // universal Mega Stone is legal in 10%/50%, but activates only when the
@@ -346,7 +346,7 @@ int main() {
         0U,718U,100U,false,withMegaStone?0x718A5U:0x71805U,6U);
     zygarde.moves[0]=static_cast<MoveId>(150U); // SPLASH
     zygarde.movePp[0]=40U;
-    zygarde.moves[1]=static_cast<MoveId>(687U); // CORE ENFORCER
+    zygarde.moves[1]=static_cast<MoveId>(650U); // CORE ENFORCER
     zygarde.movePp[1]=10U;
     if(withMegaStone)
       assert(CollectionLogic::setHeldItemQuantity(
@@ -381,7 +381,7 @@ int main() {
     OwnedPokemon* active=CollectionLogic::find(owned,zygardeUid);
     assert(active&&CollectionLogic::resolvedForm(*active)==1U);
     assert(MegaEvolution::variantFor(*active)==MegaVariant::None);
-    assert(active->moves[1]==static_cast<MoveId>(687U));
+    assert(active->moves[1]==static_cast<MoveId>(650U));
 
     const auto assertTransition=[](const BattleActionResult& result,
                                    uint8_t before,uint8_t after){
@@ -413,7 +413,7 @@ int main() {
     assert(first.accepted&&battle.active);
     assert(CollectionLogic::resolvedForm(*active)==0U);
     assert(MegaEvolution::variantFor(*active)==MegaVariant::None);
-    assert(active->moves[1]==static_cast<MoveId>(687U));
+    assert(active->moves[1]==static_cast<MoveId>(650U));
     assertTransition(first,1U,0U);
 
     active->currentHp=static_cast<uint16_t>(active->maximumHp/2U+1U);
@@ -430,7 +430,7 @@ int main() {
       assert(active->moves[1]==static_cast<MoveId>(920U));
     }else{
       assert(MegaEvolution::variantFor(*active)==MegaVariant::None);
-      assert(active->moves[1]==static_cast<MoveId>(687U));
+      assert(active->moves[1]==static_cast<MoveId>(650U));
     }
     // Leaving battle restores 10% Forme without converting a wounded
     // Complete Zygarde into an artificial 1-HP survivor. Preserve its HP
@@ -455,7 +455,7 @@ int main() {
     assert(active->currentHp==expectedHp);
     assert(active->currentHp>1U);
     assert(MegaEvolution::variantFor(*active)==MegaVariant::None);
-    assert(active->moves[1]==static_cast<MoveId>(687U));
+    assert(active->moves[1]==static_cast<MoveId>(650U));
   };
   exerciseZygardeAssembly(false);
   exerciseZygardeAssembly(true);

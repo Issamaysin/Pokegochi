@@ -18,10 +18,10 @@ struct MegaFormData {
 };
 
 namespace MegaEvolution {
-// Keep fan-Mega abilities above every canonical Generation-V ability. The
-// original 128..156 range collided with Unova's canonical IDs 127..155 and
-// made the same byte resolve to two unrelated abilities.
-constexpr uint8_t kFirstCustomAbilityId = 192;
+// Canonical abilities through Ultra Sun occupy Pokegochi ids 1..234 (the
+// retained FireRed Cacophony slot shifts canonical #76+ by one). Fan-only
+// Mega abilities therefore begin at 235 and cannot alias any Gen-VII save.
+constexpr uint8_t kFirstCustomAbilityId = 235;
 const MegaFormData* formData(uint16_t speciesId, MegaVariant variant);
 MegaVariant variantFor(const OwnedPokemon& pokemon);
 bool canTransform(uint16_t speciesId);

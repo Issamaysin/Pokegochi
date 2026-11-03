@@ -49,9 +49,32 @@ public final class ProtocolSelfTest {
                 "central retry stops after protocol reset");
         check(!BleTransportPolicy.canRetryCentral(BleTransportPolicy.STATE_CONNECTING,
                 BleTransportPolicy.MAX_CENTRAL_ATTEMPTS), "central retry is bounded");
-        check(BleTransportPolicy.CENTRAL_ROLE_SETTLE_MS >= 250L &&
+        check(BleTransportPolicy.MAX_CENTRAL_ATTEMPTS >= 5,
+                "central path survives transient Android GATT failures");
+        check(BleTransportPolicy.CENTRAL_ROLE_SETTLE_MS >= 350L &&
                         BleTransportPolicy.CENTRAL_ROLE_SETTLE_MS < 1_000L,
                 "central role transition is settled without stalling the handshake");
+        check(BleTransportPolicy.GATT_SERVER_TO_CENTRAL_SETTLE_MS >= 200L,
+                "peripheral GATT registration is released before connectGatt");
+        check(BleTransportPolicy.shouldAbortUnreadyCentral(
+                        BleTransportPolicy.STATE_ADVERTISING, false),
+                "cancelled unready central link is released immediately");
+        check(!BleTransportPolicy.shouldAbortUnreadyCentral(
+                        BleTransportPolicy.STATE_CONNECTING, false),
+                "active central handshake remains alive");
+        check(BleTransportPolicy.shouldReplayHandshake(MultiplayerProtocol.INVITE,
+                        BleTransportPolicy.STATE_CONNECTING, 0),
+                "outgoing Invite is replayed while waiting for acceptance");
+        check(!BleTransportPolicy.shouldReplayHandshake(MultiplayerProtocol.INVITE,
+                        BleTransportPolicy.STATE_CONNECTED, 0),
+                "Invite replay stops after connection");
+        check(BleTransportPolicy.shouldReplayHandshake(MultiplayerProtocol.INVITE_ACCEPT,
+                        BleTransportPolicy.STATE_CONNECTED, 0),
+                "InviteAccept receives bounded loss recovery");
+        check(!BleTransportPolicy.shouldReplayHandshake(MultiplayerProtocol.INVITE_ACCEPT,
+                        BleTransportPolicy.STATE_CONNECTED,
+                        BleTransportPolicy.MAX_HANDSHAKE_REPLAYS),
+                "handshake replay is bounded");
         System.out.println("MultiplayerProtocol v7 discovery and packet vectors: OK");
     }
 

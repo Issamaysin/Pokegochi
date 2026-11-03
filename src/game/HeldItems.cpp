@@ -97,6 +97,68 @@ constexpr HeldItemData kItems[] = {
   {HeldItem::ShockDrive,"SHOCK DRIVE",0,255,0,false,false,PokemonType::Electric},
   {HeldItem::BurnDrive,"BURN DRIVE",0,255,0,false,false,PokemonType::Fire},
   {HeldItem::ChillDrive,"CHILL DRIVE",0,255,0,false,false,PokemonType::Ice},
+  {HeldItem::FightingMemory,"FIGHTING MEMORY",0,255,0,false,false,PokemonType::Fighting},
+  {HeldItem::FlyingMemory,"FLYING MEMORY",0,255,0,false,false,PokemonType::Flying},
+  {HeldItem::PoisonMemory,"POISON MEMORY",0,255,0,false,false,PokemonType::Poison},
+  {HeldItem::GroundMemory,"GROUND MEMORY",0,255,0,false,false,PokemonType::Ground},
+  {HeldItem::RockMemory,"ROCK MEMORY",0,255,0,false,false,PokemonType::Rock},
+  {HeldItem::BugMemory,"BUG MEMORY",0,255,0,false,false,PokemonType::Bug},
+  {HeldItem::GhostMemory,"GHOST MEMORY",0,255,0,false,false,PokemonType::Ghost},
+  {HeldItem::SteelMemory,"STEEL MEMORY",0,255,0,false,false,PokemonType::Steel},
+  {HeldItem::FireMemory,"FIRE MEMORY",0,255,0,false,false,PokemonType::Fire},
+  {HeldItem::WaterMemory,"WATER MEMORY",0,255,0,false,false,PokemonType::Water},
+  {HeldItem::GrassMemory,"GRASS MEMORY",0,255,0,false,false,PokemonType::Grass},
+  {HeldItem::ElectricMemory,"ELECTRIC MEMORY",0,255,0,false,false,PokemonType::Electric},
+  {HeldItem::PsychicMemory,"PSYCHIC MEMORY",0,255,0,false,false,PokemonType::Psychic},
+  {HeldItem::IceMemory,"ICE MEMORY",0,255,0,false,false,PokemonType::Ice},
+  {HeldItem::DragonMemory,"DRAGON MEMORY",0,255,0,false,false,PokemonType::Dragon},
+  {HeldItem::DarkMemory,"DARK MEMORY",0,255,0,false,false,PokemonType::Dark},
+  {HeldItem::FairyMemory,"FAIRY MEMORY",0,255,0,false,false,PokemonType::Fairy},
+  {HeldItem::NormaliumZ,"NORMALIUM Z",0,255,0,false,false,PokemonType::Normal},
+  {HeldItem::FightiniumZ,"FIGHTINIUM Z",0,255,0,false,false,PokemonType::Fighting},
+  {HeldItem::FlyiniumZ,"FLYINIUM Z",0,255,0,false,false,PokemonType::Flying},
+  {HeldItem::PoisoniumZ,"POISONIUM Z",0,255,0,false,false,PokemonType::Poison},
+  {HeldItem::GroundiumZ,"GROUNDIUM Z",0,255,0,false,false,PokemonType::Ground},
+  {HeldItem::RockiumZ,"ROCKIUM Z",0,255,0,false,false,PokemonType::Rock},
+  {HeldItem::BuginiumZ,"BUGINIUM Z",0,255,0,false,false,PokemonType::Bug},
+  {HeldItem::GhostiumZ,"GHOSTIUM Z",0,255,0,false,false,PokemonType::Ghost},
+  {HeldItem::SteeliumZ,"STEELIUM Z",0,255,0,false,false,PokemonType::Steel},
+  {HeldItem::FiriumZ,"FIRIUM Z",0,255,0,false,false,PokemonType::Fire},
+  {HeldItem::WateriumZ,"WATERIUM Z",0,255,0,false,false,PokemonType::Water},
+  {HeldItem::GrassiumZ,"GRASSIUM Z",0,255,0,false,false,PokemonType::Grass},
+  {HeldItem::ElectriumZ,"ELECTRIUM Z",0,255,0,false,false,PokemonType::Electric},
+  {HeldItem::PsychiumZ,"PSYCHIUM Z",0,255,0,false,false,PokemonType::Psychic},
+  {HeldItem::IciumZ,"ICIUM Z",0,255,0,false,false,PokemonType::Ice},
+  {HeldItem::DragoniumZ,"DRAGONIUM Z",0,255,0,false,false,PokemonType::Dragon},
+  {HeldItem::DarkiniumZ,"DARKINIUM Z",0,255,0,false,false,PokemonType::Dark},
+  {HeldItem::FairiumZ,"FAIRIUM Z",0,255,0,false,false,PokemonType::Fairy},
+  {HeldItem::RemovedUltranecroziumZ,"REMOVED ITEM",0,255,0,false,false,PokemonType::Normal},
+  // Prices, effects and icon identities are sourced from pokeemerald-
+  // expansion's Gen-VII item table. Region gating is handled separately so
+  // an unlocked generation can use the same ordinary Badge-independent pool.
+  {HeldItem::LifeOrb,"LIFE ORB",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::FocusSash,"FOCUS SASH",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::ChoiceScarf,"CHOICE SCARF",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::ChoiceSpecs,"CHOICE SPECS",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::ExpertBelt,"EXPERT BELT",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::BlackSludge,"BLACK SLUDGE",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::ToxicOrb,"TOXIC ORB",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::FlameOrb,"FLAME ORB",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::Eviolite,"EVIOLITE",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::RockyHelmet,"ROCKY HELMET",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::AirBalloon,"AIR BALLOON",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::RedCard,"RED CARD",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::EjectButton,"EJECT BUTTON",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::AssaultVest,"ASSAULT VEST",1000,0,3,false,false,PokemonType::Normal},
+  {HeldItem::WeaknessPolicy,"WEAKNESS POLICY",1000,0,3,true,false,PokemonType::Normal},
+  {HeldItem::SafetyGoggles,"SAFETY GOGGLES",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::TerrainExtender,"TERRAIN EXTENDER",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::ProtectivePads,"PROTECTIVE PADS",4000,0,2,false,false,PokemonType::Normal},
+  {HeldItem::AdrenalineOrb,"ADRENALINE ORB",300,0,4,true,false,PokemonType::Normal},
+  {HeldItem::ElectricSeed,"ELECTRIC SEED",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::GrassySeed,"GRASSY SEED",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::MistySeed,"MISTY SEED",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::PsychicSeed,"PSYCHIC SEED",4000,0,2,true,false,PokemonType::Normal},
 };
 static_assert(sizeof(kItems)/sizeof(kItems[0]) == static_cast<uint8_t>(HeldItem::Count)-1U,
               "Held item catalog must cover every item");
@@ -106,8 +168,22 @@ const HeldItemData* heldItemData(HeldItem item) {
   const uint8_t index=static_cast<uint8_t>(item);
   return index>0&&index<static_cast<uint8_t>(HeldItem::Count)?&kItems[index-1U]:nullptr;
 }
-const char* heldItemName(HeldItem item) { const HeldItemData* data=heldItemData(item);return data?data->name:"NONE"; }
+bool heldItemIsRetired(HeldItem item) {
+  return item==HeldItem::RemovedUltranecroziumZ;
+}
+const char* heldItemName(HeldItem item) {
+  if(heldItemIsRetired(item))return "NONE";
+  const HeldItemData* data=heldItemData(item);return data?data->name:"NONE";
+}
+bool discardRetiredHeldItem(OwnedPokemon& pokemon) {
+  return heldItemIsRetired(pokemon.heldItem)&&
+      CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+}
 const char* heldItemDescription(HeldItem item) {
+  if (heldItemIsMemory(item))
+    return "CHANGES SILVALLY'S TYPE AND MULTI-ATTACK THROUGH RKS SYSTEM.";
+  if (heldItemIsZCrystal(item))
+    return "UNLEASHES ONE TYPE-MATCHED Z-MOVE PER BATTLE.";
   switch (item) {
     case HeldItem::OranBerry: return "RESTORES 10 HP AUTOMATICALLY WHEN HP FALLS BELOW HALF.";
     case HeldItem::SitrusBerry: return "RESTORES 30 HP AUTOMATICALLY WHEN HP FALLS BELOW HALF.";
@@ -172,7 +248,7 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::PetayaBerry: return "RAISES SP. ATK IN A PINCH.";
     case HeldItem::LuckyPunch: return "RAISES CHANSEY'S CRITICAL-HIT RATIO.";
     case HeldItem::GanlonBerry: return "RAISES DEFENSE IN A PINCH.";
-    case HeldItem::LuckyEgg: return "GYM 5: +50% EXP. KANTO LEAGUE: +100%. GEN 4: +125%.";
+    case HeldItem::LuckyEgg: return "KANTO BADGES: +10% EXP EACH. JOHTO/HOENN: +5% EACH.";
     case HeldItem::QuickPowder: return "DOUBLES DITTO'S SPEED BEFORE IT TRANSFORMS.";
     case HeldItem::FistPlate: return "BOOSTS FIGHTING-TYPE MOVES BY 20%; ARCEUS BECOMES FIGHTING-TYPE.";
     case HeldItem::SkyPlate: return "BOOSTS FLYING-TYPE MOVES BY 20%; ARCEUS BECOMES FLYING-TYPE.";
@@ -198,6 +274,29 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::ShockDrive: return "MAKES GENESECT'S TECHNO BLAST ELECTRIC-TYPE.";
     case HeldItem::BurnDrive: return "MAKES GENESECT'S TECHNO BLAST FIRE-TYPE.";
     case HeldItem::ChillDrive: return "MAKES GENESECT'S TECHNO BLAST ICE-TYPE.";
+    case HeldItem::LifeOrb: return "MOVES +30%; HIT COSTS 1/10 MAX HP.";
+    case HeldItem::FocusSash: return "FULL HP: SURVIVES A KO HIT WITH 1 HP.";
+    case HeldItem::ChoiceScarf: return "SPEED +50%; LOCKS THE FIRST MOVE.";
+    case HeldItem::ChoiceSpecs: return "SP. ATK +50%; LOCKS THE FIRST MOVE.";
+    case HeldItem::ExpertBelt: return "SUPER-EFFECTIVE DAMAGE +20%.";
+    case HeldItem::BlackSludge: return "HEALS POISON; HURTS OTHER TYPES.";
+    case HeldItem::ToxicOrb: return "BADLY POISONS HOLDER EACH TURN.";
+    case HeldItem::FlameOrb: return "BURNS HOLDER EACH TURN.";
+    case HeldItem::Eviolite: return "DEFENSES +50% IF HOLDER CAN EVOLVE.";
+    case HeldItem::RockyHelmet: return "HURTS ATTACKERS THAT MAKE CONTACT.";
+    case HeldItem::AirBalloon: return "GROUND IMMUNITY UNTIL A HIT POPS IT.";
+    case HeldItem::RedCard: return "ATTACKER SWITCHES AFTER HITTING.";
+    case HeldItem::EjectButton: return "HOLDER SWITCHES AFTER A HIT.";
+    case HeldItem::AssaultVest: return "SP. DEF +50%; BLOCKS STATUS MOVES.";
+    case HeldItem::WeaknessPolicy: return "WEAKNESS HIT: ATK AND SP. ATK +2.";
+    case HeldItem::SafetyGoggles: return "BLOCKS POWDER, SAND AND HAIL.";
+    case HeldItem::TerrainExtender: return "HOLDER'S TERRAIN LASTS 8 TURNS.";
+    case HeldItem::ProtectivePads: return "BLOCKS EFFECTS CAUSED BY CONTACT.";
+    case HeldItem::AdrenalineOrb: return "INTIMIDATE TRIGGERS SPEED +1.";
+    case HeldItem::ElectricSeed: return "ELECTRIC TERRAIN: DEFENSE +1 ONCE.";
+    case HeldItem::GrassySeed: return "GRASSY TERRAIN: DEFENSE +1 ONCE.";
+    case HeldItem::MistySeed: return "MISTY TERRAIN: SP. DEF +1 ONCE.";
+    case HeldItem::PsychicSeed: return "PSYCHIC TERRAIN: SP. DEF +1 ONCE.";
     default: return "NO BATTLE EFFECT.";
   }
 }
@@ -240,6 +339,22 @@ PokemonType arceusPlateType(HeldItem item) {
     default:return PokemonType::Normal;
   }
 }
+bool heldItemIsMemory(HeldItem item) {
+  return item>=HeldItem::FightingMemory&&item<=HeldItem::FairyMemory;
+}
+PokemonType memoryType(HeldItem item) {
+  if(!heldItemIsMemory(item))return PokemonType::Normal;
+  return static_cast<PokemonType>(1U+static_cast<uint8_t>(item)-
+      static_cast<uint8_t>(HeldItem::FightingMemory));
+}
+bool heldItemIsZCrystal(HeldItem item) {
+  return item>=HeldItem::NormaliumZ&&item<=HeldItem::FairiumZ;
+}
+PokemonType zCrystalType(HeldItem item) {
+  if(!heldItemIsZCrystal(item))return PokemonType::Normal;
+  return static_cast<PokemonType>(static_cast<uint8_t>(item)-
+      static_cast<uint8_t>(HeldItem::NormaliumZ));
+}
 uint8_t heldItemBoostPercent(HeldItem item,PokemonType type) {
   if (heldItemIsArceusPlate(item))
     return arceusPlateType(item)==type ? 20U : 0U;
@@ -256,9 +371,20 @@ bool heldItemBoostsType(HeldItem item,PokemonType type) { return heldItemBoostPe
 bool heldItemIsTransferLocked(HeldItem item) {
   return uniqueHeldItemOwnershipBit(item)!=0U ||
       (item>=kFirstGen4UniqueItem && item<=kLastGen4UniqueItem) ||
-      (item>=kFirstGen5Drive && item<=kLastGen5Drive);
+      (item>=kFirstGen5Drive && item<=kLastGen5Drive) ||
+      (item>=kFirstGen7UniqueItem && item<=kLastGen7UniqueItem) ||
+      item==HeldItem::RemovedUltranecroziumZ;
 }
-uint8_t heldItemCount(){return kHeldItemInventorySlots-1U;}
+uint8_t heldItemGeneration(HeldItem item) {
+  if(item>=HeldItem::LifeOrb&&item<=HeldItem::FlameOrb)return 4U;
+  if(item>=HeldItem::Eviolite&&item<=HeldItem::EjectButton)return 5U;
+  if(item>=HeldItem::AssaultVest&&item<=HeldItem::SafetyGoggles)return 6U;
+  if(item>=HeldItem::TerrainExtender&&item<=HeldItem::PsychicSeed)return 7U;
+  return 0U;
+}
+uint8_t heldItemCount(){
+  return static_cast<uint8_t>(HeldItem::Count)-2U; // None + retired tombstone.
+}
 
 namespace {
 constexpr HeldItem kSpecialItems[kSpecialHeldItemCount] = {
@@ -287,6 +413,16 @@ uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
   if (uint16_t* quantity=countedQuantity(item,inventory,special,gen4)) return quantity;
   const int8_t index=gen5DriveIndex(item);
   return index>=0?&gen5.driveQuantities[static_cast<uint8_t>(index)]:nullptr;
+}
+uint16_t* countedQuantity(HeldItem item,uint16_t inventory[],
+                          SpecialHeldItemInventory& special,
+                          Gen4UniqueItemInventory& gen4,
+                          Gen5UniqueItemInventory& gen5,
+                          ModernHeldItemInventory& modern){
+  if(uint16_t* quantity=countedQuantity(item,inventory,special,gen4,gen5))
+    return quantity;
+  const int8_t index=modernHeldItemIndex(item);
+  return index>=0?&modern.quantities[static_cast<uint8_t>(index)]:nullptr;
 }
 }
 
@@ -318,6 +454,27 @@ int8_t gen5DriveIndex(HeldItem item) {
 uint16_t gen5DriveQuantity(const Gen5UniqueItemInventory& inventory,HeldItem item) {
   const int8_t index=gen5DriveIndex(item);
   return index>=0?inventory.driveQuantities[static_cast<uint8_t>(index)]:0U;
+}
+
+int8_t gen7UniqueItemIndex(HeldItem item) {
+  if(item<kFirstGen7UniqueItem||item>kLastGen7UniqueItem)return -1;
+  return static_cast<int8_t>(static_cast<uint8_t>(item)-
+      static_cast<uint8_t>(kFirstGen7UniqueItem));
+}
+uint16_t gen7UniqueItemQuantity(const Gen7UniqueItemInventory& inventory,HeldItem item) {
+  const int8_t index=gen7UniqueItemIndex(item);
+  return index>=0&&(inventory.bagMask&(uint64_t{1}<<static_cast<uint8_t>(index)))?1U:0U;
+}
+
+int8_t modernHeldItemIndex(HeldItem item) {
+  if(item<kFirstModernHeldItem||item>kLastModernHeldItem)return -1;
+  return static_cast<int8_t>(static_cast<uint8_t>(item)-
+      static_cast<uint8_t>(kFirstModernHeldItem));
+}
+uint16_t modernHeldItemQuantity(const ModernHeldItemInventory& inventory,
+                                HeldItem item) {
+  const int8_t index=modernHeldItemIndex(item);
+  return index>=0?inventory.quantities[static_cast<uint8_t>(index)]:0U;
 }
 
 bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
@@ -479,6 +636,159 @@ bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
   return changed;
 }
 
+bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
+                   SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                   Gen5UniqueItemInventory& gen5,Gen7UniqueItemInventory& gen7,
+                   uint64_t& ownedMachines){
+  const bool discardedRetired=discardRetiredHeldItem(pokemon);
+  if(discardedRetired&&selected==HeldItem::None)return true;
+  if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
+  if(selected==HeldItem::MegaStone&&
+     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  const HeldItem equipped=pokemon.heldItem;
+  if(selected==equipped)return false;
+  const int8_t selectedGen7=gen7UniqueItemIndex(selected);
+  const int8_t equippedGen7=gen7UniqueItemIndex(equipped);
+  uint16_t* selectedQuantity=selected==HeldItem::None||selectedGen7>=0?nullptr:
+      countedQuantity(selected,inventory,special,gen4,gen5);
+  uint16_t* equippedQuantity=equipped==HeldItem::None||equippedGen7>=0?nullptr:
+      countedQuantity(equipped,inventory,special,gen4,gen5);
+  const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
+  const uint64_t equippedBit=uniqueHeldItemOwnershipBit(equipped);
+  if(selected!=HeldItem::None){
+    if(selectedGen7>=0){
+      if(!(gen7.bagMask&(uint64_t{1}<<static_cast<uint8_t>(selectedGen7))))return false;
+    }else if(selectedBit){if(!(ownedMachines&selectedBit))return false;}
+    else if(!selectedQuantity||!*selectedQuantity)return false;
+  }
+  if(equipped!=HeldItem::None&&equippedGen7<0&&!equippedBit&&
+     (!equippedQuantity||*equippedQuantity==UINT16_MAX))return false;
+  if(equippedGen7>=0)
+    gen7.bagMask|=uint64_t{1}<<static_cast<uint8_t>(equippedGen7);
+  else if(equippedBit)ownedMachines|=equippedBit;
+  else if(equippedQuantity)++*equippedQuantity;
+  if(selectedGen7>=0)
+    gen7.bagMask&=~(uint64_t{1}<<static_cast<uint8_t>(selectedGen7));
+  else if(selectedBit)ownedMachines&=~selectedBit;
+  else if(selectedQuantity)--*selectedQuantity;
+  const bool changed=CollectionLogic::setHeldItemQuantity(
+      pokemon,selected,selected==HeldItem::None?0U:1U);
+  if(changed){
+    if(pokemon.speciesId==487U)
+      pokemon.form=selected==HeldItem::GriseousOrb?1U:0U;
+    if(pokemon.speciesId==649U||pokemon.speciesId==773U)
+      pokemon.form=CollectionLogic::resolvedForm(pokemon);
+    CollectionLogic::refreshAbility(pokemon,7U);
+    CollectionLogic::refreshDerivedStats(pokemon,true);
+  }
+  return changed;
+}
+
+bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
+                     SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                     Gen5UniqueItemInventory& gen5,Gen7UniqueItemInventory& gen7,
+                     uint64_t& ownedMachines){
+  if(discardRetiredHeldItem(pokemon))return true;
+  if(pokemon.heldItem==HeldItem::None)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const int8_t gen7Index=gen7UniqueItemIndex(equipped);
+  const uint64_t ownershipBit=uniqueHeldItemOwnershipBit(equipped);
+  if(gen7Index>=0)
+    gen7.bagMask|=uint64_t{1}<<static_cast<uint8_t>(gen7Index);
+  else if(ownershipBit)ownedMachines|=ownershipBit;
+  else{
+    uint16_t* quantity=countedQuantity(equipped,inventory,special,gen4,gen5);
+    if(!quantity||*quantity==UINT16_MAX)return false;
+    ++*quantity;
+  }
+  const bool changed=CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
+  if(changed){
+    if(pokemon.speciesId==487U&&equipped==HeldItem::GriseousOrb)pokemon.form=0U;
+    if(pokemon.speciesId==649U||pokemon.speciesId==773U)pokemon.form=0U;
+    CollectionLogic::refreshAbility(pokemon,7U);
+    CollectionLogic::refreshDerivedStats(pokemon,true);
+  }
+  return changed;
+}
+
+bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
+                   SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                   Gen5UniqueItemInventory& gen5,Gen7UniqueItemInventory& gen7,
+                   ModernHeldItemInventory& modern,uint64_t& ownedMachines){
+  const bool discardedRetired=discardRetiredHeldItem(pokemon);
+  if(discardedRetired&&selected==HeldItem::None)return true;
+  if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg||
+     heldItemIsRetired(selected))return false;
+  if(selected==HeldItem::MegaStone&&
+     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  const HeldItem equipped=pokemon.heldItem;
+  if(selected==equipped)return false;
+  const int8_t selectedGen7=gen7UniqueItemIndex(selected);
+  const int8_t equippedGen7=gen7UniqueItemIndex(equipped);
+  uint16_t* selectedQuantity=selected==HeldItem::None||selectedGen7>=0?nullptr:
+      countedQuantity(selected,inventory,special,gen4,gen5,modern);
+  uint16_t* equippedQuantity=equipped==HeldItem::None||equippedGen7>=0?nullptr:
+      countedQuantity(equipped,inventory,special,gen4,gen5,modern);
+  const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
+  const uint64_t equippedBit=uniqueHeldItemOwnershipBit(equipped);
+  if(selected!=HeldItem::None){
+    if(selectedGen7>=0){
+      if(!(gen7.bagMask&(uint64_t{1}<<static_cast<uint8_t>(selectedGen7))))return false;
+    }else if(selectedBit){if(!(ownedMachines&selectedBit))return false;}
+    else if(!selectedQuantity||!*selectedQuantity)return false;
+  }
+  if(equipped!=HeldItem::None&&equippedGen7<0&&!equippedBit&&
+     (!equippedQuantity||*equippedQuantity==UINT16_MAX))return false;
+  if(equippedGen7>=0)
+    gen7.bagMask|=uint64_t{1}<<static_cast<uint8_t>(equippedGen7);
+  else if(equippedBit)ownedMachines|=equippedBit;
+  else if(equippedQuantity)++*equippedQuantity;
+  if(selectedGen7>=0)
+    gen7.bagMask&=~(uint64_t{1}<<static_cast<uint8_t>(selectedGen7));
+  else if(selectedBit)ownedMachines&=~selectedBit;
+  else if(selectedQuantity)--*selectedQuantity;
+  const bool changed=CollectionLogic::setHeldItemQuantity(
+      pokemon,selected,selected==HeldItem::None?0U:1U);
+  if(changed){
+    if(pokemon.speciesId==487U)
+      pokemon.form=selected==HeldItem::GriseousOrb?1U:0U;
+    if(pokemon.speciesId==649U||pokemon.speciesId==773U)
+      pokemon.form=CollectionLogic::resolvedForm(pokemon);
+    CollectionLogic::refreshAbility(pokemon,7U);
+    CollectionLogic::refreshDerivedStats(pokemon,true);
+  }
+  return changed;
+}
+
+bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
+                     SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
+                     Gen5UniqueItemInventory& gen5,Gen7UniqueItemInventory& gen7,
+                     ModernHeldItemInventory& modern,uint64_t& ownedMachines){
+  if(discardRetiredHeldItem(pokemon))return true;
+  if(pokemon.heldItem==HeldItem::None)return false;
+  const HeldItem equipped=pokemon.heldItem;
+  const int8_t gen7Index=gen7UniqueItemIndex(equipped);
+  const uint64_t ownershipBit=uniqueHeldItemOwnershipBit(equipped);
+  if(gen7Index>=0)
+    gen7.bagMask|=uint64_t{1}<<static_cast<uint8_t>(gen7Index);
+  else if(ownershipBit)ownedMachines|=ownershipBit;
+  else{
+    uint16_t* quantity=countedQuantity(
+        equipped,inventory,special,gen4,gen5,modern);
+    if(!quantity||*quantity==UINT16_MAX)return false;
+    ++*quantity;
+  }
+  const bool changed=CollectionLogic::setHeldItemQuantity(
+      pokemon,HeldItem::None,0U);
+  if(changed){
+    if(pokemon.speciesId==487U&&equipped==HeldItem::GriseousOrb)pokemon.form=0U;
+    if(pokemon.speciesId==649U||pokemon.speciesId==773U)pokemon.form=0U;
+    CollectionLogic::refreshAbility(pokemon,7U);
+    CollectionLogic::refreshDerivedStats(pokemon,true);
+  }
+  return changed;
+}
+
 bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
                      SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
                      uint64_t& ownedMachines){
@@ -499,6 +809,9 @@ bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
 
 bool equipHeldItem(HeldItem& equipped,HeldItem selected,uint16_t inventory[],
                    uint64_t& ownedMachines) {
+  const bool discardedRetired=heldItemIsRetired(equipped);
+  if(discardedRetired)equipped=HeldItem::None;
+  if(discardedRetired&&selected==HeldItem::None)return true;
   if(!inventory||selected>=HeldItem::Count||selected==equipped||
      selected==HeldItem::LuckyEgg)return false;
   const uint64_t selectedBit=uniqueHeldItemOwnershipBit(selected);
@@ -520,6 +833,7 @@ bool equipHeldItem(HeldItem& equipped,HeldItem selected,uint16_t inventory[],
 }
 
 bool unequipHeldItem(HeldItem& equipped,uint16_t inventory[],uint64_t& ownedMachines) {
+  if(heldItemIsRetired(equipped)){equipped=HeldItem::None;return true;}
   if(equipped==HeldItem::None)return false;
   const uint64_t ownershipBit=uniqueHeldItemOwnershipBit(equipped);
   if(ownershipBit){

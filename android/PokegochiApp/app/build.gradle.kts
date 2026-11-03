@@ -14,6 +14,12 @@ val canonicalAssetPackVersion = canonicalAssetRoot.resolve("assets/pack_version.
 val requiredAssetPackVersionHeader = file("../../../include/config/AssetPackVersion.h")
 val battleAnimationAudit = file("../../../.generated/battle_animation_audit.json")
 val generatedBattleAnimations = file("../../../src/game/BattleAnimationGenerated.inc")
+val xyShinyFixture = providers.gradleProperty("xyShinyFixture")
+    .map { it.equals("true", ignoreCase = true) }
+    .getOrElse(false)
+val legendaryBoxFixture = providers.gradleProperty("legendaryBoxFixture")
+    .map { it.equals("true", ignoreCase = true) }
+    .getOrElse(false)
 
 fun sha256(stream: InputStream): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -95,8 +101,14 @@ android {
         applicationId = "com.pokegochi.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 87
-        versionName = "2.0"
+        versionCode = 104
+        versionName = "3.0"
+        externalNativeBuild {
+            cmake {
+                arguments += "-DPOKEGOCHI_XY_SHINY_FIXTURE=${if (xyShinyFixture) 1 else 0}"
+                arguments += "-DPOKEGOCHI_LEGENDARY_BOX_FIXTURE=${if (legendaryBoxFixture) 1 else 0}"
+            }
+        }
     }
 
     compileOptions {

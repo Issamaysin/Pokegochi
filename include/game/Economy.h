@@ -6,9 +6,11 @@ enum class MartItem : uint8_t { PokeBall, GreatBall, UltraBall, Potion, SuperPot
 constexpr uint8_t kLegacyMachineCount = 58;
 constexpr uint8_t kSinnohMachineCount = 42;
 constexpr uint8_t kUnovaMachineCount = 25;
-constexpr uint8_t kKalosMachineCount = 4;
+constexpr uint8_t kKalosMachineCount = 5;
+constexpr uint8_t kAlolaMachineCount = 4;
 constexpr uint16_t kMachineCount = kLegacyMachineCount + kSinnohMachineCount +
-                                   kUnovaMachineCount + kKalosMachineCount;
+                                   kUnovaMachineCount + kKalosMachineCount +
+                                   kAlolaMachineCount;
 constexpr uint8_t kMartOfferCount = 20;
 constexpr uint16_t kInventoryStackLimit = 999;
 struct MartOffer {
@@ -16,9 +18,12 @@ struct MartOffer {
   HeldItem heldItem=HeldItem::None;
   uint16_t price=0;
   uint8_t remaining=0;
-  bool isMachine() const { return (static_cast<uint8_t>(heldItem) & 0x80U) != 0; }
+  bool isMachine() const {
+    return (static_cast<uint8_t>(heldItem) & 0x80U) != 0 &&
+           (item == MartItem::PokeBall || item == MartItem::Count);
+  }
   // The original persisted encoding had seven ID bits. Kalos brings the
-  // catalog to 129 entries, so MartItem::Count acts as the high ID bit only
+  // catalog beyond 128 entries, so MartItem::Count acts as the high ID bit only
   // for machine offers. This keeps sizeof(MartOffer), old saves and every
   // existing machine ID byte-for-byte stable.
   uint16_t machineId() const {
@@ -51,52 +56,64 @@ class Economy {
                            bool sinnohUnlocked = false,
                            uint32_t ownedUnovaMachines = 0,
                            bool unovaUnlocked = false,
-                           bool kalosUnlocked = false);
+                           bool kalosUnlocked = false,
+                           bool alolaUnlocked = false);
   static void advance(MartState& mart, uint32_t seconds, uint8_t badgeCount = 0,
                       uint64_t ownedMachines = 0,
                       uint64_t ownedSinnohMachines = 0,
                       bool sinnohUnlocked = false,
                       uint32_t ownedUnovaMachines = 0,
                       bool unovaUnlocked = false,
-                      bool kalosUnlocked = false);
+                      bool kalosUnlocked = false,
+                      bool alolaUnlocked = false);
   static void rotate(MartState& mart, uint8_t badgeCount = 0, uint64_t ownedMachines = 0,
                      uint64_t ownedSinnohMachines = 0,
                      bool sinnohUnlocked = false,
                      uint32_t ownedUnovaMachines = 0,
                      bool unovaUnlocked = false,
-                     bool kalosUnlocked = false);
+                     bool kalosUnlocked = false,
+                     bool alolaUnlocked = false);
   static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
-                  uint64_t& ownedMachines, PpItemInventory* ppItems = nullptr);
+                  uint64_t& ownedMachines, PpItemInventory* ppItems = nullptr,
+                  ModernHeldItemInventory* modernItems = nullptr);
   static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
                   uint64_t& ownedMachines, uint64_t& ownedSinnohMachines,
-                  PpItemInventory* ppItems = nullptr);
+                  PpItemInventory* ppItems = nullptr,
+                  ModernHeldItemInventory* modernItems = nullptr);
   static bool buy(MartState& mart, uint8_t offer, uint32_t& money, Inventory& inventory,
                   uint64_t& ownedMachines, uint64_t& ownedSinnohMachines,
-                  uint32_t& ownedUnovaMachines, PpItemInventory* ppItems = nullptr);
+                  uint32_t& ownedUnovaMachines, PpItemInventory* ppItems = nullptr,
+                  ModernHeldItemInventory* modernItems = nullptr);
   static uint8_t maximumPurchasable(const MartState& mart, uint8_t offer, uint32_t money,
                                     const Inventory& inventory, uint64_t ownedMachines,
-                                    const PpItemInventory* ppItems = nullptr);
+                                    const PpItemInventory* ppItems = nullptr,
+                                    const ModernHeldItemInventory* modernItems = nullptr);
   static uint8_t maximumPurchasable(const MartState& mart, uint8_t offer, uint32_t money,
                                     const Inventory& inventory, uint64_t ownedMachines,
                                     uint64_t ownedSinnohMachines,
-                                    const PpItemInventory* ppItems = nullptr);
+                                    const PpItemInventory* ppItems = nullptr,
+                                    const ModernHeldItemInventory* modernItems = nullptr);
   static uint8_t maximumPurchasable(const MartState& mart, uint8_t offer, uint32_t money,
                                     const Inventory& inventory, uint64_t ownedMachines,
                                     uint64_t ownedSinnohMachines,
                                     uint32_t ownedUnovaMachines,
-                                    const PpItemInventory* ppItems = nullptr);
+                                    const PpItemInventory* ppItems = nullptr,
+                                    const ModernHeldItemInventory* modernItems = nullptr);
   static bool buyQuantity(MartState& mart, uint8_t offer, uint8_t quantity, uint32_t& money,
                           Inventory& inventory, uint64_t& ownedMachines,
-                          PpItemInventory* ppItems = nullptr);
+                          PpItemInventory* ppItems = nullptr,
+                          ModernHeldItemInventory* modernItems = nullptr);
   static bool buyQuantity(MartState& mart, uint8_t offer, uint8_t quantity, uint32_t& money,
                           Inventory& inventory, uint64_t& ownedMachines,
                           uint64_t& ownedSinnohMachines,
-                          PpItemInventory* ppItems = nullptr);
+                          PpItemInventory* ppItems = nullptr,
+                          ModernHeldItemInventory* modernItems = nullptr);
   static bool buyQuantity(MartState& mart, uint8_t offer, uint8_t quantity, uint32_t& money,
                           Inventory& inventory, uint64_t& ownedMachines,
                           uint64_t& ownedSinnohMachines,
                           uint32_t& ownedUnovaMachines,
-                          PpItemInventory* ppItems = nullptr);
+                          PpItemInventory* ppItems = nullptr,
+                          ModernHeldItemInventory* modernItems = nullptr);
   static const char* name(MartItem item);
   static const char* name(const MartOffer& offer);
   static uint32_t price(const MartOffer& offer);

@@ -132,16 +132,19 @@ bool LeagueSystem::isChampionStage(const BattleState& battle) {
 }
 
 uint8_t LeagueSystem::luckyEggExperienceBonusPercent(
-    const GymProgress& progress, bool generation4Unlocked) {
-  if (GymSystem::leagueComplete(progress, 1U))
-    return generation4Unlocked?125U:100U;
-  if (GymSystem::hasBadge(progress, GymId::Fuchsia)) return 50U;
-  return 0U;
+    const GymProgress& progress) {
+  uint8_t bonusPercent=0U;
+  for(uint8_t index=0U;index<static_cast<uint8_t>(GymId::Count);++index){
+    if(!GymSystem::hasBadge(progress,static_cast<GymId>(index)))continue;
+    bonusPercent=static_cast<uint8_t>(
+        bonusPercent+(index<8U?10U:5U));
+  }
+  return bonusPercent;
 }
 
-bool LeagueSystem::reconcileKantoLuckyEggReward(const GymProgress& progress,
-                                                PokemonCollection& collection,
-                                                uint64_t& ownedMachines) {
+bool LeagueSystem::reconcileLuckyEggReward(const GymProgress& progress,
+                                           PokemonCollection& collection,
+                                           uint64_t& ownedMachines) {
   if (!luckyEggExperienceBonusPercent(progress)) return false;
   bool removedLegacyHolder=false;
   for (OwnedPokemon& pokemon : collection.box)

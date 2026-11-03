@@ -31,7 +31,8 @@ def read_pkg(relative: str) -> dict[str, object]:
         raise RuntimeError(f"Truncated PKG2: {relative}")
     magic, width, height, transparent, bpp, palette_count = struct.unpack_from(
         "<4sHHHBB", raw, 0)
-    if magic != b"PKG2" or bpp not in (4, 6, 8) or not palette_count:
+    tiled_4bpp = bpp == 0x84
+    if magic != b"PKG2" or bpp not in (4, 6, 8, 0x84) or not palette_count:
         raise RuntimeError(f"Invalid PKG2 header: {relative}")
     palette_offset = 12
     payload_offset = palette_offset + palette_count * 2
@@ -40,7 +41,31 @@ def read_pkg(relative: str) -> dict[str, object]:
     pixels = width * height
     payload = raw[payload_offset:]
     indices: list[int] = []
-    if bpp == 4:
+    if tiled_4bpp:
+        if width % 8 or height % 8:
+            raise RuntimeError(f"Invalid tiled 4bpp dimensions: {relative}")
+        tile_columns = width // 8
+        tile_rows = height // 8
+        tile_map_size = tile_columns * tile_rows
+        if len(payload) < tile_map_size:
+            raise RuntimeError(f"Truncated tiled 4bpp map: {relative}")
+        tile_map = payload[:tile_map_size]
+        tile_data = payload[tile_map_size:]
+        tile_count = len(tile_data) // 32
+        if len(tile_data) % 32 or any(index >= tile_count for index in tile_map):
+            raise RuntimeError(f"Invalid tiled 4bpp payload: {relative}")
+        indices = [0] * pixels
+        for map_index, tile_index in enumerate(tile_map):
+            tile_x = (map_index % tile_columns) * 8
+            tile_y = (map_index // tile_columns) * 8
+            tile = tile_data[tile_index * 32:(tile_index + 1) * 32]
+            for row in range(8):
+                for column in range(8):
+                    byte = tile[row * 4 + column // 2]
+                    indices[(tile_y + row) * width + tile_x + column] = (
+                        (byte >> 4) if not column & 1 else (byte & 0x0F))
+        bpp = 4
+    elif bpp == 4:
         if len(payload) != (pixels + 1) // 2:
             raise RuntimeError(f"Invalid 4bpp payload: {relative}")
         for index in range(pixels):
@@ -152,14 +177,17 @@ def main() -> None:
     audit_path = ROOT / ".generated/battle_animation_audit.json"
     animation = json.loads(audit_path.read_text(encoding="utf-8"))
     moves = animation["moves"]
-    # FireRed's 354 moves are followed by the complete Platinum Gen-IV range
-    # (ROOST through SHADOW_FORCE, IDs 355..467), not only the four moves that
-    # were initially spot-checked on hardware.
-    expected_moves = 354 + (467 - 355 + 1)
-    if len(moves) != expected_moves or animation["program"]["moves"] != expected_moves:
+    # The runtime now carries every ordinary move through Photon Geyser
+    # (IDs 1..675), followed by the 35 separate authored Z-Move visual IDs
+    # (848..882). Validate the exact key set rather than only its size so a
+    # missing ordinary move cannot be hidden by an accidental extra entry.
+    expected_ids = set(range(1, 676)) | set(range(848, 883))
+    actual_ids = {int(move_id) for move_id in moves}
+    if (actual_ids != expected_ids or
+            animation["program"]["moves"] != len(expected_ids)):
         raise RuntimeError(
-            "The generated VM does not contain the FireRed catalog plus the "
-            "exact Gen-IV overlay")
+            "The generated VM does not contain the exact Gen-I--VII move and "
+            "Z-Move visual catalogs")
     incomplete = [
         f"{move_id}:{move['symbol']}" for move_id, move in moves.items()
         if (not move["sourceFound"] or move["untranslated"] or
@@ -277,7 +305,11 @@ def main() -> None:
         name for name, handler in animation["spriteHandlers"].items()
         if handler["motion"] in {"Projectile", "Arc", "ProceduralPulse"}
         or handler["coverage"] in {"HeuristicFallback", "StaticCelOrAffine"}
-        or (handler["stateMovesCoordinates"] and handler["motion"] == "Static")
+        # AnimIon's visible coordinate state is reproduced by the owning
+        # IonRain task, which also chooses each random spawn. Its exported
+        # child resource is deliberately position-neutral.
+        or (handler["stateMovesCoordinates"] and handler["motion"] == "Static"
+            and handler["callback"] != "AnimIon")
     ]
     if invalid_sprites:
         raise RuntimeError(
@@ -400,7 +432,7 @@ def main() -> None:
     palette_case_start = runtime_source.index(
         "case BattleAnimationMotion::PalettePulse:")
     palette_case_end = runtime_source.index(
-        "case BattleAnimationMotion::ProceduralPulse:", palette_case_start)
+        "case BattleAnimationMotion::Static:", palette_case_start)
     palette_source = runtime_source[palette_case_start:palette_case_end]
     for required in (
             "const bool simpleBlend = particle.argumentCount < 7U",
@@ -418,7 +450,7 @@ def main() -> None:
     # over-capacity GBA OBJ train.  Anchor the audit at the actual ordered
     # particle dereference instead of a historical loop-variable spelling.
     particle_loop = runtime_source.index(
-        "const BattleAnimationRuntimeParticle& particle =")
+        "BattleAnimationRuntimeParticle& particle =")
     particle_switch = runtime_source.index("switch (resource.motion)", particle_loop)
     particle_end = runtime_source.index(
         "if (!resource.asset || !resource.asset[0]) continue;", particle_switch)
@@ -490,8 +522,10 @@ def main() -> None:
         raise RuntimeError("Retained compositor regressed below eight scanlines")
     particles = re.search(
         r"kBattleAnimationParticleCapacity\s*=\s*(\d+)", runtime_source)
-    if not particles or int(particles.group(1)) < 64:
-        raise RuntimeError("Logical animation OBJ capacity is below FireRed's 64 slots")
+    if not particles or int(particles.group(1)) < 192:
+        raise RuntimeError(
+            "Logical animation OBJ capacity is below the measured Gen VII peak reserve"
+        )
 
     render_start = runtime_source.index(
         "bool renderBattleAnimationProgramFrame")
@@ -530,8 +564,6 @@ def main() -> None:
             "kind == BattleAnimationTaskKind::PsychicBackground" not in
             psychic_case.group(1) or
             "setBattleVisualPsychicField" not in psychic_case.group(1) or
-            "setBattleVisualPrimitive(BattleVisualPrimitive::PsychicField" not in
-            psychic_case.group(1) or
             "addBattleAnimationDirtyPoint" not in psychic_case.group(1)):
         raise RuntimeError(
             "PsychicBackground exact handler must compose the psychic field cue")
@@ -590,6 +622,7 @@ def main() -> None:
 
     background_count = 0
     secondary_plane_paths: list[str] = []
+    opaque_replacement_paths: list[str] = []
     for background_id, (gfx, tilemap, palette_name) in enumerate(
             pack.BATTLE_ANIMATION_BACKGROUNDS):
         tiled, palette = pack.battle_animation_indexed_plane(
@@ -611,20 +644,27 @@ def main() -> None:
         tiled_runtime = (tiled.crop((0, 0, 256, 256))
                          if background_id == 21 else tiled)
         assert_plane(tiled_relative, tiled_runtime, palette)
-        secondary_plane_paths.extend((static_relative, tiled_relative))
+        opaque_replacement_paths.extend((static_relative, tiled_relative))
         background_count += 1
     expansion_background_id = len(pack.BATTLE_ANIMATION_BACKGROUNDS)
     for gfx, tilemap, palette_name in pack.EXPANSION_BATTLE_ANIMATION_BACKGROUNDS:
         tiled, palette = pack.battle_animation_indexed_plane(
             gfx, tilemap, palette_name, pack.EXPANSION)
-        static = tiled.resize((320, 184), pack.Image.Resampling.NEAREST)
+        # Match the production packer's 240x138 GBA camera. Resizing the whole
+        # 256x256 tilemap audits a different image than the one the firmware
+        # actually loads and falsely reports every expansion background as
+        # stale.
+        camera_width = min(240, tiled.width)
+        camera_height = min(138, tiled.height)
+        static = tiled.crop((0, 0, camera_width, camera_height)).resize(
+            (320, 184), pack.Image.Resampling.NEAREST)
         static_relative = (
             f"firered/battle_anims/backgrounds/bg_{expansion_background_id:02}.pkg")
         tiled_relative = (
             f"firered/battle_anims/backgrounds/tiled_bg_{expansion_background_id:02}.pkg")
         assert_plane(static_relative, static, palette)
         assert_plane(tiled_relative, tiled, palette)
-        secondary_plane_paths.extend((static_relative, tiled_relative))
+        opaque_replacement_paths.extend((static_relative, tiled_relative))
         background_count += 1
         expansion_background_id += 1
 
@@ -649,9 +689,10 @@ def main() -> None:
                 f"firered/battle_anims/{prefix}_{side}.pkg")
             surf_count += 1
 
-    # Runtime keeps terrain pixels plus one secondary plane and its palette
-    # in a fixed 64 KiB bank.  Prove every legal pairing fits; a previous
-    # 256x512 Fissure package exceeded this bound and silently disappeared.
+    # Runtime keeps terrain pixels plus one transparent task/effect plane and
+    # its palette in a fixed 64 KiB bank. Opaque changebg planes replace the
+    # terrain in that same slot and therefore must fit individually, not be
+    # incorrectly summed with the terrain.
     # Kept in lockstep with AssetRenderer. Boot uses a smaller bank so SPIFFS,
     # GameSave and the retained canvas can start reliably; battle promotes the
     # shared arena before loading a terrain/changebg pair.
@@ -659,6 +700,16 @@ def main() -> None:
     largest_scene = 0
     largest_pair = ("", "")
     largest_terrain_bytes = 0
+    largest_secondary_bytes = 0
+    for replacement_path in opaque_replacement_paths:
+        replacement_package = read_pkg(replacement_path)
+        # LargeAssetCache owns its 256-entry palette outside the scene
+        # workspace; only packed indices consume this arena.
+        replacement_bytes = packed_pixel_bytes(replacement_package)
+        if replacement_bytes > scene_capacity:
+            raise RuntimeError(
+                f"Opaque battle replacement exceeds 64 KiB: "
+                f"{replacement_path} = {replacement_bytes}")
     for terrain_path in terrain_paths:
         terrain_package = read_pkg(terrain_path)
         primary_bytes = packed_pixel_bytes(terrain_package)
@@ -666,9 +717,11 @@ def main() -> None:
         largest_terrain_bytes = max(largest_terrain_bytes, aligned_primary)
         for plane_path in secondary_plane_paths:
             plane_package = read_pkg(plane_path)
-            total = (aligned_primary +
-                     len(plane_package["palette"]) * 2 +
-                     packed_pixel_bytes(plane_package))
+            secondary_bytes = (len(plane_package["palette"]) * 2 +
+                               packed_pixel_bytes(plane_package))
+            largest_secondary_bytes = max(largest_secondary_bytes,
+                                          secondary_bytes)
+            total = aligned_primary + secondary_bytes
             if total > largest_scene:
                 largest_scene = total
                 largest_pair = (terrain_path, plane_path)
@@ -719,7 +772,7 @@ def main() -> None:
             "Pattern masks must reproduce FireRed's per-pixel BG1 alpha blend")
     main_source = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
     retained_presenter_start = main_source.index(
-        "bool presentRetainedFrame() {")
+        "bool presentRetainedFrame(uint32_t* transferredPixels) {")
     retained_presenter_end = main_source.index(
         "void stopWildLedAlert()", retained_presenter_start)
     retained_presenter = main_source[retained_presenter_start:
@@ -739,7 +792,8 @@ def main() -> None:
             "return true;" not in retained_presenter):
         raise RuntimeError(
             "Retained presenter no longer reports whether a frame reached the panel")
-    if ("if (committed) battleAnimationAtomicRevealPending = false;" not in
+    if ("if (committed) {" not in retained_presenter or
+            "battleAnimationAtomicRevealPending = false;" not in
             retained_presenter):
         raise RuntimeError(
             "Android clears the atomic arena latch before a frame is committed")
@@ -750,7 +804,9 @@ def main() -> None:
     hp_animation_source = main_source[hp_animation_start:hp_animation_end]
     if ("if (!restoreBattleArenaBeforePresentation())" not in
             hp_animation_source or
-            "const bool frameCommitted = presentRetainedFrame();" not in
+            "presentRetainedFrame(&transferredPixels);" not in
+            hp_animation_source or
+            "hpFramePhysicallyCommitted(" not in
             hp_animation_source or
             "return BattleHpAnimationOutcome::Deferred;" not in
             hp_animation_source):
@@ -923,14 +979,28 @@ def main() -> None:
             raise RuntimeError(
                 f"{move['symbol']} needs {resident_slots} cache descriptors; "
                 f"renderer has {small_slots}")
-        needs_secondary_plane = "AnimBackgroundChange" in move["flags"]
-        if not needs_secondary_plane:
-            needs_secondary_plane = any(
-                animation["taskHandlers"].get(callback, {}).get("motion")
-                in plane_task_motions for callback in move["taskCallbacks"])
-        available_bytes = (worst_plane_sprite_capacity
-                           if needs_secondary_plane
-                           else worst_terrain_sprite_capacity)
+        background_ids = move.get("backgroundIds", [])
+        needs_effect_plane = any(
+            animation["taskHandlers"].get(callback, {}).get("motion")
+            in plane_task_motions for callback in move["taskCallbacks"])
+        if background_ids:
+            replacement_bytes = 0
+            for background_id in background_ids:
+                for prefix in ("bg", "tiled_bg"):
+                    relative = (
+                        f"firered/battle_anims/backgrounds/"
+                        f"{prefix}_{int(background_id):02}.pkg")
+                    replacement_bytes = max(
+                        replacement_bytes,
+                        packed_pixel_bytes(read_pkg(relative)))
+            available_bytes = (small_arena_bytes + scene_capacity -
+                               replacement_bytes -
+                               (largest_secondary_bytes
+                                if needs_effect_plane else 0))
+        elif needs_effect_plane:
+            available_bytes = worst_plane_sprite_capacity
+        else:
+            available_bytes = worst_terrain_sprite_capacity
         if resident_bytes > available_bytes:
             if not move["conditionalBranches"]:
                 raise RuntimeError(

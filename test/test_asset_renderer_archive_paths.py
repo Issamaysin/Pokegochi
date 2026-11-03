@@ -1,5 +1,7 @@
 """Guard cold scene draws against bypassing the versioned asset archive."""
 
+import json
+import re
 from pathlib import Path
 
 
@@ -77,6 +79,30 @@ def main() -> None:
     prime_body = SOURCE[prime_start:prime_end]
     assert "count < kSequentialLookupThreshold" in prime_body
     assert "return primeArchiveRangesSequential(paths, count);" in prime_body
+
+    # The constrained board retains 92 complete cache keys. Keep those keys
+    # byte-exact without paying for the historical 112-byte field, and make a
+    # future longer asset fail generation instead of truncating into a cache
+    # alias or taking heap away from GameSave.
+    capacity_match = re.search(
+        r"kCachedAssetPathCapacity\s*=\s*(\d+)U", SOURCE
+    )
+    assert capacity_match
+    capacity = int(capacity_match.group(1))
+    assert capacity == 80
+    assert "char path[kCachedAssetPathCapacity]" in SOURCE
+    assert "std::strlen(path) >= kCachedAssetPathCapacity" in SOURCE
+    builder = (ROOT / "scripts/build_sd_asset_pack.py").read_text(encoding="utf-8")
+    assert f"FIRMWARE_CACHE_PATH_CAPACITY = {capacity}" in builder
+    assert "validate_firmware_cache_paths(manifest)" in builder
+    manifest_path = ROOT / ".generated/sdcard/pokegochi/assets/manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        longest = max(
+            (len("/pokegochi/assets/" + relative), relative)
+            for relative in manifest
+        )
+        assert longest[0] < capacity, longest
     print("AssetRenderer archive-path audit passed.")
 
 

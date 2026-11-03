@@ -162,5 +162,44 @@ int main() {
   pump(higherId, lowerId);
   assert(lowerId.state() == Multiplayer::State::Connected);
   assert(higherId.state() == Multiplayer::State::Connected);
+
+  // Turning Bluetooth off on the peer is an unplanned physical loss. Even in
+  // the middle of a trade it must expose one recovery edge and discard only
+  // volatile offers/commit latches; the main UI uses the edge to rebuild Home.
+  Multiplayer lostLinkHost;
+  Multiplayer lostLinkPeer;
+  assert(lostLinkHost.beginWithPlayerId(7007));
+  assert(lostLinkPeer.beginWithPlayerId(8008));
+  assert(lostLinkHost.setEnabled(true));
+  assert(lostLinkPeer.setEnabled(true));
+  lostLinkPeer.transportConnected(false);
+  assert(lostLinkHost.requestPeer(8008));
+  pump(lostLinkHost, lostLinkPeer);
+  lostLinkPeer.answerPeerInvitation(true);
+  pump(lostLinkPeer, lostLinkHost);
+  assert(lostLinkHost.requestActivity(Multiplayer::Activity::Trade));
+  pump(lostLinkHost, lostLinkPeer);
+  lostLinkPeer.answerActivity(true);
+  pump(lostLinkPeer, lostLinkHost);
+  assert(lostLinkHost.submitTradeOffer(pokemon(31, 25, 0x55555555U)));
+  pump(lostLinkHost, lostLinkPeer);
+  assert(lostLinkPeer.submitTradeOffer(pokemon(32, 133, 0x66666666U)));
+  pump(lostLinkPeer, lostLinkHost);
+  assert(lostLinkPeer.state() == Multiplayer::State::TradeConfirming);
+  lostLinkPeer.transportDisconnected();
+  assert(lostLinkPeer.takeUnexpectedDisconnect());
+  assert(!lostLinkPeer.takeUnexpectedDisconnect());
+  assert(lostLinkPeer.state() == Multiplayer::State::Advertising);
+  assert(lostLinkPeer.activity() == Multiplayer::Activity::None);
+  assert(!lostLinkPeer.localTradeOffer().valid);
+  assert(!lostLinkPeer.remoteTradeOffer().valid);
+
+  // A locally requested close also causes a later platform disconnect
+  // callback, but that callback is expected and must not masquerade as a lost
+  // peer after the UI has already handled the button/toggle action.
+  lowerId.disconnect();
+  assert(!lowerId.takeUnexpectedDisconnect());
+  lowerId.transportDisconnected();
+  assert(!lowerId.takeUnexpectedDisconnect());
   return 0;
 }

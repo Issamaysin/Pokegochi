@@ -38,6 +38,31 @@ enum class HeldItem : uint8_t {
   // Generation-V Drives are unique Genesect form items. Appending keeps all
   // previously serialized HeldItem values byte-for-byte stable.
   DouseDrive, ShockDrive, BurnDrive, ChillDrive,
+  // Generation-VII Memories drive Silvally's RKS System. Normal is the
+  // no-item form, so the compact set contains the other seventeen types.
+  FightingMemory, FlyingMemory, PoisonMemory, GroundMemory, RockMemory,
+  BugMemory, GhostMemory, SteelMemory, FireMemory, WaterMemory, GrassMemory,
+  ElectricMemory, PsychicMemory, IceMemory, DragonMemory, DarkMemory,
+  FairyMemory,
+  // One generic Z-Crystal per type. Signature crystals are progression flags
+  // and resolve automatically for their compatible species/move.
+  NormaliumZ, FightiniumZ, FlyiniumZ, PoisoniumZ, GroundiumZ, RockiumZ,
+  BuginiumZ, GhostiumZ, SteeliumZ, FiriumZ, WateriumZ, GrassiumZ,
+  ElectriumZ, PsychiumZ, IciumZ, DragoniumZ, DarkiniumZ, FairiumZ,
+  // Serialized tombstone for saves created by the removed custom
+  // Ultranecrozium Z mechanic. It is never granted, shown or equipable;
+  // keeping the numeric value prevents later enum entries from shifting.
+  RemovedUltranecroziumZ,
+  // Ordinary held items introduced after Emerald.  They are appended after
+  // the retired value so every already-serialized Pokemon keeps its exact
+  // item id.  Unlike the signature sidecars above, these are stackable Mart
+  // goods and live in ModernHeldItemInventory.
+  LifeOrb, FocusSash, ChoiceScarf, ChoiceSpecs, ExpertBelt, BlackSludge,
+  ToxicOrb, FlameOrb,
+  Eviolite, RockyHelmet, AirBalloon, RedCard, EjectButton,
+  AssaultVest, WeaknessPolicy, SafetyGoggles,
+  TerrainExtender, ProtectivePads, AdrenalineOrb,
+  ElectricSeed, GrassySeed, MistySeed, PsychicSeed,
   Count,
 };
 
@@ -51,6 +76,12 @@ constexpr HeldItem kLastGen4UniqueItem = HeldItem::GriseousOrb;
 constexpr uint8_t kGen5DriveCount = 4;
 constexpr HeldItem kFirstGen5Drive = HeldItem::DouseDrive;
 constexpr HeldItem kLastGen5Drive = HeldItem::ChillDrive;
+constexpr uint8_t kGen7UniqueItemCount = 35;
+constexpr HeldItem kFirstGen7UniqueItem = HeldItem::FightingMemory;
+constexpr HeldItem kLastGen7UniqueItem = HeldItem::FairiumZ;
+constexpr uint8_t kModernHeldItemCount = 23;
+constexpr HeldItem kFirstModernHeldItem = HeldItem::LifeOrb;
+constexpr HeldItem kLastModernHeldItem = HeldItem::PsychicSeed;
 
 struct SpecialHeldItemInventory {
   uint16_t quantities[kSpecialHeldItemCount]{};
@@ -80,7 +111,31 @@ struct Gen5UniqueItemInventory {
 static_assert(sizeof(Gen5UniqueItemInventory) == 10,
               "Gen 5 unique-item inventory layout changed");
 
+struct Gen7UniqueItemInventory {
+  // A bit is present while the unique item is in the Bag and cleared while
+  // equipped. claimedMask prevents campaign rewards from duplicating it.
+  uint64_t bagMask = 0;
+  uint64_t claimedMask = 0;
+};
+static_assert(sizeof(Gen7UniqueItemInventory) == 16,
+              "Gen 7 unique-item inventory layout changed");
+
+// V51 appends one counted slot for every ordinary Gen-IV--VII held item.
+// Keeping this outside Inventory preserves the frozen save prefix used by
+// every installed build through V50.
+struct ModernHeldItemInventory {
+  uint16_t quantities[kModernHeldItemCount]{};
+};
+static_assert(sizeof(ModernHeldItemInventory) == 46,
+              "Modern held-item inventory layout changed");
+
 constexpr uint8_t kDnaSplicersBit = 1U << 0U;
+// Kept outside the contiguous held-item bits. It represents the paired
+// N-Solarizer/N-Lunarizer key-item function without growing the save record.
+constexpr uint64_t kNecrozmaFusersBit = uint64_t{1} << 63U;
+// Bit 35 belonged to the removed Ultranecrozium Z. Reconciliation clears it
+// from both masks so old saves cannot keep displaying or cloning the item.
+constexpr uint64_t kRemovedUltranecroziumZBit = uint64_t{1} << 35U;
 // Legacy save bit: intentionally preserved in the serialized layout, but no
 // longer granted, shown or required by gameplay.
 constexpr uint8_t kRevealGlassBit = 1U << 1U;
@@ -104,13 +159,21 @@ struct HeldItemData {
 const HeldItemData* heldItemData(HeldItem item);
 const char* heldItemName(HeldItem item);
 const char* heldItemDescription(HeldItem item);
+// Retired serialized values remain in the enum only so old saves keep their
+// byte layout. They are not real inventory items.
+bool heldItemIsRetired(HeldItem item);
 bool heldItemIsConsumable(HeldItem item);
 bool heldItemIsBerry(HeldItem item);
 bool heldItemBoostsType(HeldItem item, PokemonType type);
 uint8_t heldItemBoostPercent(HeldItem item, PokemonType type);
 bool heldItemIsArceusPlate(HeldItem item);
 PokemonType arceusPlateType(HeldItem item);
+bool heldItemIsMemory(HeldItem item);
+PokemonType memoryType(HeldItem item);
+bool heldItemIsZCrystal(HeldItem item);
+PokemonType zCrystalType(HeldItem item);
 bool heldItemIsTransferLocked(HeldItem item);
+uint8_t heldItemGeneration(HeldItem item);
 uint8_t heldItemCount();
 int8_t specialHeldItemIndex(HeldItem item);
 uint16_t specialHeldItemQuantity(const SpecialHeldItemInventory& inventory,
@@ -121,8 +184,15 @@ uint16_t gen4UniqueItemQuantity(const Gen4UniqueItemInventory& inventory,
 int8_t gen5DriveIndex(HeldItem item);
 uint16_t gen5DriveQuantity(const Gen5UniqueItemInventory& inventory,
                            HeldItem item);
+int8_t gen7UniqueItemIndex(HeldItem item);
+uint16_t gen7UniqueItemQuantity(const Gen7UniqueItemInventory& inventory,
+                                HeldItem item);
+int8_t modernHeldItemIndex(HeldItem item);
+uint16_t modernHeldItemQuantity(const ModernHeldItemInventory& inventory,
+                                HeldItem item);
 
 struct OwnedPokemon;
+bool discardRetiredHeldItem(OwnedPokemon& pokemon);
 bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
                    uint16_t inventory[], SpecialHeldItemInventory& special,
                    uint64_t& ownedMachines);
@@ -143,6 +213,28 @@ bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
                      SpecialHeldItemInventory& special,
                      Gen4UniqueItemInventory& gen4,
                      Gen5UniqueItemInventory& gen5, uint64_t& ownedMachines);
+bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
+                   uint16_t inventory[], SpecialHeldItemInventory& special,
+                   Gen4UniqueItemInventory& gen4,
+                   Gen5UniqueItemInventory& gen5,
+                   Gen7UniqueItemInventory& gen7, uint64_t& ownedMachines);
+bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
+                     SpecialHeldItemInventory& special,
+                     Gen4UniqueItemInventory& gen4,
+                     Gen5UniqueItemInventory& gen5,
+                     Gen7UniqueItemInventory& gen7, uint64_t& ownedMachines);
+bool equipHeldItem(OwnedPokemon& pokemon, HeldItem selected,
+                   uint16_t inventory[], SpecialHeldItemInventory& special,
+                   Gen4UniqueItemInventory& gen4,
+                   Gen5UniqueItemInventory& gen5,
+                   Gen7UniqueItemInventory& gen7,
+                   ModernHeldItemInventory& modern, uint64_t& ownedMachines);
+bool unequipHeldItem(OwnedPokemon& pokemon, uint16_t inventory[],
+                     SpecialHeldItemInventory& special,
+                     Gen4UniqueItemInventory& gen4,
+                     Gen5UniqueItemInventory& gen5,
+                     Gen7UniqueItemInventory& gen7,
+                     ModernHeldItemInventory& modern, uint64_t& ownedMachines);
 
 // Swaps an item from the Bag with the Pokemon's current item. Selecting None
 // takes the current item back. A consumed Berry never returns to the Bag.

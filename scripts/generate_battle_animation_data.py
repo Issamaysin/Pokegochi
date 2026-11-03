@@ -190,10 +190,10 @@ FIRERED_SCRIPT = (D / "data/battle_anim_scripts.s").read_text(encoding="utf-8")
 EXPANSION_SCRIPT = _expand_battle_script_macros(
     (EXPANSION / "data/battle_anim_scripts.s").read_text(encoding="utf-8"),
     EXPANSION / "asm/macros/battle_anim_script.inc")
-# Keep the original catalog intact and append the complete Gen-IV and Gen-V
-# program ranges from pokeemerald-expansion. Their ids are above FireRed's
-# 354, so the merged arrays remain sorted and the existing VM needs no
-# numeric remapping.
+# Keep the original catalog intact and append the complete Gen-IV through
+# Gen-VII program ranges from pokeemerald-expansion. Their ids are above
+# FireRed's 354, so the merged arrays remain sorted and the existing VM needs
+# no numeric remapping.
 SCRIPT = FIRERED_SCRIPT + "\n" + EXPANSION_SCRIPT
 MOVES = (D / "include/constants/moves.h").read_text(encoding="utf-8")
 GRAPHICS = (D / "src/graphics.c").read_text(encoding="utf-8")
@@ -207,9 +207,59 @@ EXPANSION_BATTLE_DATA = (EXPANSION / "src/data/battle_anim.h").read_text(encodin
 EXPANSION_GRAPHICS_RULES = (EXPANSION / "graphics_file_rules.mk").read_text(encoding="utf-8")
 EXPANSION_SPRITES = EXPANSION / "graphics/battle_anims/sprites"
 # Expansion supplies the exact authored scripts for every post-FireRed move.
-# Keep the catalog continuous through Pokemon X/Y's Light of Ruin (#617), so
-# a newly generated Kalos move can never silently fall back to no animation.
-EXPANSION_MOVE_IDS = set(range(355, 618))
+# Keep the catalog continuous through Alola's Photon Geyser (#675): mapping
+# these moves to merely similar legacy visuals made Gen-VII attacks execute
+# the wrong script even though the canonical source was already available.
+# Z-Moves are presentation-only in Pokegochi (their base move stays in the
+# battle journal for damage, PP and save compatibility). Retain the
+# expansion's canonical enum values so both the 18 type moves and the 17
+# signatures select their authored programs instead of replaying the base
+# move. The generic rows are enum aliases in moves.h, so the numeric-only
+# parser below cannot discover them without this explicit canonical table.
+GENERIC_Z_MOVE_ANIMATION_IDS = {
+    "BREAKNECK_BLITZ": 848,
+    "ALL_OUT_PUMMELING": 849,
+    "SUPERSONIC_SKYSTRIKE": 850,
+    "ACID_DOWNPOUR": 851,
+    "TECTONIC_RAGE": 852,
+    "CONTINENTAL_CRUSH": 853,
+    "SAVAGE_SPIN_OUT": 854,
+    "NEVER_ENDING_NIGHTMARE": 855,
+    "CORKSCREW_CRASH": 856,
+    "INFERNO_OVERDRIVE": 857,
+    "HYDRO_VORTEX": 858,
+    "BLOOM_DOOM": 859,
+    "GIGAVOLT_HAVOC": 860,
+    "SHATTERED_PSYCHE": 861,
+    "SUBZERO_SLAMMER": 862,
+    "DEVASTATING_DRAKE": 863,
+    "BLACK_HOLE_ECLIPSE": 864,
+    "TWINKLE_TACKLE": 865,
+}
+SIGNATURE_Z_MOVE_ANIMATION_IDS = {
+    "CATASTROPIKA": 866,
+    "10000000_VOLT_THUNDERBOLT": 867,
+    "STOKED_SPARKSURFER": 868,
+    "EXTREME_EVOBOOST": 869,
+    "PULVERIZING_PANCAKE": 870,
+    "GENESIS_SUPERNOVA": 871,
+    "SINISTER_ARROW_RAID": 872,
+    "MALICIOUS_MOONSAULT": 873,
+    "OCEANIC_OPERETTA": 874,
+    "SPLINTERED_STORMSHARDS": 875,
+    "LETS_SNUGGLE_FOREVER": 876,
+    "CLANGOROUS_SOULBLAZE": 877,
+    "GUARDIAN_OF_ALOLA": 878,
+    "SEARING_SUNRAZE_SMASH": 879,
+    "MENACING_MOONRAZE_MAELSTROM": 880,
+    "LIGHT_THAT_BURNS_THE_SKY": 881,
+    "SOUL_STEALING_7_STAR_STRIKE": 882,
+}
+LIGHT_THAT_BURNS_THE_SKY_ANIMATION_ID = (
+    SIGNATURE_Z_MOVE_ANIMATION_IDS["LIGHT_THAT_BURNS_THE_SKY"])
+EXPANSION_MOVE_IDS = set(range(355, 676)) | set(
+    GENERIC_Z_MOVE_ANIMATION_IDS.values()) | set(
+    SIGNATURE_Z_MOVE_ANIMATION_IDS.values())
 SOURCE_NUMERIC_CONSTANTS: dict[str, int] = {}
 
 
@@ -690,6 +740,12 @@ MANUAL_TILE_BASE_BIAS: dict[str, int] = {
 # write would address beyond the loaded four-tile resource on the GBA too.
 TEMPLATE_MANUAL_TILE_BASE_BIAS: dict[str, int] = {
     "gThousandArrowsGreenArrowTemplate": 0,
+    # Sparkling Aria also borrows AnimMudSportDirt for its falling path, but
+    # the three 16x16 bubble cels occupy all 12 loaded tiles. Applying the
+    # dirt callback's +1 raw tile bias to the final cel reads tile 12 beyond
+    # that resource (adjacent OBJ VRAM on GBA). Preserve the authored bubble
+    # frames and motion without reproducing that out-of-resource read.
+    "gSparklingAriaBubbleRainTemplate": 0,
 }
 
 # callback: (argument index, tile stride, variant count, per-variant h/v flip)
@@ -703,6 +759,19 @@ MANUAL_TILE_ARGUMENT_VARIANTS: dict[
     "AnimBrickBreakWallShard": (1, 16, 4, {}),
     "AnimSuperpowerRock": (2, 4, 5, {}),
     "AnimEruptionFallingRock": (4, 16, 4, {}),
+}
+
+# Some templates call a generic tile-selecting callback with a deliberately
+# narrower argument domain than that callback supports elsewhere.  Encode the
+# domain at the template boundary so the exporter neither invents unreachable
+# cels nor reads beyond the exact loaded sheet.
+TEMPLATE_MANUAL_TILE_ARGUMENT_VARIANTS: dict[
+        str, tuple[int, int, int, dict[int, tuple[bool, bool]]]] = {
+    # Pollen Puff always passes selector 0. gGrantingStarsAnimTable already
+    # fills all 128 tiles, so the generic Zap Cannon selectors 1/2 would point
+    # into adjacent OBJ VRAM and are not reachable from this authored script.
+    "gPollenPuffPinkSparkleTemplate": (6, 4, 1, {}),
+    "gPollenPuffYellowSparkleTemplate": (6, 4, 1, {}),
 }
 
 # These callbacks change tileNum later in their state machine.  Sequence zero
@@ -837,7 +906,8 @@ def template_visual_asset_spec(template: str, tag: str,
     if base_bias:
         command_sequences = [shifted_sequence(sequence, base_bias)
                              for sequence in command_sequences]
-    argument_variants = MANUAL_TILE_ARGUMENT_VARIANTS.get(callback)
+    argument_variants = TEMPLATE_MANUAL_TILE_ARGUMENT_VARIANTS.get(
+        template, MANUAL_TILE_ARGUMENT_VARIANTS.get(callback))
     phase_variants = MANUAL_TILE_PHASE_VARIANTS.get(callback)
     if argument_variants or phase_variants:
         if len(command_sequences) != 1:
@@ -1065,10 +1135,16 @@ for _background_id, _background_name in enumerate((
         "BG_AURORA", "BG_FISSURE", "BG_BUG_OPPONENT", "BG_BUG_PLAYER",
         "BG_SOLAR_BEAM_OPPONENT", "BG_SOLAR_BEAM_PLAYER", "BG_SOLAR_BEAM_CONTESTS")):
     EXPRESSION_CONSTANTS[_background_name] = _background_id
-# The expansion's BG table continues far beyond FireRed.  The Pokegochi
-# archive gives Aura Sphere one explicit local slot, backed by the expansion's
-# own Focus Blast tilemap and Aura Sphere palette.
-EXPRESSION_CONSTANTS["BG_AURA_SPHERE"] = 27
+# Keep every post-FireRed background at its canonical expansion id. The asset
+# pack exports the same continuous 27..80 table, preventing one move's custom
+# plane from being mistaken for another (Aura Sphere used to occupy local 27,
+# which is Magma Storm in the actual source table).
+for _background_name, _background_id in re.findall(
+        r"#define\s+(BG_[A-Z0-9_]+)\s+(\d+)",
+        (EXPANSION / "include/constants/battle_anim.h").read_text(
+            encoding="utf-8")):
+    if int(_background_id) >= 27:
+        EXPRESSION_CONSTANTS[_background_name] = int(_background_id)
 
 
 def _eval_expression_node(node: ast.AST) -> int:
@@ -1528,12 +1604,35 @@ for source, _source_name in animation_sources:
 # addition still stops generation for review.
 RAW_TEMPLATE_OAM_SIZES: dict[str, tuple[int, int]] = {
     "gPetalBlizzardTwister2Template": (8, 8),
+    # Source declares sSunsteelStrikeBlastOAM with explicit
+    # SPRITE_SHAPE/SIZE(64x64) instead of a shared gOamData_* symbol.
+    "gSunsteelStrikeSuperpowerTemplate": (64, 64),
+    "gGrowingSuperpowerTemplate": (64, 64),
+    # Signature Z-Moves reuse the same source-local 64x64 growing-superpower
+    # OAM as Sunsteel Strike; neither template points at a named gOamData row.
+    "gCatastrokpikaSuperpowerSpriteTemplate": (64, 64),
+    "gGenesisSupernovaSuperpowerSpriteTemplate": (64, 64),
+    # Light That Burns the Sky uses the source-local sGeyserOam declaration.
+    "gLightThatBurnsTheSkyExplosionSpriteTemplate": (32, 32),
 }
+
+CUSTOM_OAM_SIZES: dict[tuple[str, str], tuple[int, int]] = {}
+for source, source_name in animation_sources:
+    for match in re.finditer(
+            r"(?:const|static const)\s+struct\s+OamData\s+(\w+)\s*=\s*"
+            r"\{(.*?)\};", source, re.S):
+        dimensions = re.search(
+            r"\.shape\s*=\s*SPRITE_SHAPE\((\d+)x(\d+)\)",
+            match.group(2))
+        if dimensions:
+            CUSTOM_OAM_SIZES[(source_name, match.group(1))] = (
+                int(dimensions.group(1)), int(dimensions.group(2)))
 
 template_specs: dict[str, dict[str, object]] = {}
 for source, source_name in animation_sources:
     for match in re.finditer(
-            r"(?:const|static const)\s+struct\s+SpriteTemplate\s+(\w+)\s*=\s*\{(.*?)\};",
+            r"(?:const|static const)\s+struct\s+SpriteTemplate\s+(\w+)\s*=\s*"
+            r"(?://[^\r\n]*)?\s*\{(.*?)\};",
             source, re.S):
         if source_name == "expansion" and match.group(1) in template_specs:
             # The expansion intentionally carries the same GBA templates for
@@ -1548,8 +1647,12 @@ for source, source_name in animation_sources:
         animations = re.search(r"\.anims\s*=\s*(\w+)", body)
         affine_animations = re.search(r"\.affineAnims\s*=\s*(\w+)", body)
         oam_size = re.search(r"gOamData_[A-Za-z0-9_]+_(\d+)x(\d+)", body)
+        oam_symbol = re.search(r"\.oam\s*=\s*&([A-Za-z0-9_]+)", body)
         raw_width, raw_height = RAW_TEMPLATE_OAM_SIZES.get(
             match.group(1), (0, 0))
+        if not raw_width and oam_symbol:
+            raw_width, raw_height = CUSTOM_OAM_SIZES.get(
+                (source_name, oam_symbol.group(1)), (0, 0))
         template_specs[match.group(1)] = {
             "tag": (tag.group(1) if tag else
                     "SMOKESCREEN_IMPACT" if match.group(1) ==
@@ -1589,6 +1692,11 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     # the retained IonRain renderer. AnimIon itself only installs the child
     # callback, so the exported sprite resource must remain position-neutral.
     "AnimIon": ("BattleAnimationMotion::Static", 18),
+    # Volt Switch uses the public horizontal-arc ABI for its outbound phase,
+    # then merges x2/y2 and performs a fixed twenty-tick linear return to the
+    # attacker. A plain Arc silently discarded that second phase.
+    "AnimTask_VoltSwitch":
+        ("BattleAnimationMotion::VoltSwitchReturn", 53),
     "AnimSkyAttackBird": ("BattleAnimationMotion::SkyAttackBird", 30),
     "AnimMovementWaves": ("BattleAnimationMotion::MovementWavesRepeat", 96),
     "AnimReversalOrb": ("BattleAnimationMotion::FastOrbit", 52),
@@ -1627,7 +1735,7 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     "AnimThrowMistBall": ("BattleAnimationMotion::TargetLocationProjectile", 31),
     "AnimRainDrop": ("BattleAnimationMotion::Falling", 18),
     "AnimSuperpowerOrb": ("BattleAnimationMotion::Projectile", 20),
-    "AnimWavyMusicNotes": ("BattleAnimationMotion::Wave", 36),
+    "AnimWavyMusicNotes": ("BattleAnimationMotion::WavyMusicNote", 36),
     # Expansion-only Gen-IV callbacks. Their source state machines are
     # translated to explicit retained motions with the same travel direction;
     # they never fall through to a name-based placeholder.
@@ -1657,10 +1765,22 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     # Reflect Type and later expansion moves place a guard ring 40px below
     # the attacker and linearly raise it 72px over thirteen frames.
     "SpriteCB_SurroundingRing": ("BattleAnimationMotion::RaiseSprite", 14),
-    # Water Pledge starts at the target and rises by arg3 pixels per frame
-    # until reaching arg2. The retained Rising profile preserves that visible
-    # target-local vertical travel instead of freezing the orb at spawn.
-    "AnimFlyUpTarget": ("BattleAnimationMotion::Rising", 48),
+    # The Pledge orb starts one half target-height below its target anchor,
+    # applies arg1, then rises by arg3 until its y2 reaches arg2.
+    "AnimFlyUpTarget": ("BattleAnimationMotion::PledgeOrbRise", 48),
+    # These expansion callbacks have distinct ABIs despite their short names.
+    # Keep them out of the broad Falling/Rising/Scatter classifiers.
+    "AnimSkyDropBallUp": ("BattleAnimationMotion::FlyBallRise", 64),
+    "AnimHappyHourCoinShower":
+        ("BattleAnimationMotion::FallingRockEllipse", 49),
+    "SpriteCB_FallingObject":
+        ("BattleAnimationMotion::FallingObject", 32),
+    "SpriteCB_Geyser": ("BattleAnimationMotion::GeyserRise", 48),
+    "SpriteCB_GeyserTarget": ("BattleAnimationMotion::GeyserRise", 48),
+    "AnimAcrobaticsSlashes":
+        ("BattleAnimationMotion::RandomAffineOrientedStatic", 27),
+    "SpriteCB_RandomCentredHits":
+        ("BattleAnimationMotion::RandomCentredAffineHit", 14),
     # Reflect Type reuses String Shot's exact three-frame blink cadence and
     # 51-frame lifetime; only the initializer name differs in expansion.
     "SpriteCB_ToxicThreadWrap": ("BattleAnimationMotion::StringWrapBlink", 51),
@@ -1668,6 +1788,62 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     # canonical spinning kick/punch callback, with arg4 only selecting the
     # affected battler in doubles (the app's battle scene is single-target).
     "SpriteCB_SearingShotRock": ("BattleAnimationMotion::SpinningKickOrPunchExact", 96),
+    # The Sunsteel rings share Fly's exact off-screen linear callback after
+    # choosing a different palette. Moongeist's charge is the standard arc
+    # ABI but remains local to the attacker. Both can use existing exact
+    # executors once they are classified explicitly.
+    "SpriteCB_SunsteelStrikeRings":
+        ("BattleAnimationMotion::OffscreenFly", 48),
+    "SpriteCB_MoongeistCharge":
+        ("BattleAnimationMotion::StandardArcProjectile", 31),
+    # Breakneck Blitz and the elemental/signature Z-Moves reuse this exact
+    # sixteen-tick attacker/target translation plus an authored affine scale.
+    "SpriteCB_GrowingSuperpower":
+        ("BattleAnimationMotion::GrowingSuperpower", 17),
+    # Core Enforcer delegates directly to AnimSolarBeamBigOrb in the
+    # single-target battles supported by Pokegochi. Keep that exact callback
+    # profile; the alternate branch only recentres the same linear beam for a
+    # doubles formation that this renderer never presents.
+    "SpriteCB_CoreEnforcerBeam": ("BattleAnimationMotion::SolarBeamBigOrb", 96),
+    # Clanging Scales uses the expansion's doubles-aware version of the
+    # standard attacker-to-target translation. Its first six arguments have
+    # the same retained ABI; the final selector only chooses which doubles
+    # target receives the ring and resolves to the sole foe in our battles.
+    "SpriteCB_TranslateAnimSpriteToTargetMonLocationDoubles":
+        ("BattleAnimationMotion::TargetLocationProjectile", 31),
+    # Mind Blown uses the same three-phase ABI already retained for Shadow
+    # Ball: attacker-to-centre duration, centre hold, then centre-to-target.
+    "SpriteCB_MindBlownBall": ("BattleAnimationMotion::ShadowBall", 41),
+    "SpriteCB_MindBlownExplosion":
+        ("BattleAnimationMotion::MindBlownExplosion", 64),
+    "SpriteCB_SpriteToCentreOfSide":
+        ("BattleAnimationMotion::OrientedStatic", 64),
+    "SpriteCB_CentredSpiderWeb":
+        ("BattleAnimationMotion::SpiderWebFade", 53),
+    "SpriteCB_CoreEnforcerHits":
+        ("BattleAnimationMotion::CoreEnforcerHit", 32),
+    "SpriteCB_AnimSpriteOnSelectedMonPos":
+        ("BattleAnimationMotion::OrientedStatic", 64),
+    "SpriteCB_PhotonGeyserBeam":
+        ("BattleAnimationMotion::PhotonGeyserBeam", 181),
+    "AnimBlastBurnTargetPlume":
+        ("BattleAnimationMotion::BlastBurnTargetPlume", 64),
+    # Soul-Stealing 7-Star Strike places each star at arg0/arg1, moves it by
+    # fixed-point arg3/arg4 for arg5 ticks, then retraces that path exactly.
+    "AnimSoulStealingStar":
+        ("BattleAnimationMotion::SoulStealingStar", 97),
+    # Signature-Z callback identities reviewed directly in battle_anim_new.c.
+    "AnimGrowingShockWaveOrbOnTarget":
+        ("BattleAnimationMotion::OrientedStatic", 64),
+    "AnimExtremeEvoboostCircle":
+        ("BattleAnimationMotion::EllipticalGust", 71),
+    # This OBJ is an invisible object-window mask. The retained spotlight and
+    # palette tasks own the visible dimming; drawing the mask itself would be
+    # a spurious white disc.
+    "AnimOceanicOperettaSpotlight":
+        ("BattleAnimationMotion::FlatterSpotlightMask", 123),
+    "SpriteCB_TwinkleOnBattler":
+        ("BattleAnimationMotion::OrientedStatic", 64),
 }
 
 # Stationary is a valid FireRed contract only for callbacks reviewed here.
@@ -1929,7 +2105,7 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimThunderboltOrb": ("BattleAnimationMotion::ThunderboltOrbBlink", 64),
         "AnimThunderWave": ("BattleAnimationMotion::ThunderWavePairBlink", 51),
         "AnimSparkElectricity": ("BattleAnimationMotion::StaticElectricity", 64),
-        "InitIceBallParticle": ("BattleAnimationMotion::IceBallImpactShard", 21),
+        "InitIceBallParticle": ("BattleAnimationMotion::Scatter", 21),
         "AnimSlashSlice": ("BattleAnimationMotion::SlashFlicker", 34),
         "AnimNightSlash": ("BattleAnimationMotion::SlashFlicker", 34),
         "AnimConversion": ("BattleAnimationMotion::ConversionHold", 255),
@@ -1953,6 +2129,11 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimCuttingSlice": ("BattleAnimationMotion::SliceArc", 23),
         "AnimAirCutterSlice": ("BattleAnimationMotion::SliceArc", 23),
         "AnimEllipticalGust": ("BattleAnimationMotion::EllipticalGust", 71),
+        # Bloom Doom's callback is byte-for-byte the same ellipse/timing but
+        # initializes from ANIM_ATTACKER; the script anchor already carries
+        # that distinction into the retained renderer.
+        "AnimEllipticalGustAttacker":
+            ("BattleAnimationMotion::EllipticalGust", 71),
         "AnimStompFoot": ("BattleAnimationMotion::StompDrop", 23),
         "AnimHornHit": ("BattleAnimationMotion::HornLunge", 18),
         "AnimBubbleEffect": ("BattleAnimationMotion::BubbleRise", 30),
@@ -2087,22 +2268,22 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         if "dip" in key or "jump" in key:
             return "BattleAnimationMotion::BattlerDip", 12
         if any(word in key for word in ("slide", "translate", "sway", "rotate", "scale")):
-            return "BattleAnimationMotion::BattlerSlide", 16
+            return "BattleAnimationMotion::BattlerLunge", 16
         if any(word in key for word in ("blend", "palette", "flash", "invert", "grayscale")):
             return "BattleAnimationMotion::PalettePulse", 16
-        return "BattleAnimationMotion::ProceduralPulse", 14
+        return "BattleAnimationMotion::Static", 14
     if any(word in key for word in (
             "initanimarctranslation", "translateanimhorizontalarc",
             "translateanimverticalarc", "animtranslatehorizontalarc")):
         return "BattleAnimationMotion::Arc", 18
     if "sin(" in key and "cos(" in key:
-        return "BattleAnimationMotion::Orbit", 20
+        return "BattleAnimationMotion::FastOrbit", 20
     if any(word in key for word in (
             "initanimlineartranslation", "startanimlineartranslation",
             "translateanimlinear", "animtranslatelinear", "initanimfastlineartranslation")):
         return "BattleAnimationMotion::Projectile", 18
     if any(word in key for word in ("spiral", "orbit", "vortex", "circle")):
-        return "BattleAnimationMotion::Orbit", 20
+        return "BattleAnimationMotion::FastOrbit", 20
     if any(word in key for word in ("fall", "drop", "rain", "hail")):
         return "BattleAnimationMotion::Falling", 18
     if any(word in key for word in ("rise", "rising", "float", "upward")):
@@ -2110,9 +2291,9 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
     if any(word in key for word in ("arc", "bounce", "parabola", "leap")):
         return "BattleAnimationMotion::Arc", 18
     if any(word in key for word in ("wave", "sine", "wavy", "flutter")):
-        return "BattleAnimationMotion::Wave", 18
+        return "BattleAnimationMotion::WavyMusicNote", 18
     if "sin(" in key or "cos(" in key:
-        return "BattleAnimationMotion::Wave", 18
+        return "BattleAnimationMotion::WavyMusicNote", 18
     if any(word in key for word in ("scatter", "burst", "random", "particle", "fragment")):
         return "BattleAnimationMotion::Scatter", 14
     if any(word in key for word in (
@@ -2179,7 +2360,6 @@ def sprite_travel(template: str, callback: str, motion: str) -> str:
             "BattleAnimationMotion::DragonFire",
             "BattleAnimationMotion::SkyAttackBird",
             "BattleAnimationMotion::Arc",
-            "BattleAnimationMotion::Wave",
             "BattleAnimationMotion::OrbitingProjectile",
             "BattleAnimationMotion::IceBeamParticle",
             "BattleAnimationMotion::SwirlingSnowball",
@@ -2281,6 +2461,11 @@ def sprite_origin(template: str, callback: str, travel: str) -> str:
         "AnimDiveWaterSplash": "BattleAnimationOrigin::Argument0",
         "AnimTailGlowOrb": "BattleAnimationOrigin::Argument0",
         "AnimRevengeScratch": "BattleAnimationOrigin::Argument2",
+        "SpriteCB_SpriteToCentreOfSide": "BattleAnimationOrigin::Argument2",
+        "SpriteCB_CoreEnforcerHits": "BattleAnimationOrigin::Argument2",
+        "SpriteCB_AnimSpriteOnSelectedMonPos": "BattleAnimationOrigin::Argument2",
+        "SpriteCB_PhotonGeyserBeam": "BattleAnimationOrigin::Argument2",
+        "SpriteCB_TwinkleOnBattler": "BattleAnimationOrigin::Argument2",
     }
     if callback in explicit_selector_origins:
         return explicit_selector_origins[callback]
@@ -2537,7 +2722,13 @@ def task_kind(name: str) -> str:
     if name in {"AnimTask_AllySwitchAttacker", "AnimTask_AllySwitchPartner",
                 "AnimTask_SnatchOpposingMonMove"}:
         return "BattleAnimationTaskKind::BattlerMotion"
-    if name == "AnimTask_TechnoBlast":
+    if name in {
+            "AnimTask_TechnoBlast",
+            # Pokegochi battles are singles: attacker and target are the only
+            # battlers, so hiding every battler except those two is an exact
+            # no-op control command rather than an unimplemented motion.
+            "AnimTask_AllBattlersInvisibleExceptAttackerAndTarget",
+    }:
         return "BattleAnimationTaskKind::Control"
     if lowered.startswith("soundtask_"):
         return "BattleAnimationTaskKind::Sound"
@@ -2583,6 +2774,7 @@ def task_kind(name: str) -> str:
         "animtask_mistballfog": "FogBackground",
         "animtask_hazescrollingfog": "FogBackground",
         "animtask_morningsunlightbeam": "SunlightBackground",
+        "animtask_doomdesirelightbeam": "SunlightBackground",
         "animtask_heartsbackground": "HeartBackground",
         "animtask_moveskyuppercutbg": "CinematicBackground",
         "animtask_positionfissurebgonbattler": "CinematicBackground",
@@ -2665,6 +2857,7 @@ TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_FlailMovement": ("FlailMovement", "Attacker"),
     "AnimTask_GrowAndGrayscale": ("GrowAndGrayscale", "Target"),
     "AnimTask_GrowAndShrink": ("GrowAndShrink", "Attacker"),
+    "AnimTask_GrowTarget": ("GrowTarget", "Target"),
     "AnimTask_HelpingHandAttackerMovement": ("HelpingHandAttackerMovement", "Attacker"),
     "AnimTask_MeditateStretchAttacker": ("MeditateStretchAttacker", "Attacker"),
     "AnimTask_Minimize": ("Minimize", "Attacker"),
@@ -2684,6 +2877,13 @@ TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_ScaleMonAndRestore": ("ScaleMonAndRestore", "ScriptAnchor"),
     "AnimTask_SnatchOpposingMonMove": ("SnatchOpposingMonMoveExact", "Attacker"),
     "AnimTask_SetAllNonAttackersInvisiblity": ("SetAllNonAttackersInvisible", "Target"),
+    # Expansion's signature Z scripts use the correctly-spelled helper which
+    # hides every bystander while preserving both combatants. Pokegochi is a
+    # one-on-one renderer, so this has the same retained result as the
+    # FireRed helper already used above: attacker and target remain visible.
+    "AnimTask_AllBattlersInvisibleExceptAttackerAndTarget": ("None", "None"),
+    "AnimTask_AllBattlersInvisible": ("AllBattlersInvisible", "BothBattlers"),
+    "AnimTask_AllBattlersVisible": ("AllBattlersVisible", "BothBattlers"),
     "AnimTask_SetAttackerInvisibleWaitForSignal": ("SetAttackerInvisibleWaitForSignal", "Attacker"),
     "AnimTask_SetGrayscaleOrOriginalPal": ("SetGrayscaleOrOriginalPal", "ScriptAnchor"),
     "AnimTask_ShrinkTargetCopy": ("ShrinkTargetCopy", "Target"),
@@ -2711,6 +2911,7 @@ TASK_MOTION_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_TransformMon": ("TransformMon", "Attacker"),
     "AnimTask_TranslateMonElliptical": ("TranslateMonElliptical", "ScriptAnchor"),
     "AnimTask_TranslateMonEllipticalRespectSide": ("TranslateMonEllipticalRespectSide", "ScriptAnchor"),
+    "AnimTask_TwinkleTackleLaunch": ("TwinkleTackleLaunch", "Target"),
     "AnimTask_TransparentCloneGrowAndShrink": ("TransparentCloneGrowAndShrink", "ScriptAnchor"),
     "AnimTask_UproarDistortion": ("UproarDistortion", "Attacker"),
     "AnimTask_VoltTackleAttackerReappear": ("VoltTackleAttackerReappear", "Attacker"),
@@ -2790,11 +2991,16 @@ TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_CreateRaindrops": ("Raindrops", "Screen"),
     "AnimTask_CreateSmallSolarBeamOrbs": ("SolarBeamOrbs", "Attacker"),
     "AnimTask_DestinyBondWhiteShadow": ("DestinyBondShadow", "Attacker"),
+    # Pulverizing Pancake instantiates the same white-shadow template and the
+    # same fade/travel state machine, but fixes it to the current target.
+    "AnimTask_PulverizingPancakeWhiteShadow":
+        ("DestinyBondShadow", "Attacker"),
     "AnimTask_DrillPeckHitSplats": ("DrillPeckHitSplats", "Target"),
     "AnimTask_ElectricBolt": ("ElectricBoltSegments", "Target"),
     "AnimTask_ElectricChargingParticles": ("ElectricChargingParticles", "Attacker"),
     "AnimTask_EruptionLaunchRocks": ("EruptionLaunchRocks", "Attacker"),
     "AnimTask_FrozenIceCube": ("FrozenIceCube", "Target"),
+    "AnimTask_FrozenIceCubeAttacker": ("FrozenIceCube", "Attacker"),
     "AnimTask_GlareEyeDots": ("GlareEyeDots", "Target"),
     "AnimTask_GrudgeFlames": ("GrudgeFlames", "Attacker"),
     "AnimTask_PurpleFlamesOnTarget": ("GrudgeFlames", "Target"),
@@ -2803,6 +3009,9 @@ TASK_EXACT_SPRITE_RESOURCES: dict[str, tuple[str, str]] = {
     "AnimTask_CreateIons": ("IonRain", "Screen"),
     "AnimTask_LeafBlade": ("LeafBladePath", "Target"),
     "AnimTask_Rollout": ("RolloutDebris", "Attacker"),
+    # Tectonic Rage invokes the identical Rollout_Step routine, but fixes the
+    # counter to one and travelFrames to 40 (ordinary Rollout uses 32 there).
+    "AnimTask_TectonicRageRollout": ("TectonicRageRollout", "Attacker"),
     "AnimTask_ShockWaveLightning": ("ShockWaveLightning", "Target"),
     "AnimTask_ShockWaveProgressingBolt": ("ShockWaveProgressingBolt", "Target"),
     # Heart Swap is explicitly copied from Skill Swap in the expansion; it
@@ -2843,6 +3052,11 @@ TASK_BACKGROUND_RESOURCES: dict[str, tuple[str, str, int, bool]] = {
         ("HeartsField", "Screen", 271, True),
     "AnimTask_MorningSunLightBeam":
         ("MorningSunField", "Attacker", 164, True),
+    # Doom Desire/Supersonic Skystrike use the same source LightBeam BG1
+    # mask as Morning Sun, but sweep four target-centred X offsets with a
+    # fixed EVA=3 blend. This is a separate callback state machine.
+    "AnimTask_DoomDesireLightBeam":
+        ("DoomDesireLightBeam", "Target", 42, True),
     "AnimTask_CreateSpotlight":
         ("SpotlightWindow", "Screen", 1, True),
     "AnimTask_RemoveSpotlight":
@@ -2894,6 +3108,7 @@ TASK_MOTION_LIFETIMES = {
     "ElectricBoltSegments": 25, "SmokescreenImpact": 42,
     "GlareEyeDots": 89, "BarrageBall": 58, "BestowItemThrow": 41,
     "DestinyBondShadow": 120, "RolloutDebris": 100,
+    "TectonicRageRollout": 100,
     "Raindrops": 134, "SpeedDust": 132, "HailStones": 150,
     "TormentThoughtBubbles": 132, "ElectricChargingParticles": 150,
     "EruptionLaunchRocks": 112, "SkillSwapOrbs": 104,
@@ -2919,7 +3134,8 @@ TASK_MOTION_LIFETIMES.update({
     "DigUpMovement": 16, "DoubleTeam": 96,
     "ExtremeSpeedImpact": 24, "ExtremeSpeedMonReappear": 24,
     "FlailMovement": 36, "GrowAndGrayscale": 81,
-    "GrowAndShrink": 32, "HelpingHandAttackerMovement": 48,
+    "GrowAndShrink": 32, "GrowTarget": 121,
+    "HelpingHandAttackerMovement": 48,
     "MeditateStretchAttacker": 32, "Minimize": 160,
     "MonToSubstitute": 48, "NightShadeClone": 80,
     "NightmareClone": 64, "OdorSleuthMovement": 96,
@@ -2930,6 +3146,7 @@ TASK_MOTION_LIFETIMES.update({
     "SnatchOpposingMonMoveExact": 80,
     "RotateMonToSideAndRestore": 64, "ScaleMonAndRestore": 32,
     "SetAllNonAttackersInvisible": 1,
+    "AllBattlersInvisible": 1, "AllBattlersVisible": 1,
     "SetAttackerInvisibleWaitForSignal": 0xFFFF,
     "SetGrayscaleOrOriginalPal": 1, "ShrinkTargetCopy": 64,
     "SkullBashPosition": 48, "SlackOffSquish": 32,
@@ -2945,6 +3162,7 @@ TASK_MOTION_LIFETIMES.update({
     "TranslateMonEllipticalRespectSide": 64,
     "TransparentCloneGrowAndShrink": 64, "UproarDistortion": 64,
     "VoltTackleAttackerReappear": 16, "WindUpLunge": 64,
+    "TwinkleTackleLaunch": 96,
     "WithdrawExact": 32,
     "HorizontalShakeExact": 32, "ShakeAndSinkMonExact": 32,
     "ShakeBattleTerrainExact": 32, "ShakeMonExact": 32,
@@ -3007,8 +3225,13 @@ def task_motion_resource(name: str, kind: str,
 rows: list[str] = []
 program_rows: list[str] = []
 program_command_rows: list[str] = []
+program_command_argument_offsets: list[int] = []
 program_argument_values: list[int] = []
 program_argument_offsets: dict[tuple[int, ...], int] = {}
+COMPACT_COMMAND_PRIORITIES = (
+    0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 16,
+    19, 20, 40, 41, 50, 51, 66, 70, 120, 130, 131, 132, 133, 136, 240,
+)
 sprite_resource_rows: list[str] = []
 sprite_frame_step_rows: list[str] = []
 sprite_frame_sequence_rows: list[str] = []
@@ -3046,7 +3269,7 @@ def move_script_label(symbol: str, number: int) -> str:
     return candidates[0]
 
 
-def sprite_animation_selector(callback: str,
+def sprite_animation_selector(template: str, callback: str,
                               sequence_count: int) -> tuple[int, int, str]:
     """Return (argument index, constant, proof) for StartSpriteAnim.
 
@@ -3056,7 +3279,8 @@ def sprite_animation_selector(callback: str,
     """
     if sequence_count <= 1:
         return -1, 0, "SingleSequence"
-    manual_selector = MANUAL_TILE_ARGUMENT_VARIANTS.get(callback)
+    manual_selector = TEMPLATE_MANUAL_TILE_ARGUMENT_VARIANTS.get(
+        template, MANUAL_TILE_ARGUMENT_VARIANTS.get(callback))
     if manual_selector is not None:
         argument, _, count, _ = manual_selector
         if sequence_count != count:
@@ -3281,7 +3505,7 @@ def sprite_resource_id(template: str) -> int:
         sprite_frame_sequence_rows.append(
             f"  {{{step_offset}, {len(steps)}, {loop_step}}},")
     selector_argument, selector_constant, selector_proof = \
-        sprite_animation_selector(callback, len(sequences))
+        sprite_animation_selector(template, callback, len(sequences))
     affine_table = str(spec.get("affineAnimations", ""))
     lifecycle_body = expanded_sprite_motion_body(callback)
     manual_tile_write = "oam.tileNum" in lifecycle_body
@@ -3359,6 +3583,10 @@ def sprite_resource_id(template: str) -> int:
         "AnimBellyDrumHand": (-1, -1),
         "AnimQuestionMark": (-1, -1),
         "AnimateZenHeadbutt": (-1, -1),
+        "SpriteCB_CentredSpiderWeb": (-1, -1),
+        "SpriteCB_Geyser": (1, 2),
+        "SpriteCB_GeyserTarget": (1, 2),
+        "SpriteCB_RandomCentredHits": (-1, -1),
     }
     x_offset_argument, y_offset_argument = offset_argument_overrides.get(
         callback, (0, 1))
@@ -3407,13 +3635,21 @@ def sprite_resource_id(template: str) -> int:
     if template == "gFistFootRandomPosSpriteTemplate":
         child_resource_id = sprite_resource_id("gBasicHitSplatSpriteTemplate")
     sprite_resource_ids[template] = identifier
+    if not (-1 <= selector_argument <= 7 and
+            -1 <= affine_selector_argument <= 7 and
+            -1 <= x_offset_argument <= 7 and
+            -1 <= y_offset_argument <= 7):
+        raise RuntimeError(
+            f"Animation argument selector exceeds packed nibble: {template}")
     sprite_resource_rows.append(
-        f'  {{"{asset_key}", {palette_tag}, {frames}, {sequence_offset}, {len(sequences)}, '
-        f'{selector_argument}, {selector_constant}, {motion}, {travel}, {origin}, '
+        f'  {{"{asset_key}", {palette_tag}, {sequence_offset}, '
+        f'{affine_sequence_offset}, {child_resource_id}, {motion}, '
+        f'{frames}, {len(sequences)}, {selector_argument}, '
+        f'{affine_selector_argument}, {selector_constant}, '
+        f'{travel}, {origin}, '
         f'{x_offset_argument}, {y_offset_argument}, {lifetime}, '
-        f'{affine_sequence_offset}, {affine_sequence_count}, '
-        f'{affine_selector_argument}, {affine_selector_constant}, {affine_start_age}, '
-        f'{child_resource_id}}}, '
+        f'{affine_sequence_count}, {affine_selector_constant}, '
+        f'{affine_start_age}}}, '
         f'// {template} / {callback}')
     sprite_asset_catalog_rows.append(
         f'  {{"{asset_key}", {frames}, {motion}, {lifetime}}}, // {template} / {callback}')
@@ -3467,12 +3703,47 @@ def task_resource_id(name: str, kind: str,
 def append_program_command(opcode: str, resource: str = "0", anchor: int = 0,
                            priority: int = 0, arguments: list[int] | None = None) -> None:
     values = arguments or []
+    try:
+        numeric_resource = int(resource, 0)
+    except ValueError:
+        if not resource.startswith("static_cast<uint16_t>(BattleAnimationQuery::"):
+            raise RuntimeError(f"Animation resource is not compact-auditable: {resource}")
+        numeric_resource = 0
+    if not 0 <= numeric_resource <= 0x03FF:
+        raise RuntimeError(f"Animation resource exceeds 10 bits: {numeric_resource}")
+    if not 0 <= anchor <= 3:
+        raise RuntimeError(f"Animation anchor exceeds 2 bits: {anchor}")
+    compact_priority = priority & 0xFF
+    if compact_priority not in COMPACT_COMMAND_PRIORITIES:
+        raise RuntimeError(
+            f"Animation priority is not in compact dictionary: {priority}/{compact_priority}")
+    if len(values) > 0x0F:
+        raise RuntimeError(f"Animation argument count exceeds 4 bits: {len(values)}")
     key = tuple(values)
     offset = program_argument_offsets.get(key, -1)
     if offset < 0:
-        offset = len(program_argument_values)
-        program_argument_values.extend(values)
+        # Reuse a tuple contained by an earlier argument stream, or overlap
+        # its prefix with the existing suffix.  Offsets are translated to the
+        # final varint byte stream after all commands have been generated.
+        offset = -1
+        if values:
+            limit = len(program_argument_values) - len(values) + 1
+            for candidate in range(max(0, limit)):
+                if program_argument_values[candidate:candidate + len(values)] == values:
+                    offset = candidate
+                    break
+        else:
+            offset = 0
+        if offset < 0:
+            overlap = 0
+            for count in range(min(len(program_argument_values), len(values)), 0, -1):
+                if program_argument_values[-count:] == values[:count]:
+                    overlap = count
+                    break
+            offset = len(program_argument_values) - overlap
+            program_argument_values.extend(values[overlap:])
         program_argument_offsets[key] = offset
+    program_command_argument_offsets.append(offset)
     program_command_rows.append(
         f"  {{{resource}, {offset}, static_cast<uint8_t>(BattleAnimationOpcode::{opcode}), "
         f"{anchor & 0xFF}, {priority & 0xFF}, {len(values)}}},")
@@ -3500,6 +3771,10 @@ if 468 in EXPANSION_MOVE_IDS:
     expansion_move_definitions.append(("HONE_CLAWS", 468))
 if 560 in EXPANSION_MOVE_IDS:
     expansion_move_definitions.append(("FLYING_PRESS", 560))
+if 622 in EXPANSION_MOVE_IDS:
+    expansion_move_definitions.append(("SHORE_UP", 622))
+expansion_move_definitions.extend(GENERIC_Z_MOVE_ANIMATION_IDS.items())
+expansion_move_definitions.extend(SIGNATURE_Z_MOVE_ANIMATION_IDS.items())
 expansion_move_definitions.sort(key=lambda entry: entry[1])
 move_definitions += expansion_move_definitions
 
@@ -3639,7 +3914,8 @@ for symbol, number in move_definitions:
                 elif task_name in TASK_BACKGROUND_RESOURCES:
                     renderer = ("ExactTaskBackground" if task_motion in {
                         "SandstormField", "HazeFogField", "MistBallFogField",
-                        "HeartsField", "MorningSunField"} else
+                        "HeartsField", "MorningSunField",
+                        "DoomDesireLightBeam"} else
                         "ExactBackgroundTransform" if task_motion in {
                         "SlidingBackground", "PsychicPaletteCycle",
                         "FadeScreenPaletteCycle", "FissureBackgroundPosition",
@@ -3809,12 +4085,26 @@ for symbol, number in move_definitions:
     unknown = sorted(set(commands) - supported)
     for command in unknown:
         unsupported_commands[command] = unsupported_commands.get(command, 0) + 1
+    background_ids: set[int] = set()
+    for generated in move_commands:
+        if generated["opcode"] not in {"ChangeBackground", "FadeToBackground"}:
+            continue
+        resource = str(generated["resource"])
+        if resource.isdigit():
+            background_ids.add(int(resource))
+        # FadeToBackground from a source set stores the alternate singles
+        # background as its first retained argument.
+        if generated["arguments"]:
+            alternate = int(generated["arguments"][0])
+            if alternate >= 0:
+                background_ids.add(alternate)
     audit["moves"][str(number)] = {  # type: ignore[index]
         "symbol": symbol,
         "tags": tags,
         "assets": assets[:len(specs)],
         "particles": particle,
         "flags": flags,
+        "backgroundIds": sorted(background_ids),
         "sourceFound": source_found,
         "visualTasks": visual_tasks,
         "scriptSprites": script_static_sprites,
@@ -3851,6 +4141,69 @@ if len(program_command_rows) > 0xFFFF or len(program_argument_values) > 0xFFFF:
     raise RuntimeError(
         f"Animation bytecode exceeds 16-bit offsets: {len(program_command_rows)} commands, "
         f"{len(program_argument_values)} arguments")
+
+# Zig-zag varints retain every signed 16-bit callback argument while using a
+# single byte for the overwhelmingly common -64..63 range.  Commands address
+# byte offsets, so the firmware can decode one tuple into a tiny scratch view
+# without expanding the complete table into scarce ESP32 RAM.
+encoded_argument_values: list[int] = []
+argument_byte_offsets: list[int] = []
+for value in program_argument_values:
+    argument_byte_offsets.append(len(encoded_argument_values))
+    encoded = (value << 1) ^ (value >> 15)
+    while encoded >= 0x80:
+        encoded_argument_values.append((encoded & 0x7F) | 0x80)
+        encoded >>= 7
+    encoded_argument_values.append(encoded)
+argument_byte_offsets.append(len(encoded_argument_values))
+if len(program_command_argument_offsets) != len(program_command_rows):
+    raise RuntimeError("Animation command/argument offset tables diverged")
+for index, element_offset in enumerate(program_command_argument_offsets):
+    byte_offset = argument_byte_offsets[element_offset]
+    if byte_offset > 0x3FFF:
+        raise RuntimeError(
+            f"Encoded animation argument offset exceeds 14 bits: {byte_offset}")
+    program_command_rows[index] = re.sub(
+        r"^(\s*\{[^,]+,\s*)\d+(,\s*static_cast)",
+        rf"\g<1>{byte_offset}\2", program_command_rows[index], count=1)
+
+# The Gen VII catalog contains many repeated VM commands.  Keeping every
+# command as a five-byte record used more flash than the OTA application slot
+# permits, even though only a quarter of those records are distinct.  Store a
+# dictionary of complete commands and a random-access 13-bit index stream.
+# Programs still address commands by their original linear offset, so jumps,
+# calls and every generated control-flow contract remain unchanged.
+command_dictionary_rows: list[str] = []
+command_dictionary_ids: dict[str, int] = {}
+program_command_indices: list[int] = []
+for command_row in program_command_rows:
+    command_id = command_dictionary_ids.get(command_row)
+    if command_id is None:
+        command_id = len(command_dictionary_rows)
+        command_dictionary_ids[command_row] = command_id
+        command_dictionary_rows.append(command_row)
+    program_command_indices.append(command_id)
+if len(command_dictionary_rows) > 0x2000:
+    raise RuntimeError(
+        f"Animation command dictionary exceeds 13 bits: "
+        f"{len(command_dictionary_rows)} entries")
+
+packed_command_indices: list[int] = []
+packed_bits = 0
+packed_value = 0
+for command_id in program_command_indices:
+    packed_value |= command_id << packed_bits
+    packed_bits += 13
+    while packed_bits >= 8:
+        packed_command_indices.append(packed_value & 0xFF)
+        packed_value >>= 8
+        packed_bits -= 8
+if packed_bits:
+    packed_command_indices.append(packed_value & 0xFF)
+packed_command_index_rows = [
+    "  " + ", ".join(str(value) for value in packed_command_indices[offset:offset + 24]) + ","
+    for offset in range(0, len(packed_command_indices), 24)
+]
 
 unclassified_tasks = [
     name for name, handler in task_handler_audit.items()
@@ -3951,7 +4304,8 @@ if invisible_moves:
                        ", ".join(invisible_moves))
 
 program_payload = "\n".join(
-    program_rows + program_command_rows + sprite_resource_rows + task_resource_rows)
+    ["command-index-bits=13"] + program_rows + command_dictionary_rows +
+    packed_command_index_rows + sprite_resource_rows + task_resource_rows)
 program_hash = hashlib.sha256(program_payload.encode("utf-8")).hexdigest()[:16]
 
 # The SD compatibility id describes files on the SD card, not firmware-only
@@ -3980,8 +4334,10 @@ else:
     catalog_hash = asset_fingerprint[:16]
 output = ("// Generated from local FireRed battle_anim_scripts.s and exact animation tag tables.\n"
           f'constexpr char kBattleAnimationCatalogId[] = "{catalog_hash}";\n'
+          "#if !defined(ARDUINO)\n"
           "constexpr BattleAnimationData kBattleAnimations[] = {\n" +
           "\n".join(rows) + "\n};\n"
+          "#endif\n"
           "constexpr BattleAnimationSpriteResource kBattleAnimationSpriteResources[] = {\n" +
           "\n".join(sprite_resource_rows) + "\n};\n"
           "constexpr BattleAnimationFrameStep kBattleAnimationFrameSteps[] = {\n" +
@@ -3994,10 +4350,13 @@ output = ("// Generated from local FireRed battle_anim_scripts.s and exact anima
           ("\n".join(sprite_affine_sequence_rows) or "  {0, 0, 255},") + "\n};\n"
           "constexpr BattleAnimationTaskResource kBattleAnimationTaskResources[] = {\n" +
           "\n".join(task_resource_rows) + "\n};\n"
-          "constexpr int16_t kBattleAnimationArguments[] = {\n  " +
-          ", ".join(str(value) for value in program_argument_values) + "\n};\n"
+          "constexpr uint8_t kBattleAnimationArguments[] = {\n  " +
+          ", ".join(str(value) for value in encoded_argument_values) + "\n};\n"
           "constexpr BattleAnimationCommand kBattleAnimationCommands[] = {\n" +
-          "\n".join(program_command_rows) + "\n};\n"
+          "\n".join(command_dictionary_rows) + "\n};\n"
+          "constexpr uint8_t kBattleAnimationCommandIndices[] = {\n" +
+          "\n".join(packed_command_index_rows) + "\n};\n"
+          f"constexpr size_t kBattleAnimationCommandIndexCount = {len(program_command_indices)}U;\n"
           "constexpr BattleAnimationProgram kBattleAnimationPrograms[] = {\n" +
           "\n".join(program_rows) + "\n};\n")
 (ROOT / "src/game/BattleAnimationGenerated.inc").write_text(
@@ -4024,7 +4383,11 @@ audit["implicitFallthroughLabels"] = sum(
     has_physical_fallthrough(label) for label in LABEL_BODIES)
 audit["program"] = {
     "commands": len(program_command_rows),
+    "commandDictionary": len(command_dictionary_rows),
+    "commandIndexBits": 13,
+    "commandIndexBytes": len(packed_command_indices),
     "arguments": len(program_argument_values),
+    "argumentBytes": len(encoded_argument_values),
     "spriteResources": len(sprite_resource_rows),
     "frameSequences": len(sprite_frame_sequence_rows),
     "frameSteps": len(sprite_frame_step_rows),

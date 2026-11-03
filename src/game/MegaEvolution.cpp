@@ -1,43 +1,28 @@
 #include "game/MegaEvolution.h"
+#include "game/AlolaForms.h"
 #include "game/Collection.h"
 #include <algorithm>
 
 namespace {
+// Canonical internal ids include Pokegochi's retained Cacophony slot.
+constexpr uint8_t ToughClaws=182, MegaLauncher=179, Adaptability=92,
+    NoGuard=100, ParentalBond=186, Aerilate=185, MoldBreaker=105,
+    Steadfast=81, SandForce=160, Technician=102, SkillLink=93,
+    SolarPower=95, Pixilate=183, MagicBounce=157, Filter=112,
+    StrongJaw=174, SheerForce=126, Prankster=159, Refrigerate=175,
+    PrimordialSea=190, DesolateLand=191, DeltaStream=192,
+    Contrary=127, Multiscale=137, InnardsOut=216, ElectricSurge=227;
 enum CustomAbility : uint8_t {
-  ToughClaws=MegaEvolution::kFirstCustomAbilityId, MegaLauncher, Adaptability, NoGuard, ParentalBond,
-  Aerilate, MoldBreaker, Steadfast, SandForce, Technician, SkillLink,
-  SolarPower, Pixilate, MagicBounce, Filter, StrongJaw, SheerForce,
-  Prankster, Refrigerate, PrimordialSea, DesolateLand, DeltaStream,
-  Multiscale, InnardsOut, ElectricSurge, Stalwart, Sharpness, Dragonize,
+  Stalwart=MegaEvolution::kFirstCustomAbilityId, Sharpness, Dragonize,
   MegaSol, PiercingDrill, Eelevate, UnseenFist, FireMane,
 };
 
 constexpr AbilityData kCustomAbilities[] = {
-  {ToughClaws,"TOUGH CLAWS","BOOSTS CONTACT MOVES BY 30%."},
-  {MegaLauncher,"MEGA LAUNCHER","BOOSTS PULSE AND AURA MOVES BY 50%."},
-  {Adaptability,"ADAPTABILITY","RAISES THE SAME-TYPE BONUS TO 2X."},
-  {NoGuard,"NO GUARD","BOTH BATTLERS' MOVES ALWAYS HIT."},
-  {ParentalBond,"PARENTAL BOND","DAMAGING MOVES STRIKE A SECOND TIME."},
-  {Aerilate,"AERILATE","MAKES NORMAL MOVES FLYING AND BOOSTS THEM."},
-  {MoldBreaker,"MOLD BREAKER","IGNORES ABILITIES THAT BLOCK A MOVE."},
-  {Steadfast,"STEADFAST","RAISES SPEED AFTER FLINCHING."},
-  {SandForce,"SAND FORCE","BOOSTS ROCK, GROUND AND STEEL IN SAND."},
-  {Technician,"TECHNICIAN","BOOSTS MOVES WITH 60 POWER OR LESS."},
-  {SkillLink,"SKILL LINK","MULTI-HIT MOVES ALWAYS STRIKE FIVE TIMES."},
-  {SolarPower,"SOLAR POWER","BOOSTS SP. ATK IN SUN BUT COSTS HP."},
-  {Pixilate,"PIXILATE","MAKES NORMAL MOVES FAIRY AND BOOSTS THEM."},
-  {MagicBounce,"MAGIC BOUNCE","REFLECTS STATUS MOVES BACK."},
-  {Filter,"FILTER","REDUCES SUPER-EFFECTIVE DAMAGE BY 25%."},
-  {StrongJaw,"STRONG JAW","BOOSTS BITING MOVES BY 50%."},
-  {SheerForce,"SHEER FORCE","BOOSTS MOVES BUT REMOVES ADDED EFFECTS."},
-  {Prankster,"PRANKSTER","GIVES STATUS MOVES PRIORITY."},
-  {Refrigerate,"REFRIGERATE","MAKES NORMAL MOVES ICE AND BOOSTS THEM."},
-  {PrimordialSea,"PRIMORDIAL SEA","HEAVY RAIN MAKES FIRE MOVES FAIL."},
-  {DesolateLand,"DESOLATE LAND","HARSH SUN MAKES WATER MOVES FAIL."},
-  {DeltaStream,"DELTA STREAM","STRONG WINDS PROTECT FLYING TYPES."},
-  {Multiscale,"MULTISCALE","HALVES DAMAGE WHILE HP IS FULL."},
-  {InnardsOut,"INNARDS OUT","HURTS THE FOE WHEN THE HOLDER FAINTS."},
-  {ElectricSurge,"ELECTRIC SURGE","CHARGES THE FIELD WITH ELECTRICITY."},
+  // Expansion weather trio occupy the reserved canonical 190..192 gap
+  // immediately before the generated Gen-VII table begins at Stamina (193).
+  {PrimordialSea,"PRIMORDIAL SEA","SUMMONS HEAVY RAIN THAT BLOCKS FIRE."},
+  {DesolateLand,"DESOLATE LAND","SUMMONS HARSH SUN THAT BLOCKS WATER."},
+  {DeltaStream,"DELTA STREAM","STRONG WINDS PROTECT FLYING WEAKNESSES."},
   {Stalwart,"STALWART","IGNORES MOVE REDIRECTION."},
   {Sharpness,"SHARPNESS","BOOSTS SLICING MOVES BY 50%."},
   {Dragonize,"DRAGONIZE","MAKES NORMAL MOVES DRAGON AND BOOSTS THEM."},
@@ -48,9 +33,10 @@ constexpr AbilityData kCustomAbilities[] = {
   {FireMane,"FIRE MANE","BOOSTS FIRE MOVES BY 30%."},
 };
 
-// Official Mega Evolutions in the available National Dex, plus the two
-// official Primal Reversions. Sinnoh and Unova use this exact same Mega
-// Stone/selection flow as the older regions.
+// Every Mega Evolution authored by the expansion for species in Pokegochi's
+// available National Dex, plus the two official Primal Reversions.  Keep this
+// catalog in lockstep with scripts/build_sd_asset_pack.py: a form is not
+// playable unless both its battle data and complete normal/shiny art exist.
 constexpr MegaFormData kForms[] = {
  {26,MegaVariant::MegaX,60,135,95,90,95,110,PokemonType::Electric,PokemonType::Electric,ElectricSurge,"mega_x","MEGA X"},
  {26,MegaVariant::MegaY,60,100,55,160,80,130,PokemonType::Electric,PokemonType::Electric,NoGuard,"mega_y","MEGA Y"},
@@ -106,11 +92,17 @@ constexpr MegaFormData kForms[] = {
  {382,MegaVariant::Primal,100,150,90,180,160,90,PokemonType::Water,PokemonType::Water,PrimordialSea,"primal","PRIMAL"},
  {383,MegaVariant::Primal,100,180,160,150,90,90,PokemonType::Ground,PokemonType::Fire,DesolateLand,"primal","PRIMAL"},
  {384,MegaVariant::Mega,105,180,100,180,100,115,PokemonType::Dragon,PokemonType::Flying,DeltaStream,"mega","MEGA"},
+ {398,MegaVariant::Mega,85,140,100,60,90,110,PokemonType::Fighting,PokemonType::Flying,Contrary,"mega","MEGA"},
  {428,MegaVariant::Mega,65,136,94,54,96,135,PokemonType::Normal,PokemonType::Fighting,114,"mega","MEGA"},
  {445,MegaVariant::Mega,108,170,115,120,95,92,PokemonType::Dragon,PokemonType::Ground,SandForce,"mega","MEGA"},
+ {445,MegaVariant::MegaZ,108,130,85,141,85,151,PokemonType::Dragon,PokemonType::Dragon,8,"mega_z","MEGA Z"},
  {448,MegaVariant::Mega,70,145,88,140,70,112,PokemonType::Fighting,PokemonType::Steel,92,"mega","MEGA"},
+ {448,MegaVariant::MegaZ,70,100,70,164,70,151,PokemonType::Fighting,PokemonType::Steel,Steadfast,"mega_z","MEGA Z"},
  {460,MegaVariant::Mega,90,132,105,132,105,30,PokemonType::Grass,PokemonType::Ice,118,"mega","MEGA"},
  {475,MegaVariant::Mega,68,165,95,65,115,110,PokemonType::Psychic,PokemonType::Fighting,39,"mega","MEGA"},
+ {478,MegaVariant::Mega,70,80,70,140,100,120,PokemonType::Ice,PokemonType::Ghost,118,"mega","MEGA"},
+ {485,MegaVariant::Mega,91,120,106,175,141,67,PokemonType::Fire,PokemonType::Steel,18,"mega","MEGA"},
+ {491,MegaVariant::Mega,70,120,130,165,130,85,PokemonType::Dark,PokemonType::Dark,124,"mega","MEGA"},
  {500,MegaVariant::Mega,110,148,75,110,110,75,PokemonType::Fire,PokemonType::Fighting,105,"mega","MEGA"},
  {530,MegaVariant::Mega,110,165,100,65,65,103,PokemonType::Ground,PokemonType::Steel,PiercingDrill,"mega","MEGA"},
  {531,MegaVariant::Mega,103,60,126,80,126,50,PokemonType::Normal,PokemonType::Fairy,132,"mega","MEGA"},
@@ -131,6 +123,11 @@ constexpr MegaFormData kForms[] = {
  {701,MegaVariant::Mega,78,137,100,74,93,118,PokemonType::Fighting,PokemonType::Flying,NoGuard,"mega","MEGA"},
  {718,MegaVariant::Mega,216,70,91,216,85,100,PokemonType::Dragon,PokemonType::Ground,189,"mega","MEGA"},
  {719,MegaVariant::Mega,50,160,110,160,110,110,PokemonType::Rock,PokemonType::Fairy,MagicBounce,"mega","MEGA"},
+ {740,MegaVariant::Mega,97,157,122,62,107,33,PokemonType::Fighting,PokemonType::Ice,90,"mega","MEGA"},
+ {768,MegaVariant::Mega,75,150,175,70,120,40,PokemonType::Bug,PokemonType::Steel,195,"mega","MEGA"},
+ {780,MegaVariant::Mega,78,85,110,160,116,36,PokemonType::Normal,PokemonType::Dragon,202,"mega","MEGA"},
+ {801,MegaVariant::Mega,80,125,115,170,115,95,PokemonType::Steel,PokemonType::Fairy,221,"mega","MEGA"},
+ {807,MegaVariant::Mega,88,157,75,147,80,153,PokemonType::Electric,PokemonType::Electric,10,"mega","MEGA"},
 };
 }
 
@@ -195,7 +192,7 @@ MegaVariant variantFor(const OwnedPokemon& pokemon){
 }
 bool synchronizeSignatureMove(OwnedPokemon& pokemon){
   if(pokemon.speciesId!=718U)return false;
-  const MoveId core=static_cast<MoveId>(687U);
+  const MoveId core=static_cast<MoveId>(650U);
   const MoveId nihil=static_cast<MoveId>(920U);
   const bool mega=variantFor(pokemon)==MegaVariant::Mega;
   const MoveId desired=mega?nihil:core;
@@ -222,6 +219,8 @@ bool synchronizeSignatureMove(OwnedPokemon& pokemon){
 }
 uint8_t baseHp(const OwnedPokemon& pokemon,uint8_t fallback){
   if(const auto* mega=formData(pokemon.speciesId,variantFor(pokemon)))return mega->baseHp;
+  const uint8_t alola=AlolaForms::baseHp(pokemon,fallback);
+  if(alola!=fallback||AlolaForms::supports(pokemon.speciesId))return alola;
   if (pokemon.speciesId == 479U || pokemon.speciesId == 487U || pokemon.speciesId == 492U)
     return fallback;
   const uint8_t form=CollectionLogic::resolvedForm(pokemon);
@@ -249,6 +248,8 @@ uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback)
                            mega->baseSpAttack,mega->baseSpDefense};
     return statIndex<5U?stats[statIndex]:fallback;
   }
+  const uint8_t alola=AlolaForms::baseStat(pokemon,statIndex,fallback);
+  if(alola!=fallback||AlolaForms::supports(pokemon.speciesId))return alola;
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
   if (pokemon.speciesId == 479U && form > 0U) {
     static constexpr uint8_t kRotom[5] = {65,107,86,105,107};
@@ -324,10 +325,14 @@ uint8_t baseStat(const OwnedPokemon& pokemon,uint8_t statIndex,uint8_t fallback)
   return fallback;
 }
 PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){
+  if(const auto* mega=formData(pokemon.speciesId,variantFor(pokemon)))
+    return mega->type1;
   // "MULTITYPE" resolves Arceus through the currently held Plate.
   if (pokemon.speciesId == 493U && pokemon.abilityId == 122U &&
       heldItemIsArceusPlate(pokemon.heldItem))
     return arceusPlateType(pokemon.heldItem);
+  const PokemonType alola=AlolaForms::type1(pokemon,fallback);
+  if(alola!=fallback||AlolaForms::supports(pokemon.speciesId))return alola;
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
   if (pokemon.speciesId == 479U && form > 0U) return PokemonType::Electric;
   if (pokemon.speciesId == 492U && form == 1U) return PokemonType::Grass;
@@ -337,9 +342,13 @@ PokemonType type1(const OwnedPokemon& pokemon,PokemonType fallback){
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type1:fallback;
 }
 PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){
+  if(const auto* mega=formData(pokemon.speciesId,variantFor(pokemon)))
+    return mega->type2;
   if (pokemon.speciesId == 493U && pokemon.abilityId == 122U &&
       heldItemIsArceusPlate(pokemon.heldItem))
     return arceusPlateType(pokemon.heldItem);
+  const PokemonType alola=AlolaForms::type2(pokemon,fallback);
+  if(alola!=fallback||AlolaForms::supports(pokemon.speciesId))return alola;
   if (pokemon.speciesId == 479U) {
     static constexpr PokemonType kRotomTypes[] = {
         PokemonType::Ghost, PokemonType::Fire, PokemonType::Water,
@@ -358,6 +367,8 @@ PokemonType type2(const OwnedPokemon& pokemon,PokemonType fallback){
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->type2:fallback;
 }
 uint8_t abilityId(const OwnedPokemon& pokemon,uint8_t fallback){
+  if(const auto* mega=formData(pokemon.speciesId,variantFor(pokemon)))
+    return mega->abilityId;
   // Shaymin-Sky uses Serene Grace in Platinum; the other selectable Sinnoh
   // forms retain their species ability (Levitate/Natural Cure).
   const uint8_t form = CollectionLogic::resolvedForm(pokemon);
@@ -372,6 +383,8 @@ uint8_t abilityId(const OwnedPokemon& pokemon,uint8_t fallback){
   if (pokemon.speciesId == 645U && form == 1U) return 22U;  // Intimidate
   if (pokemon.speciesId == 646U && form == 1U) return 165U; // Teravolt
   if (pokemon.speciesId == 646U && form == 2U) return 164U; // Turboblaze
+  const uint8_t alola=AlolaForms::abilityId(pokemon,fallback);
+  if(alola!=fallback||AlolaForms::supports(pokemon.speciesId))return alola;
   const auto* f=formData(pokemon.speciesId,variantFor(pokemon));return f?f->abilityId:fallback;
 }
 const AbilityData* customAbility(uint8_t id){for(const auto& a:kCustomAbilities)if(a.id==id)return &a;return nullptr;}

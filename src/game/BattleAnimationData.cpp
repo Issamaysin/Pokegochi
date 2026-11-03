@@ -5,26 +5,41 @@
 namespace {
 uint16_t authoredAnimationMove(uint16_t moveId) {
   switch (moveId) {
-    case 618U: return 352U; // Origin Pulse -> Water Pulse
-    case 619U: return 89U;  // Precipice Blades -> Earthquake
-    case 620U: return 413U; // Dragon Ascent -> Brave Bird
-    case 621U: return 593U; // Hyperspace Fury -> Hyperspace Hole
     case 687U: return 406U; // Core Enforcer -> Dragon Pulse
     case 920U: return 617U; // Nihil Light -> Light of Ruin
     default: return moveId;
   }
 }
+
+#if defined(ARDUINO)
+// The retained ESP32 renderer executes only the generated VM below. The old
+// per-move summary duplicated roughly 19 KiB of asset names/flags and is used
+// only by native audit helpers and Android's Aurora Beam preload. Keep one
+// presence descriptor on-device so existing lookup guards stay cheap without
+// reducing or aliasing any authored command program.
+constexpr BattleAnimationData kEmbeddedAnimationPresence = {
+    0U, {"", "", "", ""}, {0U, 0U, 0U, 0U}, 0U, 1U, 65U, 0U};
+#endif
 }
 
 const BattleAnimationData* findBattleAnimation(uint16_t moveId) {
-  // Later signature moves reuse the closest complete authored visual from
-  // the Pokemon Y catalog instead of falling through to no animation.
   moveId = authoredAnimationMove(moveId);
+#if defined(ARDUINO)
+  return findBattleAnimationProgram(moveId)
+      ? &kEmbeddedAnimationPresence : nullptr;
+#else
   uint16_t lo=0,hi=static_cast<uint16_t>(sizeof(kBattleAnimations)/sizeof(kBattleAnimations[0]));
   while(lo<hi){const uint16_t mid=static_cast<uint16_t>((lo+hi)/2);if(kBattleAnimations[mid].moveId<moveId)lo=mid+1;else hi=mid;}
   return lo<battleAnimationCount()&&kBattleAnimations[lo].moveId==moveId?&kBattleAnimations[lo]:nullptr;
+#endif
 }
-uint16_t battleAnimationCount(){return static_cast<uint16_t>(sizeof(kBattleAnimations)/sizeof(kBattleAnimations[0]));}
+uint16_t battleAnimationCount(){
+#if defined(ARDUINO)
+  return battleAnimationProgramCount();
+#else
+  return static_cast<uint16_t>(sizeof(kBattleAnimations)/sizeof(kBattleAnimations[0]));
+#endif
+}
 const char* battleAnimationCatalogId(){return kBattleAnimationCatalogId;}
 
 const BattleAnimationProgram* findBattleAnimationProgram(uint16_t moveId) {
@@ -43,29 +58,76 @@ const BattleAnimationProgram* findBattleAnimationProgram(uint16_t moveId) {
 const BattleAnimationCommand* battleAnimationProgramCommand(
     const BattleAnimationProgram& program, uint16_t index) {
   if (index >= program.commandCount) return nullptr;
-  return &kBattleAnimationCommands[program.commandOffset + index];
+  constexpr uint8_t kCommandIndexBits = 13U;
+  constexpr uint16_t kCommandIndexMask = (1U << kCommandIndexBits) - 1U;
+  const size_t streamIndex = static_cast<size_t>(program.commandOffset) + index;
+  if (streamIndex >= kBattleAnimationCommandIndexCount) return nullptr;
+  const size_t bitOffset = streamIndex * kCommandIndexBits;
+  const size_t byteOffset = bitOffset >> 3U;
+  uint32_t packed = 0U;
+  for (uint8_t byte = 0U; byte < 3U; ++byte) {
+    const size_t source = byteOffset + byte;
+    if (source < sizeof(kBattleAnimationCommandIndices))
+      packed |= static_cast<uint32_t>(kBattleAnimationCommandIndices[source]) << (byte * 8U);
+  }
+  const uint16_t commandIndex = static_cast<uint16_t>(
+      (packed >> (bitOffset & 7U)) & kCommandIndexMask);
+  constexpr size_t kCommandCount =
+      sizeof(kBattleAnimationCommands) / sizeof(kBattleAnimationCommands[0]);
+  return commandIndex < kCommandCount ? &kBattleAnimationCommands[commandIndex] : nullptr;
+}
+
+bool battleAnimationDecodeArguments(uint16_t byteOffset, uint8_t count,
+                                    int16_t* output,
+                                    uint8_t outputCapacity) {
+  if (!count) return true;
+  if (!output || count > outputCapacity || count > 8U ||
+      byteOffset >= sizeof(kBattleAnimationArguments))
+    return false;
+  size_t offset = byteOffset;
+  for (uint8_t index = 0U; index < count; ++index) {
+    uint32_t encoded = 0U;
+    uint8_t shift = 0U;
+    bool complete = false;
+    while (offset < sizeof(kBattleAnimationArguments) && shift <= 14U) {
+      const uint8_t byte = kBattleAnimationArguments[offset++];
+      encoded |= static_cast<uint32_t>(byte & 0x7FU) << shift;
+      if (!(byte & 0x80U)) { complete = true; break; }
+      shift = static_cast<uint8_t>(shift + 7U);
+    }
+    if (!complete || encoded > 0xFFFFU) return false;
+    output[index] = static_cast<int16_t>(
+        (encoded >> 1U) ^ static_cast<uint32_t>(-
+            static_cast<int32_t>(encoded & 1U)));
+  }
+  return true;
+}
+
+bool battleAnimationDecodeCommandArguments(
+    const BattleAnimationCommand& command, int16_t* output,
+    uint8_t outputCapacity) {
+  return battleAnimationDecodeArguments(command.argumentOffset(),
+                                        command.argumentCount(), output,
+                                        outputCapacity);
+}
+
+const int16_t* battleAnimationArgumentsAt(uint16_t byteOffset, uint8_t count) {
+  static int16_t decoded[8]{};
+  if (!count) return nullptr;
+  if (!battleAnimationDecodeArguments(byteOffset, count, decoded,
+                                      sizeof(decoded) / sizeof(decoded[0])))
+    return nullptr;
+  return decoded;
 }
 
 const int16_t* battleAnimationCommandArguments(const BattleAnimationCommand& command) {
-  if (!command.argumentCount) return nullptr;
-  constexpr size_t kArgumentCount =
-      sizeof(kBattleAnimationArguments) / sizeof(kBattleAnimationArguments[0]);
-  const size_t offset = command.argumentOffset;
-  if (offset >= kArgumentCount || command.argumentCount > kArgumentCount - offset)
-    return nullptr;
-  const int16_t* arguments = &kBattleAnimationArguments[offset];
-  return battleAnimationArgumentsValid(arguments, command.argumentCount)
-      ? arguments : nullptr;
+  return battleAnimationArgumentsAt(command.argumentOffset(),
+                                    command.argumentCount());
 }
 
 bool battleAnimationArgumentsValid(const int16_t* arguments, uint8_t count) {
   if (!count) return true;
-  if (!arguments) return false;
-  const uintptr_t begin = reinterpret_cast<uintptr_t>(kBattleAnimationArguments);
-  const uintptr_t end = begin + sizeof(kBattleAnimationArguments);
-  const uintptr_t address = reinterpret_cast<uintptr_t>(arguments);
-  if (address < begin || address >= end) return false;
-  return count <= (end - address) / sizeof(kBattleAnimationArguments[0]);
+  return arguments && count <= 8U;
 }
 
 const BattleAnimationSpriteResource* battleAnimationSpriteResource(uint16_t resourceId) {
@@ -303,4 +365,4 @@ BattleAnimationPlaybackKind battleAnimationPlaybackKind(uint16_t moveId) {
   return BattleAnimationPlaybackKind::Generated;
 }
 
-// Battle animation data: 5b90894914eb1769
+// Battle animation data: aede0a3755b264bc

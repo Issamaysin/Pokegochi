@@ -21,7 +21,19 @@ bool PokedexLogic::isLegendaryOrMythical(uint16_t speciesId) {
       (speciesId >= 377 && speciesId <= 386) ||
       (speciesId >= 480 && speciesId <= 493) ||
       speciesId == 494 || (speciesId >= 638 && speciesId <= 649) ||
-      (speciesId >= 716 && speciesId <= 721);
+      (speciesId >= 716 && speciesId <= 721) ||
+      speciesId == 772 || speciesId == 773 ||
+      (speciesId >= 785 && speciesId <= 807);
+}
+
+bool PokedexLogic::isUltraBeast(uint16_t speciesId) {
+  return (speciesId >= 793U && speciesId <= 799U) ||
+      (speciesId >= 803U && speciesId <= 806U);
+}
+
+bool PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(
+    uint16_t speciesId) {
+  return isLegendaryOrMythical(speciesId) && !isUltraBeast(speciesId);
 }
 
 void PokedexLogic::markSeen(PokedexState& pokedex, uint16_t speciesId) {
@@ -62,6 +74,7 @@ uint16_t PokedexLogic::generationSpeciesCount(uint8_t generation) {
     case 4: return 493;
     case 5: return 649;
     case 6: return 721;
+    case 7: return 807;
     default: return 0;
   }
 }

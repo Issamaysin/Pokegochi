@@ -179,6 +179,11 @@ class Multiplayer {
 
   // The UI uses this edge rather than polling/redrawing continuously.
   bool takeChanged();
+  // One-shot edge for an unplanned physical link loss. The game UI consumes
+  // it on the main loop so it can leave Box/Trade/Battle safely, release the
+  // BLE renderer reservation and rebuild Home. Deliberate local closes and
+  // protocol-level SessionClose packets do not raise this edge.
+  bool takeUnexpectedDisconnect();
 
   // Transport callbacks. They are public solely so the small platform glue in
   // Multiplayer.cpp can enqueue events without making any UI call from a BLE
@@ -233,6 +238,8 @@ class Multiplayer {
   bool battleLaunchPending_ = false;
   bool battleCommandsPending_ = false;
   bool transportConnected_ = false;
+  bool localTransportClosePending_ = false;
+  bool unexpectedDisconnectPending_ = false;
   char status_[64] = "BLUETOOTH IS OFF.";
   PeerRecord peers_[kMaximumPeers]{};
   uint8_t peerCount_ = 0;

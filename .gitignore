@@ -32,6 +32,13 @@ tmp/
 output/
 backups/
 /build/
+/artifacts/
+/.artifacts/
+/.android-build-home/
+/.build/
+/.gradle-user/
+/.pio-necrozma-build/
+/.pio-necrozma-build-global/
 legend-fighter/
 /Legend_Fighter_OneStick_2.9.5_APKPure.apk
 

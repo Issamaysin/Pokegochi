@@ -41,6 +41,11 @@ struct AssetInfo {
   size_t pixelBytes = 0;
 };
 
+// Surf and Muddy Water are authored as repeating 8x8 BG tiles. Their PKG2
+// payload keeps a one-byte tilemap followed by deduplicated packed 4-bpp
+// tiles. This marker can never collide with an ordinary package bpp.
+constexpr uint8_t kResidentTiled4Bpp = 0x84U;
+
 struct IndexedImage {
   bool valid = false;
   AssetHeader header{};
@@ -51,9 +56,17 @@ struct IndexedImage {
   size_t indexBytes = 0;
 };
 
+// Every runtime asset in the canonical Gen I--VII pack fits in 79 bytes,
+// including the leading /pokegochi/assets/ prefix.  The old 112-byte field
+// spent 2,944 bytes on unused suffixes across the 92 ESP32 descriptors.  That
+// static DRAM came directly out of the ordinary heap and left the Alola
+// GameSave 1.6 KiB larger than the post-SD contiguous block.  Keep one byte
+// for the terminator and let both the pack builder and tests enforce this
+// bound whenever a future generation adds paths.
+constexpr size_t kCachedAssetPathCapacity = 80U;
 struct CacheEntry {
   bool valid = false;
-  char path[112]{};
+  char path[kCachedAssetPathCapacity]{};
   IndexedImage image{};
   uint32_t stamp = 0;
 };
@@ -282,9 +295,13 @@ constexpr size_t kBattleSceneWorkspaceBytes = 64U * 1024U;
 constexpr uint16_t kRegionBufferWidth = 96;
 // Region restoration is streamed in short strips.  Keeping a complete 96x96
 // RGB565 tile consumed 18 KiB even though the retained presenter itself works
-// in bands.  A 96x32 strip is sufficient and releases 12 KiB for the taller
-// presenter without changing any decoded pixel.
-constexpr uint16_t kRegionBufferHeight = 32;
+// in bands. A 96x16 strip is sufficient and leaves enough contiguous DRAM for
+// the normal 57 KiB scene bank after the Gen VII GameSave is allocated. That
+// bank must retain a 320x184 terrain beside Surf's 512x112 plane (58,144
+// bytes) without a late destructive promotion. Pixel output is unchanged;
+// tall regions are simply emitted in additional chunks. Four decode rows are
+// the minimum that also provides the compositor's 640-entry x-map scratch.
+constexpr uint16_t kRegionBufferHeight = 16;
 constexpr uint16_t kDecodeRows = 4;
 constexpr size_t kStreamPixelCapacity = 320U * kDecodeRows;
 
@@ -299,7 +316,6 @@ uint8_t* cacheArena = cacheArenaStorage;
 size_t cacheArenaUsed = 0;
 size_t sceneCacheSpillUsed = 0;
 size_t largeWorkspaceUsed = 0;
-uint32_t cacheStamp = 0;
 
 uint8_t* sceneWorkspace = nullptr;
 size_t sceneWorkspaceCapacity = 0;
@@ -327,9 +343,14 @@ struct BattlePlaneCache {
 BattlePlaneCache battlePlaneAsset;
 size_t battlePlaneWorkspaceEnd = 0;
 
+// The canonical Home packages use at most 52 colours. Keeping a 256-entry
+// palette in each of the two resident layers wasted 768 bytes of static DRAM,
+// exactly the memory the post-GameSave scene bank needs for large battle
+// planes. The pack contract leaves twelve spare colours for future themes.
+constexpr uint16_t kHomeLayerPaletteCapacity = 64U;
 struct HomeLayerCache {
   char path[112]{};
-  uint16_t palette[256]{};
+  uint16_t palette[kHomeLayerPaletteCapacity]{};
   IndexedImage image{};
 };
 HomeLayerCache homeLayers[2];
@@ -425,15 +446,21 @@ bool readAssetInfo(AssetFile& file, AssetInfo& info) {
   } else if (!std::memcmp(info.header.magic, "PKG2", 4)) {
     Pkg2Tail tail{};
     if (!readFully(file, reinterpret_cast<uint8_t*>(&tail), sizeof(tail)) ||
-        (tail.bitsPerPixel != 4U && tail.bitsPerPixel != 6U && tail.bitsPerPixel != 8U) || tail.paletteCount == 0 ||
+        (tail.bitsPerPixel != 4U && tail.bitsPerPixel != 6U &&
+         tail.bitsPerPixel != 8U &&
+         tail.bitsPerPixel != kResidentTiled4Bpp) ||
+        tail.paletteCount == 0 ||
         (tail.bitsPerPixel == 4U && tail.paletteCount > 16U)) return false;
     info.bitsPerPixel = tail.bitsPerPixel;
     info.paletteCount = tail.paletteCount;
     info.paletteOffset = sizeof(AssetHeader) + sizeof(Pkg2Tail);
     info.pixelOffset = info.paletteOffset + static_cast<uint32_t>(info.paletteCount) * sizeof(uint16_t);
     const size_t pixelCount = static_cast<size_t>(info.header.width) * info.header.height;
-    info.pixelBytes = info.bitsPerPixel == 4U ? (pixelCount + 1U) / 2U
-                    : info.bitsPerPixel == 6U ? (pixelCount * 6U + 7U) / 8U : pixelCount;
+    info.pixelBytes = info.bitsPerPixel == kResidentTiled4Bpp
+        ? static_cast<size_t>(file.size() - info.pixelOffset)
+        : info.bitsPerPixel == 4U ? (pixelCount + 1U) / 2U
+        : info.bitsPerPixel == 6U ? (pixelCount * 6U + 7U) / 8U
+                                  : pixelCount;
   } else {
     return false;
   }
@@ -455,6 +482,21 @@ bool containsTransparency(const IndexedImage& image) {
 }
 
 uint8_t indexedValue(const IndexedImage& image, size_t pixel) {
+  if (image.bitsPerPixel == kResidentTiled4Bpp) {
+    const uint16_t x = static_cast<uint16_t>(pixel % image.header.width);
+    const uint16_t y = static_cast<uint16_t>(pixel / image.header.width);
+    const uint16_t mapWidth = image.header.width >> 3U;
+    const size_t mapBytes =
+        (static_cast<size_t>(image.header.width) * image.header.height) >> 6U;
+    const uint8_t tile = image.indices[
+        static_cast<size_t>(y >> 3U) * mapWidth + (x >> 3U)];
+    const size_t tileByte = mapBytes +
+        static_cast<size_t>(tile) * 32U +
+        static_cast<size_t>(y & 7U) * 4U + ((x & 7U) >> 1U);
+    const uint8_t packed = image.indices[tileByte];
+    return static_cast<uint8_t>((x & 1U) ? (packed & 0x0FU)
+                                          : (packed >> 4U));
+  }
   if (image.bitsPerPixel == 4U) {
     const uint8_t packed = image.indices[pixel >> 1U];
     return static_cast<uint8_t>((pixel & 1U) ? (packed & 0x0FU) : (packed >> 4U));
@@ -468,6 +510,31 @@ uint8_t indexedValue(const IndexedImage& image, size_t pixel) {
     return static_cast<uint8_t>((pair >> (10U - shift)) & 0x3FU);
   }
   return image.indices[pixel];
+}
+
+// Coordinate-aware counterpart used by scrolling/full-field renderers.
+// kResidentTiled4Bpp stores an 8x8 tile map followed by tile pixels.  Going
+// through indexedValue(pixel) for an already-known (x,y) pair divided and
+// reduced that linear index back into x/y for every destination pixel.  A
+// 320x184 battle plane repeated those two divisions almost 60,000 times per
+// physical frame; on the ESP32 this was the dominant cost of 3x animations.
+inline uint8_t indexedValueAt(const IndexedImage& image,
+                              uint16_t x, uint16_t y) {
+  if (image.bitsPerPixel == kResidentTiled4Bpp) {
+    const uint16_t mapWidth = image.header.width >> 3U;
+    const size_t mapBytes =
+        (static_cast<size_t>(image.header.width) * image.header.height) >> 6U;
+    const uint8_t tile = image.indices[
+        static_cast<size_t>(y >> 3U) * mapWidth + (x >> 3U)];
+    const size_t tileByte = mapBytes +
+        static_cast<size_t>(tile) * 32U +
+        static_cast<size_t>(y & 7U) * 4U + ((x & 7U) >> 1U);
+    const uint8_t packed = image.indices[tileByte];
+    return static_cast<uint8_t>((x & 1U) ? (packed & 0x0FU)
+                                          : (packed >> 4U));
+  }
+  return indexedValue(
+      image, static_cast<size_t>(y) * image.header.width + x);
 }
 
 uint16_t indexedPixel(const IndexedImage& image, size_t pixel) {
@@ -656,6 +723,40 @@ bool drawIndexed(PixelCanvas& display, const IndexedImage& image, int16_t x, int
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
   const bool transparent = containsTransparency(image);
+  // Battle OBJ cels are ordinary linear 4-bpp packages.  Going through
+  // indexedPixel() and encoded565() for every covered pixel repeated nibble
+  // decoding, palette bounds checks and the RGB565 byte swap for every copy
+  // of the same particle.  Dense programs such as Light of Ruin can retain
+  // more than thirty cels in one physical 3x sample, making that redundant
+  // work the dominant frame cost.  Resolve the sixteen palette entries once
+  // per draw and stream packed nibbles directly; clipping and transparency
+  // remain byte-for-byte identical to the generic path below.
+  if (image.bitsPerPixel == 4U && image.paletteCount <= 16U) {
+    uint16_t encodedPalette[16]{};
+    bool paletteVisible[16]{};
+    for (uint8_t index = 0U; index < 16U; ++index) {
+      const uint16_t pixel = index < image.paletteCount
+          ? image.palette[index] : image.header.transparent;
+      encodedPalette[index] = PixelCanvas::encoded565(pixel);
+      paletteVisible[index] = !transparent || pixel != image.header.transparent;
+    }
+    for (uint16_t row = static_cast<uint16_t>(firstVisibleRow);
+         row < static_cast<uint16_t>(lastVisibleRow); ++row) {
+      uint16_t* destination = display.writableRow565(
+          x + firstVisibleColumn, y + row, visibleWidth);
+      if (!destination) return false;
+      size_t sourcePixel = static_cast<size_t>(row) *
+          image.header.width + firstVisibleColumn;
+      for (uint16_t column = 0; column < visibleWidth;
+           ++column, ++sourcePixel) {
+        const uint8_t packed = image.indices[sourcePixel >> 1U];
+        const uint8_t index = static_cast<uint8_t>((sourcePixel & 1U)
+            ? (packed & 0x0FU) : (packed >> 4U));
+        if (paletteVisible[index]) destination[column] = encodedPalette[index];
+      }
+    }
+    return true;
+  }
   for (uint16_t row = static_cast<uint16_t>(firstVisibleRow);
        row < static_cast<uint16_t>(lastVisibleRow); ++row) {
     uint16_t* destination = display.writableRow565(
@@ -772,8 +873,8 @@ uint16_t indexedPaletteIndexPixel(const IndexedImage& image, uint8_t index,
 uint16_t indexedPalettePixel(const IndexedImage& image, uint16_t sourceX,
                              uint16_t sourceY, uint8_t paletteFirst,
                              uint8_t paletteCount, uint8_t paletteShift) {
-  return indexedPaletteIndexPixel(image, indexedValue(
-      image, static_cast<size_t>(sourceY) * image.header.width + sourceX),
+  return indexedPaletteIndexPixel(image, indexedValueAt(
+      image, sourceX, sourceY),
       paletteFirst, paletteCount, paletteShift);
 }
 
@@ -847,16 +948,201 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
   static_assert(sizeof(scratch.stream.indices) >=
                 320U * sizeof(uint16_t), "scroll x-map scratch too small");
   uint16_t* sourceXMap = reinterpret_cast<uint16_t*>(scratch.stream.indices);
+  // Walk the rational scale as a Bresenham-style quotient/remainder.  A
+  // retained full-field frame calls this function once for every 8px stripe;
+  // doing a signed divide and modulo for all 320 columns in every stripe was
+  // measurable on every 4:3 expansion background (weather, Z-Moves and the
+  // Gen-VII signature fields).  The recurrence is bit-exact for our
+  // non-negative destination columns and pays those operations only once.
+  int32_t scaledX = identityScale
+      ? firstVisibleColumn
+      : firstVisibleColumn * scaleDenominator / scaleNumerator;
+  uint16_t scaleRemainder = identityScale ? 0U : static_cast<uint16_t>(
+      (firstVisibleColumn * scaleDenominator) % scaleNumerator);
+  const uint16_t scaleStep = identityScale ? 1U : static_cast<uint16_t>(
+      scaleDenominator / scaleNumerator);
+  const uint16_t remainderStep = identityScale ? 0U : static_cast<uint16_t>(
+      scaleDenominator % scaleNumerator);
+  int32_t mappedX = scaledX + sourceOffsetX;
+  uint16_t wrappedX = wrapX ? positiveModulo(mappedX, sourceWidth) : 0U;
   for (uint16_t column = 0; column < visibleWidth; ++column) {
-    const int32_t destinationX = firstVisibleColumn + column;
-    const int32_t sourceXUnbounded = identityScale
-        ? destinationX + sourceOffsetX
-        : destinationX * scaleDenominator / scaleNumerator + sourceOffsetX;
     sourceXMap[column] = wrapX
-        ? positiveModulo(sourceXUnbounded, sourceWidth)
+        ? wrappedX
         : static_cast<uint16_t>(std::clamp<int32_t>(
-              sourceXUnbounded, 0, sourceWidth - 1U));
+              mappedX, 0, sourceWidth - 1U));
+    uint16_t delta = scaleStep;
+    scaleRemainder = static_cast<uint16_t>(scaleRemainder + remainderStep);
+    if (!identityScale && scaleRemainder >= scaleNumerator) {
+      scaleRemainder = static_cast<uint16_t>(scaleRemainder - scaleNumerator);
+      ++delta;
+    }
+    mappedX += delta;
+    if (wrapX) {
+      uint32_t next = static_cast<uint32_t>(wrappedX) + delta;
+      while (next >= sourceWidth) next -= sourceWidth;
+      wrappedX = static_cast<uint16_t>(next);
+    }
   }
+
+  // The generated opaque 8-bpp move planes are the hot path for Solar Beam,
+  // Core Enforcer and several Z-Moves.  Their palette does not cycle and the
+  // source extent is the real image extent, so the generic per-pixel format,
+  // virtual-fill, transparency and Bayer checks are all provably redundant.
+  // Keeping this as a whole-row branch also lets the compiler hoist every
+  // invariant out of the 58,880-pixel arena loop.
+  const bool directLinearIndexed =
+      (image.bitsPerPixel == 8U || image.bitsPerPixel == 4U) &&
+      opacity16 == 16U && !paletteCount &&
+      sourceWidth == image.header.width &&
+      sourceHeight == image.header.height;
+  if (directLinearIndexed) {
+    // Convert each palette entry once per draw, rather than byte-swapping the
+    // same RGB565 value for every destination pixel. Core Enforcer alone can
+    // visit this loop over 50,000 times in one full-field sample.
+    uint16_t* const encodedPalette = scratch.stream.pixels;
+    uint8_t* const paletteVisible = reinterpret_cast<uint8_t*>(
+        scratch.stream.pixels + 256U);
+    const uint16_t formatColors = image.bitsPerPixel == 4U ? 16U : 256U;
+    for (uint16_t index = 0U; index < formatColors; ++index) {
+      const uint16_t pixel = index < image.paletteCount
+          ? image.palette[index] : image.header.transparent;
+      encodedPalette[index] = PixelCanvas::encoded565(pixel);
+      paletteVisible[index] = !transparent || pixel != image.header.transparent;
+    }
+    for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
+         line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+      uint16_t* destination = display.writableRow565(
+          x + firstVisibleColumn, y + line, visibleWidth);
+      if (!destination) return false;
+      const int32_t sourceYUnbounded = identityScale
+          ? static_cast<int32_t>(line) + sourceOffsetY
+          : static_cast<int32_t>(line) * scaleDenominator /
+                scaleNumerator + sourceOffsetY;
+      const uint16_t sourceY = wrapY
+          ? positiveModulo(sourceYUnbounded, sourceHeight)
+          : static_cast<uint16_t>(std::clamp<int32_t>(
+                sourceYUnbounded, 0, sourceHeight - 1U));
+      const size_t sourceRow =
+          static_cast<size_t>(sourceY) * image.header.width;
+      if (image.bitsPerPixel == 8U) {
+        if (!transparent) {
+          // At 1:1 scale the source row is contiguous except at a wrap.  Copy
+          // those runs directly instead of loading a 16-bit coordinate for
+          // every 8-bit source pixel.  This is the common scrolling-weather
+          // path and keeps the generic mapped loop for exact 4:3 sampling.
+          const int32_t firstLinearSourceX =
+              firstVisibleColumn + sourceOffsetX;
+          const bool contiguousIdentityRow = identityScale &&
+              (wrapX || (firstLinearSourceX >= 0 &&
+                         firstLinearSourceX + visibleWidth <= sourceWidth));
+          if (contiguousIdentityRow) {
+            uint16_t written = 0U;
+            uint16_t sourceX = sourceXMap[0];
+            while (written < visibleWidth) {
+              const uint16_t run = wrapX
+                  ? std::min<uint16_t>(visibleWidth - written,
+                                       sourceWidth - sourceX)
+                  : static_cast<uint16_t>(visibleWidth - written);
+              const uint8_t* source = image.indices + sourceRow + sourceX;
+              for (uint16_t local = 0U; local < run; ++local)
+                destination[written + local] = encodedPalette[source[local]];
+              written = static_cast<uint16_t>(written + run);
+              if (written < visibleWidth) sourceX = 0U;
+            }
+          } else {
+            for (uint16_t local = 0; local < visibleWidth; ++local)
+              destination[local] = encodedPalette[
+                  image.indices[sourceRow + sourceXMap[local]]];
+          }
+        } else {
+          for (uint16_t local = 0; local < visibleWidth; ++local) {
+            const uint8_t index = image.indices[
+                sourceRow + sourceXMap[local]];
+            if (paletteVisible[index]) destination[local] = encodedPalette[index];
+          }
+        }
+      } else if (!transparent) {
+        for (uint16_t local = 0; local < visibleWidth; ++local) {
+          const size_t sourcePixel = sourceRow + sourceXMap[local];
+          const uint8_t packed = image.indices[sourcePixel >> 1U];
+          destination[local] = encodedPalette[(sourcePixel & 1U)
+              ? (packed & 0x0FU) : (packed >> 4U)];
+        }
+      } else {
+        for (uint16_t local = 0; local < visibleWidth; ++local) {
+          const size_t sourcePixel = sourceRow + sourceXMap[local];
+          const uint8_t packed = image.indices[sourcePixel >> 1U];
+          const uint8_t index = static_cast<uint8_t>((sourcePixel & 1U)
+              ? (packed & 0x0FU) : (packed >> 4U));
+          if (paletteVisible[index]) destination[local] = encodedPalette[index];
+        }
+      }
+    }
+    return true;
+  }
+
+  // FireRed's animated BGs are stored as a compact 8x8 tile map plus unique
+  // 4-bpp tiles. The generic coordinate lookup below is useful for virtual
+  // planes, but it repeats map-width, tile-row and palette work for every
+  // destination pixel. Battle composition visits the same eight source rows
+  // across a retained stripe, so resolve all row invariants once and keep a
+  // compact x descriptor (tile column, byte within tile row, nibble) in the
+  // existing scratch map. This preserves every source pixel and transparency
+  // decision while avoiding the hot-path divisions and redundant palette
+  // transforms that dominated scrolling backgrounds at 3x.
+  const bool directTiled4 = image.bitsPerPixel == kResidentTiled4Bpp &&
+      opacity16 == 16U && sourceWidth == image.header.width &&
+      sourceHeight == image.header.height;
+  if (directTiled4) {
+    uint16_t encodedPalette[16]{};
+    bool paletteVisible[16]{};
+    for (uint8_t index = 0U; index < 16U; ++index) {
+      const uint16_t pixel = indexedPaletteIndexPixel(
+          image, index, paletteFirst, paletteCount, paletteShift);
+      encodedPalette[index] = PixelCanvas::encoded565(pixel);
+      paletteVisible[index] = !transparent || pixel != image.header.transparent;
+    }
+    for (uint16_t local = 0U; local < visibleWidth; ++local) {
+      const uint16_t sourceX = sourceXMap[local];
+      sourceXMap[local] = static_cast<uint16_t>(
+          ((sourceX >> 3U) << 3U) |
+          (((sourceX & 7U) >> 1U) << 1U) |
+          (sourceX & 1U));
+    }
+    const uint16_t mapWidth = image.header.width >> 3U;
+    const size_t mapBytes =
+        (static_cast<size_t>(image.header.width) * image.header.height) >> 6U;
+    for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
+         line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+      uint16_t* destination = display.writableRow565(
+          x + firstVisibleColumn, y + line, visibleWidth);
+      if (!destination) return false;
+      const int32_t sourceYUnbounded = identityScale
+          ? static_cast<int32_t>(line) + sourceOffsetY
+          : static_cast<int32_t>(line) * scaleDenominator /
+                scaleNumerator + sourceOffsetY;
+      const uint16_t sourceY = wrapY
+          ? positiveModulo(sourceYUnbounded, sourceHeight)
+          : static_cast<uint16_t>(std::clamp<int32_t>(
+                sourceYUnbounded, 0, sourceHeight - 1U));
+      const uint8_t* mapRow = image.indices +
+          static_cast<size_t>(sourceY >> 3U) * mapWidth;
+      const size_t tileRow = mapBytes +
+          static_cast<size_t>(sourceY & 7U) * 4U;
+      for (uint16_t local = 0U; local < visibleWidth; ++local) {
+        const uint16_t descriptor = sourceXMap[local];
+        const uint8_t tile = mapRow[descriptor >> 3U];
+        const uint8_t packed = image.indices[
+            tileRow + static_cast<size_t>(tile) * 32U +
+            ((descriptor >> 1U) & 3U)];
+        const uint8_t index = static_cast<uint8_t>(
+            (descriptor & 1U) ? (packed & 0x0FU) : (packed >> 4U));
+        if (paletteVisible[index]) destination[local] = encodedPalette[index];
+      }
+    }
+    return true;
+  }
+
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
        line < static_cast<uint16_t>(lastVisibleRow); ++line) {
       uint16_t* destination = display.writableRow565(
@@ -887,7 +1173,7 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
                                            paletteFirst, paletteCount,
                                            paletteShift)
                 : image.header.transparent;
-        if (pixel != image.header.transparent &&
+        if (opacity16 < 16U && pixel != image.header.transparent &&
             !orderedAlphaVisible(static_cast<int16_t>(x + column),
                                  static_cast<int16_t>(y + line),
                                  opacity16))
@@ -1073,6 +1359,41 @@ bool drawIndexedTransformed(PixelCanvas& display, const IndexedImage& image,
   const uint16_t visibleWidth = static_cast<uint16_t>(
       lastVisibleColumn - firstVisibleColumn);
   const bool transparent = containsTransparency(image);
+  // Palette effects do not change within one cel draw.  The common battle
+  // path is an unscaled 4-bpp sprite, so transform and encode each of its at
+  // most sixteen colors once instead of doing RGB math and byte swapping for
+  // every non-transparent pixel.  Scaled and non-linear packages continue
+  // through the exact generic sampler below.
+  if (scaleXPercent == 100U && scaleYPercent == 100U &&
+      image.bitsPerPixel == 4U && image.paletteCount <= 16U) {
+    uint16_t encodedPalette[16]{};
+    bool paletteVisible[16]{};
+    for (uint8_t index = 0U; index < 16U; ++index) {
+      const uint16_t original = index < image.paletteCount
+          ? image.palette[index] : image.header.transparent;
+      paletteVisible[index] = !transparent ||
+          original != image.header.transparent;
+      const uint16_t color = original == image.header.transparent ? original :
+          transformedColor(original, colorEffect, blendColor, blendAmount);
+      encodedPalette[index] = PixelCanvas::encoded565(color);
+    }
+    for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
+         line < static_cast<uint16_t>(lastVisibleRow); ++line) {
+      uint16_t* destination = display.writableRow565(
+          x + firstVisibleColumn, y + line, visibleWidth);
+      if (!destination) return false;
+      size_t sourcePixel = static_cast<size_t>(line) *
+          image.header.width + firstVisibleColumn;
+      for (uint16_t local = 0U; local < visibleWidth;
+           ++local, ++sourcePixel) {
+        const uint8_t packed = image.indices[sourcePixel >> 1U];
+        const uint8_t index = static_cast<uint8_t>((sourcePixel & 1U)
+            ? (packed & 0x0FU) : (packed >> 4U));
+        if (paletteVisible[index]) destination[local] = encodedPalette[index];
+      }
+    }
+    return true;
+  }
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
        line < static_cast<uint16_t>(lastVisibleRow); ++line) {
     uint16_t* destination = display.writableRow565(
@@ -1546,13 +1867,14 @@ void clearSpriteCache() {
   cacheArenaUsed = 0;
   sceneCacheSpillUsed = sceneWorkspaceOwner == SceneWorkspaceOwner::Large
       ? std::max(largeWorkspaceUsed, battlePlaneWorkspaceEnd) : 0;
-  cacheStamp = 0;
 }
 
 CacheEntry* findCached(const char* path) {
   if (!path) return nullptr;
+  const uint32_t hash = assetPathHash(path);
   for (auto& entry : cache)
-    if (entry.valid && std::strcmp(entry.path, path) == 0) return &entry;
+    if (entry.valid && entry.stamp == hash &&
+        std::strcmp(entry.path, path) == 0) return &entry;
   return nullptr;
 }
 
@@ -1586,7 +1908,10 @@ bool preloadHomeLayer(const char* path) {
 
   AssetFile file = openAsset(path);
   AssetInfo info{};
-  if (!file || !readAssetInfo(file, info)) { file.close(); preloadFailure(path, "home-header"); return false; }
+  if (!file || !readAssetInfo(file, info) || info.bitsPerPixel == 16U ||
+      info.paletteCount > kHomeLayerPaletteCapacity) {
+    file.close(); preloadFailure(path, "home-header"); return false;
+  }
   const size_t reserve = info.bitsPerPixel == 16U
       ? static_cast<size_t>(info.header.width) * info.header.height : info.pixelBytes;
   if (homeWorkspaceUsed + reserve > sceneWorkspaceCapacity) {
@@ -1633,6 +1958,33 @@ bool preloadLargeAsset(const char* path) {
   return true;
 }
 
+bool restoreBattleSceneAfterPromotionFailure(size_t previousCapacity,
+                                             const char* retainedLargePath) {
+  // Promotion is an optimization for an authored secondary plane. Losing the
+  // canonical terrain when that optional plane is a few bytes too large turns
+  // a skipped animation into an unrecoverable PRESENT_CANCEL/HP_DEFER loop.
+  // Recreate the bank that existed before the attempt and reload its terrain
+  // before reporting the promotion failure to the caller.
+  const size_t largest = heap_caps_get_largest_free_block(
+      MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  size_t requested = std::min(previousCapacity, largest);
+  if (!requested)
+    requested = std::min(kSceneWorkspaceBytes, largest);
+  if (requested)
+    sceneWorkspace = new (std::nothrow) uint8_t[requested];
+  if (!sceneWorkspace && largest > 256U) {
+    requested = (largest - 128U) & ~size_t(3U);
+    sceneWorkspace = new (std::nothrow) uint8_t[requested];
+  }
+  sceneWorkspaceCapacity = sceneWorkspace ? requested : 0U;
+  sceneWorkspaceOwner = SceneWorkspaceOwner::None;
+  if (!sceneWorkspace) return false;
+  bool terrainRestored = true;
+  if (retainedLargePath && retainedLargePath[0])
+    terrainRestored = preloadLargeAsset(retainedLargePath);
+  return terrainRestored;
+}
+
 bool promoteBattleSceneWorkspace(size_t required) {
   if (sceneWorkspace && sceneWorkspaceCapacity >= required) return true;
 
@@ -1644,6 +1996,7 @@ bool promoteBattleSceneWorkspace(size_t required) {
   if (largeAsset.image.valid && largeAsset.path[0])
     std::strncpy(retainedLargePath, largeAsset.path,
                  sizeof(retainedLargePath) - 1U);
+  const size_t previousCapacity = sceneWorkspaceCapacity;
   clearSpriteCache();
   clearLargeAsset();
   delete[] sceneWorkspace;
@@ -1660,35 +2013,25 @@ bool promoteBattleSceneWorkspace(size_t required) {
   if (largest >= requested + 128U)
     requested = std::min(requested, (largest - 128U) & ~size_t(3U));
   if (largest < requested) {
-    Serial.printf("[GFX] battle workspace promotion unavailable need=%u largest=%u\n",
-                  static_cast<unsigned>(required),
-                  static_cast<unsigned>(largest));
+    restoreBattleSceneAfterPromotionFailure(previousCapacity,
+                                            retainedLargePath);
     return false;
   }
   sceneWorkspace = new (std::nothrow) uint8_t[requested];
   sceneWorkspaceCapacity = sceneWorkspace ? requested : 0;
   if (!sceneWorkspace || sceneWorkspaceCapacity < required) {
-    Serial.printf("[GFX] battle workspace promotion failed need=%u got=%u\n",
-                  static_cast<unsigned>(required),
-                  static_cast<unsigned>(sceneWorkspaceCapacity));
     if (sceneWorkspace) {
       delete[] sceneWorkspace;
       sceneWorkspace = nullptr;
       sceneWorkspaceCapacity = 0;
     }
+    restoreBattleSceneAfterPromotionFailure(previousCapacity,
+                                            retainedLargePath);
     return false;
   }
-  Serial.printf("[GFX] battle workspace promoted size=%u need=%u heap=%u block=%u\n",
-                static_cast<unsigned>(sceneWorkspaceCapacity),
-                static_cast<unsigned>(required),
-                static_cast<unsigned>(ESP.getFreeHeap()),
-                static_cast<unsigned>(ESP.getMaxAllocHeap()));
 
-  if (retainedLargePath[0] && !preloadLargeAsset(retainedLargePath)) {
-    Serial.printf("[GFX] battle workspace terrain restore failed: %s\n",
-                  retainedLargePath);
+  if (retainedLargePath[0] && !preloadLargeAsset(retainedLargePath))
     return false;
-  }
   return true;
 }
 
@@ -1796,13 +2139,18 @@ bool preloadBattlePlane(const char* path) {
   file.close();
   std::strncpy(battlePlaneAsset.path, path,
                sizeof(battlePlaneAsset.path) - 1U);
-  battlePlaneWorkspaceEnd = planeOffset + paletteBytes + pixelBytes;
-  sceneCacheSpillUsed = end;
+  battlePlaneWorkspaceEnd = planeOffset + paletteBytes +
+      battlePlaneAsset.image.indexBytes;
+  sceneCacheSpillUsed = battlePlaneWorkspaceEnd;
   return true;
 }
 
 bool cacheSmallAsset(const char* path) {
-  if (CacheEntry* cached = findCached(path)) { cached->stamp = ++cacheStamp; return true; }
+  if (findCached(path)) return true;
+  if (!path || std::strlen(path) >= kCachedAssetPathCapacity) {
+    preloadFailure(path, "cache-path");
+    return false;
+  }
   CacheEntry* slot = nullptr;
   for (auto& entry : cache) if (!entry.valid) { slot = &entry; break; }
   if (!slot || !cacheArena) { preloadFailure(path, "cache-slots"); return false; }
@@ -1838,8 +2186,13 @@ bool cacheSmallAsset(const char* path) {
   file.close();
   slot->valid = true;
   std::strncpy(slot->path, path, sizeof(slot->path) - 1);
+  slot->path[sizeof(slot->path) - 1U] = '\0';
   slot->image = image;
-  slot->stamp = ++cacheStamp;
+  // `stamp` used to be incremented as an LRU counter, but this fixed arena
+  // never evicts individual entries.  Store the path hash in the existing
+  // word instead: dense battle frames can now reject almost every cache slot
+  // with one integer comparison instead of dozens of long strcmp walks.
+  slot->stamp = assetPathHash(path);
   if (destinationArena == cacheArena) cacheArenaUsed = destinationOffset + reserve;
   else sceneCacheSpillUsed = destinationOffset + reserve;
   return true;
@@ -1877,8 +2230,10 @@ void AssetRenderer::storageMounted() {
   File archive = SD.open(kAssetArchivePath, FILE_READ);
   archiveAvailable = archive && readArchiveHeader(archive, archiveHeader, false);
   if (archive) archive.close();
+#if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[GFX] indexed scene renderer: %s asset source\n",
                 archiveAvailable ? "PGA3 versioned" : "individual PKG fallback");
+#endif
 }
 
 bool AssetRenderer::beginPreloadBatch() {
@@ -2038,11 +2393,13 @@ bool AssetRenderer::begin() {
     sceneWorkspaceCapacity = sceneWorkspace ? kSceneWorkspaceBytes : 0;
   }
   const bool ready = sceneWorkspace != nullptr;
+#if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[GFX] workspace %s scene=%s/%u cache=PENDING/%u heap=%u block=%u\n", ready ? "READY" : "FAIL",
                 sceneWorkspace ? "OK" : "FAIL", static_cast<unsigned>(kSceneWorkspaceBytes),
                 static_cast<unsigned>(kCacheArenaBytes),
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
   return ready;
 }
 
@@ -2055,10 +2412,14 @@ void releaseSceneWorkspace(const char* reason) {
   sceneWorkspace = nullptr;
   sceneWorkspaceCapacity = 0;
   sceneWorkspaceOwner = SceneWorkspaceOwner::None;
+#if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[GFX] scene workspace released for %s heap=%u block=%u\n",
                 reason,
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#else
+  (void)reason;
+#endif
 }
 }  // namespace
 
@@ -2086,7 +2447,9 @@ bool AssetRenderer::restoreSceneWorkspace(bool radioActive) {
     sceneWorkspace = nullptr;
     sceneWorkspaceCapacity = 0;
     sceneWorkspaceOwner = SceneWorkspaceOwner::None;
-    Serial.printf("[GFX] scene workspace growing from battle bank to normal bank\n");
+#if defined(POKEGOCHI_SERIAL_PROFILING)
+    Serial.println("[GFX] scene workspace growing from battle bank to normal bank");
+#endif
   }
   size_t requested = kSceneWorkspaceBytes;
   if (radioActive) {
@@ -2108,19 +2471,25 @@ bool AssetRenderer::restoreSceneWorkspace(bool radioActive) {
   }
   if (requested) sceneWorkspace = new (std::nothrow) uint8_t[requested];
   sceneWorkspaceCapacity = sceneWorkspace ? requested : 0;
+#if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[GFX] scene workspace %s mode=%s size=%u heap=%u block=%u\n",
                 sceneWorkspace ? "READY" : "UNAVAILABLE", radioActive ? "BLE" : "NORMAL",
                 static_cast<unsigned>(sceneWorkspaceCapacity),
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#else
+  if (!sceneWorkspace) Serial.println("[GFX] scene workspace unavailable");
+#endif
   return sceneWorkspace != nullptr;
 }
 
 bool AssetRenderer::beginCache() {
+#if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[GFX] sprite cache %s size=%u heap=%u block=%u\n", cacheArena ? "READY" : "FAIL",
                 static_cast<unsigned>(kCacheArenaBytes),
                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
   return cacheArena != nullptr;
 }
 
@@ -2268,6 +2637,10 @@ bool AssetRenderer::draw(PixelCanvas& display, const char* path, int16_t x, int1
       }
       return false;
     }
+    // The retained presenter is RAM-only and residentImage already resolved
+    // the exact immutable package. Drawing it directly avoids repeating the
+    // complete cache routing/search below for every sprite in every 8px band.
+    return drawIndexed(display, *resident, x, y);
   }
   if (useCache && homeLayerIndex(path) >= 0) {
     if (drawHomeLayer(display, path, x, y)) return true;
@@ -2301,7 +2674,6 @@ bool AssetRenderer::draw(PixelCanvas& display, const char* path, int16_t x, int1
   // resident copy first. Box previously passed useCache=false for its grid
   // and consequently reopened already-preloaded icons once per band.
   if (CacheEntry* cached = findCached(path)) {
-    cached->stamp = ++cacheStamp;
     return drawIndexed(display, cached->image, x, y);
   }
   // Compositing a retained band is a hard no-I/O phase. Re-entering FAT/SD
@@ -2492,18 +2864,71 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
                 640U * sizeof(uint16_t), "plane x-map scratch too small");
   uint16_t* baseXMap = reinterpret_cast<uint16_t*>(scratch.stream.indices);
   uint16_t* overlayXMap = baseXMap + 320U;
-  for (uint16_t local = 0; local < visibleWidth; ++local) {
-    const int32_t screenX = x + firstVisibleColumn + local;
-    baseXMap[local] = sourceCoordinate(
-        screenX, basePlane.x, basePlane.sourceOffsetX,
-        baseSourceWidth, basePlane.scaleNumerator,
-        basePlane.scaleDenominator,
-        basePlane.wrap ? basePlane.wrapX : false);
-    overlayXMap[local] = sourceCoordinate(
-        screenX, overlayPlane.x, overlayPlane.sourceOffsetX,
-        overlaySourceWidth, overlayPlane.scaleNumerator,
-        overlayPlane.scaleDenominator,
-        overlayPlane.wrap ? overlayPlane.wrapX : false);
+  const auto fillCoordinateMap = [&](uint16_t* map,
+                                     const AssetOverlay& plane,
+                                     uint16_t sourceExtent) {
+    const int32_t firstRelativeX =
+        x + firstVisibleColumn - plane.x;
+    const uint16_t numerator = std::max<uint8_t>(
+        1U, plane.scaleNumerator);
+    const uint16_t denominator = std::max<uint8_t>(
+        1U, plane.scaleDenominator);
+    const bool wrap = plane.wrap && plane.wrapX;
+    // All arena-sized planes begin at or before the clipped stripe.  Walk
+    // their rational scale without repeating two divisions and two modulo
+    // operations per destination pixel.  Small overlays which begin to the
+    // right retain sourceCoordinate's exact signed-truncation behaviour.
+    if (firstRelativeX >= 0) {
+      int32_t mapped = firstRelativeX * denominator / numerator +
+          plane.sourceOffsetX;
+      uint16_t remainder = static_cast<uint16_t>(
+          (firstRelativeX * denominator) % numerator);
+      const uint16_t step = static_cast<uint16_t>(denominator / numerator);
+      const uint16_t remainderStep = static_cast<uint16_t>(
+          denominator % numerator);
+      uint16_t wrapped = wrap ? positiveModulo(mapped, sourceExtent) : 0U;
+      for (uint16_t local = 0U; local < visibleWidth; ++local) {
+        map[local] = wrap ? wrapped : static_cast<uint16_t>(
+            std::clamp<int32_t>(mapped, 0, sourceExtent - 1U));
+        uint16_t delta = step;
+        remainder = static_cast<uint16_t>(remainder + remainderStep);
+        if (remainder >= numerator) {
+          remainder = static_cast<uint16_t>(remainder - numerator);
+          ++delta;
+        }
+        mapped += delta;
+        if (wrap) {
+          uint32_t next = static_cast<uint32_t>(wrapped) + delta;
+          while (next >= sourceExtent) next -= sourceExtent;
+          wrapped = static_cast<uint16_t>(next);
+        }
+      }
+      return;
+    }
+    for (uint16_t local = 0U; local < visibleWidth; ++local)
+      map[local] = sourceCoordinate(
+          x + firstVisibleColumn + local, plane.x,
+          plane.sourceOffsetX, sourceExtent,
+          plane.scaleNumerator, plane.scaleDenominator, wrap);
+  };
+  fillCoordinateMap(baseXMap, basePlane, baseSourceWidth);
+  fillCoordinateMap(overlayXMap, overlayPlane, overlaySourceWidth);
+
+  // Palette cycling is constant for the complete retained stripe. Resolve it
+  // once here instead of running the range tests and modulo chain for both
+  // planes at every pixel. The second table uses stream.pixels, which is
+  // independent of the two coordinate maps in stream.indices.
+  uint16_t* const basePalette = directPalette;
+  uint16_t* const overlayPalette = scratch.stream.pixels;
+  for (uint16_t index = 0U; index < 256U; ++index) {
+    basePalette[index] = indexedPaletteIndexPixel(
+        *baseImage, static_cast<uint8_t>(index),
+        basePlane.paletteFirst, basePlane.paletteCount,
+        basePlane.paletteShift);
+    overlayPalette[index] = indexedPaletteIndexPixel(
+        *overlayImage, static_cast<uint8_t>(index),
+        overlayPlane.paletteFirst, overlayPlane.paletteCount,
+        overlayPlane.paletteShift);
   }
   for (uint16_t line = static_cast<uint16_t>(firstVisibleRow);
        line < static_cast<uint16_t>(lastVisibleRow); ++line) {
@@ -2526,13 +2951,8 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
         const uint16_t baseX = baseXMap[local];
         uint16_t pixel = (baseX < baseImage->header.width &&
                           baseY < baseImage->header.height)
-            ? indexedPalettePixel(*baseImage, baseX, baseY,
-                                  basePlane.paletteFirst,
-                                  basePlane.paletteCount,
-                                  basePlane.paletteShift)
-            : indexedPaletteIndexPixel(*baseImage,
-                  basePlane.virtualFillIndex, basePlane.paletteFirst,
-                  basePlane.paletteCount, basePlane.paletteShift);
+            ? basePalette[indexedValueAt(*baseImage, baseX, baseY)]
+            : basePalette[basePlane.virtualFillIndex];
 
         const bool insideOverlay =
             screenX >= overlayPlane.x && screenY >= overlayPlane.y &&
@@ -2543,14 +2963,9 @@ bool AssetRenderer::drawPlaneComposite(PixelCanvas& display,
           const uint16_t foreground =
               (overlayX < overlayImage->header.width &&
                overlayY < overlayImage->header.height)
-                  ? indexedPalettePixel(*overlayImage, overlayX, overlayY,
-                        overlayPlane.paletteFirst, overlayPlane.paletteCount,
-                        overlayPlane.paletteShift)
-                  : indexedPaletteIndexPixel(*overlayImage,
-                        overlayPlane.virtualFillIndex,
-                        overlayPlane.paletteFirst,
-                        overlayPlane.paletteCount,
-                        overlayPlane.paletteShift);
+                  ? overlayPalette[indexedValueAt(
+                        *overlayImage, overlayX, overlayY)]
+                  : overlayPalette[overlayPlane.virtualFillIndex];
           if (foreground != overlayImage->header.transparent)
             pixel = alphaBlend565(foreground, pixel,
                                   overlayPlane.opacity16);

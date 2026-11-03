@@ -85,7 +85,10 @@ enum class BattleAnimationQuery : uint8_t {
   IsMonInvisible,
 };
 
-enum class BattleAnimationMotion : uint8_t {
+// The generated callback catalog now needs more than 256 distinct motion
+// profiles.  Keeping an 8-bit underlying type would alias the last profiles
+// after future additions, so motion identity is deliberately 16-bit.
+enum class BattleAnimationMotion : uint16_t {
   Static,
   // Source-reviewed stationary callbacks.  Their cels do not travel, but
   // FireRed still mirrors the initial X offset in the attack direction.
@@ -151,6 +154,17 @@ enum class BattleAnimationMotion : uint8_t {
   TravelDiagonal,
   TriAttackTriangle,
   WaterGunDroplet,
+  // Expansion callbacks with multi-phase or callback-specific ABIs. Volt
+  // Switch arcs to the target and then returns linearly to the user; the
+  // growing superpower projectile always translates for sixteen ticks while
+  // its authored affine stream doubles the cel.
+  VoltSwitchReturn,
+  GrowingSuperpower,
+  PledgeOrbRise,
+  FallingObject,
+  GeyserRise,
+  RandomAffineOrientedStatic,
+  RandomCentredAffineHit,
   RandomBattlerHit,
   ConfettiBallistic,
   FlyingParticle,
@@ -199,6 +213,13 @@ enum class BattleAnimationMotion : uint8_t {
   // the attacker, holds it spinning in the centre, then accelerates it into
   // the target. Its three arguments are phase durations, not x/y offsets.
   ShadowBall,
+  // Mind Blown's explosion rays use a target-local four-argument state
+  // machine: direction flag, destination offset and exact duration.
+  MindBlownExplosion,
+  CoreEnforcerHit,
+  PhotonGeyserBeam,
+  BlastBurnTargetPlume,
+  SoulStealingStar,
   // FireRed's standard cross-battler translation ABI: initial x/y offsets,
   // target x/y offsets, duration and coordinate flags.  Keeping this apart
   // from Projectile prevents the duration and destination offsets from being
@@ -229,7 +250,6 @@ enum class BattleAnimationMotion : uint8_t {
   Arc,
   Falling,
   Rising,
-  Orbit,
   // Callback-faithful circular families. FireRed reuses "orbit-like"
   // callbacks with incompatible argument layouts; treating argument 0/1 as
   // a generic x/y offset displaced Fire Spin, Whirlpool, Hidden Power and
@@ -316,7 +336,6 @@ enum class BattleAnimationMotion : uint8_t {
   ThunderboltOrbBlink,
   ThunderWavePairBlink,
   StaticElectricity,
-  IceBallImpactShard,
   SlashFlicker,
   MovementWavesRepeat,
   PerishSongDelayedNote,
@@ -372,7 +391,6 @@ enum class BattleAnimationMotion : uint8_t {
   BlockBounce,
   WaterPulseBubble,
   WaterPulseRing,
-  Wave,
   Scatter,
   // Callback-faithful ice motions. These must remain distinct: the FireRed
   // ICE_CRYSTALS tag is a tile atlas shared by several unrelated cels and
@@ -389,11 +407,9 @@ enum class BattleAnimationMotion : uint8_t {
   BattlerSlideToOffset,
   BattlerRestorePosition,
   BattlerSlideToOffsetAndBack,
-  BattlerSlide,
   BattlerBow,
   BattlerShake,
   PalettePulse,
-  ProceduralPulse,
 };
 
 // FireRed's createsprite anchor is the owner used by the GBA sprite engine,
@@ -496,6 +512,8 @@ enum class BattleAnimationTaskMotion : uint8_t {
   FlailMovement,
   GrowAndGrayscale,
   GrowAndShrink,
+  GrowTarget,
+  TwinkleTackleLaunch,
   HelpingHandAttackerMovement,
   MeditateStretchAttacker,
   Minimize,
@@ -514,6 +532,8 @@ enum class BattleAnimationTaskMotion : uint8_t {
   ScaleMonAndRestore,
   SnatchOpposingMonMoveExact,
   SetAllNonAttackersInvisible,
+  AllBattlersInvisible,
+  AllBattlersVisible,
   SetAttackerInvisibleWaitForSignal,
   SetGrayscaleOrOriginalPal,
   ShrinkTargetCopy,
@@ -615,6 +635,7 @@ enum class BattleAnimationTaskMotion : uint8_t {
   MistBallFogField,
   HeartsField,
   MorningSunField,
+  DoomDesireLightBeam,
   SpotlightWindow,
   ExtrasensoryDistortion,
   DragonDanceDistortion,
@@ -642,6 +663,7 @@ enum class BattleAnimationTaskMotion : uint8_t {
   BestowItemThrow,
   DestinyBondShadow,
   RolloutDebris,
+  TectonicRageRollout,
   Raindrops,
   SpeedDust,
   HailStones,
@@ -662,6 +684,15 @@ enum class BattleAnimationTaskMotion : uint8_t {
   ShockWaveLightning,
   IonRain,
 };
+
+// pokeemerald-expansion's canonical internal presentation IDs. Pokegochi
+// keeps each base move as the mechanical MoveId and selects these rows only
+// after the battle engine resolves a Z-Move.
+constexpr uint16_t kFirstGenericZMoveAnimationMoveId = 848U;
+constexpr uint16_t kLastGenericZMoveAnimationMoveId = 865U;
+constexpr uint16_t kFirstSignatureZMoveAnimationMoveId = 866U;
+constexpr uint16_t kLastSignatureZMoveAnimationMoveId = 882U;
+constexpr uint16_t kLightThatBurnsTheSkyAnimationMoveId = 881U;
 
 enum class BattleAnimationTaskTarget : uint8_t {
   ScriptAnchor,
@@ -698,34 +729,36 @@ struct BattleAnimationSpriteResource {
   // compact resource is what lets Gust, Hyper Beam, Magical Leaf, etc. tint
   // exactly the intended cels instead of flashing a battler or doing nothing.
   uint16_t paletteTag;
-  uint8_t frameCount;
   uint16_t sequenceOffset;
-  uint8_t sequenceCount;
-  int8_t selectorArgument;
-  uint8_t selectorConstant;
+  uint16_t affineSequenceOffset;
+  // Some source callbacks create a second SpriteTemplate directly from the
+  // first sprite (Close Combat's fist/foot impact is the retained example).
+  uint16_t childResourceId = 0xFFFFU;
   BattleAnimationMotion motion;
-  BattleAnimationTravel travel;
-  BattleAnimationOrigin origin;
+  // Grouping the 16-bit members above removes alignment holes from every one
+  // of the 908 generated callback resources without packing unaligned words.
+  uint8_t frameCount;
+  uint8_t sequenceCount;
+  // Every argument selector is -1 or 0..7. Pairing their signed nibbles keeps
+  // each resource 4-byte aligned while reducing the table from 28 to 24 bytes.
+  int8_t selectorArgument : 4;
+  int8_t affineSelectorArgument : 4;
+  uint8_t selectorConstant;
+  BattleAnimationTravel travel : 2;
+  BattleAnimationOrigin origin : 4;
   // FireRed callback arguments are not a common x/y ABI.  -1 means that the
   // callback has no ordinary battler-relative offset on that axis.  Keeping
   // the two selectors in generated data prevents control arguments (battler,
   // duration, frame/affine selector) from being applied as coordinates.
-  int8_t xOffsetArgument;
-  int8_t yOffsetArgument;
+  int8_t xOffsetArgument : 4;
+  int8_t yOffsetArgument : 4;
   uint8_t lifetimeFrames;
-  uint16_t affineSequenceOffset;
   uint8_t affineSequenceCount;
-  int8_t affineSelectorArgument;
   uint8_t affineSelectorConstant;
   // Some FireRed callbacks install their affine table only after the normal
   // cel animation ends (Amnesia's question mark is the canonical case).
   // Starting that transform at spawn visibly skips the first phase.
   uint8_t affineStartAge;
-  // Some source callbacks create a second SpriteTemplate directly from the
-  // first sprite (Close Combat's fist/foot impact is the retained example).
-  // Keep that relationship in generated data so the child uses the same
-  // source position and lifetime instead of being silently dropped.
-  uint16_t childResourceId = 0xFFFFU;
 };
 
 struct BattleAnimationFrameStep {
@@ -761,39 +794,65 @@ struct BattleAnimationAffineState {
 };
 
 struct BattleAnimationCommand {
-  // Commands are flash-resident and numerous (the complete FireRed + Sinnoh
-  // catalog is over eleven thousand entries). Resource id (9 bits), opcode
-  // (5 bits) and anchor (2 bits) share one word; this keeps each command at
-  // six bytes instead of eight without changing the generated initializer
-  // ABI. The remaining priority and argument count stay byte-addressable.
-  uint16_t resourceOpcode;
-  uint16_t argumentOffset;
-  uint8_t priority;
-  uint8_t argumentCount;
+  // The complete animation VM contains more than fifteen thousand commands.
+  // Store each in exactly 40 bits: resource 10, opcode 5, anchor 2, priority
+  // dictionary index 5, argument count 4 and argument offset 14. Besides
+  // saving one byte per command, the tenth resource bit fixes IDs 512..573,
+  // which the previous nine-bit layout silently wrapped.
+  uint8_t packed[5];
+
+  static constexpr uint8_t priorityValues[29] = {
+      0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 16,
+      19, 20, 40, 41, 50, 51, 66, 70, 120, 130, 131, 132, 133, 136, 240};
+
+  static constexpr uint8_t priorityCode(uint8_t priority) {
+    for (uint8_t index = 0; index < sizeof(priorityValues); ++index)
+      if (priorityValues[index] == priority) return index;
+    return 0;
+  }
 
   constexpr BattleAnimationCommand(uint16_t resource, uint16_t arguments,
                                    uint8_t opcodeValue, uint8_t anchorValue,
                                    uint8_t priorityValue,
                                    uint8_t argumentCountValue)
-      : resourceOpcode(static_cast<uint16_t>(
-            (resource & 0x01FFU) |
-            ((static_cast<uint16_t>(opcodeValue) & 0x001FU) << 9U) |
-            ((static_cast<uint16_t>(anchorValue) & 0x0003U) << 14U))),
-        argumentOffset(arguments), priority(priorityValue),
-        argumentCount(argumentCountValue) {}
+      : packed{
+            static_cast<uint8_t>(resource & 0xFFU),
+            static_cast<uint8_t>(((resource >> 8U) & 0x03U) |
+                                 ((opcodeValue & 0x1FU) << 2U) |
+                                 ((anchorValue & 0x01U) << 7U)),
+            static_cast<uint8_t>(((anchorValue >> 1U) & 0x01U) |
+                                 (priorityCode(priorityValue) << 1U) |
+                                 ((argumentCountValue & 0x03U) << 6U)),
+            static_cast<uint8_t>(((argumentCountValue >> 2U) & 0x03U) |
+                                 ((arguments & 0x003FU) << 2U)),
+            static_cast<uint8_t>((arguments >> 6U) & 0xFFU)} {}
 
   constexpr uint16_t resourceId() const {
-    return static_cast<uint16_t>(resourceOpcode & 0x01FFU);
+    return static_cast<uint16_t>(packed[0] |
+                                 ((packed[1] & 0x03U) << 8U));
   }
   constexpr uint8_t opcode() const {
-    return static_cast<uint8_t>((resourceOpcode >> 9U) & 0x001FU);
+    return static_cast<uint8_t>((packed[1] >> 2U) & 0x1FU);
   }
   constexpr uint8_t anchor() const {
-    return static_cast<uint8_t>((resourceOpcode >> 14U) & 0x0003U);
+    return static_cast<uint8_t>(((packed[1] >> 7U) & 0x01U) |
+                                ((packed[2] & 0x01U) << 1U));
+  }
+  constexpr uint8_t priority() const {
+    const uint8_t code = static_cast<uint8_t>((packed[2] >> 1U) & 0x1FU);
+    return code < sizeof(priorityValues) ? priorityValues[code] : 0U;
+  }
+  constexpr uint8_t argumentCount() const {
+    return static_cast<uint8_t>(((packed[2] >> 6U) & 0x03U) |
+                                ((packed[3] & 0x03U) << 2U));
+  }
+  constexpr uint16_t argumentOffset() const {
+    return static_cast<uint16_t>(((packed[3] >> 2U) & 0x3FU) |
+                                 (static_cast<uint16_t>(packed[4]) << 6U));
   }
 };
 
-static_assert(sizeof(BattleAnimationCommand) == 6,
+static_assert(sizeof(BattleAnimationCommand) == 5,
               "Battle animation command must stay compact in flash");
 
 struct BattleAnimationProgram {
@@ -816,7 +875,14 @@ const char* battleAnimationCatalogId();
 const BattleAnimationProgram* findBattleAnimationProgram(uint16_t moveId);
 const BattleAnimationCommand* battleAnimationProgramCommand(
     const BattleAnimationProgram& program, uint16_t index);
+bool battleAnimationDecodeArguments(uint16_t byteOffset, uint8_t count,
+                                    int16_t* output,
+                                    uint8_t outputCapacity);
+bool battleAnimationDecodeCommandArguments(
+    const BattleAnimationCommand& command, int16_t* output,
+    uint8_t outputCapacity);
 const int16_t* battleAnimationCommandArguments(const BattleAnimationCommand& command);
+const int16_t* battleAnimationArgumentsAt(uint16_t byteOffset, uint8_t count);
 bool battleAnimationArgumentsValid(const int16_t* arguments, uint8_t count);
 const BattleAnimationSpriteResource* battleAnimationSpriteResource(uint16_t resourceId);
 uint8_t battleAnimationSpriteFrameAtAge(

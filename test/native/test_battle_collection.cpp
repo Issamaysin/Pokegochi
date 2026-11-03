@@ -34,7 +34,7 @@ void visitDefaultAnimationPath(uint16_t move, Visitor&& visitor) {
     const int16_t* values=battleAnimationCommandArguments(*command);
     const auto opcode=static_cast<BattleAnimationOpcode>(command->opcode());
     const auto value=[&](uint8_t index,int16_t fallback=0){
-      return values&&index<command->argumentCount?values[index]:fallback;
+      return values&&index<command->argumentCount()?values[index]:fallback;
     };
     if(opcode==BattleAnimationOpcode::SetArgument){
       if(value(0,-1)>=0&&value(0)<16)arguments[value(0)]=value(1);++pc;
@@ -69,6 +69,51 @@ uint16_t countDefaultAnimationOpcode(uint16_t move,BattleAnimationOpcode wanted)
 }
 
 int main() {
+  constexpr BattleAnimationCommand compactCommand(
+      573U, 11414U, static_cast<uint8_t>(BattleAnimationOpcode::End),
+      3U, 240U, 8U);
+  static_assert(sizeof(BattleAnimationCommand) == 5U);
+  static_assert(compactCommand.resourceId() == 573U);
+  static_assert(compactCommand.argumentOffset() == 11414U);
+  static_assert(compactCommand.opcode() ==
+                static_cast<uint8_t>(BattleAnimationOpcode::End));
+  static_assert(compactCommand.anchor() == 3U);
+  static_assert(compactCommand.priority() == 240U);
+  static_assert(compactCommand.argumentCount() == 8U);
+  // Psycho Cut renders its first pose before consuming `delay 30`. Command
+  // arguments therefore have to live in caller-owned storage: the renderer
+  // decodes particle/task arguments while that delay value is still live.
+  // A shared scratch buffer used to replace 30 with RGB_PURPLE (10285),
+  // freezing the Android battle for roughly 85 seconds at 2x speed.
+  const BattleAnimationProgram* psychoCutProgram =
+      findBattleAnimationProgram(427U);
+  assert(psychoCutProgram);
+  int16_t psychoCutDelayArguments[8]{};
+  bool foundPsychoCutDelay = false;
+  for (uint16_t index = 0; index < psychoCutProgram->commandCount; ++index) {
+    const BattleAnimationCommand* command =
+        battleAnimationProgramCommand(*psychoCutProgram, index);
+    assert(command);
+    if (static_cast<BattleAnimationOpcode>(command->opcode()) !=
+        BattleAnimationOpcode::Delay)
+      continue;
+    assert(battleAnimationDecodeCommandArguments(
+        *command, psychoCutDelayArguments,
+        sizeof(psychoCutDelayArguments) /
+            sizeof(psychoCutDelayArguments[0])));
+    assert(command->argumentCount() == 1U &&
+           psychoCutDelayArguments[0] == 30);
+    foundPsychoCutDelay = true;
+    break;
+  }
+  assert(foundPsychoCutDelay);
+  int16_t unrelatedArguments[8]{};
+  const BattleAnimationCommand* firstPsychoCutCommand =
+      battleAnimationProgramCommand(*psychoCutProgram, 0U);
+  assert(firstPsychoCutCommand && battleAnimationDecodeCommandArguments(
+      *firstPsychoCutCommand, unrelatedArguments,
+      sizeof(unrelatedArguments) / sizeof(unrelatedArguments[0])));
+  assert(psychoCutDelayArguments[0] == 30);
   static_assert(BatteryProtection::kCutoffPercent == 10U);
   assert(!BatteryProtection::shouldEnterDormancy(false, 0U));
   assert(!BatteryProtection::shouldEnterDormancy(true, 11U));
@@ -84,6 +129,57 @@ int main() {
   assert(findFullMove(static_cast<MoveId>(9))->category==MoveCategory::Physical);   // Thunder Punch
   assert(findFullMove(static_cast<MoveId>(49))->category==MoveCategory::Special);  // Sonic Boom
   assert(findFullMove(static_cast<MoveId>(246))->category==MoveCategory::Special); // Ancient Power
+
+  // FireRed/Emerald critical hits do not erase every stat stage. Thunder
+  // must ignore the attacker's negative Sp. Atk and the target's positive
+  // Sp. Def, but it must preserve positive Sp. Atk and negative Sp. Def.
+  OwnedPokemon criticalAttacker=CollectionLogic::createPokemon(
+      0xC0170001U,151,50,false,0xC0170001U);
+  criticalAttacker.abilityId=0;
+  BattleState criticalTemplate;BattleEngine::clear(criticalTemplate);
+  criticalTemplate.active=true;criticalTemplate.kind=BattleKind::Pvp;
+  criticalTemplate.outcome=BattleOutcome::Ongoing;
+  criticalTemplate.playerUid=criticalAttacker.uid;
+  criticalTemplate.opponentCount=1;
+  criticalTemplate.opponents[0]=CollectionLogic::createPokemon(
+      0xC0170002U,151,50,false,0xC0170002U);
+  criticalTemplate.opponents[0].abilityId=0;
+  uint32_t thunderCriticalSeed=0;
+  for(uint32_t seed=1;seed<=128U&&!thunderCriticalSeed;++seed){
+    BattleState sample=criticalTemplate;sample.rngState=seed;
+    CombatVolatile attackerStages{};attackerStages.criticalStage=4;
+    CombatVolatile defenderStages{};
+    bool critical=false;
+    const uint16_t damage=BattleEngine::calculateDamage(
+        sample,criticalAttacker,sample.opponents[0],static_cast<MoveId>(87),
+        attackerStages,defenderStages,nullptr,&critical,true);
+    if(critical&&damage)thunderCriticalSeed=seed;
+  }
+  assert(thunderCriticalSeed);
+  const auto criticalThunderDamage=[&](int8_t spAttackStage,
+                                       int8_t spDefenseStage){
+    BattleState sample=criticalTemplate;sample.rngState=thunderCriticalSeed;
+    CombatVolatile attackerStages{};
+    attackerStages.criticalStage=4;
+    attackerStages.spAttackStage=spAttackStage;
+    CombatVolatile defenderStages{};
+    defenderStages.spDefenseStage=spDefenseStage;
+    bool critical=false;
+    const uint16_t damage=BattleEngine::calculateDamage(
+        sample,criticalAttacker,sample.opponents[0],static_cast<MoveId>(87),
+        attackerStages,defenderStages,nullptr,&critical,true);
+    assert(critical&&damage);
+    return damage;
+  };
+  const uint16_t neutralCriticalThunder=criticalThunderDamage(0,0);
+  assert(criticalThunderDamage(0,kMaximumBattleStatStage)==
+         neutralCriticalThunder);
+  assert(criticalThunderDamage(kMinimumBattleStatStage,0)==
+         neutralCriticalThunder);
+  assert(criticalThunderDamage(kMaximumBattleStatStage,0)>
+         neutralCriticalThunder);
+  assert(criticalThunderDamage(0,kMinimumBattleStatStage)>
+         neutralCriticalThunder);
 
   bool sawHomeWeather[5]{};
   uint32_t activeWeatherSamples=0;
@@ -147,13 +243,19 @@ int main() {
   assert(Economy::machineMove(100) == static_cast<MoveId>(468)); // BW TM01 Hone Claws
   assert(Economy::machineMove(124) == static_cast<MoveId>(555)); // BW TM95 Snarl
   assert(Economy::machineMove(125) == static_cast<MoveId>(611)); // XY TM83 Infestation
-  assert(Economy::machineMove(126) == static_cast<MoveId>(612)); // XY TM98 Power-Up Punch
-  assert(Economy::machineMove(127) == static_cast<MoveId>(605)); // XY TM99 Dazzling Gleam
-  assert(Economy::machineMove(128) == static_cast<MoveId>(590)); // XY TM100 Confide
+  assert(Economy::machineMove(126) == static_cast<MoveId>(267)); // XY TM96 Nature Power
+  assert(Economy::machineMove(127) == static_cast<MoveId>(612)); // XY TM98 Power-Up Punch
+  assert(Economy::machineMove(128) == static_cast<MoveId>(605)); // XY TM99 Dazzling Gleam
+  assert(Economy::machineMove(129) == static_cast<MoveId>(590)); // XY TM100 Confide
+  assert(Economy::machineMove(130) == static_cast<MoveId>(141)); // USUM TM28 Leech Life
+  assert(Economy::machineMove(131) == static_cast<MoveId>(656)); // USUM TM59 Brutal Swing
+  assert(Economy::machineMove(132) == static_cast<MoveId>(647)); // USUM TM67 Smart Strike
+  assert(Economy::machineMove(133) == static_cast<MoveId>(657)); // USUM TM70 Aurora Veil
   assert(Economy::machineNumber(100)==1U&&Economy::machineNumber(124)==95U);
-  assert(Economy::machineNumber(125)==83U&&Economy::machineNumber(128)==100U);
-  const MartOffer highMachine=MartOffer::machine(128U,3000U);
-  assert(highMachine.isMachine()&&highMachine.machineId()==128U&&
+  assert(Economy::machineNumber(125)==83U&&Economy::machineNumber(129)==100U);
+  assert(Economy::machineNumber(130)==28U&&Economy::machineNumber(133)==70U);
+  const MartOffer highMachine=MartOffer::machine(133U,3000U);
+  assert(highMachine.isMachine()&&highMachine.machineId()==133U&&
          highMachine.item==MartItem::Count);
   MartState kalosLockedMart{};
   constexpr uint32_t kOwnedUnovaMachines=(uint32_t{1}<<kUnovaMachineCount)-1U;
@@ -167,10 +269,21 @@ int main() {
   bool sawKalosMachine=false;
   for(const MartOffer& offer:kalosOpenMart.offers)
     if(offer.isMachine()){
-      assert(offer.machineId()>=125U&&offer.machineId()<kMachineCount);
+      assert(offer.machineId()>=125U&&offer.machineId()<130U);
       sawKalosMachine=true;
     }
   assert(sawKalosMachine);
+  MartState alolaOpenMart{};
+  constexpr uint64_t kOwnedSinnohOnly=(uint64_t{1}<<kSinnohMachineCount)-1U;
+  Economy::rotate(alolaOpenMart,24U,~uint64_t{0},kOwnedSinnohOnly,true,
+                  UINT32_MAX,true,true,true);
+  bool sawAlolaMachine=false;
+  for(const MartOffer& offer:alolaOpenMart.offers)
+    if(offer.isMachine()){
+      assert(offer.machineId()>=132U&&offer.machineId()<kMachineCount);
+      sawAlolaMachine=true;
+    }
+  assert(sawAlolaMachine);
   assert(!Economy::canLearnMachine(1, 0));   // Bulbasaur / Focus Punch
   assert(Economy::canLearnMachine(1, 5));    // Bulbasaur / Toxic
   assert(Economy::canLearnMachine(1, 50));   // Bulbasaur / Cut
@@ -179,6 +292,11 @@ int main() {
   assert(Economy::canLearnMachine(252, 8));  // Treecko / Bullet Seed
   assert(Economy::canLearnMachine(445, 1));  // Garchomp / Dragon Claw
   assert(Economy::canLearnMachine(448, 0));  // Lucario / Focus Punch
+  assert(Economy::canLearnMachine(722, 122)); // Rowlet / Work Up
+  assert(Economy::canLearnMachine(722, 126)); // Rowlet / XY TM96 Nature Power
+  assert(!Economy::canLearnMachine(722, 133)); // Rowlet / USUM TM70 Aurora Veil
+  assert(Economy::canLearnMachine(778, 130)); // Mimikyu / USUM TM28 Leech Life
+  assert(Economy::canLearnMachine(807, 131)); // Zeraora / USUM TM59 Brutal Swing
   for (uint16_t machine = 0; machine < kMachineCount; ++machine)
     assert(Economy::canLearnMachine(151, machine)); // Mew learns every machine.
   for (uint16_t machine = 0; machine < kMachineCount; ++machine) {
@@ -218,17 +336,29 @@ int main() {
   uint16_t kalosTmCompatibilityCount=0;
   for(uint16_t species=1U;species<=649U;++species)
     for(uint16_t machine=kLegacyMachineCount+kSinnohMachineCount+kUnovaMachineCount;
-        machine<kMachineCount;++machine)
+        machine<kLegacyMachineCount+kSinnohMachineCount+kUnovaMachineCount+
+            kKalosMachineCount;++machine)
       kalosTmCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
-  assert(kalosTmCompatibilityCount==981U);
+  assert(kalosTmCompatibilityCount==1072U);
+  uint16_t alolaTmCompatibilityCount=0;
+  for(uint16_t species=1U;species<=721U;++species)
+    for(uint16_t machine=kMachineCount-kAlolaMachineCount;
+        machine<kMachineCount;++machine)
+      alolaTmCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
+  assert(alolaTmCompatibilityCount==131U);
   uint16_t kalosSpeciesMachineCompatibilityCount=0;
   for(uint16_t species=650U;species<=721U;++species)
     for(uint16_t machine=0;machine<kMachineCount;++machine)
       kalosSpeciesMachineCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
-  assert(kalosSpeciesMachineCompatibilityCount==2527U);
+  assert(kalosSpeciesMachineCompatibilityCount==2561U);
+  uint16_t alolaSpeciesMachineCompatibilityCount=0;
+  for(uint16_t species=722U;species<=807U;++species)
+    for(uint16_t machine=0;machine<kMachineCount;++machine)
+      alolaSpeciesMachineCompatibilityCount+=Economy::canLearnMachine(species,machine)?1U:0U;
+  assert(alolaSpeciesMachineCompatibilityCount==2634U);
   assert(Economy::canLearnMachine(494U,101U)); // Victini learns TM03 Psyshock.
-  assert(Economy::canLearnMachine(650U,128U)); // Chespin learns XY TM100 Confide.
-  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(722, 0) &&
+  assert(Economy::canLearnMachine(650U,129U)); // Chespin learns XY TM100 Confide.
+  assert(!Economy::canLearnMachine(0, 0) && !Economy::canLearnMachine(808, 0) &&
          !Economy::canLearnMachine(1, kMachineCount));
 
   // The Summary move editor exposes the complete level-up pool inherited
@@ -247,8 +377,11 @@ int main() {
 
   static_assert(sizeof(CombatVolatile)==34,
       "stockpileCount must use existing tail padding and keep saves compatible");
-  assert(battleAnimationCount()==617);
-  assert(battleAnimationProgramCount()==617);
+  // The exact authored catalog now includes the complete Gen-VII set plus
+  // signature Z-Move programs; keep descriptors and executable programs in
+  // one-to-one lockstep.
+  assert(battleAnimationCount()==710);
+  assert(battleAnimationProgramCount()==710);
   assert(battleAnimationSpriteResourceCount()>=250);
   // Every generated SpriteTemplate variant must remain drawable for its full
   // retained lifetime.  This is deliberately exhaustive rather than a list
@@ -303,7 +436,8 @@ int main() {
     assert(battleAnimationPlaybackKind(move)==BattleAnimationPlaybackKind::Generated);
     assert(findBattleAnimationProgram(move));
   }
-  assert(battleAnimationProgramCount()==617);
+  // FireRed through Gen VII plus the 17 signature Z-Move presentation IDs.
+  assert(battleAnimationProgramCount()==710);
   uint16_t userTargetMoveCount = 0;
   for(uint16_t move=1;move<=354;++move){
     const FullMoveData* moveData=findFullMove(static_cast<MoveId>(move));
@@ -323,7 +457,7 @@ int main() {
     for(uint16_t commandIndex=0;commandIndex<program->commandCount;++commandIndex){
       const BattleAnimationCommand* command=battleAnimationProgramCommand(*program,commandIndex);
       assert(command);
-      if(command->argumentCount)assert(battleAnimationCommandArguments(*command));
+      if(command->argumentCount())assert(battleAnimationCommandArguments(*command));
       if(static_cast<BattleAnimationOpcode>(command->opcode())==BattleAnimationOpcode::SpawnSprite)
         assert(battleAnimationSpriteResource(command->resourceId()));
       if(static_cast<BattleAnimationOpcode>(command->opcode())==BattleAnimationOpcode::VisualTask)
@@ -357,7 +491,7 @@ int main() {
           battleAnimationSpriteResource(command->resourceId());
       const int16_t* arguments=battleAnimationCommandArguments(*command);
       if(resource&&resource->origin==BattleAnimationOrigin::Argument0&&
-         arguments&&command->argumentCount>=1&&arguments[0]==0)
+         arguments&&command->argumentCount()>=1&&arguments[0]==0)
         ++focusEnergyUserParticles;
     }else if(opcode==BattleAnimationOpcode::VisualTask&&command->anchor()==0){
       const BattleAnimationTaskResource* resource=
@@ -426,7 +560,7 @@ int main() {
     if(!resource||resource->motion!=
        BattleAnimationTaskMotion::BlendBattleAnimPalExact)return;
     const int16_t* arguments=battleAnimationCommandArguments(command);
-    assert(arguments&&command.argumentCount==5);
+    assert(arguments&&command.argumentCount()==5);
     assert(arguments[0]==1&&arguments[1]==1); // F_PAL_BG, one frame per step.
     if(roarOfTimePaletteFade==0U){
       assert(arguments[2]==0&&arguments[3]==16&&arguments[4]==0);
@@ -502,7 +636,7 @@ int main() {
     assert(resource->motion==BattleAnimationMotion::ShadowBall);
     assert(resource->origin==BattleAnimationOrigin::Attacker);
     assert(resource->lifetimeFrames==41);
-    assert(arguments&&command.argumentCount==3&&
+    assert(arguments&&command.argumentCount()==3&&
            arguments[0]==16&&arguments[1]==16&&arguments[2]==8);
     shadowBallMotionFound=true;
   });
@@ -566,7 +700,7 @@ int main() {
     if (!resource || resource->motion != BattleAnimationMotion::PainSplitBounce) return;
     assert(resource->origin == BattleAnimationOrigin::Argument2);
     const int16_t* arguments = battleAnimationCommandArguments(command);
-    assert(arguments && command.argumentCount >= 3U);
+    assert(arguments && command.argumentCount() >= 3U);
     if (arguments[2] == 0) ++painSplitAttacker;
     else ++painSplitTarget;
     painSplitHasBothOwners = painSplitAttacker > 0U && painSplitTarget > 0U;
@@ -1307,8 +1441,8 @@ int main() {
   verifyEarlyExperienceMultiplier(9, 2);
   verifyEarlyExperienceMultiplier(10, 1);
 
-  // Lucky Egg is a permanent account-wide Pokegochi bonus. Gym 5 grants +50%,
-  // Kanto League grants +100%, and Generation IV grants +125% before splitting.
+  // Lucky Egg is a permanent account-wide Pokegochi bonus. Badge progression
+  // can feed every 5/10-point tier through the battle award before splitting.
   PokemonCollection luckyXpCollection;
   CollectionLogic::initialize(luckyXpCollection);
   assert(CollectionLogic::chooseStarter(luckyXpCollection, 1, 0x1E660001U));
@@ -1328,9 +1462,9 @@ int main() {
   assert(CollectionLogic::setPartySlot(luckyXpCollection, 1, luckyPartnerUid));
   OwnedPokemon* luckyPartner = CollectionLogic::find(luckyXpCollection, luckyPartnerUid);
   assert(luckyPartner);
-  BattleEngine::setPermanentExperienceBoostPercent(50U);
+  BattleEngine::setPermanentExperienceBoostPercent(10U);
   assert(BattleEngine::permanentExperienceBoost());
-  assert(BattleEngine::permanentExperienceBoostPercent()==50U);
+  assert(BattleEngine::permanentExperienceBoostPercent()==10U);
   const uint32_t luckyLeadXpBefore = luckyLead->experience;
   const uint32_t luckyPartnerXpBefore = luckyPartner->experience;
   BattleState luckyXpBattle{};
@@ -1347,17 +1481,17 @@ int main() {
     luckyXpBattle.opponents[0].moves[slot] = MoveId::None;
   const uint32_t luckyBaseTotal =
       (static_cast<uint32_t>(findSpecies(19)->baseExperience) * 5U) / 7U;
-  const uint32_t luckyExpectedShare50 = (luckyBaseTotal * 150U / 100U) / 2U;
+  const uint32_t luckyExpectedShare10 = (luckyBaseTotal * 110U / 100U) / 2U;
   const BattleActionResult luckyXpResult = BattleEngine::fight(
       luckyXpBattle, luckyXpCollection, 0);
   assert(luckyXpResult.accepted && luckyXpResult.opponentDefeated);
-  assert(luckyXpResult.experienceGained == luckyExpectedShare50);
-  assert(luckyLead->experience - luckyLeadXpBefore == luckyExpectedShare50);
-  assert(luckyPartner->experience - luckyPartnerXpBefore == luckyExpectedShare50);
+  assert(luckyXpResult.experienceGained == luckyExpectedShare10);
+  assert(luckyLead->experience - luckyLeadXpBefore == luckyExpectedShare10);
+  assert(luckyPartner->experience - luckyPartnerXpBefore == luckyExpectedShare10);
 
-  // The League replaces the +50% tier with +100%; it does not stack to +150%.
-  BattleEngine::setPermanentExperienceBoostPercent(100U);
-  assert(BattleEngine::permanentExperienceBoostPercent()==100U);
+  // Eight Kanto badges produce +80% without quantizing intermediate tiers.
+  BattleEngine::setPermanentExperienceBoostPercent(80U);
+  assert(BattleEngine::permanentExperienceBoostPercent()==80U);
   const uint32_t stackedLeadXpBefore = luckyLead->experience;
   const uint32_t stackedPartnerXpBefore = luckyPartner->experience;
   BattleState stackedLuckyBattle{};
@@ -1374,34 +1508,34 @@ int main() {
     stackedLuckyBattle.opponents[0].moves[slot] = MoveId::None;
   const BattleActionResult stackedLuckyResult = BattleEngine::fight(
       stackedLuckyBattle, luckyXpCollection, 0);
-  const uint32_t luckyExpectedShare100 = (luckyBaseTotal * 2U) / 2U;
+  const uint32_t luckyExpectedShare80 = (luckyBaseTotal * 180U / 100U) / 2U;
   assert(stackedLuckyResult.accepted && stackedLuckyResult.opponentDefeated);
-  assert(stackedLuckyResult.experienceGained == luckyExpectedShare100);
-  assert(luckyLead->experience - stackedLeadXpBefore == luckyExpectedShare100);
-  assert(luckyPartner->experience - stackedPartnerXpBefore == luckyExpectedShare100);
-  BattleEngine::setPermanentExperienceBoostPercent(125U);
-  assert(BattleEngine::permanentExperienceBoostPercent()==125U);
-  const uint32_t gen4LeadXpBefore=luckyLead->experience;
-  const uint32_t gen4PartnerXpBefore=luckyPartner->experience;
-  BattleState gen4LuckyBattle{};
-  gen4LuckyBattle.active=true;
-  gen4LuckyBattle.kind=BattleKind::Wild;
-  gen4LuckyBattle.outcome=BattleOutcome::Ongoing;
-  gen4LuckyBattle.playerUid=luckyLead->uid;
-  gen4LuckyBattle.opponentCount=1;
-  gen4LuckyBattle.rngState=0x1E660009U;
-  gen4LuckyBattle.opponents[0]=CollectionLogic::createPokemon(
+  assert(stackedLuckyResult.experienceGained == luckyExpectedShare80);
+  assert(luckyLead->experience - stackedLeadXpBefore == luckyExpectedShare80);
+  assert(luckyPartner->experience - stackedPartnerXpBefore == luckyExpectedShare80);
+  BattleEngine::setPermanentExperienceBoostPercent(160U);
+  assert(BattleEngine::permanentExperienceBoostPercent()==160U);
+  const uint32_t allBadgeLeadXpBefore=luckyLead->experience;
+  const uint32_t allBadgePartnerXpBefore=luckyPartner->experience;
+  BattleState allBadgeLuckyBattle{};
+  allBadgeLuckyBattle.active=true;
+  allBadgeLuckyBattle.kind=BattleKind::Wild;
+  allBadgeLuckyBattle.outcome=BattleOutcome::Ongoing;
+  allBadgeLuckyBattle.playerUid=luckyLead->uid;
+  allBadgeLuckyBattle.opponentCount=1;
+  allBadgeLuckyBattle.rngState=0x1E660009U;
+  allBadgeLuckyBattle.opponents[0]=CollectionLogic::createPokemon(
       0x1E66000AU,19,5,false,0x1E66000BU);
-  gen4LuckyBattle.opponents[0].currentHp=1;
+  allBadgeLuckyBattle.opponents[0].currentHp=1;
   for(uint8_t slot=0;slot<kMoveSlots;++slot)
-    gen4LuckyBattle.opponents[0].moves[slot]=MoveId::None;
-  const uint32_t luckyExpectedShare125=(luckyBaseTotal*225U/100U)/2U;
-  const BattleActionResult gen4LuckyResult=BattleEngine::fight(
-      gen4LuckyBattle,luckyXpCollection,0);
-  assert(gen4LuckyResult.accepted&&gen4LuckyResult.opponentDefeated);
-  assert(gen4LuckyResult.experienceGained==luckyExpectedShare125);
-  assert(luckyLead->experience-gen4LeadXpBefore==luckyExpectedShare125);
-  assert(luckyPartner->experience-gen4PartnerXpBefore==luckyExpectedShare125);
+    allBadgeLuckyBattle.opponents[0].moves[slot]=MoveId::None;
+  const uint32_t luckyExpectedShare160=(luckyBaseTotal*260U/100U)/2U;
+  const BattleActionResult allBadgeLuckyResult=BattleEngine::fight(
+      allBadgeLuckyBattle,luckyXpCollection,0);
+  assert(allBadgeLuckyResult.accepted&&allBadgeLuckyResult.opponentDefeated);
+  assert(allBadgeLuckyResult.experienceGained==luckyExpectedShare160);
+  assert(luckyLead->experience-allBadgeLeadXpBefore==luckyExpectedShare160);
+  assert(luckyPartner->experience-allBadgePartnerXpBefore==luckyExpectedShare160);
   BattleEngine::setPermanentExperienceBoostPercent(0U);
   assert(!BattleEngine::permanentExperienceBoost());
 
@@ -2511,11 +2645,73 @@ int main() {
   // Every held item is catalogued, Mart-locked by Badge count and can be
   // swapped or taken back without duplicating it.
   for(uint8_t raw=1;raw<static_cast<uint8_t>(HeldItem::Count);++raw){
-    const HeldItemData* data=heldItemData(static_cast<HeldItem>(raw));assert(data&&data->name[0]);
-    if(raw<kHeldItemInventorySlots)assert(data->price&&data->martWeight);
+    const HeldItem item=static_cast<HeldItem>(raw);
+    const HeldItemData* data=heldItemData(item);assert(data&&data->name[0]);
+    if(heldItemIsRetired(item))assert(data->unlockBadges==255U&&!data->martWeight);
+    else if(raw<kHeldItemInventorySlots||modernHeldItemIndex(item)>=0)
+      assert(data->price&&data->martWeight);
     else assert(data->unlockBadges==255U&&!data->martWeight);
   }
-  assert(MegaEvolution::officialFormCount()==79);
+  static_assert(static_cast<uint8_t>(HeldItem::RemovedUltranecroziumZ)==127U);
+  static_assert(static_cast<uint8_t>(HeldItem::LifeOrb)==128U);
+  static_assert(static_cast<uint8_t>(HeldItem::PsychicSeed)==150U);
+  static_assert(static_cast<uint8_t>(HeldItem::Count)==151U);
+  assert(heldItemGeneration(HeldItem::LifeOrb)==4U&&
+         heldItemGeneration(HeldItem::Eviolite)==5U&&
+         heldItemGeneration(HeldItem::AssaultVest)==6U&&
+         heldItemGeneration(HeldItem::TerrainExtender)==7U);
+
+  // The high bit in modern held-item IDs must not alias the persisted TM
+  // encoding. Potion is the explicit discriminator for a real high-ID item.
+  MartState modernMart{};
+  modernMart.offers[0]={MartItem::Potion,HeldItem::LifeOrb,4000U,3U};
+  assert(modernMart.offers[0].isHeldItem()&&!modernMart.offers[0].isMachine());
+  ModernHeldItemInventory modernInventory{};
+  PpItemInventory modernPp{};
+  uint32_t modernMoney=12000U;uint64_t modernMachines=0U;
+  assert(Economy::maximumPurchasable(modernMart,0U,modernMoney,inventory,
+      modernMachines,&modernPp,&modernInventory)==3U);
+  assert(Economy::buyQuantity(modernMart,0U,2U,modernMoney,inventory,
+      modernMachines,&modernPp,&modernInventory));
+  assert(modernHeldItemQuantity(modernInventory,HeldItem::LifeOrb)==2U&&
+         modernMoney==4000U);
+  OwnedPokemon modernHolder=CollectionLogic::createPokemon(0x128U,1U,30U);
+  SpecialHeldItemInventory modernSpecial{};
+  Gen4UniqueItemInventory modernGen4{};Gen5UniqueItemInventory modernGen5{};
+  Gen7UniqueItemInventory modernGen7{};
+  assert(equipHeldItem(modernHolder,HeldItem::LifeOrb,inventory.heldItems,
+      modernSpecial,modernGen4,modernGen5,modernGen7,modernInventory,
+      modernMachines));
+  assert(modernHolder.heldItem==HeldItem::LifeOrb&&
+         modernHeldItemQuantity(modernInventory,HeldItem::LifeOrb)==1U);
+  assert(unequipHeldItem(modernHolder,inventory.heldItems,modernSpecial,
+      modernGen4,modernGen5,modernGen7,modernInventory,modernMachines));
+  assert(modernHolder.heldItem==HeldItem::None&&
+         modernHeldItemQuantity(modernInventory,HeldItem::LifeOrb)==2U);
+
+  // Rotations expose each family only after its matching region unlocks.
+  const auto auditHeldGeneration=[&](bool sinnoh,bool unova,bool kalos,
+                                      bool alola,uint8_t maximumGeneration){
+    MartState state{};state.rng=0x17E60000U+maximumGeneration;
+    bool sawCurrentGeneration=false;
+    for(uint16_t rotation=0;rotation<200U;++rotation){
+      Economy::rotate(state,24U,UINT64_MAX,UINT64_MAX,sinnoh,UINT32_MAX,
+                      unova,kalos,alola);
+      for(const MartOffer& offer:state.offers){
+        if(!offer.isHeldItem())continue;
+        const uint8_t generation=heldItemGeneration(offer.heldItem);
+        assert(!generation||generation<=maximumGeneration);
+        if(generation==maximumGeneration)sawCurrentGeneration=true;
+      }
+    }
+    if(maximumGeneration>=4U)assert(sawCurrentGeneration);
+  };
+  auditHeldGeneration(false,false,false,false,3U);
+  auditHeldGeneration(true,false,false,false,4U);
+  auditHeldGeneration(true,true,false,false,5U);
+  auditHeldGeneration(true,true,true,false,6U);
+  auditHeldGeneration(true,true,true,true,7U);
+  assert(MegaEvolution::officialFormCount()==90);
   assert(heldItemIsTransferLocked(HeldItem::MegaStone));
   OwnedPokemon megaCharizard=CollectionLogic::createPokemon(7000,6,50,false,1);
   megaCharizard.heldItem=HeldItem::MegaStone;
@@ -2535,7 +2731,8 @@ int main() {
     OwnedPokemon mega=CollectionLogic::createPokemon(7000U+sinnohMega,sinnohMega,50U,false,sinnohMega);
     mega.heldItem=HeldItem::MegaStone;
     assert(MegaEvolution::canTransform(sinnohMega));
-    assert(MegaEvolution::variantChoiceCount(sinnohMega)==1U);
+    const uint8_t expectedChoices=(sinnohMega==445U||sinnohMega==448U)?2U:1U;
+    assert(MegaEvolution::variantChoiceCount(sinnohMega)==expectedChoices);
     assert(MegaEvolution::variantFor(mega)==MegaVariant::Mega);
     CollectionLogic::refreshAbility(mega,4U);
     assert(MegaEvolution::abilityId(mega,0U)==mega.abilityId);
@@ -2577,6 +2774,62 @@ int main() {
     const AbilityData* ability=findAbility(mega.abilityId);
     assert(ability&&std::strcmp(ability->name,expected.ability)==0);
   }
+
+  struct ExpectedAdditionalMega {
+    uint16_t species;
+    MegaVariant variant;
+    uint8_t hp,attack,defense,spAttack,spDefense,speed;
+    PokemonType type1,type2;
+    const char* ability;
+  };
+  static constexpr ExpectedAdditionalMega kAdditionalMegas[]={
+    {398,MegaVariant::Mega,85,140,100,60,90,110,
+      PokemonType::Fighting,PokemonType::Flying,"CONTRARY"},
+    {445,MegaVariant::MegaZ,108,130,85,141,85,151,
+      PokemonType::Dragon,PokemonType::Dragon,"SAND VEIL"},
+    {448,MegaVariant::MegaZ,70,100,70,164,70,151,
+      PokemonType::Fighting,PokemonType::Steel,"STEADFAST"},
+    {478,MegaVariant::Mega,70,80,70,140,100,120,
+      PokemonType::Ice,PokemonType::Ghost,"SNOW WARNING"},
+    {485,MegaVariant::Mega,91,120,106,175,141,67,
+      PokemonType::Fire,PokemonType::Steel,"FLASH FIRE"},
+    {491,MegaVariant::Mega,70,120,130,165,130,85,
+      PokemonType::Dark,PokemonType::Dark,"BAD DREAMS"},
+    {740,MegaVariant::Mega,97,157,122,62,107,33,
+      PokemonType::Fighting,PokemonType::Ice,"IRON FIST"},
+    {768,MegaVariant::Mega,75,150,175,70,120,40,
+      PokemonType::Bug,PokemonType::Steel,"EMERGENCY EXIT"},
+    {780,MegaVariant::Mega,78,85,110,160,116,36,
+      PokemonType::Normal,PokemonType::Dragon,"BERSERK"},
+    {801,MegaVariant::Mega,80,125,115,170,115,95,
+      PokemonType::Steel,PokemonType::Fairy,"SOUL-HEART"},
+    {807,MegaVariant::Mega,88,157,75,147,80,153,
+      PokemonType::Electric,PokemonType::Electric,"VOLT ABSORB"},
+  };
+  for(const ExpectedAdditionalMega& expected:kAdditionalMegas){
+    const MegaFormData* form=MegaEvolution::formData(
+        expected.species,expected.variant);
+    assert(form&&form->baseHp==expected.hp&&
+           form->baseAttack==expected.attack&&
+           form->baseDefense==expected.defense&&
+           form->baseSpAttack==expected.spAttack&&
+           form->baseSpDefense==expected.spDefense&&
+           form->baseSpeed==expected.speed&&
+           form->type1==expected.type1&&form->type2==expected.type2);
+    OwnedPokemon mega=CollectionLogic::createPokemon(
+        8500U+expected.species,expected.species,70U,false,expected.species,7U);
+    mega.heldItem=HeldItem::MegaStone;
+    assert(MegaEvolution::canTransform(expected.species));
+    if(expected.variant==MegaVariant::MegaZ)
+      assert(MegaEvolution::setVariantChoice(mega,expected.variant));
+    assert(MegaEvolution::variantFor(mega)==expected.variant);
+    CollectionLogic::refreshAbility(mega,7U);
+    CollectionLogic::refreshDerivedStats(mega,false);
+    const AbilityData* ability=findAbility(mega.abilityId);
+    assert(ability&&std::strcmp(ability->name,expected.ability)==0);
+  }
+  assert(MegaEvolution::variantChoiceCount(445U)==2U);
+  assert(MegaEvolution::variantChoiceCount(448U)==2U);
 
   // Mega form abilities are temporary. Equipping and taking the stone must
   // never erase the Hidden Ability provenance or recalculate the base form
@@ -3840,6 +4093,17 @@ int main() {
   assert(PokedexLogic::isLegendaryOrMythical(493));
   assert(PokedexLogic::isLegendaryOrMythical(494)); // Victini
   assert(!PokedexLogic::isLegendaryOrMythical(495));
+  constexpr uint16_t ultraBeasts[]={
+      793U,794U,795U,796U,797U,798U,799U,803U,804U,805U,806U};
+  for(uint16_t species:ultraBeasts){
+    assert(PokedexLogic::isUltraBeast(species));
+    assert(PokedexLogic::isLegendaryOrMythical(species));
+    assert(!PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(species));
+  }
+  assert(!PokedexLogic::isUltraBeast(800U)); // Necrozma
+  assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(800U));
+  assert(!PokedexLogic::isUltraBeast(801U)); // Magearna
+  assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(801U));
 
   // Each regional block is completed independently. Reconciliation grants
   // one persistent Master Ball, queues a visible acknowledgement and never
@@ -4052,20 +4316,46 @@ int main() {
   const GymDefinition* blaine=GymSystem::definition(GymId::Cinnabar);
   assert(koga&&koga->team[2].level==34U&&sabrina&&sabrina->team[2].level==39U&&
          blaine&&blaine->team[2].level==44U);
+
+  // Lucky Egg progression is derived only from the 24 regional badges:
+  // Kanto contributes 8x10%, Johto 8x5%, and Hoenn 8x5%.
+  GymProgress luckyProgress;
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==0U);
+  for(uint8_t index=0U;index<8U;++index){
+    assert(GymSystem::recordVictory(luckyProgress,static_cast<GymId>(index)));
+    assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==
+           static_cast<uint8_t>((index+1U)*10U));
+  }
+  assert(GymSystem::recordLeagueVictory(luckyProgress,1U));
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==80U);
+  assert(GymSystem::unlockWithStarter(luckyProgress,152U));
+  for(uint8_t index=8U;index<16U;++index){
+    assert(GymSystem::recordVictory(luckyProgress,static_cast<GymId>(index)));
+    assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==
+           static_cast<uint8_t>(80U+(index-7U)*5U));
+  }
+  assert(GymSystem::recordLeagueVictory(luckyProgress,2U));
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==120U);
+  assert(GymSystem::unlockWithStarter(luckyProgress,252U));
+  for(uint8_t index=16U;index<24U;++index){
+    assert(GymSystem::recordVictory(luckyProgress,static_cast<GymId>(index)));
+    assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==
+           static_cast<uint8_t>(120U+(index-15U)*5U));
+  }
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(luckyProgress)==160U);
+
   PokemonCollection leagueCollection;CollectionLogic::initialize(leagueCollection);
   assert(CollectionLogic::chooseStarter(leagueCollection,7));
   uint64_t luckyEggOwnership=0;
   for(uint8_t i=1;i<4;++i)
     assert(GymSystem::recordVictory(gyms,static_cast<GymId>(i)));
-  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==0U);
-  assert(!LeagueSystem::reconcileKantoLuckyEggReward(
-      gyms,leagueCollection,luckyEggOwnership));
-  assert(GymSystem::recordVictory(gyms,GymId::Fuchsia));
-  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==50U);
-  assert(LeagueSystem::reconcileKantoLuckyEggReward(
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==40U);
+  assert(LeagueSystem::reconcileLuckyEggReward(
       gyms,leagueCollection,luckyEggOwnership));
   assert(luckyEggOwnership&kLuckyEggOwnershipBit);
-  assert(!LeagueSystem::reconcileKantoLuckyEggReward(
+  assert(GymSystem::recordVictory(gyms,GymId::Fuchsia));
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==50U);
+  assert(!LeagueSystem::reconcileLuckyEggReward(
       gyms,leagueCollection,luckyEggOwnership));
   for(uint8_t i=5;i<8;++i)
     assert(GymSystem::recordVictory(gyms,static_cast<GymId>(i)));
@@ -4085,13 +4375,12 @@ int main() {
   assert(!LeagueSystem::advance(leagueBattle,leagueCollection));
   assert(GymSystem::recordLeagueVictory(gyms,1));
   assert(GymSystem::leagueComplete(gyms,1)&&!GymSystem::leagueAvailable(gyms));
-  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==100U);
-  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms,true)==125U);
-  assert(!LeagueSystem::reconcileKantoLuckyEggReward(
+  assert(LeagueSystem::luckyEggExperienceBonusPercent(gyms)==80U);
+  assert(!LeagueSystem::reconcileLuckyEggReward(
       gyms,leagueCollection,luckyEggOwnership));
   luckyEggOwnership&=~kLuckyEggOwnershipBit;
   CollectionLogic::active(leagueCollection,0)->heldItem=HeldItem::LuckyEgg;
-  assert(LeagueSystem::reconcileKantoLuckyEggReward(
+  assert(LeagueSystem::reconcileLuckyEggReward(
       gyms,leagueCollection,luckyEggOwnership));
   assert(CollectionLogic::active(leagueCollection,0)->heldItem==HeldItem::None&&
          (luckyEggOwnership&kLuckyEggOwnershipBit));
@@ -4864,8 +5153,8 @@ int main() {
   assert(BattleTowerSystem::replacesVsSeeker(megaProgress));
 
   // The freed Gym/special slot becomes a repeatable raid-style Boss after
-  // the Mega Stone trial. Every roll is a Gen I-III legendary/mythical or an
-  // authored Mega, with legal trained stats and exactly 10,000 HP.
+  // the Mega Stone trial. The catalog starts with every unlocked legendary,
+  // mythical and authored Mega, then expands with each content generation.
   assert(BossSystem::available(megaProgress));
   GymProgress preBossProgress=megaProgress;
   preBossProgress.starterClaimedBits&=
@@ -4913,6 +5202,178 @@ int main() {
       assert(boss.moves[slot]!=MoveId::None&&BossSystem::moveAllowed(boss.moves[slot]));
   }
   assert(sawLegendaryBoss&&sawMegaBoss);
+
+  // The first Boss victory is the Sinnoh gate and therefore uses a reduced
+  // 50,000-point pool. The encounter marker and active-battle marker both
+  // survive retries; every encounter rolled after that first victory keeps
+  // the regular 200,000-point pool.
+  BossEncounterState introductoryEncounter{};
+  BossSystem::ensureEncounter(
+      introductoryEncounter,0xF1A57B05U,3U,true);
+  assert(BossSystem::hasEncounter(introductoryEncounter)&&
+         introductoryEncounter.currentHp==
+             BossSystem::kIntroductoryMaximumHp&&
+         BossSystem::encounterMaximumHp(introductoryEncounter)==
+             BossSystem::kIntroductoryMaximumHp);
+  BattleState introductoryBoss;
+  assert(BossSystem::start(
+      introductoryBoss,megaCollection,megaLead->uid,megaProgress,0U,
+      introductoryEncounter,0xF1A57B06U,3U,true));
+  assert(BossSystem::battleMaximumHp(introductoryBoss)==
+             BossSystem::kIntroductoryMaximumHp&&
+         BossSystem::battleCurrentHp(introductoryBoss)==
+             BossSystem::kIntroductoryMaximumHp&&
+         introductoryBoss.opponents[0].currentHp==
+             BossSystem::kIntroductoryMaximumHp&&
+         introductoryBoss.rewardMoney==0U);
+  introductoryBoss.payDayMoney=32100U;
+  BossSystem::recordAttempt(
+      introductoryEncounter,introductoryBoss,false);
+  BattleEngine::clear(introductoryBoss);
+  assert(BossSystem::start(
+      introductoryBoss,megaCollection,megaLead->uid,megaProgress,0U,
+      introductoryEncounter,0xF1A57B07U,3U,true)&&
+         BossSystem::battleMaximumHp(introductoryBoss)==
+             BossSystem::kIntroductoryMaximumHp&&
+         BossSystem::battleCurrentHp(introductoryBoss)==32100U);
+  BossSystem::recordAttempt(
+      introductoryEncounter,introductoryBoss,true);
+  assert(!BossSystem::hasEncounter(introductoryEncounter));
+  BattleEngine::clear(introductoryBoss);
+  BossSystem::ensureEncounter(
+      introductoryEncounter,0xF1A57B08U,3U,false);
+  assert(introductoryEncounter.currentHp==BossSystem::kMaximumHp&&
+         BossSystem::encounterMaximumHp(introductoryEncounter)==
+             BossSystem::kMaximumHp);
+
+  // Existing saves may already have rolled or entered their first 200k Boss.
+  // Reconciliation reduces both forms in place without changing identity.
+  BattleState migratedFirstBoss;
+  assert(BossSystem::start(
+      migratedFirstBoss,megaCollection,megaLead->uid,megaProgress,0U,
+      introductoryEncounter,0xF1A57B09U,3U,false));
+  const uint16_t migratedSpecies=introductoryEncounter.speciesId;
+  assert(BossSystem::reconcileDifficulty(
+      introductoryEncounter,migratedFirstBoss,true)&&
+         introductoryEncounter.speciesId==migratedSpecies&&
+         introductoryEncounter.currentHp==
+             BossSystem::kIntroductoryMaximumHp&&
+         BossSystem::battleMaximumHp(migratedFirstBoss)==
+             BossSystem::kIntroductoryMaximumHp&&
+         BossSystem::battleCurrentHp(migratedFirstBoss)==
+             BossSystem::kIntroductoryMaximumHp&&
+         migratedFirstBoss.opponents[0].currentHp==
+             BossSystem::kIntroductoryMaximumHp);
+
+  // Unlocking Sinnoh, Unova, Kalos and Alola expands both halves of the
+  // catalog without leaking future species into an earlier generation.
+  // Alola has no new Mega species, so only its legendary half grows there.
+  for(uint8_t generation=3U;generation<=7U;++generation){
+    const uint16_t limit=PokedexLogic::generationSpeciesCount(generation);
+    const uint16_t previousLimit=generation>1U?
+        PokedexLogic::generationSpeciesCount(
+            static_cast<uint8_t>(generation-1U)):0U;
+    bool sawCurrentLegendary=generation==3U;
+    bool sawCurrentMega=generation==3U||generation==7U;
+    for(uint32_t seed=1U;seed<=8192U;++seed){
+      BossEncounterState candidate{};
+      BossSystem::ensureEncounter(candidate,seed,generation);
+      assert(BossSystem::hasEncounter(candidate)&&candidate.speciesId<=limit);
+      if(candidate.megaVariant==MegaVariant::None){
+        assert(PokedexLogic::isLegendaryOrMythical(candidate.speciesId));
+        sawCurrentLegendary|=candidate.speciesId>previousLimit;
+      }else{
+        const MegaFormData* form=MegaEvolution::formData(
+            candidate.speciesId,candidate.megaVariant);
+        assert(form&&form->variant!=MegaVariant::Primal&&
+               form->speciesId<=limit);
+        sawCurrentMega|=candidate.speciesId>previousLimit;
+      }
+    }
+    assert(sawCurrentLegendary&&sawCurrentMega);
+  }
+
+  // Zygarde Boss uses the real 200,000-point pool for its 90% and 50%
+  // thresholds. Neither stat refresh is allowed to add or remove raid HP.
+  BossEncounterState zygardeEncounter{};
+  zygardeEncounter.personality=0x718B055U;
+  zygardeEncounter.speciesId=718U;
+  zygardeEncounter.currentHp=180000U;
+  zygardeEncounter.form=1U;
+  zygardeEncounter.megaVariant=MegaVariant::Mega;
+  BattleState zygardeBoss;
+  assert(BossSystem::start(zygardeBoss,megaCollection,megaLead->uid,
+                           megaProgress,0U,zygardeEncounter,0x71800001U,6U));
+  assert(zygardeBoss.unlockedGeneration==6U&&
+         zygardeBoss.opponents[0].speciesId==718U&&
+         CollectionLogic::resolvedForm(zygardeBoss.opponents[0])==1U&&
+         zygardeBoss.opponents[0].heldItem==HeldItem::MegaStone&&
+         MegaEvolution::variantFor(zygardeBoss.opponents[0])==MegaVariant::None);
+  bool bossKnowsCoreEnforcer=false;
+  for(MoveId move:zygardeBoss.opponents[0].moves)
+    bossKnowsCoreEnforcer|=move==static_cast<MoveId>(650U);
+  assert(bossKnowsCoreEnforcer);
+  megaLead->status=StatusCondition::None;
+  megaLead->currentHp=megaLead->maximumHp;
+  megaLead->moves[0]=static_cast<MoveId>(150U); // SPLASH
+  megaLead->movePp[0]=findFullMove(megaLead->moves[0])->pp;
+  for(uint8_t slot=1U;slot<kMoveSlots;++slot){
+    megaLead->moves[slot]=MoveId::None;megaLead->movePp[slot]=0U;
+  }
+  zygardeBoss.opponents[0].moves[0]=static_cast<MoveId>(150U);
+  zygardeBoss.opponents[0].movePp[0]=findFullMove(
+      zygardeBoss.opponents[0].moves[0])->pp;
+  for(uint8_t slot=1U;slot<kMoveSlots;++slot){
+    zygardeBoss.opponents[0].moves[slot]=MoveId::None;
+    zygardeBoss.opponents[0].movePp[slot]=0U;
+  }
+  BattleActionResult zygardeTurn=BattleEngine::fight(
+      zygardeBoss,megaCollection,0U);
+  assert(zygardeTurn.accepted&&
+         CollectionLogic::resolvedForm(zygardeBoss.opponents[0])==0U&&
+         BossSystem::battleCurrentHp(zygardeBoss)==180000U&&
+         zygardeBoss.opponents[0].maximumHp==BossSystem::kBattleHpLayer);
+  zygardeBoss.payDayMoney=100000U;
+  zygardeTurn=BattleEngine::fight(zygardeBoss,megaCollection,0U);
+  assert(zygardeTurn.accepted&&
+         CollectionLogic::resolvedForm(zygardeBoss.opponents[0])==2U&&
+         MegaEvolution::variantFor(zygardeBoss.opponents[0])==MegaVariant::Mega&&
+         BossSystem::battleCurrentHp(zygardeBoss)==100000U&&
+         zygardeBoss.opponents[0].maximumHp==BossSystem::kBattleHpLayer);
+
+  // Mega Rayquaza remains a move-triggered exception: no illegal stone is
+  // equipped, Dragon Ascent activates it, and its raid HP also stays exact.
+  BossEncounterState rayquazaEncounter{};
+  rayquazaEncounter.personality=0x384B055U;
+  rayquazaEncounter.speciesId=384U;
+  rayquazaEncounter.currentHp=123456U;
+  rayquazaEncounter.megaVariant=MegaVariant::Mega;
+  BattleState rayquazaBoss;
+  assert(BossSystem::start(rayquazaBoss,megaCollection,megaLead->uid,
+                           megaProgress,0U,rayquazaEncounter,0x38400001U,6U));
+  bool bossKnowsDragonAscent=false;
+  for(MoveId move:rayquazaBoss.opponents[0].moves)
+    bossKnowsDragonAscent|=move==static_cast<MoveId>(620U);
+  assert(rayquazaBoss.opponents[0].heldItem==HeldItem::None&&
+         bossKnowsDragonAscent&&
+         MegaEvolution::variantFor(rayquazaBoss.opponents[0])==MegaVariant::None);
+  megaLead->currentHp=megaLead->maximumHp;
+  rayquazaBoss.opponents[0].moves[0]=static_cast<MoveId>(620U);
+  rayquazaBoss.opponents[0].movePp[0]=findFullMove(
+      rayquazaBoss.opponents[0].moves[0])->pp;
+  for(uint8_t slot=1U;slot<kMoveSlots;++slot){
+    rayquazaBoss.opponents[0].moves[slot]=MoveId::None;
+    rayquazaBoss.opponents[0].movePp[slot]=0U;
+  }
+  const BattleActionResult rayquazaTurn=BattleEngine::fight(
+      rayquazaBoss,megaCollection,0U);
+  assert(rayquazaTurn.accepted&&
+         MegaEvolution::variantFor(rayquazaBoss.opponents[0])==MegaVariant::Mega&&
+         BossSystem::battleCurrentHp(rayquazaBoss)==123456U&&
+         rayquazaBoss.opponents[0].maximumHp==BossSystem::kBattleHpLayer);
+  megaLead->status=StatusCondition::None;
+  megaLead->recoverySecondsRemaining=0U;
+  megaLead->currentHp=megaLead->maximumHp;
 
   // One selected identity and its HP pool survive every attempt. A new battle
   // reconstructs the same species/form/personality at the recorded HP; only a
@@ -5257,6 +5718,19 @@ int main() {
     assert(gen5Species!=495U&&gen5Species!=498U&&gen5Species!=501U);
   }
   assert(sawSinnohLegendary&&sawUnovaLegendary);
+  // Ultra Beasts have their own wormhole acquisition and must never leak into
+  // the Special Egg legendary pool. Necrozma remains a legal Gen-VII result.
+  bool sawNecrozmaSpecialEgg=false;
+  for(uint32_t seed=1U;seed<=16384U;++seed){
+    EggInventory gen7Eggs{};
+    assert(EggSystem::storeBattleTowerSpecial(
+        gen7Eggs,oneStarterMissing,7U,seed));
+    const uint16_t species=gen7Eggs.slots[0].speciesId;
+    assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(species));
+    assert(!PokedexLogic::isUltraBeast(species));
+    sawNecrozmaSpecialEgg|=species==800U;
+  }
+  assert(sawNecrozmaSpecialEgg);
   EggInventory fullRewardEggs{};fullRewardEggs.count=EggInventory::kCapacity;
   Inventory fullEggRewardInventory{};
   const BattleTowerRewardResult fullEggReward=BattleTowerSystem::awardCompletionReward(

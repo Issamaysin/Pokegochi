@@ -26,6 +26,22 @@ int main() {
   assert(panelSampleStride(3U) == 12U);
   assert(panelSampleStride(9U) == 12U);
   assert(panelSampleStride(2U, 0U) == 2U);
+  assert(compressedPanelSampleStride(1U) == 8U);
+  assert(compressedPanelSampleStride(2U) == 12U);
+  assert(compressedPanelSampleStride(3U) == 16U);
+  assert(sampledChildAge(3U, 0U, false, 4U, 12U) ==
+         kNoSampledChildAge);
+  assert(sampledChildAge(9U, 0U, true, 4U, 12U) == 5U);
+  // At 3x this twelve-tick particle can live entirely between two 16-tick
+  // panel samples. It must still be presented once at its final authored
+  // pose, rather than disappearing from the faster animation.
+  assert(sampledChildAge(16U, 0U, true, 4U, 12U) == 11U);
+  // Once any pose from this child was physically presented, an expired child
+  // is not replayed on later samples.
+  assert(sampledChildAge(16U, 8U, true, 4U, 12U) ==
+         kNoSampledChildAge);
+  assert(sampledChildAge(16U, 0U, false, 0U, 0U) ==
+         kNoSampledChildAge);
   assert(commandBoundaryRequiresFrame(1U, false, false, false, false));
   assert(!commandBoundaryRequiresFrame(2U, false, false, false, false));
   assert(!commandBoundaryRequiresFrame(3U, false, false, false, false));
