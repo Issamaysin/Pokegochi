@@ -7,6 +7,20 @@
 - Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
 - Nunca publicar um APK Android somente porque o Gradle terminou em `BUILD SUCCESSFUL`. Antes de assinar ou subir, abrir o APK final e comparar o `pokegochi.pak` interno com o pacote canônico por versão, quantidade/tamanho e SHA-256. Essa classe de falha já ocorreu duas vezes: R20261028-239 e R20261029-253.
 
+## R20261103-318 - APK 3.0 no Drive e GitHub atualizado
+
+```mermaid
+graph LR
+    A["APK 3.0 r317 validado"] --> D["Google Drive"]
+    D --> V["Metadados relidos"]
+    V --> N["Release notes com link oficial"]
+    N --> G["Commit e push para main"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-318 | 2026-11-03 | Subir o APK 3.0 no Drive e atualizar o GitHub | Concluído e publicado | O APK assinado `Pokegochi-Android-3.0-r317.apk`, exatamente o artefato validado na R20261103-317, foi enviado ao Meu Drive. A releitura do Drive confirmou o ID `1M_hkG8O9xLKvS7U8-_BQoxVkvDBWDVDJ`, MIME `application/vnd.android.package-archive` e tamanho de 11.540.266 bytes. As notas oficiais da versão 4.0/3.0 passaram a apontar para o download verificado: https://drive.google.com/file/d/1M_hkG8O9xLKvS7U8-_BQoxVkvDBWDVDJ/view?usp=drivesdk. O código e a tag `app-v3.0-fw-v4.0` já estavam publicados; este registro e o link de distribuição foram enviados à branch `main`. |
+
 ## R20261103-317 - release Android 3.0 e firmware 4.0 pós-Sun/Moon
 
 ```mermaid

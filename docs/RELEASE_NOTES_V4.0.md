@@ -35,6 +35,7 @@ save format and canonical asset archive.
 
 ## Release artifacts
 
+- [Download the signed Android 3.0 APK from Google Drive](https://drive.google.com/file/d/1M_hkG8O9xLKvS7U8-_BQoxVkvDBWDVDJ/view?usp=drivesdk)
 - `Pokegochi-Android-3.0-r317.apk`
 - `Pokegochi-Firmware-4.0-ALOLA.bin`
 - `Pokegochi-Firmware-4.0-ALOLA.factory.bin`
