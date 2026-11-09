@@ -11,9 +11,14 @@ constexpr uint8_t kRunActive = 1U << 0U;
 constexpr uint8_t kHealUsed = 1U << 1U;
 constexpr uint8_t kGateDefeated = 1U << 2U;
 constexpr uint8_t kBossAvailable = 1U << 3U;
+constexpr uint8_t kChoiceEntered = 1U << 4U;
+constexpr uint8_t kChoicesCached = 1U << 5U;
 constexpr uint8_t kChampionsComplete = 1U << 0U;
 constexpr uint8_t kWhite2Theme = 1U << 1U;
 constexpr uint8_t kWhite2ThemeSelected = 1U << 2U;
+// Bit 3 is the regional Master Ball receipt. Bit 4 was reserved in every
+// previous save and now distinguishes White from the established Black theme.
+constexpr uint8_t kWhiteThemeSelected = 1U << 4U;
 
 uint32_t advance(uint32_t& value) {
   if (!value) value = 0x554E4F56UL;
@@ -164,6 +169,17 @@ bool healthyPlayer(const UnovaRunState& run,
       pokemon->currentHp && !pokemon->recoverySecondsRemaining;
 }
 
+bool enteredAnyChoice(const UnovaRunState& run) {
+  // The explicit bit covers current saves. The remaining checks recognize an
+  // in-progress run written by an older firmware before the bit existed.
+  return (run.flags & static_cast<uint8_t>(
+              kChoiceEntered | kHealUsed | kGateDefeated | kBossAvailable)) !=
+             0U ||
+      run.visitedRooms != 0U || run.depth != 0U || run.clueMask != 0U ||
+      run.pendingBattle != UnovaBattleRole::None ||
+      run.pendingPhenomenon != 0U || run.pendingSpecies != 0U;
+}
+
 void initializeBattle(BattleState& battle, uint32_t playerUid,
                       uint32_t seed, BattleKind kind) {
   BattleEngine::clear(battle);
@@ -224,6 +240,9 @@ bool UnovaAdventure::reconcileCompletionReward(
 bool UnovaAdventure::white2ThemeUnlocked(const UnovaAdventureState& state) {
   return (state.flags & kWhite2Theme) != 0U;
 }
+bool UnovaAdventure::whiteThemeUnlocked(const UnovaAdventureState& state) {
+  return white2ThemeUnlocked(state);
+}
 bool UnovaAdventure::royalUnovaUnlocked(const UnovaAdventureState& state) {
   return championsCompleted(state);
 }
@@ -234,8 +253,25 @@ bool UnovaAdventure::setWhite2ThemeSelected(UnovaAdventureState& state,
                                              bool selected) {
   if (selected && !white2ThemeUnlocked(state)) return false;
   const uint8_t before = state.flags;
-  if (selected) state.flags |= kWhite2ThemeSelected;
+  if (selected) {
+    state.flags = static_cast<uint8_t>(
+        (state.flags | kWhite2ThemeSelected) & ~kWhiteThemeSelected);
+  }
   else state.flags &= ~kWhite2ThemeSelected;
+  return before != state.flags;
+}
+bool UnovaAdventure::whiteThemeSelected(const UnovaAdventureState& state) {
+  return whiteThemeUnlocked(state) && (state.flags & kWhiteThemeSelected);
+}
+bool UnovaAdventure::setWhiteThemeSelected(UnovaAdventureState& state,
+                                            bool selected) {
+  if (selected && !whiteThemeUnlocked(state)) return false;
+  const uint8_t before = state.flags;
+  if (selected) {
+    state.flags = static_cast<uint8_t>(
+        (state.flags | kWhiteThemeSelected) & ~kWhite2ThemeSelected);
+  }
+  else state.flags &= ~kWhiteThemeSelected;
   return before != state.flags;
 }
 
@@ -267,21 +303,41 @@ bool UnovaAdventure::begin(UnovaAdventureState& state, UnovaArea area,
   }
   if (!hasReadyMember) return false;
   const uint8_t index = normalizedArea(area);
+  const bool restoreChoices =
+      (state.run.flags & kChoicesCached) != 0U &&
+      (state.run.flags & kRunActive) == 0U;
+  const uint32_t cachedSeed = state.run.seed;
+  const uint8_t cachedSeason = state.run.season;
   state.run = UnovaRunState{};
-  state.run.seed = seed ? seed : mixed(advance(state.rngState));
+  state.run.seed = restoreChoices ? cachedSeed :
+      (seed ? seed : mixed(advance(state.rngState)));
   state.run.area = index;
   state.run.gateDepth = static_cast<uint8_t>(4U + mixed(state.run.seed) % 2U);
   state.run.gateRoute = static_cast<uint8_t>(mixed(state.run.seed ^ 0x47415445UL) % 3U);
   state.run.flags = kRunActive;
-  state.run.season = std::min<uint8_t>(season, 3U);
+  state.run.season = restoreChoices ? cachedSeason :
+      std::min<uint8_t>(season, 3U);
   std::copy(std::begin(collection.party), std::end(collection.party),
             std::begin(state.run.partyUids));
   return true;
 }
 
+bool UnovaAdventure::willPreserveChoicesOnAbandon(
+    const UnovaAdventureState& state) {
+  return active(state) && !enteredAnyChoice(state.run);
+}
+
 bool UnovaAdventure::abandon(UnovaAdventureState& state) {
   if (!active(state)) return false;
+  const bool preserveChoices = willPreserveChoicesOnAbandon(state);
+  const uint32_t cachedSeed = state.run.seed;
+  const uint8_t cachedSeason = state.run.season;
   state.run = UnovaRunState{};
+  if (preserveChoices) {
+    state.run.seed = cachedSeed;
+    state.run.season = cachedSeason;
+    state.run.flags = kChoicesCached;
+  }
   return true;
 }
 bool UnovaAdventure::active(const UnovaAdventureState& state) {
@@ -338,6 +394,7 @@ UnovaRoomResult UnovaAdventure::choose(UnovaAdventureState& state,
   UnovaRoomChoice options[3]{};
   const uint8_t count = choices(state, options);
   if (choice >= count) return result;
+  state.run.flags |= kChoiceEntered;
   const UnovaRoomChoice selected = options[choice];
   result.kind = selected.kind;
   state.run.visitedRooms |= static_cast<uint16_t>(

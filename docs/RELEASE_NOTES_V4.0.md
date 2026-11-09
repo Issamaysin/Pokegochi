@@ -9,8 +9,9 @@ save format and canonical asset archive.
 - Complete regional progression through Sinnoh, Unova, Kalos and Alola on top
   of the original Kanto, Johto and Hoenn game.
 - Sinnoh site exploration with eight Gyms; Unova procedural areas, Pokemon
-  World Tournament and Royal Unova; Kalos regional campaign; and Alola island
-  trials with Sun and Moon themes.
+  World Tournament and Royal Unova; paired Black and White themes unlocked by
+  the same Unova milestone; Kalos regional campaign; and Alola island trials
+  with Sun and Moon themes.
 - Generation I-VII species, evolutions, moves, abilities, TMs, held items,
   regional variants and form-specific stats, types, learnsets and sprites.
 - Mega Evolution, Primal forms, Z-Moves, Ultra Necrozma, Zygarde Complete,
@@ -24,19 +25,29 @@ save format and canonical asset archive.
   complete regional progression without deleting or rewriting older saves.
 - Mega Stone targeting is non-destructive while browsing Party/Box, and Key
   Items use a three-row paginated layout with correctly centred artwork.
+- Greninja can receive the unique `ASH'S BOND` held item and transform into
+  Ash-Greninja after defeating a foe, including the final Pokemon of a wild
+  encounter. If it leaves battle alive, the form remains for five real-world
+  minutes spent outside battle and carries through sequential wild encounters;
+  battle time pauses the countdown. Fainting, expiry or removing the item
+  restores the normal form. The battle journal preserves the exact KO/form
+  order across Android, ESP32 and saved-battle resume; Water Shuriken uses its
+  authored blue shuriken sprites.
+- Black now uses true-black surfaces with restrained charcoal panel depth;
+  White keeps a predominantly white lock screen with dark readable controls.
 
 ## Versions
 
-- Android replica: `3.0` (`versionCode 104`, build `r317`)
+- Android replica: `3.0` (`versionCode 108`, build `r322`)
 - ESP32 firmware: `4.0 ALOLA`
 - Persistent save format: `51` with automatic migration from older formats
-- Required asset pack format: `54`
+- Required asset pack format: `55`
 - Bluetooth multiplayer protocol: `7`
 
 ## Release artifacts
 
-- [Download the signed Android 3.0 APK from Google Drive](https://drive.google.com/file/d/1M_hkG8O9xLKvS7U8-_BQoxVkvDBWDVDJ/view?usp=drivesdk)
-- `Pokegochi-Android-3.0-r317.apk`
+- [Download the signed Android 3.0 APK from Google Drive](https://drive.google.com/file/d/1xGGQrEdzvYcs_10ccHMR7YdCOsvoRk3a/view?usp=drivesdk)
+- `Pokegochi-Android-3.0-white-background-r322.apk`
 - `Pokegochi-Firmware-4.0-ALOLA.bin`
 - `Pokegochi-Firmware-4.0-ALOLA.factory.bin`
 - `Pokegochi-Firmware-4.0-ALOLA.pgota`

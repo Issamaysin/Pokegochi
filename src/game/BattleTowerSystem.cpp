@@ -165,7 +165,8 @@ bool BattleTowerSystem::awardCompletionReward(Inventory& inventory) {
 }
 
 BattleTowerRewardResult BattleTowerSystem::awardCompletionReward(
-    Inventory& inventory,EggInventory& eggs,const PokedexState& pokedex,
+    Inventory& inventory,EggInventory& eggs,const EggState& activeEgg,
+    const PokedexState& pokedex,
     uint8_t unlockedGeneration,uint32_t seed) {
   BattleTowerRewardResult reward;
   // Hash the battle RNG once before applying the exact 1/200 threshold. The
@@ -187,7 +188,7 @@ BattleTowerRewardResult BattleTowerSystem::awardCompletionReward(
     }
   }
   if(rewardBucket==1U&&EggSystem::storeBattleTowerSpecial(
-        eggs,pokedex,unlockedGeneration,roll^0x45474721UL,
+        eggs,activeEgg,pokedex,unlockedGeneration,roll^0x45474721UL,
         &reward.eggSpeciesId)){
     reward.kind=BattleTowerRewardKind::SpecialEgg;
     return reward;

@@ -6,7 +6,7 @@ import java.util.Arrays;
 
 /** Wire contract shared with src/services/Multiplayer.cpp. */
 final class MultiplayerProtocol {
-    static final int VERSION = 7;
+    static final int VERSION = 10;
     static final int PACKET_MAGIC = 0x4750;
     static final int MAX_PAYLOAD = 160;
     // Android removes these first two bytes from manufacturer data returned
@@ -41,6 +41,7 @@ final class MultiplayerProtocol {
     static final int BATTLE_SYNC_VOLATILE = 20;
     static final int BATTLE_SYNC_CORE = 21;
     static final int BATTLE_SYNC_ACK = 22;
+    static final int BATTLE_RULES_CHOICE = 23;
 
     private MultiplayerProtocol() {}
 

@@ -47,6 +47,13 @@ extern "C" uint32_t pokegochi_android_frame_generation();
 extern "C" uint32_t pokegochi_android_multiplayer_player_id();
 extern "C" bool pokegochi_android_multiplayer_enabled();
 extern "C" uint8_t pokegochi_android_multiplayer_state();
+extern "C" uint8_t pokegochi_android_multiplayer_transport_kind();
+extern "C" const char* pokegochi_android_multiplayer_online_host();
+extern "C" uint16_t pokegochi_android_multiplayer_online_port();
+extern "C" const char* pokegochi_android_multiplayer_online_code();
+extern "C" uint32_t pokegochi_android_multiplayer_online_balanced_wins();
+extern "C" void pokegochi_android_multiplayer_start_wifi_player_search();
+extern "C" void pokegochi_android_multiplayer_complete_wifi_player_search();
 extern "C" uint32_t pokegochi_android_multiplayer_peer_id();
 extern "C" bool pokegochi_android_multiplayer_is_connected();
 extern "C" bool pokegochi_android_multiplayer_take_outgoing(
@@ -54,6 +61,7 @@ extern "C" bool pokegochi_android_multiplayer_take_outgoing(
 extern "C" void pokegochi_android_multiplayer_receive(
     const uint8_t* bytes, size_t length);
 extern "C" void pokegochi_android_multiplayer_discovered(
-    uint32_t playerId, int8_t rssi, const char* address, uint8_t addressType);
+    uint32_t playerId, int8_t rssi, const char* address, uint8_t addressType,
+    uint32_t balancedWins);
 extern "C" void pokegochi_android_multiplayer_transport_connected(bool outbound);
 extern "C" void pokegochi_android_multiplayer_disconnected();

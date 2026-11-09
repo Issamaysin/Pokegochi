@@ -32,6 +32,8 @@ class FireRedFont {
   static int16_t textWidth(const char* text, uint8_t style);
   static int16_t lineHeight(uint8_t style);
   void drawGlyph(uint8_t code, int16_t x, int16_t y, uint8_t style);
+  void drawStringLocalized(const char* text, int16_t x, int16_t y,
+                           uint8_t style);
 
   PixelCanvas& display_;
   uint16_t foreground_ = TFT_WHITE;

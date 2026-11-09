@@ -143,6 +143,10 @@ enum class BattleAnimationMotion : uint16_t {
   LeechSeedArc,
   MimicOrb,
   AbsorptionLinear,
+  // Reflect Type and Geomancy use a callback with no script arguments: the
+  // guard ring starts 40 px below the attacker and rises 72 px in 13 ticks.
+  // It cannot share AnimRaiseSprite's five-argument Ancient Power ABI.
+  SurroundingRingRise,
   RaiseSprite,
   PreinitializedArc,
   SludgeArc,

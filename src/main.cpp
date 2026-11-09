@@ -8,12 +8,27 @@
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <esp_heap_caps.h>
+#if defined(ARDUINO_ARCH_ESP32)
+#include <esp32-hal-bt.h>
+#include <esp_netif.h>
+#endif
 #include <algorithm>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <functional>
+
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+// Real app-hosted PvP reaches the forced-switch presenter with substantially
+// deeper protocol and animation state than the synthetic peer.  The physical
+// board measured only 724 bytes of the default 8 KiB loop stack remaining
+// after a faint/switch, which is not enough for a following retained-frame
+// composition.  Four extra KiB preserve the no-PSRAM heap budget while
+// keeping the renderer and TCP client clear of stack corruption.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
+#endif
+
 #include "config/BoardConfig.h"
 #include "config/AssetPackVersion.h"
 #include "drivers/Backlight.h"
@@ -48,12 +63,12 @@
 #include "game/WildChainSystem.h"
 #include "game/HomeBackgrounds.h"
 #include "game/HomeWeather.h"
-#include "game/KidsMemoryGame.h"
-#include "game/TowerDefenseSystem.h"
 #include "game/WorldFeatures.h"
 #include "game/BatteryProtection.h"
+#include "game/Localization.h"
 #include "services/PersistentSave.h"
 #include "services/Multiplayer.h"
+#include "services/OnlineMultiplayerProtocol.h"
 #include "services/SwipeUnlock.h"
 #include "services/WirelessUpdate.h"
 #if defined(POKEGOCHI_ANDROID)
@@ -99,6 +114,7 @@ bool drawHomeRegion(int16_t x, int16_t y, uint16_t width, uint16_t height);
 bool prepareAndroidBattleRender(const char* phase);
 #endif
 void drawInventory();
+void drawMultiplayerPocket();
 bool presentRetainedFrame(uint32_t* transferredPixels = nullptr);
 void paintRetainedSceneStripe();
 bool restoreBattleArenaBeforePresentation();
@@ -109,28 +125,23 @@ void beginBattleEventFlow(const BattleActionResult& result, uint32_t playerUid, 
                           StatusCondition playerStatusBefore, StatusCondition opponentStatusBefore,
                           uint16_t playerSpeciesBefore, uint16_t opponentSpeciesBefore,
                           uint8_t playerFormBefore, uint8_t opponentFormBefore,
+                          MegaVariant playerMegaBefore,
+                          MegaVariant opponentMegaBefore,
                           uint16_t playerMaximumHpBefore,
                           uint16_t opponentMaximumHpBefore);
 OwnedPokemon* presentedBattlePlayer();
 OwnedPokemon* presentedBattleOpponent();
 uint16_t presentedBattleSpeciesId(const OwnedPokemon* pokemon, bool playerSide);
 uint8_t presentedBattleForm(const OwnedPokemon* pokemon, bool playerSide);
+MegaVariant presentedBattleMegaVariant(const OwnedPokemon* pokemon, bool playerSide);
+void applyPresentedBattleAppearance(OwnedPokemon& visual, bool playerSide);
 uint16_t presentedBattleMaximumHp(const OwnedPokemon* pokemon, bool playerSide);
 const char* chooseBattleTerrain(const OwnedPokemon* opponent);
-void prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* opponent,
+bool prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* opponent,
                            const char* terrainPath);
 void requestRetainedFrame();
 void drawUnlockScreen();
 void drawWirelessUpdate();
-void drawKidsMenu();
-void drawKidsMemory();
-void drawKidsPaint();
-void drawKidsCatch();
-void drawKidsPokeball(int16_t cx,int16_t cy,int16_t radius);
-void drawKidsTowerCampaign();
-void drawKidsTowerTeam();
-void drawKidsTowerBattle();
-void serviceKidsTowerBattle(uint32_t now);
 void drawBerryGarden();
 void drawMegaFormSelect();
 void drawSinnohExpedition();
@@ -152,7 +163,7 @@ void drawFireRedBattleWindow(int16_t x, int16_t y, int16_t width, int16_t height
 void drawGbaInsetPanel(int16_t x, int16_t y, int16_t width, int16_t height,
                        uint8_t radius, uint16_t frame, uint16_t paper,
                        uint16_t highlight);
-enum class Screen : uint8_t { Diagnostic, OakIntro, Starter, RegionalDiscovery, RegionalStarter, PokedexUpdated, PokedexCompleteReward, Home, PokecenterConfirm, Settings, PlayerStats, WirelessUpdate, KidsMenu, KidsMemory, KidsPaint, EggOffer, EggStatus, EggHatch, GymInvite, LeagueInvite, MegaChallengeInvite, TowerInvite, BossInvite, LeagueComplete, ChooseBattler, TrainerIntro, Battle, MoveSelect, EvolutionCinematic, TradeCinematic, EvolutionChoose, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, TrainerCard, BadgeCase, Box, Pokedex, PokedexDetail, Mart, Recovery, BerryGarden, KidsCatch, KidsTowerCampaign, KidsTowerTeam, KidsTowerBattle, MegaFormSelect, WildChainSelect, SinnohExpedition, ChallengeHub, RegionHub, UnovaAdventure, UnovaTournament, KalosAdventure, AlolaAdventure };
+enum class Screen : uint8_t { Diagnostic, OakIntro, Starter, RegionalDiscovery, RegionalStarter, PokedexUpdated, PokedexCompleteReward, Home, PokecenterConfirm, Settings, PlayerStats, WirelessUpdate, EggOffer, EggStatus, EggHatch, GymInvite, LeagueInvite, MegaChallengeInvite, TowerInvite, BossInvite, LeagueComplete, ChooseBattler, TrainerIntro, Battle, MoveSelect, EvolutionCinematic, TradeCinematic, EvolutionChoose, MoveLearn, BattleParty, BattleSummary, Bag, Inventory, TrainerCard, BadgeCase, Box, Pokedex, PokedexDetail, Mart, Recovery, BerryGarden, MegaFormSelect, WildChainSelect, SinnohExpedition, ChallengeHub, RegionHub, UnovaAdventure, UnovaTournament, KalosAdventure, AlolaAdventure };
 #if defined(POKEGOCHI_ANDROID)
 const char* androidScreenName(Screen value) {
   switch (value) {
@@ -168,9 +179,6 @@ const char* androidScreenName(Screen value) {
     case Screen::Settings: return "Settings";
     case Screen::PlayerStats: return "PlayerStats";
     case Screen::WirelessUpdate: return "WirelessUpdate";
-    case Screen::KidsMenu: return "KidsMenu";
-    case Screen::KidsMemory: return "KidsMemory";
-    case Screen::KidsPaint: return "KidsPaint";
     case Screen::EggOffer: return "EggOffer";
     case Screen::EggStatus: return "EggStatus";
     case Screen::EggHatch: return "EggHatch";
@@ -200,10 +208,6 @@ const char* androidScreenName(Screen value) {
     case Screen::Mart: return "Mart";
     case Screen::Recovery: return "Recovery";
     case Screen::BerryGarden: return "BerryGarden";
-    case Screen::KidsCatch: return "KidsCatch";
-    case Screen::KidsTowerCampaign: return "KidsTowerCampaign";
-    case Screen::KidsTowerTeam: return "KidsTowerTeam";
-    case Screen::KidsTowerBattle: return "KidsTowerBattle";
     case Screen::MegaFormSelect: return "MegaFormSelect";
     case Screen::WildChainSelect: return "WildChainSelect";
     case Screen::SinnohExpedition: return "SinnohExpedition";
@@ -262,7 +266,7 @@ constexpr uint32_t kMartSeenDayMask = 0x7FFFFFFFUL;
 // Single semantic label shared by the firmware UI, boot diagnostics and signed
 // wireless-update metadata. Version 4.0 closes the Generation VII / Alola
 // content line shared with Android app 3.0.
-constexpr char kGameVersion[] = "4.0 ALOLA";
+constexpr char kGameVersion[] = "4.1 WIFI";
 // Colours sampled from FireRed's battle_interface palettes.  They are used
 // by the arena and by every battle-adjacent screen so pre-battle selection
 // no longer looks like a separate blue application.
@@ -300,6 +304,25 @@ WirelessUpdate wirelessUpdate;
 // retain the familiar reference syntax below.
 GameSave* gameSaveStorage = nullptr;
 #define gameSave (*gameSaveStorage)
+
+// Kids Games left a frozen 32-byte compatibility reservation in V43. Its
+// final three bytes were always padding, so they can persist language without
+// growing GameSave, moving later fields, or introducing another migration.
+constexpr uint8_t kLanguageSignature = 0x4CU;  // 'L'
+UiLanguage savedUiLanguage() {
+  if (!gameSaveStorage) return UiLanguage::English;
+  const uint8_t* marker = gameSave.towerDefense.reserved;
+  return marker[0] == kLanguageSignature && marker[1] == 'P' && marker[2] == 'T'
+      ? UiLanguage::Portuguese : UiLanguage::English;
+}
+void selectUiLanguage(UiLanguage language) {
+  if (!gameSaveStorage) return;
+  uint8_t* marker = gameSave.towerDefense.reserved;
+  marker[0] = kLanguageSignature;
+  marker[1] = language == UiLanguage::Portuguese ? 'P' : 'E';
+  marker[2] = language == UiLanguage::Portuguese ? 'T' : 'N';
+  Localization::setLanguage(language);
+}
 
 uint8_t battlePresentationSpeedMultiplier() {
   return gameSaveStorage
@@ -340,7 +363,14 @@ const UiThemePalette& uiThemePaletteFor(UiColorTheme theme) {
     {0xD8A7, 0xF92C, 0x780C, 0xFDD7}, // Ruby
     {0x04CD, 0x07F3, 0x0247, 0xB7F1}, // Emerald
     {0x632C, 0x9D39, 0x2104, 0xD69A}, // Platinum
-    {0x39E7, 0x73AE, 0x1082, 0xEF7D}, // White 2
+    // Black mirrors White's literal treatment: large themed surfaces are
+    // actual black, while two very dark charcoal steps retain panel depth on
+    // both the ILI9341 and a phone OLED without turning the theme grey again.
+    {0x0000, 0x2104, 0x0000, 0x3186}, // Black
+    // White is deliberately literal rather than another silver theme. Every
+    // themed surface is pure white and the edge/ink is pure black; contrast
+    // helpers below keep labels and controls readable on those white panels.
+    {0xFFFF, 0xFFFF, 0x0000, 0xFFFF}, // White
     // Kalos combines X's cobalt/cyan with Y's crimson/magenta instead of
     // presenting one version as the canonical region colour.
     {0x2B38, 0xE92D, 0x20A7, 0xEF5F}, // X/Y
@@ -363,6 +393,8 @@ UiColorTheme selectedUiTheme() {
     return UiColorTheme::Sun;
   if (gameSaveStorage && KalosAdventure::xThemeSelected(gameSave.kalos))
     return UiColorTheme::X;
+  if (gameSaveStorage && UnovaAdventure::whiteThemeSelected(gameSave.unova))
+    return UiColorTheme::White;
   if (gameSaveStorage && UnovaAdventure::white2ThemeSelected(gameSave.unova))
     return UiColorTheme::White2;
   return gameSaveStorage ? gameSave.settings.colorTheme()
@@ -378,12 +410,23 @@ uint16_t themeAccent() { return uiThemePalette().accent; }
 uint16_t themeDark() { return uiThemePalette().dark; }
 uint16_t themePale() { return uiThemePalette().pale; }
 
+// Most themes use FireRed's white ink over a saturated primary colour. White
+// intentionally uses an actual white background, so every primitive drawn on
+// a themed surface must choose black instead of silently disappearing.
+uint16_t readableInkOn(uint16_t surface) {
+  return surface == TFT_WHITE ? TFT_BLACK : TFT_WHITE;
+}
+
+uint16_t themePrimaryInk() { return readableInkOn(themePrimary()); }
+uint16_t themePaleInk() { return readableInkOn(themePale()); }
+
 const char* themeName(UiColorTheme theme) {
   switch (theme) {
     case UiColorTheme::Ruby: return "RUBY RED";
     case UiColorTheme::Emerald: return "EMERALD GREEN";
     case UiColorTheme::Platinum: return "PLATINUM SILVER";
     case UiColorTheme::White2: return "BLACK";
+    case UiColorTheme::White: return "WHITE";
     case UiColorTheme::X: return "X/Y";
     case UiColorTheme::Sun: return "SUN";
     case UiColorTheme::Moon: return "MOON";
@@ -407,6 +450,8 @@ bool uiThemeUnlocked(UiColorTheme theme) {
       return SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh);
     case UiColorTheme::White2:
       return UnovaAdventure::white2ThemeUnlocked(gameSave.unova);
+    case UiColorTheme::White:
+      return UnovaAdventure::whiteThemeUnlocked(gameSave.unova);
     case UiColorTheme::X:
       return KalosAdventure::xThemeUnlocked(gameSave.kalos);
     case UiColorTheme::Sun:
@@ -466,6 +511,8 @@ bool chooseUiTheme(UiColorTheme theme) {
       gameSave.kalos, theme == UiColorTheme::X);
   UnovaAdventure::setWhite2ThemeSelected(
       gameSave.unova, theme == UiColorTheme::White2);
+  UnovaAdventure::setWhiteThemeSelected(
+      gameSave.unova, theme == UiColorTheme::White);
   if (static_cast<uint8_t>(theme) <=
       static_cast<uint8_t>(UiColorTheme::Platinum))
     gameSave.settings.setColorTheme(theme);
@@ -512,6 +559,19 @@ bool storageRecoveryPending = false;
 // radio-time arena as if it were the full scene bank; recreate it at the next
 // battle boundary or after the capture disconnects.
 bool liveDiagnosticWorkspaceRestorePending = false;
+// Radio shutdown can return several smaller heap blocks instead of rebuilding
+// the original 57 KiB battle arena. Home now uses a lossless compact scene
+// cache, so it can be restored in-process; keep the last complete panel frame
+// visible only for the rare scheduler turn in which deinitialization is still
+// returning memory.
+bool multiplayerGraphicsRestorePending = false;
+bool multiplayerHomeReturnPending = false;
+// Once the recovery card has been written directly to TFT GRAM, the normal
+// retained presenter must not publish the stale blue Bag/Wi-Fi canvas over
+// it while the radio heap is being dismantled. The latch is cleared only
+// after a complete compact Home workspace is available.
+bool multiplayerHomeRecoveryTransitionVisible = false;
+uint32_t multiplayerGraphicsRestoreAttemptMs = 0;
 // The XPT2046 IRQ line on this board can occasionally stay LOW briefly after
 // a touch.  Remember the last handled coordinate as a second re-arm signal so
 // the UI never becomes unresponsive waiting for a missing release edge.
@@ -528,6 +588,8 @@ uint16_t battleArenaPlayerSpeciesId = 0;
 uint16_t battleArenaOpponentSpeciesId = 0;
 uint8_t battleArenaPlayerForm = 0;
 uint8_t battleArenaOpponentForm = 0;
+MegaVariant battleArenaPlayerMega = MegaVariant::None;
+MegaVariant battleArenaOpponentMega = MegaVariant::None;
 // `screen` is the logical state.  `presentedScreen` is deliberately kept
 // separate: it records which complete surface is physically resident on the
 // TFT.  Internal taps are then free to repaint a dirty panel without ever
@@ -879,7 +941,12 @@ struct BattleAnimationRuntimeTask {
 // through its smaller physical layer batch, so retain the complete authored
 // ledger and let that scheduler show every emission at least once.
 constexpr uint8_t kBattleAnimationParticleCapacity = 192;
-constexpr uint8_t kBattleAnimationTaskCapacity = 16;
+// Pulverizing Pancake keeps sixteen authored controller tasks alive before a
+// callback creates its final shadow controller. Dropping that seventeenth
+// task removes a visible phase even though the particle/layer ledgers remain
+// healthy. Tasks are compact state records, so retain headroom for expansion
+// scripts just as the logical OBJ ledger does below.
+constexpr uint8_t kBattleAnimationTaskCapacity = 20;
 BattleAnimationRuntimeParticle battleAnimationParticles[kBattleAnimationParticleCapacity]{};
 BattleAnimationRuntimeTask battleAnimationTasks[kBattleAnimationTaskCapacity]{};
 int16_t battleAnimationArgument(const int16_t* arguments, uint8_t count,
@@ -962,7 +1029,11 @@ bool battleAnimationUseTiledBackground = false;
 // This is presentation state, not an owned heap object. A fixed buffer keeps
 // the path valid across retained-frame callbacks and makes scene transitions
 // idempotent even when a screen change arrives while a move is finishing.
-char battleAnimationPreparedBackgroundPath[112]{};
+// This latch only stores paths generated by battleAnimationBackgroundPath().
+// The longest canonical value is the tiled background path (67 bytes with
+// NUL), so 80 bytes retains explicit headroom without wasting scarce static
+// DRAM on the no-PSRAM board.
+char battleAnimationPreparedBackgroundPath[80]{};
 // An opaque move plane is removed from the shared scene cache at the end of
 // playback, but its canonical arena frame must also reach the panel before a
 // following move starts. Keep this latch until that shallow, outside-presenter
@@ -1120,6 +1191,7 @@ char boxNotice[48] = "";
 uint8_t dexPage = 0;
 uint16_t preparedPokedexSpecies = 0;
 uint8_t bagPage = 0;
+uint8_t multiplayerPeerPage = 0;
 uint8_t inventorySelection = 0;
 uint8_t inventoryListOffset = 0;
 uint8_t keyItemPage = 0;
@@ -1157,51 +1229,8 @@ constexpr int16_t kBerryGardenTreeX[3] = {80, 180, 276};
 constexpr int16_t kBerryGardenTreeY[2] = {48, 116};
 constexpr int16_t kBerryGardenTouchX[3] = {60, 160, 256};
 constexpr int16_t kBerryGardenTouchY[2] = {54, 120};
-uint32_t kidsRandomState = 0x4B494453UL;
-uint8_t kidsMemoryCards[12]{};
-KidsMemoryGame::State kidsMemoryState{};
-uint8_t kidsCatchScore = 0;
-uint8_t kidsCatchBerry = 0;
-int16_t kidsCatchX = 160;
-int16_t kidsCatchY = 125;
-bool kidsCatchTimerStarted = false;
-uint32_t kidsCatchStartedMs = 0;
-uint32_t kidsCatchFinishedMs = 0;
-TowerDefense::Runtime kidsTowerRuntime{};
-TowerDefense::DefenderSnapshot kidsTowerDefenders[TowerDefense::kDefenderCount]{};
-uint32_t kidsTowerLastTickMs = 0;
-char kidsTowerNotice[44] = "";
-uint8_t kidsTowerBrowseStage = 0;
-uint8_t kidsPaintColor = 1;
-constexpr uint8_t kKidsCanvasWidth = 148;
-constexpr uint8_t kKidsCanvasHeight = 70;
-constexpr size_t kKidsCanvasBytes =
-    (static_cast<size_t>(kKidsCanvasWidth) * kKidsCanvasHeight + 3U) / 4U;
-// The packed paint bitmap is only 2.590 bytes, but the ESP32's largest free
-// heap block can be smaller after the SD/archive, save and retained-canvas
-// workspaces are initialized. Keep this tiny interactive surface in static
-// DRAM so Kids Paint cannot open successfully and then lose every stroke when
-// a fragmented heap rejects its late allocation. The surface is explicitly
-// cleared whenever Kids Paint opens, so RTC_NOINIT avoids embedding 2.590 zero
-// bytes in every OTA image without exposing stale pixels to the player.
-#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
-RTC_NOINIT_ATTR alignas(4) uint8_t kidsPaintPixelsStorage[kKidsCanvasBytes];
-#else
-alignas(4) uint8_t kidsPaintPixelsStorage[kKidsCanvasBytes];
-#endif
-uint8_t* kidsPaintPixels = nullptr;
-int16_t kidsPaintLastX = -1;
-int16_t kidsPaintLastY = -1;
-uint32_t kidsPaintLastTouchMs = 0;
-int16_t kidsPaintSampleX[3]{};
-int16_t kidsPaintSampleY[3]{};
-uint8_t kidsPaintSampleCount = 0;
-uint8_t kidsPaintSampleCursor = 0;
 TouchInputFilter gameTouchFilter;
 Screen gameTouchFilterScreen = Screen::Diagnostic;
-uint8_t kidsExitSlide = 0;
-bool kidsExitDragging = false;
-bool kidsExitAwaitRelease = false;
 // The 39-scenery browser keeps only one 20-30 KiB map in the shared scene
 // bank. After presenting a selection, use the idle interval to replace that
 // bank with the next map in the direction being browsed. Consecutive taps are
@@ -1289,6 +1318,12 @@ bool batteryReadingValid = false;
 uint32_t lastBatterySampleMs = 0;
 constexpr uint32_t kLowBatteryDormantMagic = 0x4C4F5742UL;  // "LOWB"
 RTC_DATA_ATTR uint32_t lowBatteryDormantMarker = 0;
+// esp_bt_mem_release(BT_MODE_BLE) is intentionally irreversible until reset.
+// When a player leaves Wi-Fi and later asks for BLE, preserve only this small
+// navigation intent across the controlled reboot and return straight to the
+// BLE pocket instead of making the player traverse START/Home/Bag again.
+constexpr uint32_t kResumeBlePocketMagic = 0x5047424CU;  // "PGBL"
+RTC_DATA_ATTR uint32_t resumeBlePocketMarker = 0;
 bool lowBatteryDormancyStarting = false;
 struct BatterySampleBurst {
   uint32_t millivoltSum = 0;
@@ -1334,6 +1369,13 @@ struct BattleFlow {
   uint16_t displayOpponentSpeciesId = 0;
   uint8_t displayPlayerForm = 0;
   uint8_t displayOpponentForm = 0;
+  // Rayquaza's Dragon Ascent Mega state is not stored in `form`: it lives in
+  // a battle-only marker. Resolution mutates (or even clears) that marker
+  // before the journal reaches the TFT, so stage the visible Mega identity
+  // independently just like species/form. Otherwise the normal and Mega
+  // paths disagree during preload, retained stripes and battle-ending KOs.
+  MegaVariant displayPlayerMega = MegaVariant::None;
+  MegaVariant displayOpponentMega = MegaVariant::None;
   // Form changes such as Zygarde assembly can alter maximum HP. Stage that
   // value with the sprite form so earlier move/damage frames cannot reveal
   // the Complete-form HP total before its transformation event is shown.
@@ -1589,16 +1631,138 @@ bool battleFrameCompositionFailed = false;
 // ends. Link damage, PP and status therefore never leak into the permanent
 // single-player save.
 bool pvpSessionActive = false;
+// On the no-PSRAM board, a Wi-Fi link battle lends the unused Box tail to
+// the renderer. The durable save is committed before the loan and reloaded
+// afterwards; only the three disposable PvP roster snapshots remain live.
+bool pvpCollectionWorkspaceBorrowed = false;
 bool pvpStatePublishPending = false;
 bool pvpAwaitingAuthoritativeState = false;
 bool pvpForcedChoiceSubmitted = false;
 bool pvpForcedWaitSubmitted = false;
+int8_t pvpStagedForcedRosterSlot = -1;
+// Replacement is a two-command transaction. BattleState carries the engine's
+// immediate request, while these latches carry its cause across the network
+// snapshot/ACK barrier and the Party UI. Without them, a same-turn retry could
+// turn Volt Switch/U-turn/Parting Shot into an ordinary voluntary switch and
+// either leave the outgoing Pokemon active or incorrectly apply trapping.
+constexpr uint8_t kPvpFaintReplacementReason = 0xFEU;
+uint8_t pvpLocalReplacementReason = 0U;
+uint8_t pvpRemoteReplacementReason = 0U;
+uint8_t pvpStagedReplacementReason = 0U;
+uint8_t pvpSubmittedReplacementReason = 0U;
+// Forced replacement snapshots intentionally reuse the attack's turn number.
+// Remember the chosen slot until the authority echoes it so a delayed retry
+// of the pre-switch snapshot cannot resurrect the fainted active Pokemon.
+int8_t pvpExpectedForcedRosterSlot = -1;
+// Replacing either active battler changes pixels throughout the arena while
+// keeping the logical screen enum on Battle. Treat that as a real scene
+// transaction: the retained renderer must not publish only the rows touched
+// by the incoming sprite over a frame that still contains the old battler.
+bool pvpFullBattleSurfaceRefreshPending = false;
 uint32_t pvpLastStatePublishAttemptMs = 0;
+bool pvpStateAckRetryPending = false;
+uint16_t pvpStateAckRetryTurn = 0;
+uint32_t pvpStateAckRetryChecksum = 0;
+uint32_t pvpLastStateAckAttemptMs = 0;
+uint16_t pvpLastAppliedSnapshotTurn = 0;
+uint32_t pvpLastAppliedSnapshotChecksum = 0;
+// The timer measures only a local decision window. Once this player has
+// locked a command, their clock stops and the remote client owns its own
+// independent 30-second window. Expiry submits an ordinary legal MOVE command
+// (or Struggle), preserving wire compatibility with older peers and keeping
+// simultaneous expiry deterministic instead of awarding both players a loss.
+constexpr uint32_t kPvpTurnDecisionLimitMs = 30000U;
+uint32_t pvpDecisionStartedMs = 0;
+uint16_t pvpDecisionTurn = 0;
+bool pvpDecisionForcedSwitch = false;
+uint8_t pvpDecisionLastShownSeconds = 0xFFU;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+// This snapshot exists only between startPvpBattle() and restorePartyAfterPvp().
+// Keeping it in RTC no-init RAM preserves the animation task capacity without
+// consuming the final bytes of ordinary DRAM. startPvpBattle() always clears
+// every record before the first read, so retained reset contents are harmless.
+RTC_NOINIT_ATTR OwnedPokemon pvpPartyBackup[kPartyCapacity];
+#else
 OwnedPokemon pvpPartyBackup[kPartyCapacity]{};
+#endif
 uint32_t pvpPartyBackupUids[kPartyCapacity]{};
 uint8_t pvpRemoteRosterSlotAtIndex[kPartyCapacity]{};
+Inventory pvpLocalInventory{};
+PpItemInventory pvpLocalPpItems{};
+Inventory pvpRemoteInventory{};
+PpItemInventory pvpRemotePpItems{};
 BattleActionResult pvpResolvedAction{};
 BattleActionResult pvpPreludeAction{};
+
+void resetPvpDecisionClock() {
+  pvpDecisionStartedMs = 0;
+  pvpDecisionTurn = 0;
+  pvpDecisionForcedSwitch = false;
+  pvpDecisionLastShownSeconds = 0xFFU;
+}
+
+uint8_t pvpDecisionSecondsRemaining(uint32_t now) {
+  if (!pvpDecisionStartedMs) return 0U;
+  const uint32_t elapsed = now - pvpDecisionStartedMs;
+  if (elapsed >= kPvpTurnDecisionLimitMs) return 0U;
+  return static_cast<uint8_t>(
+      (kPvpTurnDecisionLimitMs - elapsed + 999U) / 1000U);
+}
+
+void resetPvpBattleBags() {
+  pvpLocalInventory = Inventory{};
+  pvpLocalPpItems = PpItemInventory{};
+  pvpRemoteInventory = Inventory{};
+  pvpRemotePpItems = PpItemInventory{};
+  for (Inventory* inventory : {&pvpLocalInventory, &pvpRemoteInventory}) {
+    std::memset(inventory->balls, 0, sizeof(inventory->balls));
+    std::memset(inventory->medicine, 0, sizeof(inventory->medicine));
+    inventory->medicine[static_cast<uint8_t>(BattleItem::HyperPotion)] =
+        PokegochiMultiplayerProtocol::kBattleBagHyperPotionCount;
+    inventory->medicine[static_cast<uint8_t>(BattleItem::FullHeal)] =
+        PokegochiMultiplayerProtocol::kBattleBagFullHealCount;
+    inventory->medicine[static_cast<uint8_t>(BattleItem::MaxRevive)] =
+        PokegochiMultiplayerProtocol::kBattleBagMaxReviveCount;
+  }
+  pvpLocalPpItems.quantities[ppInventoryIndex(BattleItem::MaxElixir)] =
+      PokegochiMultiplayerProtocol::kBattleBagMaxElixirCount;
+  pvpRemotePpItems.quantities[ppInventoryIndex(BattleItem::MaxElixir)] =
+      PokegochiMultiplayerProtocol::kBattleBagMaxElixirCount;
+}
+
+constexpr uint8_t packPvpItemCommand(BattleItem item, uint8_t rosterSlot) {
+  return static_cast<uint8_t>((static_cast<uint8_t>(item) & 0x1FU) |
+                              ((rosterSlot & 0x03U) << 5U));
+}
+
+constexpr BattleItem pvpCommandItem(uint8_t value) {
+  return static_cast<BattleItem>(value & 0x1FU);
+}
+
+constexpr uint8_t pvpCommandRosterSlot(uint8_t value) {
+  return static_cast<uint8_t>((value >> 5U) & 0x03U);
+}
+
+constexpr uint8_t kPvpMoveZFlag = 0x80U;
+constexpr uint8_t kPvpMoveSlotMask = 0x07U;
+
+constexpr uint8_t packPvpMoveCommand(uint8_t moveSlot, bool useZMove) {
+  return static_cast<uint8_t>((moveSlot & kPvpMoveSlotMask) |
+                              (useZMove ? kPvpMoveZFlag : 0U));
+}
+
+constexpr uint8_t pvpCommandMoveSlot(uint8_t value) {
+  return static_cast<uint8_t>(value & kPvpMoveSlotMask);
+}
+
+constexpr bool pvpCommandUsesZMove(uint8_t value) {
+  return (value & kPvpMoveZFlag) != 0U;
+}
+
+constexpr bool pvpBattleItemAllowed(BattleItem item) {
+  return item == BattleItem::HyperPotion || item == BattleItem::FullHeal ||
+         item == BattleItem::MaxRevive || item == BattleItem::MaxElixir;
+}
 
 bool multiplayerTradeSelectionActive() {
   return multiplayer.connected() && multiplayer.activity() == Multiplayer::Activity::Trade &&
@@ -1735,6 +1899,7 @@ bool wildLedAlertActive = false;
 bool wildLedOn = false;
 bool wildChargeAlertPending = false;
 bool centerChargeUiDirty = false;
+bool ashBondPresentationRefreshPending = false;
 uint32_t wildLedAlertStartedMs = 0;
 
 constexpr uint32_t kScreenTimeoutSeconds[] = {60U, 120U, 300U, 600U};
@@ -1778,8 +1943,35 @@ constexpr uint8_t kHeldPocket = 2;
 constexpr uint8_t kMachinePocket = 3;
 constexpr uint8_t kEggPocket = 4;
 constexpr uint8_t kKeyItemsPage = 5;
-constexpr uint8_t kMultiplayerPage = 6;
-constexpr uint8_t kInventoryPocketCount = 7;
+constexpr uint8_t kMultiplayerBlePage = 6;
+constexpr uint8_t kMultiplayerWifiPage = 7;
+constexpr uint8_t kInventoryPocketCount = 8;
+constexpr bool isMultiplayerPage(uint8_t page) {
+  return page == kMultiplayerBlePage || page == kMultiplayerWifiPage;
+}
+uint8_t activeMultiplayerPage() {
+  return multiplayer.transportKind() == Multiplayer::TransportKind::Wifi
+      ? kMultiplayerWifiPage : kMultiplayerBlePage;
+}
+enum class WifiSetupField : uint8_t { None, Password };
+#if defined(POKEGOCHI_APP_BUILD)
+constexpr bool kWifiNeedsLocalSetup = false;
+#else
+constexpr bool kWifiNeedsLocalSetup = true;
+#endif
+bool wifiSetupVisible = false;
+bool wifiSetupKeyboard = false;
+bool wifiSetupNetworkPicker = false;
+bool wifiSetupShift = true;
+// Radio startup can spend several seconds scanning, associating and finding
+// the relay. Latch the requested switch position before that synchronous work
+// so the physical panel acknowledges the touch immediately.
+bool multiplayerRadioTransitionActive = false;
+bool multiplayerRadioTransitionTargetOn = false;
+WifiSetupField wifiSetupField = WifiSetupField::None;
+char wifiSetupSsid[33]{};
+char wifiSetupPassword[65]{};
+char wifiSetupEdit[65]{};
 constexpr uint8_t kInventoryVisibleRows = 5;
 constexpr int16_t kInventoryDescriptionPanelX = 72;
 constexpr int16_t kInventoryDescriptionPanelY = 174;
@@ -1958,6 +2150,13 @@ uint16_t pokeBallQuantity(PokeBallType ball) {
 
 uint16_t battleItemQuantity(BattleItem item) {
   const uint8_t id=static_cast<uint8_t>(item);
+  if (pvpSessionActive && gameSave.battle.kind == BattleKind::Pvp) {
+    if (isPpInventoryItem(item)) {
+      const uint8_t index = ppInventoryIndex(item);
+      return index < kPpItemCount ? pvpLocalPpItems.quantities[index] : 0U;
+    }
+    return id < kStandardMedicineCount ? pvpLocalInventory.medicine[id] : 0U;
+  }
   if(item==BattleItem::RareCandy)
     return gameSave.inventory.heldItems[kRareCandyInventorySlot];
   if(isPpInventoryItem(item)){
@@ -1996,11 +2195,16 @@ uint8_t nextInventoryPage(uint8_t page) {
   page = normalizeInventoryPage(page);
   return page + 1U < kInventoryPocketCount ? static_cast<uint8_t>(page + 1U) : kBallPocket;
 }
-uint8_t normalizeBattleBagPage(uint8_t page) { return page <= kMedicinePocket ? page : kBallPocket; }
+uint8_t normalizeBattleBagPage(uint8_t page) {
+  if (pvpSessionActive && gameSave.battle.kind == BattleKind::Pvp) return kMedicinePocket;
+  return page <= kMedicinePocket ? page : kBallPocket;
+}
 uint8_t previousBattleBagPage(uint8_t page) {
+  if (pvpSessionActive && gameSave.battle.kind == BattleKind::Pvp) return kMedicinePocket;
   return normalizeBattleBagPage(page) == kBallPocket ? kMedicinePocket : kBallPocket;
 }
 uint8_t nextBattleBagPage(uint8_t page) {
+  if (pvpSessionActive && gameSave.battle.kind == BattleKind::Pvp) return kMedicinePocket;
   return normalizeBattleBagPage(page) == kMedicinePocket ? kBallPocket : kMedicinePocket;
 }
 
@@ -2044,6 +2248,8 @@ uint8_t inventoryEntries(InventoryEntry* entries, uint8_t capacity) {
         id<=static_cast<uint8_t>(kLastGen7UniqueItem);++id)
       if(gen7UniqueItemQuantity(gameSave.gen7UniqueItems,static_cast<HeldItem>(id)))
         add(InventoryEntryKind::Held,id);
+    if(gen7UniqueItemQuantity(gameSave.gen7UniqueItems,HeldItem::AshsBond))
+      add(InventoryEntryKind::Held,static_cast<uint8_t>(HeldItem::AshsBond));
     for(uint8_t id=static_cast<uint8_t>(kFirstModernHeldItem);
         id<=static_cast<uint8_t>(kLastModernHeldItem);++id)
       if(modernHeldItemQuantity(gameSave.modernHeldItems,static_cast<HeldItem>(id)))
@@ -2083,6 +2289,7 @@ uint8_t inventoryTotalEntries() {
     for(uint8_t id=static_cast<uint8_t>(kFirstGen7UniqueItem);
         id<=static_cast<uint8_t>(kLastGen7UniqueItem);++id)
       if(gen7UniqueItemQuantity(gameSave.gen7UniqueItems,static_cast<HeldItem>(id)))++total;
+    if(gen7UniqueItemQuantity(gameSave.gen7UniqueItems,HeldItem::AshsBond))++total;
     for(uint8_t id=static_cast<uint8_t>(kFirstModernHeldItem);
         id<=static_cast<uint8_t>(kLastModernHeldItem);++id)
       if(modernHeldItemQuantity(gameSave.modernHeldItems,static_cast<HeldItem>(id)))++total;
@@ -2136,6 +2343,8 @@ bool beginnerProtectionActive(){
       BattleEngine::highestPartyLevel(gameSave.collection)<10U;
 }
 void saveNow();
+bool suspendGameSaveForWifi();
+bool resumeGameSaveAfterWifi();
 void serviceDeferredHomeGiftSave();
 
 uint8_t reconcileRegionCompletionRewards() {
@@ -2175,6 +2384,13 @@ uint8_t reconcileRegionCompletionRewards() {
 }
 
 void normalizeSettings() {
+  // The language picker is temporarily retired. Keep the persisted marker and
+  // localization engine intact so the feature can return later, but normalize
+  // every existing save (including PT-BR saves) to the sole supported UI.
+  const bool languageWasPortuguese =
+      savedUiLanguage() == UiLanguage::Portuguese;
+  selectUiLanguage(UiLanguage::English);
+  if (languageWasPortuguese) saveDirty = true;
   gameSave.settings.homeBackground = HomeBackgrounds::normalize(gameSave.settings.homeBackground);
 #if !defined(POKEGOCHI_ANDROID)
   // Bits 2..3 were unused before battle speed reached the physical device.
@@ -2193,12 +2409,19 @@ void normalizeSettings() {
   if (gameSave.settings.colorTheme() == UiColorTheme::Platinum &&
       !SinnohExpedition::platinumThemeUnlocked(gameSave.sinnoh))
     gameSave.settings.setColorTheme(UiColorTheme::Sapphire);
-  if (!UnovaAdventure::white2ThemeUnlocked(gameSave.unova))
+  if (!UnovaAdventure::white2ThemeUnlocked(gameSave.unova)) {
     UnovaAdventure::setWhite2ThemeSelected(gameSave.unova, false);
+    UnovaAdventure::setWhiteThemeSelected(gameSave.unova, false);
+  } else if (UnovaAdventure::whiteThemeSelected(gameSave.unova)) {
+    // White wins if a damaged/experimental save somehow carries both bits.
+    UnovaAdventure::setWhiteThemeSelected(gameSave.unova, true);
+  }
   if (!KalosAdventure::xThemeUnlocked(gameSave.kalos))
     KalosAdventure::setXThemeSelected(gameSave.kalos, false);
   else if (KalosAdventure::xThemeSelected(gameSave.kalos))
     UnovaAdventure::setWhite2ThemeSelected(gameSave.unova, false);
+  if (KalosAdventure::xThemeSelected(gameSave.kalos))
+    UnovaAdventure::setWhiteThemeSelected(gameSave.unova, false);
   if (!AlolaAdventure::sunThemeUnlocked(gameSave.alola)) {
     AlolaAdventure::setSunThemeSelected(gameSave.alola, false);
     AlolaAdventure::setMoonThemeSelected(gameSave.alola, false);
@@ -2206,10 +2429,12 @@ void normalizeSettings() {
     AlolaAdventure::setMoonThemeSelected(gameSave.alola, true);
     KalosAdventure::setXThemeSelected(gameSave.kalos, false);
     UnovaAdventure::setWhite2ThemeSelected(gameSave.unova, false);
+    UnovaAdventure::setWhiteThemeSelected(gameSave.unova, false);
   } else if (AlolaAdventure::sunThemeSelected(gameSave.alola)) {
     AlolaAdventure::setSunThemeSelected(gameSave.alola, true);
     KalosAdventure::setXThemeSelected(gameSave.kalos, false);
     UnovaAdventure::setWhite2ThemeSelected(gameSave.unova, false);
+    UnovaAdventure::setWhiteThemeSelected(gameSave.unova, false);
   }
   gameSave.settings.setTouchInputMode(gameSave.settings.touchInputMode());
   if (gameSave.settings.brightnessPercent < 20 || gameSave.settings.brightnessPercent > 100)
@@ -2288,20 +2513,21 @@ void drawPokemonGenderSymbol(const OwnedPokemon& pokemon, int16_t centerX, int16
 }
 
 void button(int16_t x, int16_t y, int16_t w, int16_t h, const char* label, uint16_t color) {
-  display.fillRoundRect(x, y, w, h, 6, color); display.drawRoundRect(x, y, w, h, 6, TFT_WHITE);
+  const uint16_t ink = readableInkOn(color);
+  display.fillRoundRect(x, y, w, h, 6, color); display.drawRoundRect(x, y, w, h, 6, ink);
   // The asset-derived FireRed font has no '<' or '>' glyphs. Keep navigation
   // controls graphical everywhere (Bag, Trainer Card and Settings) instead
   // of rendering a misleading question mark on the real display.
   if (label && std::strcmp(label, "<") == 0) {
     const int16_t cy = y + h / 2;
     display.fillTriangle(x + w / 2 - 8, cy, x + w / 2 + 6, cy - 8,
-                         x + w / 2 + 6, cy + 8, TFT_WHITE);
+                         x + w / 2 + 6, cy + 8, ink);
     return;
   }
   if (label && std::strcmp(label, ">") == 0) {
     const int16_t cy = y + h / 2;
     display.fillTriangle(x + w / 2 + 8, cy, x + w / 2 - 6, cy - 8,
-                         x + w / 2 - 6, cy + 8, TFT_WHITE);
+                         x + w / 2 - 6, cy + 8, ink);
     return;
   }
   // Compound navigation labels used to fall through to the FireRed font,
@@ -2309,8 +2535,8 @@ void button(int16_t x, int16_t y, int16_t w, int16_t h, const char* label, uint1
   // directly and send only the supported word through the font.
   if (label && label[0] == '<' && label[1] == ' ') {
     const int16_t cy = y + h / 2;
-    display.fillTriangle(x + 8, cy, x + 20, cy - 7, x + 20, cy + 7, TFT_WHITE);
-    fireRedText.setTextColor(TFT_WHITE, color); fireRedText.setTextDatum(MC_DATUM);
+    display.fillTriangle(x + 8, cy, x + 20, cy - 7, x + 20, cy + 7, ink);
+    fireRedText.setTextColor(ink, color); fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringFitted(label + 2, x + w / 2 + 8, cy,
                                  std::max<int16_t>(1, w - 30), 1);
     fireRedText.setTextDatum(TL_DATUM);
@@ -2321,11 +2547,11 @@ void button(int16_t x, int16_t y, int16_t w, int16_t h, const char* label, uint1
       label[labelLength - 1U] == '>') {
     const int16_t cy = y + h / 2;
     display.fillTriangle(x + w - 8, cy, x + w - 20, cy - 7,
-                         x + w - 20, cy + 7, TFT_WHITE);
+                         x + w - 20, cy + 7, ink);
     char text[32]{};
     const size_t textLength = std::min<size_t>(labelLength - 2U, sizeof(text) - 1U);
     std::memcpy(text, label, textLength);
-    fireRedText.setTextColor(TFT_WHITE, color); fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.setTextColor(ink, color); fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringFitted(text, x + w / 2 - 8, cy,
                                  std::max<int16_t>(1, w - 30), 1);
     fireRedText.setTextDatum(TL_DATUM);
@@ -2333,19 +2559,19 @@ void button(int16_t x, int16_t y, int16_t w, int16_t h, const char* label, uint1
   }
   if (label && std::strcmp(label, "< PREV") == 0) {
     const int16_t cy = y + h / 2;
-    display.fillTriangle(x + 8, cy, x + 20, cy - 7, x + 20, cy + 7, TFT_WHITE);
-    fireRedText.setTextColor(TFT_WHITE, color); fireRedText.setTextDatum(MC_DATUM);
+    display.fillTriangle(x + 8, cy, x + 20, cy - 7, x + 20, cy + 7, ink);
+    fireRedText.setTextColor(ink, color); fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawString("PREV", x + w / 2 + 8, cy, 1); fireRedText.setTextDatum(TL_DATUM);
     return;
   }
   if (label && std::strcmp(label, "NEXT >") == 0) {
     const int16_t cy = y + h / 2;
-    display.fillTriangle(x + w - 8, cy, x + w - 20, cy - 7, x + w - 20, cy + 7, TFT_WHITE);
-    fireRedText.setTextColor(TFT_WHITE, color); fireRedText.setTextDatum(MC_DATUM);
+    display.fillTriangle(x + w - 8, cy, x + w - 20, cy - 7, x + w - 20, cy + 7, ink);
+    fireRedText.setTextColor(ink, color); fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawString("NEXT", x + w / 2 - 8, cy, 1); fireRedText.setTextDatum(TL_DATUM);
     return;
   }
-  fireRedText.setTextColor(TFT_WHITE, color); fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.setTextColor(ink, color); fireRedText.setTextDatum(MC_DATUM);
   fireRedText.drawStringFitted(label, x + w / 2, y + h / 2,
                                std::max<int16_t>(1, w - 4), 2);
   fireRedText.setTextDatum(TL_DATUM);
@@ -2960,6 +3186,32 @@ void latchBattleAnimationPaletteTaskTerminal(
             targetOpponent ? battleAnimationOpponentPaletteLatch
                            : battleAnimationPlayerPaletteLatch,
             color, amount);
+      break;
+    }
+    case BattleAnimationTaskMotion::BlendColorCycleExact: {
+      const uint8_t cycles = static_cast<uint8_t>(std::clamp<int16_t>(
+          arg(2, 1), 1, 255));
+      const uint8_t target = static_cast<uint8_t>(std::clamp<int16_t>(
+          arg(4, 0), 0, 16));
+      const uint8_t terminal = cycles == 1U ? target : 0U;
+      latchBattleAnimationPaletteMask(static_cast<uint16_t>(arg(0, 0)),
+                                      gbaBattleColorToRgb565(arg(5, 0)),
+                                      terminal);
+      break;
+    }
+    case BattleAnimationTaskMotion::BlendColorCycleExcludeExact: {
+      // The singles renderer has no visible partner palettes. The source's
+      // exclude task only additionally selects arena palettes when arg0 is 1.
+      if (arg(0, 0) == 1) {
+        const uint8_t cycles = static_cast<uint8_t>(std::clamp<int16_t>(
+            arg(2, 1), 1, 255));
+        const uint8_t target = static_cast<uint8_t>(std::clamp<int16_t>(
+            arg(4, 0), 0, 16));
+        setBattleAnimationPaletteLatch(
+            battleAnimationArenaPaletteLatch,
+            gbaBattleColorToRgb565(arg(5, 0)),
+            cycles == 1U ? target : 0U);
+      }
       break;
     }
     case BattleAnimationTaskMotion::BlendNonAttackerPalettesExact:
@@ -3978,11 +4230,14 @@ void drawBattleAnimationBase(const BattleAnimationData& animation) {
   const uint16_t opponentSpeciesId = presentedBattleSpeciesId(opponent, false);
   const uint8_t playerForm = presentedBattleForm(player, true);
   const uint8_t opponentForm = presentedBattleForm(opponent, false);
+  const MegaVariant playerMega = presentedBattleMegaVariant(player, true);
+  const MegaVariant opponentMega = presentedBattleMegaVariant(opponent, false);
   if (!battleArenaVisible || battleArenaPlayerUid != (player ? player->uid : 0U) ||
       battleArenaOpponentUid != (opponent ? opponent->uid : 0U) ||
       battleArenaPlayerSpeciesId != playerSpeciesId ||
       battleArenaOpponentSpeciesId != opponentSpeciesId ||
-      battleArenaPlayerForm != playerForm || battleArenaOpponentForm != opponentForm)
+      battleArenaPlayerForm != playerForm || battleArenaOpponentForm != opponentForm ||
+      battleArenaPlayerMega != playerMega || battleArenaOpponentMega != opponentMega)
     drawBattleArena(player, opponent);
 }
 
@@ -4158,7 +4413,7 @@ void playMetallicShineAnimation(const BattleAnimationData& animation,
   const uint16_t speciesId = presentedBattleSpeciesId(attacker, playerSide);
   if (!speciesId) return;
   OwnedPokemon visual = *attacker;
-  visual.form = presentedBattleForm(attacker, playerSide);
+  applyPresentedBattleAppearance(visual, playerSide);
   char path[112];
   pokemonAssetPath(path, sizeof(path), visual,
                    playerSide ? PokemonAssetView::Back : PokemonAssetView::Front,
@@ -4936,6 +5191,82 @@ int16_t battleAnimationCos(uint8_t angle, int16_t amplitude) {
   return battleAnimationSin(static_cast<uint8_t>(angle + 64U), amplitude);
 }
 
+void battleAnimationBlendColorCycleSegment(uint8_t segment, uint8_t cycles,
+                                           uint8_t initial, uint8_t target,
+                                           int16_t& start, int16_t& end) {
+  if (segment == 0U) {
+    // AnimTask_BlendColorCycle always starts from the unblended palette,
+    // regardless of initialBlendY. The latter is used by later alternations.
+    start = 0;
+    end = target;
+  } else if (segment & 1U) {
+    start = target;
+    end = initial;
+  } else {
+    start = initial;
+    end = target;
+  }
+  // The source callback forces the final *subsequent* fade back to zero.
+  // A one-segment cycle deliberately remains at targetBlendY.
+  if (segment != 0U && segment + 1U == cycles) end = 0;
+}
+
+uint16_t battleAnimationBlendColorCycleLifetime(uint16_t delay, uint8_t cycles,
+                                                uint8_t initial,
+                                                uint8_t target) {
+  uint32_t total = 0U;
+  for (uint8_t segment = 0U; segment < cycles; ++segment) {
+    int16_t start = 0;
+    int16_t end = 0;
+    battleAnimationBlendColorCycleSegment(segment, cycles, initial, target,
+                                          start, end);
+    total += static_cast<uint32_t>(std::abs(end - start) + 1) * delay;
+  }
+  return static_cast<uint16_t>(std::clamp<uint32_t>(total, 1U, 0xFFFEU));
+}
+
+uint8_t battleAnimationBlendColorCycleAmount(uint16_t age, uint16_t delay,
+                                             uint8_t cycles, uint8_t initial,
+                                             uint8_t target) {
+  uint32_t remaining = age;
+  for (uint8_t segment = 0U; segment < cycles; ++segment) {
+    int16_t start = 0;
+    int16_t end = 0;
+    battleAnimationBlendColorCycleSegment(segment, cycles, initial, target,
+                                          start, end);
+    const uint16_t distance = static_cast<uint16_t>(std::abs(end - start));
+    const uint32_t duration = static_cast<uint32_t>(distance + 1U) * delay;
+    if (remaining < duration || segment + 1U == cycles) {
+      const int16_t step = static_cast<int16_t>(std::min<uint32_t>(
+          distance, remaining / std::max<uint16_t>(1U, delay)));
+      return static_cast<uint8_t>(std::clamp<int16_t>(
+          start + (end >= start ? step : -step), 0, 16));
+    }
+    remaining -= duration;
+  }
+  return 0U;
+}
+
+uint8_t battleAnimationLavaPlumeLifetime(uint8_t phase,
+                                         bool enemyAttacking) {
+  const int16_t startX = enemyAttacking ? kBattleOpponentX : kBattlePlayerX;
+  const int16_t startY = enemyAttacking ? kBattleOpponentY : kBattlePlayerY;
+  const int16_t velocityX = battleAnimationSin(phase, 10);
+  const int16_t velocityY = battleAnimationCos(phase, 7);
+  // AnimLavaPlumeOrbitScatterStep destroys each plume independently when it
+  // leaves the native 240x160 camera. Preserve the camera's margin after its
+  // +40/+12 placement inside the 320x184 retained battle panel.
+  for (uint16_t age = 1U; age < 250U; ++age) {
+    const int16_t nativeX = static_cast<int16_t>(
+        startX - kBattleNativeViewportOriginX + velocityX * age);
+    const int16_t nativeY = static_cast<int16_t>(
+        startY - kBattleNativeViewportOriginY + velocityY * age);
+    if (nativeX < -16 || nativeX > 256 || nativeY < -16 || nativeY > 160)
+      return static_cast<uint8_t>(age);
+  }
+  return 250U;
+}
+
 bool battleAnimationAnchorIsOpponent(uint8_t anchor, bool enemyAttacking,
                                      bool targetAliasesAttacker) {
   const bool logicalTarget = anchor == 1U || anchor == 3U;
@@ -5147,7 +5478,50 @@ bool restoreBattleArenaBeforePresentation() {
 }
 
 bool restoreBattleArenaBeforeAnimation() {
-  return restoreBattleArenaBeforePresentation();
+  if (!battleAnimationArenaRestorePending) return true;
+  if (screen != Screen::Battle && screen != Screen::MoveSelect) {
+    battleAnimationArenaRestorePending = false;
+    finishAtomicBattleBackgroundReveal();
+    return true;
+  }
+  if (displaySleeping || !display.created()) return false;
+
+  // Back-to-back journal animations do not need an intermediate physical
+  // terrain frame. Requiring presentRetainedFrame() here made the next move
+  // depend on a shallow UI pass having happened first: after an opaque/heavy
+  // Z-Move, that retained commit could still be pending and every following
+  // preload was rejected. Rebuild the canonical manifest outside composition
+  // and let the first frame of the next animation replace the old plane in
+  // one atomic reveal instead.
+  AssetRenderer::setCompositionActive(false);
+  resetBattleVisualOverlay();
+  resetBattleAnimationRuntime();
+  battleVisualLastLeft = battleVisualLastTop =
+      battleVisualLastRight = battleVisualLastBottom = 0;
+  battleAnimationPreparedBackgroundPath[0] = 0;
+  battleAnimationRetainedCompositionWarm = false;
+  char terrainPath[80]{};
+  std::snprintf(terrainPath, sizeof(terrainPath),
+                "/pokegochi/assets/firered/battle_terrain/%s.pkg",
+                chooseBattleTerrain(presentedBattleOpponent()));
+  const bool ready = prepareBattleGraphics(
+      presentedBattlePlayer(), presentedBattleOpponent(), terrainPath);
+  if (!ready || storageRecoveryPending) {
+#if defined(POKEGOCHI_ANDROID) || defined(POKEGOCHI_SERIAL_PROFILING) || \
+    defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+    Serial.printf("[ANIM] next-scene restore failed ready=%u recovery=%u\n",
+                  ready ? 1U : 0U,
+                  storageRecoveryPending ? 1U : 0U);
+#endif
+    return false;
+  }
+  battleArenaVisible = false;
+  battleAnimationArenaRestorePending = false;
+  battleAnimationAtomicRevealPending = true;
+  invalidatePixels(0, 0, 320, 184);
+  requestRetainedFrame();
+  wirelessUpdate.emitLiveLog("ANIM_ARENA_REBUILT_FOR_NEXT");
+  return true;
 }
 
 bool battleAnimationRuntimeActive() {
@@ -5470,7 +5844,10 @@ void spawnBattleAnimationParticle(const BattleAnimationCommand& command,
           4, 200));
       break;
     case BattleAnimationMotion::LavaPlumeDrift:
-      slot->lifetime = 20U;
+      slot->lifetime = battleAnimationLavaPlumeLifetime(
+          static_cast<uint8_t>(battleAnimationArgument(
+              slot->arguments, slot->argumentCount, 0)),
+          battleAnimationCurrentEnemyAttacking);
       break;
     case BattleAnimationMotion::PluckParticleJump:
       slot->lifetime = static_cast<uint8_t>(std::clamp<int16_t>(
@@ -5681,6 +6058,12 @@ void spawnBattleAnimationParticle(const BattleAnimationCommand& command,
       slot->lifetime = static_cast<uint8_t>(std::clamp<int16_t>(
           battleAnimationArgument(slot->arguments, slot->argumentCount, 2, 24) + 1,
           4, 200));
+      break;
+    case BattleAnimationMotion::SurroundingRingRise:
+      // SpriteCB_SurroundingRing hard-codes data[0] = 13 and supplies no
+      // gBattleAnimArgs. Keep the generated fourteen-frame lifetime instead
+      // of interpreting absent Ancient Power arguments as a 24-frame move.
+      slot->lifetime = resource->lifetimeFrames;
       break;
     case BattleAnimationMotion::RaiseSprite:
       slot->lifetime = static_cast<uint8_t>(std::clamp<int16_t>(
@@ -5944,6 +6327,20 @@ void spawnBattleAnimationTask(const BattleAnimationCommand& command) {
         std::clamp<int32_t>(value, 1, 0xFFFE));
   };
   switch (slot->resource->motion) {
+    case BattleAnimationTaskMotion::BlendColorCycleExact:
+    case BattleAnimationTaskMotion::BlendColorCycleExcludeExact: {
+      const uint16_t delay = static_cast<uint16_t>(
+          std::max<int16_t>(0, arg(1, 0)) + 1);
+      const uint8_t cycles = static_cast<uint8_t>(std::clamp<int16_t>(
+          arg(2, 1), 1, 255));
+      const uint8_t initial = static_cast<uint8_t>(std::clamp<int16_t>(
+          arg(3, 0), 0, 16));
+      const uint8_t target = static_cast<uint8_t>(std::clamp<int16_t>(
+          arg(4, initial), 0, 16));
+      boundedLifetime(battleAnimationBlendColorCycleLifetime(
+          delay, cycles, initial, target));
+      break;
+    }
     case BattleAnimationTaskMotion::ShakeMonExact:
     case BattleAnimationTaskMotion::ShakeMon2Exact:
     case BattleAnimationTaskMotion::ShakeMonInPlaceExact:
@@ -6748,7 +7145,7 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
       if (!source) return;
       const uint16_t speciesId = presentedBattleSpeciesId(source, !sourceOpponent);
       OwnedPokemon visual = *source;
-      visual.form = presentedBattleForm(source, !sourceOpponent);
+      applyPresentedBattleAppearance(visual, !sourceOpponent);
       char path[112]{};
       pokemonAssetPath(path, sizeof(path), visual,
                        backView ? PokemonAssetView::Back
@@ -7237,27 +7634,18 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
             battleAnimationArgument(task.arguments, task.argumentCount, 3, 0), 0, 16));
         const uint8_t end = static_cast<uint8_t>(std::clamp<int16_t>(
             battleAnimationArgument(task.arguments, task.argumentCount, 4, start), 0, 16));
-        const uint8_t distance = static_cast<uint8_t>(std::max<int16_t>(1,
-            std::abs(static_cast<int16_t>(end) - start)));
-        const uint16_t half = distance * delay;
-        const uint16_t cycleAge = task.age % std::max<uint16_t>(1U, half * 2U);
-        const uint8_t step = static_cast<uint8_t>(std::min<uint16_t>(distance,
-            (cycleAge < half ? cycleAge : half * 2U - cycleAge) / delay));
-        const uint8_t amount = static_cast<uint8_t>(start +
-            (end >= start ? step : -static_cast<int16_t>(step)));
+        const uint8_t amount = battleAnimationBlendColorCycleAmount(
+            task.age, delay, cycles, start, end);
         const uint16_t color = gbaBattleColorToRgb565(battleAnimationArgument(
             task.arguments, task.argumentCount, 5, 0));
         if (excluded) {
-          if (selector != 0U && selector != 2U && selector != 4U)
-            applyColor(attackerOpponent, AssetColorEffect::Blend, color, amount);
-          if (selector != 1U && selector != 3U && selector != 4U)
-            applyColor(targetOpponent, AssetColorEffect::Blend, color, amount);
-          if (selector == 0U || selector == 1U || selector == 4U || selector == 5U)
+          // AnimTask_BlendColorCycleExclude addresses partner palettes plus,
+          // when arg0 is 1, the arena. Singles has no visible partners.
+          if (selector == 1U)
             applyArenaColor(AssetColorEffect::Blend, color, amount);
         } else {
           applyPaletteMask(selector, AssetColorEffect::Blend, color, amount);
         }
-        (void)cycles;
         break;
       }
       case BattleAnimationTaskMotion::DigDownMovement: {
@@ -7353,7 +7741,7 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
                                  : presentedBattlePlayer();
         if (mon) {
           OwnedPokemon visual = *mon;
-          visual.form = presentedBattleForm(mon, !side);
+          applyPresentedBattleAppearance(visual, !side);
           pokemonAssetPath(battleVisualOverlay.metallicPath,
               sizeof(battleVisualOverlay.metallicPath), visual,
               side ? PokemonAssetView::Front : PokemonAssetView::Back,
@@ -10286,6 +10674,13 @@ bool renderBattleAnimationProgramFrame(bool enemyAttacking,
             static_cast<int32_t>(attackerY - startY) * progress / denominator);
         break;
       }
+      case BattleAnimationMotion::SurroundingRingRise:
+        // Exact SpriteCB_SurroundingRing path from pokeemerald-expansion:
+        // attacker centre, +40 px start, then a 72 px linear rise.
+        x = attackerX;
+        y = static_cast<int16_t>(attackerY + 40 -
+            static_cast<int32_t>(72) * progress / denominator);
+        break;
       case BattleAnimationMotion::RaiseSprite: {
         const int16_t direction = targetX >= attackerX ? 1 : -1;
         const int16_t startX = static_cast<int16_t>(attackerX + direction * offsetX);
@@ -14133,7 +14528,7 @@ __attribute__((noinline)) bool preloadPresentedBattleBattlers() {
   OwnedPokemon* opponent = presentedBattleOpponent();
   if (player) {
     OwnedPokemon visual = *player;
-    visual.form = presentedBattleForm(player, true);
+    applyPresentedBattleAppearance(visual, true);
     pokemonAssetPath(path, sizeof(path), visual, PokemonAssetView::Back, 0,
                      presentedBattleSpeciesId(player, true));
     ready = AssetRenderer::primePreload(path) &&
@@ -14141,7 +14536,7 @@ __attribute__((noinline)) bool preloadPresentedBattleBattlers() {
   }
   if (opponent) {
     OwnedPokemon visual = *opponent;
-    visual.form = presentedBattleForm(opponent, false);
+    applyPresentedBattleAppearance(visual, false);
     pokemonAssetPath(path, sizeof(path), visual, PokemonAssetView::Front, 0,
                      presentedBattleSpeciesId(opponent, false));
     ready = AssetRenderer::primePreload(path) &&
@@ -14502,6 +14897,15 @@ void playBattleAnimationProgram(const BattleAnimationProgram& program,
         return false;
       }
     }
+    // Sequential ChangeBackground programs own one scene slot and page it at
+    // authored transitions. Keep the deferred-restore latch synchronized
+    // with the page that is actually resident; otherwise RestoreBackground
+    // can ask the retained compositor for the first plane after a later one
+    // replaced it (Stoked Sparksurfer: bg_73 versus bg_56).
+    std::strncpy(battleAnimationPreparedBackgroundPath, nextPath,
+                 sizeof(battleAnimationPreparedBackgroundPath) - 1U);
+    battleAnimationPreparedBackgroundPath[
+        sizeof(battleAnimationPreparedBackgroundPath) - 1U] = 0;
     return true;
   };
   const auto beginFadeToBackground = [&](uint8_t nextBackground) {
@@ -14861,11 +15265,18 @@ void playBattleAnimationProgram(const BattleAnimationProgram& program,
     trace->elapsedMs = elapsedMs;
     trace->ioFailure = storageRecoveryPending;
 #if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
-    Serial.printf("[R]%u,%lu,%lu,%u\n",
+    Serial.printf("[R]%u,%lu,%lu,%u,%u,%u,%u,%u,%u,%u,%u\n",
                   static_cast<unsigned>(trace->presentCalls),
                   static_cast<unsigned long>((trace->presentMaxUs + 500U) / 1000U),
                   static_cast<unsigned long>((trace->composeTotalUs + 500U) / 1000U),
-                  static_cast<unsigned>(trace->composedStripes));
+                  static_cast<unsigned>(trace->composedStripes),
+                  static_cast<unsigned>(trace->geometrySamples),
+                  static_cast<unsigned>(trace->maxLayers),
+                  static_cast<unsigned>(trace->maxTasks),
+                  static_cast<unsigned>(trace->maxParticles),
+                  static_cast<unsigned>(trace->outOfViewportLayers),
+                  trace->layerOverflow ? 1U : 0U,
+                  trace->ioFailure ? 1U : 0U);
 #else
 #if defined(POKEGOCHI_ANDROID) || defined(POKEGOCHI_SERIAL_PROFILING)
     Serial.printf("[ANIM] render present=%u total=%lums max=%lums compose=%lums "
@@ -15211,7 +15622,8 @@ bool preloadMoveAnimation(MoveId move, bool enemyAttacking = false,
     recordBattleRenderCheckpoint(kBattleCheckpointPreloadManifest,
                                  static_cast<uint16_t>(move), enemyAttacking);
     if (!manifestComplete || battlePlaneConflict) {
-#if defined(POKEGOCHI_ANDROID) || defined(POKEGOCHI_SERIAL_PROFILING)
+#if defined(POKEGOCHI_ANDROID) || defined(POKEGOCHI_SERIAL_PROFILING) || \
+    defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
       Serial.printf("[ANIM] invalid scene manifest move=%u conflict=%u\n",
                     static_cast<unsigned>(move), battlePlaneConflict ? 1U : 0U);
 #endif
@@ -15234,14 +15646,27 @@ bool preloadMoveAnimation(MoveId move, bool enemyAttacking = false,
       ready = AssetRenderer::primePreload(terrainPath) &&
               AssetRenderer::preload(terrainPath) && ready;
     } else {
-      if (!AssetRenderer::primePreload(replacementPlanePath)) return false;
+      if (!AssetRenderer::primePreload(replacementPlanePath)) {
+#if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+        Serial.println("[ANIM_DIAG] FAIL replacement-prime");
+#endif
+        return false;
+      }
       ready = AssetRenderer::preload(replacementPlanePath) && ready;
     }
-    if (effectPlanePath[0] && !AssetRenderer::primePreload(effectPlanePath))
+    if (effectPlanePath[0] && !AssetRenderer::primePreload(effectPlanePath)) {
+#if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+      Serial.println("[ANIM_DIAG] FAIL effect-prime");
+#endif
       return false;
+    }
     if (!AssetRenderer::prepareBattlePlane(
-            effectPlanePath[0] ? effectPlanePath : nullptr))
+            effectPlanePath[0] ? effectPlanePath : nullptr)) {
+#if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+      Serial.println("[ANIM_DIAG] FAIL battle-plane");
+#endif
       return false;
+    }
     // Only authored ChangeBackground planes replace the arena.  Several
     // FireRed callbacks also use files below battle_anims/backgrounds/ as
     // transparent helper fields (Refresh's cure bubbles, for example).  They
@@ -15323,7 +15748,8 @@ bool preloadMoveAnimation(MoveId move, bool enemyAttacking = false,
       ready = false;
     }
     if (!resourcesComplete || !ready) {
-#if defined(POKEGOCHI_ANDROID) || defined(POKEGOCHI_SERIAL_PROFILING)
+#if defined(POKEGOCHI_ANDROID) || defined(POKEGOCHI_SERIAL_PROFILING) || \
+    defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
       Serial.printf("[BATTLE] deterministic preload failed move=%u plane=%s\n",
                     static_cast<unsigned>(move),
                     effectPlanePath[0] ? effectPlanePath :
@@ -15566,6 +15992,23 @@ uint8_t unlockedContentGeneration() {
   return std::min<uint8_t>(3U, gameSave.gymProgress.unlockedGeneration);
 }
 
+bool masterBallHasBeenReceived() {
+  if (gameSave.inventory.balls[
+          static_cast<uint8_t>(PokeBallType::MasterBall)] != 0U)
+    return true;
+  for (uint8_t generation = 1U; generation <= 3U; ++generation)
+    if (PokedexRewards::wasGranted(gameSave.flags, generation)) return true;
+  const uint8_t gymRewardMask = static_cast<uint8_t>(
+      ((1U << 3U) - 1U) << GymSystem::kRegionRewardFirstBit);
+  if ((gameSave.gymProgress.starterClaimedBits & gymRewardMask) != 0U)
+    return true;
+  return (gameSave.sinnoh.rewardFlags &
+              SinnohExpedition::kMasterBallRewardBit) != 0U ||
+      (gameSave.unova.flags & UnovaAdventure::kMasterBallRewardBit) != 0U ||
+      (gameSave.kalos.flags & KalosAdventure::kMasterBallRewardBit) != 0U ||
+      (gameSave.alola.flags & AlolaAdventure::kMasterBallRewardBit) != 0U;
+}
+
 bool reconcileUnovaContent() {
   bool changed = UnovaAdventure::reconcile(gameSave.unova, gameSave.sinnoh);
   if (!unovaUnlocked()) return changed;
@@ -15586,16 +16029,33 @@ bool reconcileKalosContent() {
   return changed;
 }
 
+bool reconcileAlolaSpeciesItems(bool announceAshsBond) {
+  const bool hadAshsBond =
+      gen7UniqueItemQuantity(gameSave.gen7UniqueItems,HeldItem::AshsBond)!=0U;
+  if(!AlolaForms::reconcileUniqueItems(gameSave.collection,
+                                       gameSave.gen7UniqueItems))return false;
+  saveDirty=true;
+  const bool receivedAshsBond=!hadAshsBond&&
+      gen7UniqueItemQuantity(gameSave.gen7UniqueItems,HeldItem::AshsBond)!=0U;
+  if(announceAshsBond&&receivedAshsBond&&!homeNoticeAwaitingTap){
+    std::snprintf(homeNotice,sizeof(homeNotice),
+                  "FOUND SPECIES ITEM: ASH'S BOND!");
+    homeNoticeAwaitingTap=true;
+  }
+  return true;
+}
+
 bool reconcileAlolaContent() {
   bool changed = AlolaAdventure::reconcile(gameSave.alola, gameSave.kalos);
+  // Species-owned items follow the Pokemon, not the region screen. This is
+  // essential for existing saves and traded Greninja: merely having the mon
+  // in the Box must be enough to receive Ash's Bond retroactively.
+  if(reconcileAlolaSpeciesItems(false))changed=true;
   if (!alolaUnlocked()) return changed;
   CollectionLogic::applyGenerationContent(gameSave.collection, 7U);
   if (AlolaForms::reconcileFusionState(
           gameSave.collection, gameSave.alolaForms,
           gameSave.battle.active ? gameSave.battle.playerUid : 0U))
-    changed = true;
-  if (AlolaForms::reconcileUniqueItems(gameSave.collection,
-                                       gameSave.gen7UniqueItems))
     changed = true;
   return changed;
 }
@@ -15922,7 +16382,7 @@ bool itemCanBeUsedOutsideBattle(InventoryEntry entry) {
 bool applyInventoryItem(InventoryEntry entry, OwnedPokemon& pokemon) {
   if (entry.kind == InventoryEntryKind::Held) {
     const HeldItem selected=static_cast<HeldItem>(entry.id);
-    if(selected==HeldItem::MegaStone&&!MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+    if(!heldItemCanBeEquippedBy(selected,pokemon.speciesId))return false;
     const bool changed=equipHeldItem(pokemon,selected,gameSave.inventory.heldItems,
         gameSave.specialHeldItems,gameSave.gen4UniqueItems,
         gameSave.gen5UniqueItems,gameSave.gen7UniqueItems,
@@ -16396,12 +16856,14 @@ void playTradeAnimation(const OwnedPokemon& outgoing, const OwnedPokemon& incomi
     AssetRenderer::preload("/pokegochi/assets/firered/trade/gba.pkg");
     AssetRenderer::preload("/pokegochi/assets/firered/trade/wireless_signal.pkg");
     AssetRenderer::preload("/pokegochi/assets/firered/trade/link_mon_glow.pkg");
-    char path[96];
-    std::snprintf(path, sizeof(path), "/pokegochi/assets/pokemon/%sfront/%03u.pkg",
-                  outgoing.shiny ? "shiny/" : "", outgoing.speciesId);
+    char path[112];
+    // Trade must resolve the same form/mega/shiny path as creature(). The
+    // former base-species-only path could preload one file and then request a
+    // different form while retained composition forbade SD I/O, producing a
+    // missing received Pokemon even though the trade itself succeeded.
+    pokemonAssetPath(path, sizeof(path), outgoing, PokemonAssetView::Front);
     AssetRenderer::preload(path);
-    std::snprintf(path, sizeof(path), "/pokegochi/assets/pokemon/%sfront/%03u.pkg",
-                  incoming.shiny ? "shiny/" : "", incoming.speciesId);
+    pokemonAssetPath(path, sizeof(path), incoming, PokemonAssetView::Front);
     AssetRenderer::preload(path);
     for (uint8_t frame = 0; frame < 12; ++frame) {
       std::snprintf(path, sizeof(path), "/pokegochi/assets/firered/trade/pokeball_%02u.pkg", frame);
@@ -16430,7 +16892,7 @@ void playTradeAnimation(const OwnedPokemon& outgoing, const OwnedPokemon& incomi
   tradeVisualStage = 4; tradeVisualY = 105;
   presentTradeCinematic(1400);
 
-  bagPage = kMultiplayerPage;
+  bagPage = activeMultiplayerPage();
   inventoryBattleContext = false;
   inventoryMode = InventoryMode::Browse;
   boxOverlay = BoxOverlay::None;
@@ -17316,7 +17778,7 @@ void drawProfessorDialogue(const char* text) {
   // The dialogue is intentionally modal; this FireRed cursor is the visual
   // contract that a tap advances to the next page rather than selecting an
   // element behind the text box.
-  display.fillTriangle(296, 220, 306, 220, 301, 228, TFT_WHITE);
+  display.fillTriangle(296, 220, 306, 220, 301, 228, themePrimaryInk());
 }
 
 void drawOakIntro() {
@@ -17614,18 +18076,19 @@ void seedAndroidLegendaryBoxFixture() {
   constexpr uint8_t kGroudonGranted = 1U << 2U;
   constexpr uint8_t kKyogreGranted = 1U << 3U;
   constexpr uint8_t kDarkraiGranted = 1U << 4U;
+  constexpr uint8_t kZeraoraGranted = 1U << 5U;
   constexpr uint8_t kAllGranted = kDeoxysGranted | kRayquazaGranted |
-      kGroudonGranted | kKyogreGranted | kDarkraiGranted;
+      kGroudonGranted | kKyogreGranted | kDarkraiGranted | kZeraoraGranted;
   uint8_t& receipts = gameSave.creativeBackgrounds.reserved[1];
   if ((receipts & kAllGranted) == kAllGranted) return;
 
   uint8_t added = 0U;
   bool changed = false;
   auto grant = [&](uint16_t speciesId, uint8_t receipt,
-                   uint32_t personalitySeed) {
+                   uint32_t personalitySeed, uint8_t contentGeneration) {
     if ((receipts & receipt) != 0U) return;
     OwnedPokemon pokemon = CollectionLogic::createPokemon(
-        0U, speciesId, 100U, false, personalitySeed, 4U);
+        0U, speciesId, 100U, false, personalitySeed, contentGeneration);
     uint32_t assignedUid = 0U;
     if (!CollectionLogic::add(gameSave.collection, pokemon, &assignedUid)) {
       Serial.printf("[ANDROID_TEST] species=%u pending: Box full\n",
@@ -17641,11 +18104,12 @@ void seedAndroidLegendaryBoxFixture() {
                   static_cast<unsigned long>(assignedUid));
   };
 
-  grant(386U, kDeoxysGranted, 0x44454F58U);   // "DEOX"
-  grant(384U, kRayquazaGranted, 0x52415951U); // "RAYQ"
-  grant(383U, kGroudonGranted, 0x47524F55U);  // "GROU"
-  grant(382U, kKyogreGranted, 0x4B594F47U);   // "KYOG"
-  grant(491U, kDarkraiGranted, 0x4441524BU);  // "DARK"
+  grant(386U, kDeoxysGranted, 0x44454F58U, 4U);   // "DEOX"
+  grant(384U, kRayquazaGranted, 0x52415951U, 4U); // "RAYQ"
+  grant(383U, kGroudonGranted, 0x47524F55U, 4U);  // "GROU"
+  grant(382U, kKyogreGranted, 0x4B594F47U, 4U);   // "KYOG"
+  grant(491U, kDarkraiGranted, 0x4441524BU, 4U);  // "DARK"
+  grant(807U, kZeraoraGranted, 0x5A455241U, 7U);  // "ZERA"
   if (changed) {
     saveDirty = true;
     Serial.printf("[ANDROID_TEST] legendary fixture added=%u receipts=0x%02X\n",
@@ -17814,6 +18278,43 @@ void forceRetainedRegionTransfer(int16_t x, int16_t y,
     for (uint8_t tile = firstTile; tile <= lastTile; ++tile)
       retainedTileHash[stripe][tile] = 0U;
 #endif
+}
+
+void requestPvpFullBattleSurfaceRefresh(const char* reason) {
+  if (!pvpSessionActive) return;
+  pvpFullBattleSurfaceRefreshPending = true;
+  battleArenaVisible = false;
+  battleAnimationRetainedCompositionWarm = false;
+  invalidatePixels(0, 0, 320, 240);
+  forceRetainedRegionTransfer(0, 0, 320, 240);
+  requestRetainedFrame();
+  Serial.printf("[GFX] PvP full battle refresh queued reason=%s turn=%u\n",
+                reason ? reason : "unknown",
+                static_cast<unsigned>(gameSave.battle.turn));
+}
+
+bool clearPvpTransientBattlePrompt(const char* reason) {
+  if (!message[0] ||
+      (!std::strstr(message, "WAITING") &&
+       !std::strstr(message, "LOCKED") &&
+       !std::strstr(message, "SYNCING"))) return false;
+
+  message[0] = 0;
+  battlePromptScroll = 0;
+  if (screen == Screen::Battle) {
+    // The decision timer normally damages only y=160..175. If the transport
+    // clears SYNCING/WAITING immediately before that tick, repainting only
+    // those two retained stripes leaves the lower glyph rows from the old
+    // text below the new WHAT WILL prompt. Make the prompt-state hand-off one
+    // complete 80-row GRAM stream; coherentPvpRows presents it through a
+    // single address window, so no old/new text can survive the transaction.
+    invalidatePixels(0, 160, 320, 80);
+    requestRetainedFrame();
+  }
+  Serial.printf("[GFX] PvP prompt ready reason=%s turn=%u\n",
+                reason ? reason : "unknown",
+                static_cast<unsigned>(gameSave.battle.turn));
+  return true;
 }
 
 bool beginScreenPresentation(Screen target, uint16_t clearColor) {
@@ -19695,6 +20196,10 @@ void drawHome() {
                     heldItemName(gen4Item));
     homeNoticeAwaitingTap=true;saveDirty=true;
   }
+  // Captures, trades, imports and evolutions all converge on Home. Reconcile
+  // here so a Greninja that already existed before this build receives its
+  // item without requiring the player to open the Alola region first.
+  reconcileAlolaSpeciesItems(true);
   if (luckyEggMessagePendingPercent && !homeNoticeAwaitingTap) {
     std::snprintf(homeNotice, sizeof(homeNotice),
                   "LUCKY EGG: +%u%% PARTY EXP ACTIVE!",
@@ -20096,7 +20601,6 @@ constexpr int16_t kSettingsMoreWirelessY = 48;
 constexpr int16_t kSettingsScreenTimeoutY = 77;
 #else
 constexpr int16_t kSettingsScreenTimeoutY = 106;
-constexpr int16_t kSettingsMoreKidsY = 112;
 #endif
 constexpr int16_t kSettingsMoreCardHeight = 58;
 constexpr int16_t kSettingsMoreInfoY = 175;
@@ -20158,7 +20662,7 @@ void drawSettingsBrightnessCard() {
   display.fillRoundRect(248, 52, 48, 18, 7, themePale());
   display.drawRoundRect(248, 52, 48, 18, 7, themeDark());
   fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), themePale());
+  fireRedText.setTextColor(themePaleInk(), themePale());
   fireRedText.drawString(brightness, 272, 61, 1);
   fireRedText.setTextDatum(TL_DATUM);
 
@@ -20183,7 +20687,7 @@ void drawSettingsTimeoutCard() {
   display.fillRoundRect(165, kSettingsScreenTimeoutY + 6, 95, 33, 6, themePale());
   display.drawRoundRect(165, kSettingsScreenTimeoutY + 6, 95, 33, 6, themeDark());
   fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), themePale());
+  fireRedText.setTextColor(themePaleInk(), themePale());
   fireRedText.drawStringFitted(screenTimeoutLabel(gameSave.settings.screenTimeout()),
                                212, kSettingsScreenTimeoutY + 22, 83, 2);
   fireRedText.setTextDatum(TL_DATUM);
@@ -20398,19 +20902,7 @@ void drawSettings() {
       fireRedText.setTextColor(kBattleInk,kSettingsWell);
       fireRedText.drawString("APP VERSION",23,73,2);
       fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);
-      fireRedText.drawStringFitted("APP 3.0 RELEASE",23,98,270,2);
-#else
-      drawGbaInsetPanel(13,kSettingsMoreKidsY,294,kSettingsMoreCardHeight,7,
-                        kBattleFrameShadow,kSettingsWell,kBattleFrameGold);
-      drawKidsPokeball(48,kSettingsMoreKidsY+29,17);
-      fireRedText.setTextColor(kBattleInk,kSettingsWell);
-      fireRedText.drawStringFitted("KIDS GAMES",74,kSettingsMoreKidsY+8,
-                                   kSettingsMoreTextRight-74,2);
-      fireRedText.setTextColor(TFT_DARKGREY,kSettingsWell);
-      fireRedText.drawStringFitted("3 MINI GAMES",74,kSettingsMoreKidsY+32,
-                                   kSettingsMoreTextRight-74,1);
-      button(kSettingsMoreButtonX,kSettingsMoreKidsY+10,kSettingsMoreButtonWidth,
-             kSettingsMoreButtonHeight,"OPEN",0x04D3);
+      fireRedText.drawStringFitted("APP 3.1 RELEASE",23,98,270,2);
 #endif
 #if !defined(POKEGOCHI_ANDROID)
       // The firmware keeps its hardware/build metadata in this footer. The
@@ -20546,834 +21038,6 @@ void drawBerryGarden(){
       "SOIL: PLANT  TREE: WATER / PICK",78,213,195,1);
 }
 
-uint32_t nextKidsRandom() {
-  kidsRandomState ^= kidsRandomState << 13;
-  kidsRandomState ^= kidsRandomState >> 17;
-  kidsRandomState ^= kidsRandomState << 5;
-  return kidsRandomState;
-}
-
-uint8_t kidsMemoryPairCount(){
-  uint8_t cards=0;
-  for(uint8_t index=0;index<12U;++index)
-    if(kidsMemoryState.matched&(1U<<index))++cards;
-  return static_cast<uint8_t>(cards/2U);
-}
-
-void formatKidsTime(char* output,size_t outputSize,uint32_t startedMs,
-                    uint32_t finishedMs){
-  if(!output||!outputSize)return;
-  const uint32_t elapsedMs=finishedMs-startedMs;
-  const uint32_t totalTenths=elapsedMs/100U;
-  const uint32_t minutes=totalTenths/600U;
-  const uint32_t seconds=(totalTenths/10U)%60U;
-  const uint32_t tenths=totalTenths%10U;
-  std::snprintf(output,outputSize,"%02lu:%02lu.%lu",
-      static_cast<unsigned long>(minutes),static_cast<unsigned long>(seconds),
-      static_cast<unsigned long>(tenths));
-}
-
-// Real-animal silhouettes that are easy to name at a glance. A round picks
-// only six unique entries, so the board remains 12 cards while repeat plays
-// get a much wider cast.
-constexpr uint16_t kKidsAnimalSpecies[] = {
-    19,   // Rattata - rat
-    16,   // Pidgey - bird
-    10,   // Caterpie - caterpillar
-    129,  // Magikarp - fish
-    58,   // Growlithe - dog
-    179,  // Mareep - sheep
-    216,  // Teddiursa - bear cub
-    217,  // Ursaring - bear
-    21,   // Spearow - bird
-    144,  // Articuno - legendary bird
-    54,   // Psyduck - duck
-    83,   // Farfetch'd - duck
-    77,   // Ponyta - horse
-    241,  // Miltank - cow
-    128,  // Tauros - bull
-    98,   // Krabby - crab
-    228,  // Houndour - dog
-    309,  // Electrike - dog
-    52,   // Meowth - cat
-    161,  // Sentret - ferret
-    118,  // Goldeen - fish
-    255,  // Torchic - chick
-    158,  // Totodile - crocodile
-    319,  // Sharpedo - shark
-    320,  // Wailmer - whale
-    203,  // Girafarig - giraffe
-    301,  // Delcatty - cat
-    277,  // Swellow - bird
-    279,  // Pelipper - pelican
-    262,  // Mightyena - wolf/dog
-    264,  // Linoone - badger
-    322,  // Numel - camel
-    324,  // Torkoal - tortoise
-    341,  // Corphish - crayfish
-    335,  // Zangoose - mongoose
-};
-
-void resetKidsMemory() {
-  kidsRandomState ^= millis() + static_cast<uint32_t>(gameSave.playTimeSeconds);
-  constexpr uint8_t speciesCount=static_cast<uint8_t>(
-      sizeof(kKidsAnimalSpecies)/sizeof(kKidsAnimalSpecies[0]));
-  uint8_t choices[speciesCount];
-  for(uint8_t index=0;index<speciesCount;++index)choices[index]=index;
-  for(uint8_t index=speciesCount-1U;index>0;--index){
-    const uint8_t other=static_cast<uint8_t>(nextKidsRandom()%(index+1U));
-    std::swap(choices[index],choices[other]);
-  }
-  for(uint8_t index=0;index<12U;++index)kidsMemoryCards[index]=choices[index%6U];
-  for (uint8_t index = 11; index > 0; --index) {
-    const uint8_t other = static_cast<uint8_t>(nextKidsRandom() % (index + 1U));
-    std::swap(kidsMemoryCards[index], kidsMemoryCards[other]);
-  }
-  // A round owns the complete sprite workspace. Clearing it first prevents
-  // assets from previous rounds/screens accumulating across repeated entry.
-  AssetRenderer::clearCache();
-  for(uint8_t index=0;index<12U;++index){
-    OwnedPokemon visual{};
-    visual.speciesId=kKidsAnimalSpecies[kidsMemoryCards[index]];
-    char path[112];
-    pokemonAssetPath(path,sizeof(path),visual,PokemonAssetView::Front);
-    AssetRenderer::preload(path);
-  }
-  kidsMemoryState = KidsMemoryGame::State{};
-}
-
-constexpr int16_t kKidsExitX=199;
-constexpr int16_t kKidsExitY=10;
-constexpr int16_t kKidsExitWidth=110;
-constexpr int16_t kKidsExitHeight=29;
-constexpr int16_t kKidsExitKnob=25;
-constexpr uint8_t kKidsExitTravel=kKidsExitWidth-kKidsExitKnob-4;
-
-void endKidsPaintCanvas();
-
-void resetKidsExitSlider(){
-  kidsExitSlide=0;kidsExitDragging=false;kidsExitAwaitRelease=false;
-}
-
-bool serviceKidsExitSlider(const TouchPoint& point){
-  const bool kidsScreen=screen==Screen::KidsMenu||screen==Screen::KidsMemory||
-                        screen==Screen::KidsPaint||screen==Screen::KidsCatch||
-                        screen==Screen::KidsTowerCampaign||screen==Screen::KidsTowerTeam||
-                        screen==Screen::KidsTowerBattle;
-  // Completion changes screens before Android necessarily delivers ACTION_UP.
-  // Keep consuming that same finger even on the destination screen; otherwise
-  // the slider endpoint overlaps Settings' X and immediately closes Settings.
-  if(kidsExitAwaitRelease){
-    if(!point.touched)resetKidsExitSlider();
-    return point.touched;
-  }
-  if(!kidsScreen){resetKidsExitSlider();return false;}
-  if(!point.touched){
-    if(kidsExitDragging){
-#if defined(POKEGOCHI_ANDROID)
-      Serial.printf("[INPUT_TRACE] kids_slider cancel=release screen=%s progress=%u\n",
-                    androidScreenName(screen), static_cast<unsigned>(kidsExitSlide));
-#endif
-      kidsExitDragging=false;kidsExitSlide=0;
-      invalidatePixels(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight);
-      requestRetainedFrame();
-    }
-    return false;
-  }
-  const bool insideTrack=point.x>=kKidsExitX&&point.x<kKidsExitX+kKidsExitWidth&&
-                         point.y>=kKidsExitY-5&&point.y<kKidsExitY+kKidsExitHeight+5;
-  if(!kidsExitDragging){
-    if(!insideTrack||point.x>kKidsExitX+kKidsExitKnob+8)return false;
-    kidsExitDragging=true;
-#if defined(POKEGOCHI_ANDROID)
-    Serial.printf("[INPUT_TRACE] kids_slider start screen=%s x=%d y=%d\n",
-                  androidScreenName(screen), point.x, point.y);
-#endif
-  }
-  if(!insideTrack){
-#if defined(POKEGOCHI_ANDROID)
-    Serial.printf("[INPUT_TRACE] kids_slider cancel=outside screen=%s x=%d y=%d\n",
-                  androidScreenName(screen), point.x, point.y);
-#endif
-    kidsExitDragging=false;kidsExitSlide=0;return true;
-  }
-  const int16_t travelX=std::clamp<int16_t>(point.x-(kKidsExitX+kKidsExitKnob/2),0,kKidsExitTravel);
-  kidsExitSlide=static_cast<uint8_t>(travelX*100/kKidsExitTravel);
-  invalidatePixels(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight);
-  requestRetainedFrame();
-  if(kidsExitSlide<96U)return true;
-  const Screen leaving=screen;
-#if defined(POKEGOCHI_ANDROID)
-  Serial.printf("[INPUT_TRACE] kids_slider complete from=%s x=%d\n",
-                androidScreenName(leaving), point.x);
-#endif
-  kidsExitDragging=false;kidsExitSlide=0;kidsExitAwaitRelease=true;
-  AssetRenderer::clearSmallCache();
-  if(leaving==Screen::KidsMenu){settingsPage=0;settingsScroll=4;screen=Screen::Settings;drawSettings();}
-  else if(leaving==Screen::KidsTowerTeam||leaving==Screen::KidsTowerBattle){
-    if(leaving==Screen::KidsTowerBattle&&kidsTowerRuntime.phase==TowerDefense::Phase::Active)
-      std::snprintf(kidsTowerNotice,sizeof(kidsTowerNotice),"DEFENSE RETREATED.");
-    screen=Screen::KidsTowerCampaign;drawKidsTowerCampaign();
-  }
-  else{
-    if(leaving==Screen::KidsPaint)endKidsPaintCanvas();
-    screen=Screen::KidsMenu;drawKidsMenu();
-  }
-  return true;
-}
-
-void drawKidsExitSlider(){
-  display.fillRoundRect(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight,8,kSettingsWell);
-  display.drawRoundRect(kKidsExitX,kKidsExitY,kKidsExitWidth,kKidsExitHeight,8,themeDark());
-  fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(),kSettingsWell);
-  fireRedText.drawString("SLIDE",kKidsExitX+68,kKidsExitY+15,1);
-  display.fillTriangle(kKidsExitX+98,kKidsExitY+10,kKidsExitX+98,kKidsExitY+20,
-                       kKidsExitX+104,kKidsExitY+15,themeDark());
-  const int16_t knobX=kKidsExitX+2+(static_cast<uint16_t>(kidsExitSlide)*kKidsExitTravel/100U);
-  display.fillRoundRect(knobX,kKidsExitY+2,kKidsExitKnob,kKidsExitHeight-4,6,0x04D3);
-  display.drawRoundRect(knobX,kKidsExitY+2,kKidsExitKnob,kKidsExitHeight-4,6,themeDark());
-  display.fillTriangle(knobX+9,kKidsExitY+9,knobX+9,kKidsExitY+21,
-                       knobX+16,kKidsExitY+15,TFT_WHITE);
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-void drawKidsPokeball(int16_t cx,int16_t cy,int16_t radius){
-  display.fillCircle(cx,cy,radius,TFT_WHITE);
-  // Paint only pixels inside the upper semicircle. A rectangular lower-half
-  // overlay used to protrude beyond the circle and looked like a square tab.
-  for(int16_t dy=-radius+1;dy<0;++dy)
-    for(int16_t dx=-radius+1;dx<radius;++dx)
-      if(dx*dx+dy*dy<(radius-1)*(radius-1))display.drawPixel(cx+dx,cy+dy,TFT_RED);
-  display.fillRect(cx-radius,cy-2,radius*2+1,4,themeDark());
-  display.fillCircle(cx,cy,static_cast<int16_t>(radius/3+2),themeDark());
-  display.fillCircle(cx,cy,static_cast<int16_t>(radius/3),TFT_WHITE);
-  display.drawCircle(cx,cy,radius,themeDark());
-}
-
-void drawKidsPaintIcon(int16_t cx,int16_t cy){
-  display.fillCircle(cx-3,cy,18,0xFF5C);
-  display.drawCircle(cx-3,cy,18,themeDark());
-  display.fillCircle(cx-10,cy-6,3,TFT_RED);
-  display.fillCircle(cx-1,cy-10,3,TFT_BLUE);
-  display.fillCircle(cx+7,cy-4,3,TFT_GREEN);
-  display.fillCircle(cx+4,cy+7,4,TFT_WHITE);
-  for(int8_t offset=-2;offset<=2;++offset)
-    display.drawLine(cx+4+offset,cy+13,cx+16+offset,cy-13,TFT_WHITE);
-  display.drawLine(cx+4,cy+13,cx+16,cy-13,0x8410);
-}
-
-void drawKidsMenu() {
-  const bool entering = beginScreenPresentation(Screen::KidsMenu, TFT_BLACK);
-  if (!entering) invalidatePixels(1, 1, 318, 238);
-  drawSettingsShell("KIDS GAMES");
-  drawKidsExitSlider();
-  display.fillCircle(12,46,4,0xFFE0);display.fillCircle(309,125,5,0xF81F);
-  display.fillCircle(9,218,3,0x07FF);display.fillCircle(313,226,3,0xFFE0);
-  constexpr const char* labels[4] = {"ANIMAL CARDS", "BERRY CATCH", "FREE PAINT", "POKE DEFENSE"};
-  constexpr const char* captions[4] = {"MATCH THE PAIRS", "CATCH TEN BERRIES", "DRAW WITH YOUR FINGER", "BUILD, DEFEND, PROGRESS"};
-  constexpr uint16_t colors[4] = {0xFEB2, 0x8E7F, 0xBDF7, 0xA69F};
-  for (uint8_t index = 0; index < 4U; ++index) {
-    const int16_t y = 45 + index * 44;
-    display.fillRoundRect(21,y+3,284,40,9,0x6B4D);
-    display.fillRoundRect(18, y, 284, 40, 9, colors[index]);
-    display.drawRoundRect(18,y,284,40,9,TFT_WHITE);
-    display.drawRoundRect(19,y+1,282,38,8,themeDark());
-    display.fillCircle(54, y + 20, 16, TFT_WHITE);
-    display.drawCircle(54, y + 20, 16, themeDark());
-    fireRedText.setTextDatum(MC_DATUM);
-    fireRedText.setTextColor(themeDark(), colors[index]);
-    fireRedText.drawStringFitted(labels[index], 187, y + 14, 188, 2);
-    fireRedText.drawStringFitted(captions[index], 187, y + 30, 188, 1);
-    if(index==0)drawKidsPokeball(54,y+20,11);
-    else if(index==1){
-      display.fillCircle(54,y+20,10,TFT_RED);
-      display.fillCircle(50,y+16,3,TFT_WHITE);
-      display.fillRect(52,y+5,5,6,TFT_DARKGREEN);
-    }else if(index==2)drawKidsPaintIcon(54,y+20);
-    else {
-      display.fillCircle(54,y+20,12,0xFFFF);
-      display.drawCircle(54,y+20,12,themeDark());
-      display.fillTriangle(54,y+8,46,y+28,62,y+28,TFT_RED);
-      display.fillCircle(54,y+21,4,TFT_WHITE);
-    }
-  }
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-void drawKidsAnimal(uint8_t animal, int16_t x, int16_t y) {
-  constexpr uint8_t speciesCount=static_cast<uint8_t>(
-      sizeof(kKidsAnimalSpecies)/sizeof(kKidsAnimalSpecies[0]));
-  OwnedPokemon visual{};
-  visual.speciesId=kKidsAnimalSpecies[animal%speciesCount];
-  char path[112];
-  pokemonAssetPath(path,sizeof(path),visual,PokemonAssetView::Front);
-  // Original FireRed pixels at 1:1. Fractional downscaling made a one-pixel
-  // outline alternate in thickness and look corrupted around the silhouette.
-  if(sdReady&&drawCenteredPokemonAsset(path,x,y,64U,64U))return;
-  creature(x,y,visual);
-}
-
-void drawKidsMemory() {
-  const bool entering = beginScreenPresentation(Screen::KidsMemory, TFT_BLACK);
-  if (!entering) invalidatePixels(1, 1, 318, 238);
-  drawSettingsShell("ANIMAL CARDS");
-  drawKidsExitSlider();
-  for (uint8_t index = 0; index < 12U; ++index) {
-    const int16_t x = 12 + (index % 4U) * 77;
-    const int16_t y = 48 + (index / 4U) * 61;
-    const bool faceUp = (kidsMemoryState.matched & (1U << index)) ||
-        kidsMemoryState.first==static_cast<int8_t>(index) ||
-        kidsMemoryState.second==static_cast<int8_t>(index);
-    display.fillRoundRect(x+2,y+3,68,53,7,0x6B4D);
-    display.fillRoundRect(x, y, 68, 53, 7, faceUp ? TFT_WHITE : themePrimary());
-    display.drawRoundRect(x, y, 68, 53, 7, themeDark());
-    if (faceUp) {
-      drawKidsAnimal(kidsMemoryCards[index], x + 34, y + 27);
-      // The 64px source has transparent padding slightly taller than the card.
-      // Restore the frame on top so every revealed card keeps a clean edge.
-      display.drawRoundRect(x,y,68,53,7,themeDark());
-    } else {
-      display.drawRoundRect(x+4,y+4,60,45,5,TFT_WHITE);
-      drawKidsPokeball(x+34,y+27,13);
-    }
-  }
-  fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), kSettingsPaper);
-  char footer[52];
-  const uint8_t pairs=kidsMemoryPairCount();
-  std::snprintf(footer,sizeof(footer),"PAIRS %u/6   TRIES %u",pairs,
-                static_cast<unsigned>(kidsMemoryState.attempts));
-  fireRedText.drawStringFitted(footer,160,230,302,1);
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-void resetKidsCatch(){
-  kidsCatchScore=0;
-  kidsCatchTimerStarted=false;
-  kidsCatchStartedMs=0;
-  kidsCatchFinishedMs=0;
-  kidsRandomState^=millis()+gameSave.playTimeSeconds;
-  kidsCatchBerry=static_cast<uint8_t>(nextKidsRandom()%BerryGarden::kPlantableBerryCount);
-  kidsCatchX=static_cast<int16_t>(30+nextKidsRandom()%260U);
-  kidsCatchY=static_cast<int16_t>(67+nextKidsRandom()%112U);
-}
-
-void drawKidsCatch(){
-  const bool entering=beginScreenPresentation(Screen::KidsCatch,TFT_BLACK);
-  if(!entering)invalidatePixels(1,1,318,238);
-  drawSettingsShell("BERRY CATCH");
-  drawKidsExitSlider();
-  static constexpr const char* kSceneAssets[]={
-    "/pokegochi/assets/firered/ui/home_background_16.pkg",
-    "/pokegochi/assets/firered/items/held_01.pkg",
-    "/pokegochi/assets/firered/items/held_02.pkg",
-    "/pokegochi/assets/firered/items/held_03.pkg",
-    "/pokegochi/assets/firered/items/held_04.pkg",
-    "/pokegochi/assets/firered/items/held_05.pkg",
-    "/pokegochi/assets/firered/items/held_06.pkg",
-    "/pokegochi/assets/firered/items/held_07.pkg",
-    "/pokegochi/assets/firered/items/held_08.pkg",
-    "/pokegochi/assets/firered/items/held_09.pkg",
-  };
-  prepareUiScene(0x42455252UL,kSceneAssets,sizeof(kSceneAssets)/sizeof(kSceneAssets[0]));
-  if(!AssetRenderer::draw(display,kSceneAssets[0],8,49))display.fillRect(8,49,304,134,TFT_GREEN);
-  display.drawRect(8,49,304,134,themeDark());
-  if(kidsCatchScore<10U){
-    const HeldItem berry=BerryGarden::plantableBerry(kidsCatchBerry);
-    char berryPath[80];std::snprintf(berryPath,sizeof(berryPath),
-        "/pokegochi/assets/firered/items/held_%02u.pkg",static_cast<unsigned>(berry));
-    display.fillCircle(kidsCatchX,kidsCatchY,18,TFT_WHITE);
-    display.drawCircle(kidsCatchX,kidsCatchY,18,themeDark());
-    AssetRenderer::draw(display,berryPath,kidsCatchX-12,kidsCatchY-12);
-  }
-  display.fillRoundRect(68,189,184,36,7,kSettingsWell);
-  display.drawRoundRect(68,189,184,36,7,themeDark());
-  char score[40];
-  if(kidsCatchScore>=10U)std::snprintf(score,sizeof(score),"BERRIES  10 / 10");
-  else std::snprintf(score,sizeof(score),"BERRIES  %u / 10",kidsCatchScore);
-  fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(),kSettingsWell);
-  fireRedText.drawString(score,160,kidsCatchScore>=10U?200:207,
-                         kidsCatchScore>=10U?1:2);
-  if(kidsCatchScore>=10U){
-    char elapsed[16];formatKidsTime(elapsed,sizeof(elapsed),kidsCatchStartedMs,
-                                    kidsCatchFinishedMs);
-    char timeText[28];std::snprintf(timeText,sizeof(timeText),"TIME  %s",elapsed);
-    fireRedText.drawString(timeText,160,216,1);
-  }
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-constexpr int16_t kTowerBoardX = 8;
-constexpr int16_t kTowerBoardY = 43;
-constexpr int16_t kTowerBoardWidth = 304;
-constexpr int16_t kTowerBoardHeight = 134;
-
-void refreshKidsTowerDefenders() {
-  for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index) {
-    TowerDefense::DefenderSnapshot& snapshot = kidsTowerDefenders[index];
-    snapshot = TowerDefense::DefenderSnapshot{};
-    const OwnedPokemon* pokemon = CollectionLogic::active(gameSave.collection, index);
-    if (!pokemon || !pokemon->speciesId) continue;
-    const SpeciesData* species = findSpecies(pokemon->speciesId);
-    snapshot.active = (gameSave.towerDefense.enabledDefendersMask & (1U << index)) != 0U;
-    snapshot.uid = pokemon->uid;
-    snapshot.speciesId = pokemon->speciesId;
-    snapshot.attack = CollectionLogic::calculatedStat(*pokemon, PokemonStat::Attack);
-    snapshot.specialAttack = CollectionLogic::calculatedStat(*pokemon, PokemonStat::SpAttack);
-    snapshot.speed = CollectionLogic::calculatedStat(*pokemon, PokemonStat::Speed);
-    snapshot.level = pokemon->level;
-    snapshot.typeIndex = species ? static_cast<uint8_t>(species->type1) : 0U;
-  }
-}
-
-uint8_t kidsTowerAvailableDefenderCount() {
-  uint8_t count = 0;
-  for (const TowerDefense::DefenderSnapshot& defender : kidsTowerDefenders)
-    if (defender.active) ++count;
-  return count;
-}
-
-void kidsTowerBackgroundPath(char* path, size_t pathSize, uint8_t stage) {
-  std::snprintf(path, pathSize, "/pokegochi/assets/firered/ui/home_background_%02u.pkg",
-                static_cast<unsigned>(TowerDefense::stageInfo(stage).backgroundId));
-}
-
-bool prepareKidsTowerScene(uint8_t stage, bool includeParty) {
-  refreshKidsTowerDefenders();
-  char background[88];
-  char partyPaths[TowerDefense::kDefenderCount][112]{};
-  char enemyPaths[4][112]{};
-  const char* assets[1 + TowerDefense::kDefenderCount + 4]{};
-  uint8_t count = 0;
-  kidsTowerBackgroundPath(background, sizeof(background), stage);
-  assets[count++] = background;
-  uint32_t key = 0x54445700UL ^ stage;
-  if (includeParty) {
-    for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index) {
-      const OwnedPokemon* pokemon = CollectionLogic::active(gameSave.collection, index);
-      if (!pokemon) continue;
-      pokemonAssetPath(partyPaths[index], sizeof(partyPaths[index]), *pokemon,
-                       PokemonAssetView::Icon, 0);
-      assets[count++] = partyPaths[index];
-      key ^= pokemon->uid + (static_cast<uint32_t>(pokemon->speciesId) << (index + 3U));
-    }
-  }
-  const TowerDefense::StageInfo& info = TowerDefense::stageInfo(stage);
-  for (uint8_t index = 0; index < 4U; ++index) {
-    OwnedPokemon visual{};
-    visual.speciesId = info.enemySpecies[index];
-    pokemonAssetPath(enemyPaths[index], sizeof(enemyPaths[index]), visual,
-                     PokemonAssetView::Icon, 0);
-    assets[count++] = enemyPaths[index];
-    key ^= static_cast<uint32_t>(visual.speciesId) << (index * 4U);
-  }
-  return prepareUiScene(key, assets, count);
-}
-
-void drawKidsTowerCreature(uint16_t speciesId, int16_t centerX, int16_t centerY,
-                           bool selected = false) {
-  OwnedPokemon visual{};
-  visual.speciesId = speciesId;
-  char path[112];
-  pokemonAssetPath(path, sizeof(path), visual, PokemonAssetView::Icon, iconFrame);
-  if (selected) {
-    display.fillCircle(centerX, centerY, 18, TFT_WHITE);
-    display.drawCircle(centerX, centerY, 18, TFT_YELLOW);
-  }
-  if (sdReady && AssetRenderer::draw(display, path, centerX - 16, centerY - 16)) return;
-  creature(centerX, centerY, visual);
-}
-
-void drawKidsTowerStars(uint8_t count, int16_t centerX, int16_t y) {
-  for (uint8_t index = 0; index < 3U; ++index) {
-    const int16_t x = static_cast<int16_t>(centerX + (index - 1) * 17);
-    const uint16_t color = index < count ? 0xFEE0 : 0x7BEF;
-    display.fillTriangle(x, y - 7, x - 6, y + 6, x + 6, y + 6, color);
-    display.fillTriangle(x - 7, y - 2, x + 7, y - 2, x, y + 8, color);
-    display.drawCircle(x, y + 1, 8, themeDark());
-  }
-}
-
-void drawKidsTowerRoute(uint8_t stage) {
-  for (uint8_t point = 0; point < 4U; ++point) {
-    const TowerDefense::Point first = TowerDefense::routePoint(stage, point);
-    const TowerDefense::Point second = TowerDefense::routePoint(stage, static_cast<uint8_t>(point + 1U));
-    constexpr uint8_t kDotsPerSegment = 13U;
-    for (uint8_t dot = 0; dot <= kDotsPerSegment; ++dot) {
-      if ((dot & 1U) != 0U) continue;
-      const int16_t x = static_cast<int16_t>(kTowerBoardX + first.x +
-          (static_cast<int32_t>(second.x - first.x) * dot) / kDotsPerSegment);
-      const int16_t y = static_cast<int16_t>(kTowerBoardY + first.y +
-          (static_cast<int32_t>(second.y - first.y) * dot) / kDotsPerSegment);
-      display.fillCircle(x, y, 1, 0xBDF7);
-    }
-  }
-}
-
-void drawKidsTowerBoard(uint8_t stage, bool showRoute) {
-  char background[88];
-  kidsTowerBackgroundPath(background, sizeof(background), stage);
-  if (!AssetRenderer::draw(display, background, kTowerBoardX, kTowerBoardY))
-    display.fillRect(kTowerBoardX, kTowerBoardY, kTowerBoardWidth, kTowerBoardHeight, TFT_DARKGREEN);
-  display.drawRect(kTowerBoardX, kTowerBoardY, kTowerBoardWidth, kTowerBoardHeight, themeDark());
-  if (showRoute) drawKidsTowerRoute(stage);
-}
-
-void resetKidsTowerBattle(uint8_t stage) {
-  TowerDefense::reset(kidsTowerRuntime, stage);
-  refreshKidsTowerDefenders();
-  constexpr uint8_t preferredSlots[TowerDefense::kDefenderCount] = {0U, 2U, 4U};
-  for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index)
-    if (kidsTowerDefenders[index].active)
-      TowerDefense::placeDefender(kidsTowerRuntime, preferredSlots[index], index);
-  kidsTowerRuntime.selectedDefender = 0U;
-  kidsTowerLastTickMs = millis();
-  std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice),
-                kidsTowerAvailableDefenderCount() ? "TAP A PAD TO POSITION YOUR TEAM." :
-                "SELECT AT LEAST ONE PARTY POKEMON.");
-}
-
-void drawKidsTowerCampaign() {
-  const bool entering = beginScreenPresentation(Screen::KidsTowerCampaign, TFT_BLACK);
-  if (!entering) invalidatePixels(1, 1, 318, 238);
-  TowerDefense::reconcile(gameSave.towerDefense);
-  const uint8_t stage = TowerDefense::normalizeStage(kidsTowerBrowseStage);
-  const TowerDefense::StageInfo& info = TowerDefense::stageInfo(stage);
-  prepareKidsTowerScene(stage, false);
-  drawSettingsShell("POKE DEFENSE");
-  drawKidsExitSlider();
-  drawKidsTowerBoard(stage, false);
-  const bool unlocked = TowerDefense::isUnlocked(gameSave.towerDefense, stage);
-  display.fillRoundRect(16, 51, 192, 39, 7, unlocked ? 0xFFFF : 0x4208);
-  display.drawRoundRect(16, 51, 192, 39, 7, themeDark());
-  fireRedText.setTextColor(unlocked ? themeDark() : TFT_WHITE, unlocked ? 0xFFFF : 0x4208);
-  fireRedText.setTextDatum(TL_DATUM);
-  fireRedText.drawStringFitted(info.name, 24, 58, 174, 2);
-  fireRedText.drawStringFitted(info.tagline, 24, 78, 174, 1);
-  display.fillRoundRect(217, 51, 86, 39, 7, unlocked ? kSettingsWell : 0x4208);
-  display.drawRoundRect(217, 51, 86, 39, 7, themeDark());
-  fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(unlocked ? themeDark() : TFT_WHITE, unlocked ? kSettingsWell : 0x4208);
-  char waves[20];
-  std::snprintf(waves, sizeof(waves), "%u WAVES", static_cast<unsigned>(info.waveCount));
-  fireRedText.drawString(waves, 260, 64, 1);
-  char score[24];
-  std::snprintf(score, sizeof(score), "BEST %u", gameSave.towerDefense.bestScore[stage]);
-  fireRedText.drawString(score, 260, 80, 1);
-  drawKidsTowerStars(gameSave.towerDefense.stageStars[stage], 260, 108);
-  if (!unlocked) {
-    display.fillRoundRect(42, 111, 236, 34, 7, 0x4208);
-    display.drawRoundRect(42, 111, 236, 34, 7, TFT_WHITE);
-    fireRedText.setTextColor(TFT_WHITE, 0x4208);
-    fireRedText.drawString("CLEAR THE PREVIOUS ARENA", 160, 128, 1);
-  }
-  button(10, 183, 44, 26, "<", themePrimary());
-  button(266, 183, 44, 26, ">", themePrimary());
-  fireRedText.setTextColor(themeDark(), kSettingsPaper);
-  char indexText[32];
-  std::snprintf(indexText, sizeof(indexText), "ARENA %u / %u", static_cast<unsigned>(stage + 1U),
-                static_cast<unsigned>(TowerDefense::kStageCount));
-  fireRedText.drawString(indexText, 160, 196, 2);
-  button(65, 212, 95, 25, "TEAM", themePrimary());
-  button(165, 212, 145, 25, unlocked ? "DEFEND" : "LOCKED",
-         unlocked ? TFT_DARKGREEN : 0x8410);
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-void drawKidsTowerTeam() {
-  const bool entering = beginScreenPresentation(Screen::KidsTowerTeam, TFT_BLACK);
-  if (!entering) invalidatePixels(1, 1, 318, 238);
-  const uint8_t stage = TowerDefense::normalizeStage(kidsTowerBrowseStage);
-  prepareKidsTowerScene(stage, true);
-  drawSettingsShell("POKE DEFENSE TEAM");
-  drawKidsExitSlider();
-  drawKidsTowerBoard(stage, false);
-  display.fillRoundRect(13, 48, 294, 31, 7, kSettingsWell);
-  display.drawRoundRect(13, 48, 294, 31, 7, themeDark());
-  fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), kSettingsWell);
-  fireRedText.drawStringFitted("TAP A PARTY POKEMON TO ARM / BENCH", 160, 63, 270, 1);
-  for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index) {
-    const int16_t x = 12 + index * 103;
-    const int16_t y = 89;
-    const OwnedPokemon* pokemon = CollectionLogic::active(gameSave.collection, index);
-    const bool enabled = (gameSave.towerDefense.enabledDefendersMask & (1U << index)) != 0U && pokemon;
-    display.fillRoundRect(x + 2, y + 3, 94, 88, 8, 0x4A49);
-    display.fillRoundRect(x, y, 94, 88, 8, enabled ? 0xFFFF : 0xBDF7);
-    display.drawRoundRect(x, y, 94, 88, 8, enabled ? TFT_DARKGREEN : themeDark());
-    if (pokemon) {
-      drawKidsTowerCreature(pokemon->speciesId, x + 47, y + 30, enabled);
-      fireRedText.setTextColor(themeDark(), enabled ? 0xFFFF : 0xBDF7);
-      fireRedText.drawStringFitted(ownedPokemonName(pokemon), x + 6, y + 55, 82, 1);
-      char level[16]; std::snprintf(level, sizeof(level), "LV.%u", static_cast<unsigned>(pokemon->level));
-      fireRedText.drawString(level, x + 7, y + 72, 1);
-      fireRedText.setTextDatum(TR_DATUM);
-      fireRedText.drawString(enabled ? "ARMED" : "BENCH", x + 87, y + 72, 1);
-      fireRedText.setTextDatum(MC_DATUM);
-    } else {
-      fireRedText.setTextColor(TFT_DARKGREY, 0xBDF7);
-      fireRedText.drawString("EMPTY", x + 47, y + 44, 1);
-    }
-  }
-  display.fillRoundRect(13, 185, 294, 18, 6, kSettingsWell);
-  display.drawRoundRect(13, 185, 294, 18, 6, themeDark());
-  char roster[48];
-  if (kidsTowerNotice[0]) std::snprintf(roster, sizeof(roster), "%s", kidsTowerNotice);
-  else std::snprintf(roster, sizeof(roster), "ACTIVE DEFENDERS  %u / 3",
-                     static_cast<unsigned>(kidsTowerAvailableDefenderCount()));
-  fireRedText.setTextColor(themeDark(), kSettingsWell);
-  fireRedText.drawString(roster, 160, 194, 1);
-  button(10, 212, 118, 25, "< STAGE", themePrimary());
-  button(192, 212, 118, 25, kidsTowerAvailableDefenderCount() ? "DEFEND" : "NEED TEAM",
-         kidsTowerAvailableDefenderCount() ? TFT_DARKGREEN : 0x8410);
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-void drawKidsTowerBattle() {
-  const bool entering = beginScreenPresentation(Screen::KidsTowerBattle, TFT_BLACK);
-  if (!entering) invalidatePixels(1, 1, 318, 238);
-  const uint8_t stage = kidsTowerRuntime.stage;
-  prepareKidsTowerScene(stage, true);
-  drawSettingsShell("POKE DEFENSE");
-  drawKidsExitSlider();
-  drawKidsTowerBoard(stage, true);
-
-  const uint8_t displayWave = kidsTowerRuntime.phase == TowerDefense::Phase::Victory
-      ? TowerDefense::stageInfo(stage).waveCount
-      : static_cast<uint8_t>(std::min<uint8_t>(kidsTowerRuntime.wave + 1U,
-                                                TowerDefense::stageInfo(stage).waveCount));
-  display.fillRoundRect(13, 47, 108, 22, 6, kSettingsWell);
-  display.drawRoundRect(13, 47, 108, 22, 6, themeDark());
-  display.fillRoundRect(205, 47, 102, 22, 6, kSettingsWell);
-  display.drawRoundRect(205, 47, 102, 22, 6, themeDark());
-  fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), kSettingsWell);
-  char lives[24]; std::snprintf(lives, sizeof(lives), "BASE  %u", kidsTowerRuntime.lives);
-  fireRedText.drawString(lives, 67, 58, 1);
-  char wave[28]; std::snprintf(wave, sizeof(wave), "WAVE %u/%u", displayWave,
-      TowerDefense::stageInfo(stage).waveCount);
-  fireRedText.drawString(wave, 256, 58, 1);
-
-  for (uint8_t slotIndex = 0; slotIndex < TowerDefense::kTowerSlotCount; ++slotIndex) {
-    const TowerDefense::Point point = TowerDefense::towerPosition(stage, slotIndex);
-    const int16_t x = kTowerBoardX + point.x;
-    const int16_t y = kTowerBoardY + point.y;
-    const uint8_t defender = kidsTowerRuntime.slots[slotIndex].defenderIndex;
-    if (defender < TowerDefense::kDefenderCount && kidsTowerDefenders[defender].active) {
-      display.fillCircle(x, y, 19, TFT_WHITE);
-      display.drawCircle(x, y, 19, defender == kidsTowerRuntime.selectedDefender &&
-          kidsTowerRuntime.phase == TowerDefense::Phase::Setup ? TFT_YELLOW : themeDark());
-      drawKidsTowerCreature(kidsTowerDefenders[defender].speciesId, x, y);
-    } else {
-      display.fillCircle(x, y, 13, 0xBDF7);
-      display.drawCircle(x, y, 13, themeDark());
-      drawKidsPokeball(x, y, 8);
-    }
-  }
-  for (const TowerDefense::Enemy& enemy : kidsTowerRuntime.enemies) {
-    if (!enemy.active) continue;
-    const TowerDefense::Point point = TowerDefense::enemyPosition(stage, enemy);
-    const int16_t x = kTowerBoardX + point.x;
-    const int16_t y = kTowerBoardY + point.y;
-    drawKidsTowerCreature(enemy.speciesId, x, y);
-    display.fillRect(x - 13, y - 22, 26, 4, TFT_DARKGREY);
-    const uint8_t fill = enemy.maximumHp ? static_cast<uint8_t>(24U * enemy.hp / enemy.maximumHp) : 0U;
-    display.fillRect(x - 12, y - 21, fill, 2, enemy.hp * 2U > enemy.maximumHp ? TFT_GREEN : TFT_RED);
-  }
-  for (uint8_t index = 0; index < kidsTowerRuntime.shotCount; ++index) {
-    const TowerDefense::Shot& shot = kidsTowerRuntime.shots[index];
-    if (!shot.active) continue;
-    const uint16_t color = pokemonTypeColor(static_cast<PokemonType>(shot.typeIndex));
-    display.drawLine(kTowerBoardX + shot.from.x, kTowerBoardY + shot.from.y,
-                     kTowerBoardX + shot.to.x, kTowerBoardY + shot.to.y, color);
-  }
-
-  display.fillRoundRect(8, 182, 304, 27, 7, kSettingsWell);
-  display.drawRoundRect(8, 182, 304, 27, 7, themeDark());
-  fireRedText.setTextColor(themeDark(), kSettingsWell);
-  char status[48];
-  if (kidsTowerRuntime.phase == TowerDefense::Phase::Victory)
-    std::snprintf(status, sizeof(status), "STAGE CLEAR!  %u STAR%s", TowerDefense::starsForLives(kidsTowerRuntime.lives),
-                  TowerDefense::starsForLives(kidsTowerRuntime.lives) == 1U ? "" : "S");
-  else if (kidsTowerRuntime.phase == TowerDefense::Phase::Defeat)
-    std::snprintf(status, sizeof(status), "THE BASE FELL. TRY AGAIN!");
-  else if (kidsTowerRuntime.phase == TowerDefense::Phase::Active)
-    std::snprintf(status, sizeof(status), "SCORE %u   TIME %us", kidsTowerRuntime.score,
-                  static_cast<unsigned>(kidsTowerRuntime.elapsedSeconds));
-  else
-    std::snprintf(status, sizeof(status), "%s", kidsTowerNotice);
-  fireRedText.drawStringFitted(status, 160, 195, 286, 1);
-
-  for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index) {
-    const int16_t x = 10 + index * 70;
-    const bool enabled = kidsTowerDefenders[index].active;
-    const bool selected = kidsTowerRuntime.selectedDefender == index;
-    display.fillRoundRect(x, 214, 64, 23, 6, enabled ? 0xFFFF : 0x8410);
-    display.drawRoundRect(x, 214, 64, 23, 6, selected && kidsTowerRuntime.phase == TowerDefense::Phase::Setup
-        ? TFT_YELLOW : themeDark());
-    if (enabled) drawKidsTowerCreature(kidsTowerDefenders[index].speciesId, x + 15, 225);
-    fireRedText.setTextDatum(TL_DATUM);
-    fireRedText.setTextColor(enabled ? themeDark() : TFT_WHITE, enabled ? 0xFFFF : 0x8410);
-    char label[12]; std::snprintf(label, sizeof(label), "P%u", static_cast<unsigned>(index + 1U));
-    fireRedText.drawString(label, x + 33, 219, 1);
-  }
-  const char* action = kidsTowerRuntime.phase == TowerDefense::Phase::Setup ? "START" :
-      kidsTowerRuntime.phase == TowerDefense::Phase::Active ? "RETREAT" : "CONTINUE";
-  const uint16_t actionColor = kidsTowerRuntime.phase == TowerDefense::Phase::Setup ? TFT_DARKGREEN :
-      kidsTowerRuntime.phase == TowerDefense::Phase::Active ? TFT_RED : themePrimary();
-  button(224, 212, 86, 26, action, actionColor);
-  fireRedText.setTextDatum(TL_DATUM);
-}
-
-void serviceKidsTowerBattle(uint32_t now) {
-  if (screen != Screen::KidsTowerBattle || kidsTowerRuntime.phase != TowerDefense::Phase::Active) return;
-  const uint32_t elapsed = now - kidsTowerLastTickMs;
-  if (elapsed < 120U) return;
-  kidsTowerLastTickMs = now;
-  const TowerDefense::Phase before = kidsTowerRuntime.phase;
-  TowerDefense::update(kidsTowerRuntime, kidsTowerDefenders, TowerDefense::kDefenderCount, elapsed);
-  if (before == TowerDefense::Phase::Active && kidsTowerRuntime.phase == TowerDefense::Phase::Victory) {
-    const bool changed = TowerDefense::recordVictory(gameSave.towerDefense, kidsTowerRuntime);
-    if (changed) { saveDirty = true; saveNow(); }
-    std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "ARENA COMPLETE!");
-  } else if (before == TowerDefense::Phase::Active && kidsTowerRuntime.phase == TowerDefense::Phase::Defeat) {
-    std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "THE BASE FELL.");
-  }
-  drawKidsTowerBattle();
-  requestRetainedFrame();
-}
-
-constexpr uint16_t kKidsPaintColors[4] = {TFT_WHITE, TFT_RED, TFT_BLUE, TFT_GREEN};
-
-uint8_t kidsPaintPixel(uint8_t x, uint8_t y) {
-  if (!kidsPaintPixels) return 0;
-  const uint16_t index = static_cast<uint16_t>(y) * kKidsCanvasWidth + x;
-  return static_cast<uint8_t>((kidsPaintPixels[index >> 2U] >> ((index & 3U) * 2U)) & 0x03U);
-}
-
-void setKidsPaintPixel(int16_t x, int16_t y, uint8_t color) {
-  if (!kidsPaintPixels || x < 0 || y < 0 ||
-      x >= kKidsCanvasWidth || y >= kKidsCanvasHeight) return;
-  const uint16_t index = static_cast<uint16_t>(y) * kKidsCanvasWidth + x;
-  uint8_t& packed = kidsPaintPixels[index >> 2U];
-  const uint8_t shift=static_cast<uint8_t>((index & 3U) * 2U);
-  packed=static_cast<uint8_t>((packed & ~(0x03U << shift)) | ((color & 0x03U) << shift));
-}
-
-void stampKidsPaint(int16_t x, int16_t y) {
-  for (int8_t dy=-2;dy<=2;++dy) for (int8_t dx=-2;dx<=2;++dx)
-    if (dx*dx+dy*dy<=5) setKidsPaintPixel(x+dx,y+dy,kidsPaintColor);
-}
-
-void drawKidsPaintLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1) {
-  const int16_t dx=std::abs(x1-x0), sx=x0<x1?1:-1;
-  const int16_t dy=-std::abs(y1-y0), sy=y0<y1?1:-1;
-  int16_t error=dx+dy;
-  while (true) {
-    stampKidsPaint(x0,y0);
-    if (x0==x1&&y0==y1) break;
-    const int16_t twice=2*error;
-    if (twice>=dy) { error+=dy;x0+=sx; }
-    if (twice<=dx) { error+=dx;y0+=sy; }
-  }
-}
-
-bool beginKidsPaintCanvas() {
-  if (kidsPaintPixels) return true;
-  kidsPaintPixels = kidsPaintPixelsStorage;
-  std::memset(kidsPaintPixels, 0, kKidsCanvasBytes);
-  Serial.printf("[KIDS] paint canvas READY bytes=%u static=1\n",
-                static_cast<unsigned>(kKidsCanvasBytes));
-  return true;
-}
-
-void endKidsPaintCanvas() {
-  kidsPaintPixels=nullptr;kidsPaintLastX=-1;kidsPaintLastY=-1;kidsPaintLastTouchMs=0;
-  kidsPaintSampleCount=0;kidsPaintSampleCursor=0;
-}
-
-void drawKidsPaint() {
-  const bool entering = beginScreenPresentation(Screen::KidsPaint, TFT_BLACK);
-  if (!entering) invalidatePixels(1, 1, 318, 238);
-  drawSettingsShell("PAINT");
-  drawKidsExitSlider();
-  display.fillRect(11,46,298,142,TFT_WHITE);
-  for (uint8_t y=0;y<kKidsCanvasHeight;++y) {
-    uint8_t runStart=0; uint8_t runColor=kidsPaintPixel(0,y);
-    for (uint8_t x=1;x<=kKidsCanvasWidth;++x) {
-      const uint8_t color=x<kKidsCanvasWidth?kidsPaintPixel(x,y):0xFF;
-      if (color==runColor) continue;
-      display.fillRect(12+runStart*2,47+y*2,(x-runStart)*2,2,kKidsPaintColors[runColor]);
-      runStart=x;runColor=color;
-    }
-  }
-  display.drawRect(11,46,298,142,themeDark());
-  for (uint8_t color = 1; color < 4U; ++color) {
-    const int16_t x = 18 + (color - 1U) * 52;
-    display.fillCircle(x + 14, 211, 12, kKidsPaintColors[color]);
-    display.drawCircle(x + 14, 211, kidsPaintColor == color ? 14 : 12, TFT_BLACK);
-  }
-  button(233, 197, 76, 29, "CLEAR", TFT_DARKGREY);
-}
-
-void serviceKidsPaintStroke(const TouchPoint& point) {
-  if (!kidsPaintPixels || screen != Screen::KidsPaint) {
-    kidsPaintLastX=-1;kidsPaintLastY=-1;kidsPaintLastTouchMs=0;
-    kidsPaintSampleCount=0;kidsPaintSampleCursor=0;
-    return;
-  }
-  const uint32_t now=millis();
-  if (!point.touched) {
-    // The resistive panel occasionally reports a one-frame release while a
-    // finger is still sliding. Keep the stroke anchor briefly so that those
-    // electrical dropouts do not split a continuous line.
-    if (kidsPaintLastTouchMs && now-kidsPaintLastTouchMs>120U)
-      kidsPaintLastX=-1,kidsPaintLastY=-1,kidsPaintLastTouchMs=0,
-      kidsPaintSampleCount=0,kidsPaintSampleCursor=0;
-    return;
-  }
-  if (point.x < 12 || point.x >= 308 || point.y < 47 || point.y >= 187) {
-    kidsPaintLastX=-1;kidsPaintLastY=-1;kidsPaintLastTouchMs=0;
-    kidsPaintSampleCount=0;kidsPaintSampleCursor=0;
-    return;
-  }
-  const int16_t rawX=(point.x-12)/2, rawY=(point.y-47)/2;
-  kidsPaintSampleX[kidsPaintSampleCursor]=rawX;
-  kidsPaintSampleY[kidsPaintSampleCursor]=rawY;
-  kidsPaintSampleCursor=static_cast<uint8_t>((kidsPaintSampleCursor+1U)%3U);
-  if(kidsPaintSampleCount<3U)++kidsPaintSampleCount;
-  auto median3=[](int16_t a,int16_t b,int16_t c){
-    return std::max(std::min(a,b),std::min(std::max(a,b),c));
-  };
-  int16_t x=rawX,y=rawY;
-  if(kidsPaintSampleCount==2U){
-    x=(kidsPaintSampleX[0]+kidsPaintSampleX[1])/2;
-    y=(kidsPaintSampleY[0]+kidsPaintSampleY[1])/2;
-  }else if(kidsPaintSampleCount>=3U){
-    x=median3(kidsPaintSampleX[0],kidsPaintSampleX[1],kidsPaintSampleX[2]);
-    y=median3(kidsPaintSampleY[0],kidsPaintSampleY[1],kidsPaintSampleY[2]);
-  }
-  const int16_t previousX=kidsPaintLastX, previousY=kidsPaintLastY;
-  if (previousX<0 || std::abs(x-previousX)>30 || std::abs(y-previousY)>30)
-    stampKidsPaint(x,y);
-  else
-    drawKidsPaintLine(previousX,previousY,x,y);
-  kidsPaintLastX=x;kidsPaintLastY=y;
-  kidsPaintLastTouchMs=now;
-  // Redraw the complete segment, not only the newest brush stamp. Fast finger
-  // movement can span several touch samples and used to leave visible gaps.
-  const int16_t previousScreenX=previousX<0?point.x:12+previousX*2;
-  const int16_t previousScreenY=previousY<0?point.y:47+previousY*2;
-  const int16_t left=std::max<int16_t>(11,std::min<int16_t>(previousScreenX,point.x)-7);
-  const int16_t top=std::max<int16_t>(46,std::min<int16_t>(previousScreenY,point.y)-7);
-  const int16_t right=std::min<int16_t>(309,std::max<int16_t>(previousScreenX,point.x)+8);
-  const int16_t bottom=std::min<int16_t>(188,std::max<int16_t>(previousScreenY,point.y)+8);
-  invalidatePixels(left,top,right-left,bottom-top);
-  requestRetainedFrame();
-}
-
 TouchPoint filterGameTouch(const TouchPoint& raw){
   // Never combine coordinates sampled on opposite sides of a screen change.
   // A fast tap after BACK previously averaged the old right-side coordinate
@@ -21381,11 +21045,6 @@ TouchPoint filterGameTouch(const TouchPoint& raw){
   if(gameTouchFilterScreen!=screen){
     gameTouchFilter.reset();
     gameTouchFilterScreen=screen;
-  }
-  // Paint already has a stroke-specific median plus dropout handling.
-  if(screen==Screen::KidsPaint){
-    if(!raw.touched)gameTouchFilter.reset();
-    return raw;
   }
   TouchPoint filtered=raw;
   const FilteredTouchPoint sample=gameTouchFilter.update(
@@ -21425,7 +21084,7 @@ void drawPlayerStats() {
     display.fillRoundRect(237, y + 1, 43, 16, 6, themePale());
     display.drawRoundRect(237, y + 1, 43, 16, 6, themeDark());
     fireRedText.setTextDatum(MC_DATUM);
-    fireRedText.setTextColor(themeDark(), themePale());
+    fireRedText.setTextColor(themePaleInk(), themePale());
     fireRedText.drawStringFitted(value, 258, y + 9, 36, 1);
     fireRedText.setTextDatum(TL_DATUM);
   }
@@ -21453,7 +21112,7 @@ void drawWirelessUpdateBody() {
   display.fillRoundRect(169, 57, 124, 36, 7, themePale());
   display.drawRoundRect(169, 57, 124, 36, 7, themeDark());
   fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), themePale());
+  fireRedText.setTextColor(themePaleInk(), themePale());
   // The pairing code is the one value the player must read while also
   // looking at the phone. Use the full double-scale FireRed numerals instead
   // of the legacy 8 px artwork font; six digits still fit comfortably in the
@@ -21740,7 +21399,7 @@ void drawEggOffer() {
   display.fillRoundRect(135, 119, 160, 22, 6, themePale());
   display.drawRoundRect(135, 119, 160, 22, 6, themeDark());
   fireRedText.setTextDatum(MC_DATUM);
-  fireRedText.setTextColor(themeDark(), themePale());
+  fireRedText.setTextColor(themePaleInk(), themePale());
   char rarity[32];
   std::snprintf(rarity, sizeof(rarity), "%s EGG", EggSystem::rarityName(gameSave.egg.rarity));
   fireRedText.drawStringFitted(rarity, 215, 130, 148, 1);
@@ -22035,7 +21694,7 @@ void drawGymInvite(){
   // of the SD pack, so the invitation uses the original game art instead
   // of a generic challenge panel.
   drawFireRedBattleWindow(11,50,94,137,themeAccent(),themePale());
-  fireRedText.setTextColor(themeDark(),themePale());
+  fireRedText.setTextColor(themePaleInk(),themePale());
   fireRedText.drawString("LEADER",58,62,1);
   fireRedText.setTextDatum(TL_DATUM);
   char assetPath[96];
@@ -22110,7 +21769,7 @@ void drawLeagueInvite(){
     display.fillCircle(58,88,10,TFT_YELLOW);
     display.drawRect(27,63,62,80,TFT_DARKGREY);
   }
-  fireRedText.setTextColor(themeDark(),themePale());
+  fireRedText.setTextColor(themePaleInk(),themePale());
   fireRedText.setTextDatum(TL_DATUM);
   fireRedText.drawStringFitted(hoenn?"EVER GRANDE":"INDIGO PLATEAU",17,170,82,1);
 
@@ -22397,7 +22056,7 @@ void drawRegionHub(){
     // The arrow buttons restore TL_DATUM. Reassert the pill's center before
     // drawing its label, otherwise 1/2 is offset down and to the right.
     fireRedText.setTextDatum(MC_DATUM);
-    fireRedText.setTextColor(themeDark(),themePale());
+    fireRedText.setTextColor(themePaleInk(),themePale());
     fireRedText.drawStringFitted(pageLabel,283,28,34,1);
   }
   button(105,199,110,30,"BACK",TFT_RED);
@@ -22741,9 +22400,9 @@ void playBadgeAward(GymId id){
   battleArenaVisible=false;presentedScreen=Screen::Diagnostic;
   const GymDefinition* gym=GymSystem::definition(id);display.fillScreen(themePrimary());
   fireRedText.setTextDatum(MC_DATUM);fireRedText.setTextColor(TFT_YELLOW,themePrimary());fireRedText.drawString("BADGE GET!",160,35,4);
-  for(uint8_t radius=8;radius<39;radius+=5){display.drawCircle(160,112,radius,TFT_WHITE);delay(45);}
+  for(uint8_t radius=8;radius<39;radius+=5){display.drawCircle(160,112,radius,themePrimaryInk());delay(45);}
   char path[72];std::snprintf(path,sizeof(path),"/pokegochi/assets/firered/trainer_card/badge_%u.pkg",static_cast<uint8_t>(id));
-  AssetRenderer::draw(display,path,152,104);fireRedText.setTextColor(TFT_WHITE,themePrimary());
+  AssetRenderer::draw(display,path,152,104);fireRedText.setTextColor(themePrimaryInk(),themePrimary());
   char label[40];std::snprintf(label,sizeof(label),"%s BADGE",gym?gym->badge:"GYM");fireRedText.drawStringFitted(label,160,169,300,2);
   fireRedText.drawString("ADDED TO TRAINER CARD",160,197,1);fireRedText.setTextDatum(TL_DATUM);delay(1200);
 }
@@ -22907,14 +22566,31 @@ bool presentStartedWildEncounter(bool sinnoh, uint8_t regionalGeneration) {
   return true;
 }
 
+bool firstMasterBallSurpriseDueForNextWild() {
+  if (EncounterLogic::reconcileFirstMasterBallSurprise(
+          gameSave.wildEncounterClock, masterBallHasBeenReceived()))
+    saveDirty = true;
+  return EncounterLogic::firstMasterBallSurpriseDue(
+      gameSave.wildEncounterClock);
+}
+
+void recordFirstMasterBallWildEncounter(bool legendaryForced) {
+  if (EncounterLogic::recordFirstMasterBallWildEncounter(
+          gameSave.wildEncounterClock, legendaryForced))
+    saveDirty = true;
+}
+
 bool launchWildEncounter(uint32_t playerUid) {
   const HomeWeatherSample startingWorldWeather = currentHomeWeather();
+  const bool surpriseLegendary = firstMasterBallSurpriseDueForNextWild();
   const uint32_t encounterSeed = EncounterLogic::nextWildBattleSeed(
       gameSave.wildEncounterClock, multiplayer.playerId(), micros());
   if (!BattleEngine::startWild(
           gameSave.battle, gameSave.collection, playerUid, encounterSeed,
           unlockedContentGeneration(), beginnerProtectionActive(),
-          static_cast<uint8_t>(currentWorldPeriod()))) return false;
+          static_cast<uint8_t>(currentWorldPeriod()),
+          surpriseLegendary)) return false;
+  recordFirstMasterBallWildEncounter(surpriseLegendary);
   if (BattleEnvironment::applyHomeWeather(gameSave.battle,
                                            startingWorldWeather.kind))
     BattleEngine::synchronizeWeatherForms(gameSave.battle, gameSave.collection);
@@ -22923,11 +22599,14 @@ bool launchWildEncounter(uint32_t playerUid) {
 
 bool launchSinnohEncounter(uint32_t playerUid, SinnohSite site) {
   const HomeWeatherSample startingWorldWeather = currentHomeWeather();
+  const bool surpriseLegendary = firstMasterBallSurpriseDueForNextWild();
   const uint32_t encounterSeed = EncounterLogic::nextWildBattleSeed(
       gameSave.wildEncounterClock, multiplayer.playerId(), micros());
   if (!SinnohExpedition::startEncounter(gameSave.sinnoh, gameSave.battle,
                                         gameSave.collection, playerUid,
-                                        site, encounterSeed)) return false;
+                                        site, encounterSeed,
+                                        surpriseLegendary)) return false;
+  recordFirstMasterBallWildEncounter(surpriseLegendary);
   if (BattleEnvironment::applyHomeWeather(gameSave.battle, startingWorldWeather.kind))
     BattleEngine::synchronizeWeatherForms(gameSave.battle, gameSave.collection);
   return presentStartedWildEncounter(true, 0U);
@@ -22935,15 +22614,17 @@ bool launchSinnohEncounter(uint32_t playerUid, SinnohSite site) {
 
 bool launchRegionalWildEncounter(uint32_t playerUid, uint8_t generation) {
   const HomeWeatherSample startingWorldWeather = currentHomeWeather();
+  const bool surpriseLegendary = firstMasterBallSurpriseDueForNextWild();
   const uint32_t encounterSeed = EncounterLogic::nextWildBattleSeed(
       gameSave.wildEncounterClock, multiplayer.playerId(), micros());
-  const uint16_t denominator = generation == 5U
+  const uint16_t denominator = surpriseLegendary ? 1U : generation == 5U
       ? UnovaAdventure::kLegendaryChanceDenominator
       : generation == 6U ? KalosAdventure::kLegendaryChanceDenominator
                          : AlolaAdventure::kLegendaryChanceDenominator;
   if (!BattleEngine::startRegionalWild(
           gameSave.battle, gameSave.collection, playerUid, encounterSeed,
           generation, denominator, generation == 7U)) return false;
+  recordFirstMasterBallWildEncounter(surpriseLegendary);
   if (BattleEnvironment::applyHomeWeather(gameSave.battle,
                                            startingWorldWeather.kind))
     BattleEngine::synchronizeWeatherForms(gameSave.battle, gameSave.collection);
@@ -23552,6 +23233,31 @@ uint8_t presentedBattleForm(const OwnedPokemon* pokemon, bool playerSide) {
   return CollectionLogic::resolvedForm(*pokemon);
 }
 
+MegaVariant presentedBattleMegaVariant(const OwnedPokemon* pokemon,
+                                       bool playerSide) {
+  if (!pokemon) return MegaVariant::None;
+  if (battleFlow.phase != BattleFlowPhase::Idle) {
+    const uint32_t displayedUid = playerSide ? battleFlow.displayPlayerUid
+                                             : battleFlow.displayOpponentUid;
+    if (pokemon->uid == displayedUid)
+      return playerSide ? battleFlow.displayPlayerMega
+                        : battleFlow.displayOpponentMega;
+  }
+  return MegaEvolution::variantFor(*pokemon);
+}
+
+void applyPresentedBattleAppearance(OwnedPokemon& visual, bool playerSide) {
+  visual.form = presentedBattleForm(&visual, playerSide);
+  // Ordinary Mega forms are item-derived and form-dependent copies already
+  // resolve correctly. Rayquaza is the exception: its Mega bit is transient
+  // and must be copied from the presentation journal, not from live state.
+  if (visual.speciesId != 384U) return;
+  if (presentedBattleMegaVariant(&visual, playerSide) == MegaVariant::Mega)
+    MegaEvolution::activateRayquazaBattleMega(visual);
+  else
+    MegaEvolution::resetRayquazaBattleMega(visual);
+}
+
 uint16_t presentedBattleMaximumHp(const OwnedPokemon* pokemon,bool playerSide){
   if(!pokemon)return 1U;
   if(battleFlow.phase!=BattleFlowPhase::Idle){
@@ -23787,13 +23493,13 @@ void drawBattleStatusBox(int16_t x, int16_t y, int16_t width, const SpeciesData*
   }
 }
 
-void prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* opponent,
+bool prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* opponent,
                            const char* terrainPath) {
   // Every animation frame has already passed through the complete manifest
   // preload. Return before allocating two Pokemon copies and three path/key
   // workspaces on loopTask for each 8-row stripe. Besides wasted CPU, that
   // repeated stack frame left only ~180 bytes during the heaviest moves.
-  if (battleVisualOverlay.active) return;
+  if (battleVisualOverlay.active) return true;
   // A BLE live capture intentionally leaves the scene arena released while
   // the player is in Home/Settings. Reacquire it only now, before any battle
   // asset is decoded, so a partial radio-time allocation can never be reused
@@ -23820,13 +23526,13 @@ void prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* oppon
   mixKey(playerSpeciesId);mixKey(opponentSpeciesId);
   mixKey(player&&player->shiny?1U:0U);mixKey(opponent&&opponent->shiny?1U:0U);
   mixKey(playerForm);mixKey(opponentForm);
-  mixKey(player?static_cast<uint8_t>(MegaEvolution::variantFor(*player)):0U);
-  mixKey(opponent?static_cast<uint8_t>(MegaEvolution::variantFor(*opponent)):0U);
+  mixKey(static_cast<uint8_t>(presentedBattleMegaVariant(player,true)));
+  mixKey(static_cast<uint8_t>(presentedBattleMegaVariant(opponent,false)));
   char opponentPath[112]{};
   char playerPath[112]{};
   OwnedPokemon playerVisual{}, opponentVisual{};
-  if(player){playerVisual=*player;playerVisual.form=playerForm;}
-  if(opponent){opponentVisual=*opponent;opponentVisual.form=opponentForm;}
+  if(player){playerVisual=*player;applyPresentedBattleAppearance(playerVisual,true);}
+  if(opponent){opponentVisual=*opponent;applyPresentedBattleAppearance(opponentVisual,false);}
   if (opponent && opponentSpeciesId)
     pokemonAssetPath(opponentPath, sizeof(opponentPath), opponentVisual,
                      PokemonAssetView::Front, 0, opponentSpeciesId);
@@ -23863,7 +23569,7 @@ void prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* oppon
   if ((activeMoveBackgroundResident && battlersResident) ||
       (preparedBattleGraphicsKey == key &&
        (AssetRenderer::isPreloaded(terrainPath) || activeMoveBackgroundResident) &&
-       battlersResident)) return;
+       battlersResident)) return true;
 
   // A retained stripe is already inside the physical compositor. If the
   // scene key is stale here, never clear the valid cache and then attempt a
@@ -23872,8 +23578,13 @@ void prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* oppon
   // cache intact, expose the mismatch once, and let the caller's normal
   // outside-composition retry repair it.
   if (renderingRetainedFrame) {
+    // A scene-key mismatch is an incomplete frame, not merely a diagnostic.
+    // Letting the retained presenter continue used to copy a mixture of the
+    // previous battler and the new fallback into adjacent 8-pixel bands,
+    // producing the vertical lines seen after a Wi-Fi PvP faint/switch.
+    battleFrameCompositionFailed = true;
     Serial.println("[GFX] scene mismatch");
-    return;
+    return false;
   }
 
   // Cache exactly the terrain and the two battlers before a battle screen is
@@ -23912,6 +23623,7 @@ void prepareBattleGraphics(const OwnedPokemon* player, const OwnedPokemon* oppon
                 static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 #endif
   preparedBattleGraphicsKey = ready ? key : 0;
+  return ready;
 }
 
 void drawBattleCurseMask(const OwnedPokemon& pokemon,
@@ -24224,8 +23936,8 @@ void drawBattleArena(OwnedPokemon* player, OwnedPokemon* opponent, bool hideOppo
   // changing depth or covering HP panels depending on which code path caused
   // a repaint.
   OwnedPokemon playerVisual{},opponentVisual{};
-  if(player){playerVisual=*player;playerVisual.form=playerForm;}
-  if(opponent){opponentVisual=*opponent;opponentVisual.form=opponentForm;}
+  if(player){playerVisual=*player;applyPresentedBattleAppearance(playerVisual,true);}
+  if(opponent){opponentVisual=*opponent;applyPresentedBattleAppearance(opponentVisual,false);}
   const bool playerBackgroundLayer = battleVisualOverlay.active &&
       battleVisualOverlay.playerInBackgroundLayer;
   const bool opponentBackgroundLayer = battleVisualOverlay.active &&
@@ -24302,6 +24014,8 @@ void drawBattleArena(OwnedPokemon* player, OwnedPokemon* opponent, bool hideOppo
   battleArenaOpponentSpeciesId = opponentSpeciesId;
   battleArenaPlayerForm = playerForm;
   battleArenaOpponentForm = opponentForm;
+  battleArenaPlayerMega = presentedBattleMegaVariant(player,true);
+  battleArenaOpponentMega = presentedBattleMegaVariant(opponent,false);
 }
 
 void drawBattleTransformedBattlers(bool backgroundLayer) {
@@ -24336,7 +24050,7 @@ void drawBattleTransformedBattlers(bool backgroundLayer) {
   if (drawPlayer && battleVisualOverlay.playerInBackgroundLayer == backgroundLayer) {
     const uint16_t speciesId = presentedBattleSpeciesId(player, true);
     OwnedPokemon visual = *player;
-    visual.form = presentedBattleForm(player, true);
+    applyPresentedBattleAppearance(visual, true);
     char path[112]{};
     pokemonAssetPath(path, sizeof(path), visual, PokemonAssetView::Back, 0, speciesId);
     const uint8_t clipTop = battleVisualOverlay.playerClipTop;
@@ -24379,7 +24093,7 @@ void drawBattleTransformedBattlers(bool backgroundLayer) {
   if (drawOpponent && battleVisualOverlay.opponentInBackgroundLayer == backgroundLayer) {
     const uint16_t speciesId = presentedBattleSpeciesId(opponent, false);
     OwnedPokemon visual = *opponent;
-    visual.form = presentedBattleForm(opponent, false);
+    applyPresentedBattleAppearance(visual, false);
     char path[112]{};
     pokemonAssetPath(path, sizeof(path), visual, PokemonAssetView::Front, 0, speciesId);
     const uint8_t clipTop = battleVisualOverlay.opponentClipTop;
@@ -24603,7 +24317,7 @@ void drawBattlePromptAndCommands(OwnedPokemon* player) {
     else
       // FireRed's dialogue cursor: the event journal is paused until the
       // player taps. It is deliberately absent while animations run.
-      display.fillTriangle(296, 220, 306, 220, 301, 228, TFT_WHITE);
+      display.fillTriangle(296, 220, 306, 220, 301, 228, themePrimaryInk());
     return;
   }
   char defaultPrompt[54];
@@ -24628,7 +24342,7 @@ void drawBattlePromptAndCommands(OwnedPokemon* player) {
     display.fillTriangle(132, 222, 144, 222, 138, 229, TFT_RED);
   else if (message[0] && !std::strstr(message, "WAITING") &&
            !std::strstr(message, "LOCKED") && !std::strstr(message, "SYNCING"))
-    display.fillTriangle(134, 221, 144, 221, 139, 229, TFT_WHITE);
+    display.fillTriangle(134, 221, 144, 221, 139, 229, themePrimaryInk());
 
   // The command pane follows FireRed's two-by-two menu instead of four
   // modern rounded buttons.  The small triangle is deliberately fixed on
@@ -24642,6 +24356,17 @@ void drawBattlePromptAndCommands(OwnedPokemon* player) {
   fireRedText.drawString("BAG", 253, 176, 1);
   fireRedText.drawString("POKEMON", 164, 212, 1);
   fireRedText.drawString("RUN", 253, 212, 1);
+  if (pvpSessionActive && pvpDecisionStartedMs &&
+      !multiplayer.localBattleCommandPending()) {
+    char timer[8];
+    std::snprintf(timer, sizeof(timer), "%us",
+                  static_cast<unsigned>(pvpDecisionSecondsRemaining(millis())));
+    display.fillRoundRect(276, 163, 36, 11, 3, kBattlePaper);
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.setTextColor(TFT_RED, kBattlePaper);
+    fireRedText.drawString(timer, 294, 168, 1);
+    fireRedText.setTextDatum(TL_DATUM);
+  }
 
 }
 
@@ -24753,11 +24478,14 @@ void refreshBattleHud() {
   const uint16_t opponentSpeciesId = presentedBattleSpeciesId(opponent, false);
   const uint8_t playerForm = presentedBattleForm(player, true);
   const uint8_t opponentForm = presentedBattleForm(opponent, false);
+  const MegaVariant playerMega = presentedBattleMegaVariant(player, true);
+  const MegaVariant opponentMega = presentedBattleMegaVariant(opponent, false);
   if (!battleArenaVisible || battleArenaPlayerUid != (player ? player->uid : 0U) ||
       battleArenaOpponentUid != (opponent ? opponent->uid : 0U) ||
       battleArenaPlayerSpeciesId != playerSpeciesId ||
       battleArenaOpponentSpeciesId != opponentSpeciesId ||
-      battleArenaPlayerForm != playerForm || battleArenaOpponentForm != opponentForm) {
+      battleArenaPlayerForm != playerForm || battleArenaOpponentForm != opponentForm ||
+      battleArenaPlayerMega != playerMega || battleArenaOpponentMega != opponentMega) {
     drawBattle();
     return;
   }
@@ -24800,6 +24528,8 @@ void ensureBattleSceneForAnimation() {
   const uint16_t opponentSpeciesId = presentedBattleSpeciesId(opponent, false);
   const uint8_t playerForm = presentedBattleForm(player, true);
   const uint8_t opponentForm = presentedBattleForm(opponent, false);
+  const MegaVariant playerMega = presentedBattleMegaVariant(player, true);
+  const MegaVariant opponentMega = presentedBattleMegaVariant(opponent, false);
   if (screen != Screen::Battle && screen != Screen::MoveSelect) {
     screen = Screen::Battle;
     drawBattle();
@@ -24809,7 +24539,8 @@ void ensureBattleSceneForAnimation() {
       battleArenaOpponentUid != (opponent ? opponent->uid : 0U) ||
       battleArenaPlayerSpeciesId != playerSpeciesId ||
       battleArenaOpponentSpeciesId != opponentSpeciesId ||
-      battleArenaPlayerForm != playerForm || battleArenaOpponentForm != opponentForm) {
+      battleArenaPlayerForm != playerForm || battleArenaOpponentForm != opponentForm ||
+      battleArenaPlayerMega != playerMega || battleArenaOpponentMega != opponentMega) {
     screen = Screen::Battle;
     drawBattle();
     return;
@@ -24955,6 +24686,8 @@ void drawBattle() {
   const uint16_t opponentSpeciesId = presentedBattleSpeciesId(opponent, false);
   const uint8_t playerForm = presentedBattleForm(player, true);
   const uint8_t opponentForm = presentedBattleForm(opponent, false);
+  const MegaVariant playerMega = presentedBattleMegaVariant(player, true);
+  const MegaVariant opponentMega = presentedBattleMegaVariant(opponent, false);
   beginScreenPresentation(Screen::Battle, TFT_BLACK);
   // Returning from FIGHT, an item animation or the command confirmation
   // keeps this exact arena resident. The only pixels that must change are
@@ -24968,7 +24701,8 @@ void drawBattle() {
       battleArenaOpponentUid == (opponent ? opponent->uid : 0U) &&
       battleArenaPlayerSpeciesId == playerSpeciesId &&
       battleArenaOpponentSpeciesId == opponentSpeciesId &&
-      battleArenaPlayerForm == playerForm && battleArenaOpponentForm == opponentForm) {
+      battleArenaPlayerForm == playerForm && battleArenaOpponentForm == opponentForm &&
+      battleArenaPlayerMega == playerMega && battleArenaOpponentMega == opponentMega) {
     refreshBattleHud();
     return;
   }
@@ -25004,7 +24738,7 @@ void playBattleFaintAnimation(const BattleEvent& event) {
   const uint16_t displayedSpeciesId = presentedBattleSpeciesId(
       pokemon, event.side == BattleSide::Player);
   OwnedPokemon visual=*pokemon;
-  visual.form=presentedBattleForm(pokemon,event.side==BattleSide::Player);
+  applyPresentedBattleAppearance(visual,event.side==BattleSide::Player);
 
   char path[112];
   pokemonAssetPath(path, sizeof(path), visual,
@@ -25121,6 +24855,7 @@ void drawMoveSelect() {
                                        pokemon->moves[slot],BattleSide::Player)) {
       hasUsableMove = true; break;
     }
+  const bool usingStruggle = pokemon && !hasUsableMove;
   if (pokemon && topLevelDraw) Serial.printf("[BATTLE] move picker uid=%lu moves=%u/%u/%u/%u pp=%u/%u/%u/%u\n",
                              static_cast<unsigned long>(pokemon->uid), static_cast<unsigned>(pokemon->moves[0]),
                              static_cast<unsigned>(pokemon->moves[1]), static_cast<unsigned>(pokemon->moves[2]),
@@ -25133,13 +24868,16 @@ void drawMoveSelect() {
       battleArenaPlayerSpeciesId != presentedBattleSpeciesId(pokemon, true) ||
       battleArenaOpponentSpeciesId != presentedBattleSpeciesId(opponent, false) ||
       battleArenaPlayerForm != presentedBattleForm(pokemon, true) ||
-      battleArenaOpponentForm != presentedBattleForm(opponent, false))
+      battleArenaOpponentForm != presentedBattleForm(opponent, false) ||
+      battleArenaPlayerMega != presentedBattleMegaVariant(pokemon, true) ||
+      battleArenaOpponentMega != presentedBattleMegaVariant(opponent, false))
     drawBattleArena(pokemon, opponent);
 
   // A retained stripe is a fresh off-screen composition, even when the
   // physical move picker was already visible. Skipping to the cursor-only
   // path here left every later stripe of the logical panel black.
-  if (moveHighlightedSlot >= kMoveSlots) moveHighlightedSlot = 0;
+  if (moveHighlightedSlot >= kMoveSlots || usingStruggle)
+    moveHighlightedSlot = 0;
 
   // This is the original FireRed move picker layout: four moves on the left,
   // PP and TYPE on the right.  It deliberately overlays the arena rather
@@ -25156,22 +24894,30 @@ void drawMoveSelect() {
   for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
     const int16_t x = 58 + (slot % 2) * 107;
     const int16_t y = 164 + (slot / 2) * 36;
-    const FullMoveData* move = pokemon ? findFullMove(pokemon->moves[slot]) : nullptr;
-    const bool usable = move && pokemon && pokemon->movePp[slot] &&
-                        isMoveAvailableInSingleBattle(pokemon->moves[slot]) &&
-                        BattleEngine::moveIsSelectable(gameSave.battle,gameSave.collection,
-                                                       pokemon->moves[slot],BattleSide::Player);
+    const FullMoveData* move = usingStruggle
+        ? (slot == 0U ? findFullMove(MoveId::Struggle) : nullptr)
+        : (pokemon ? findFullMove(pokemon->moves[slot]) : nullptr);
+    const bool usable = usingStruggle ? slot == 0U :
+        (move && pokemon && pokemon->movePp[slot] &&
+         isMoveAvailableInSingleBattle(pokemon->moves[slot]) &&
+         BattleEngine::moveIsSelectable(gameSave.battle,gameSave.collection,
+                                        pokemon->moves[slot],BattleSide::Player));
     fireRedText.setTextColor(usable ? kBattleInk : TFT_LIGHTGREY, kBattlePaper);
     drawBattleMoveName(move ? move->name : "---", x, y);
   }
-  const FullMoveData* selectedMove = pokemon ? findFullMove(pokemon->moves[highlightedSlot]) : nullptr;
+  const FullMoveData* selectedMove = usingStruggle
+      ? findFullMove(MoveId::Struggle)
+      : (pokemon ? findFullMove(pokemon->moves[highlightedSlot]) : nullptr);
   fireRedText.setTextColor(kBattleInk, kBattlePaper);
-  const uint8_t selectedMaximumPp = pokemon
+  const uint8_t selectedMaximumPp = !usingStruggle && pokemon
       ? (gameSave.battle.playerTransformed ? (selectedMove ? 5U : 0U)
                                            : CollectionLogic::maximumMovePp(*pokemon, highlightedSlot))
       : 0U;
-  char pp[20]; std::snprintf(pp, sizeof(pp), "%u/%u", pokemon ? pokemon->movePp[highlightedSlot] : 0U,
-                             selectedMaximumPp);
+  char pp[20];
+  if (usingStruggle) std::snprintf(pp, sizeof(pp), "--/--");
+  else std::snprintf(pp, sizeof(pp), "%u/%u",
+                     pokemon ? pokemon->movePp[highlightedSlot] : 0U,
+                     selectedMaximumPp);
   // PP and TYPE are permanent information and must never disappear behind
   // confirmation controls.
   fireRedText.drawString("PP", 236, 170, 1); fireRedText.setTextDatum(TR_DATUM);
@@ -25207,10 +24953,6 @@ void drawMoveSelect() {
     }
     fireRedText.setTextColor(kBattleInk,kBattlePaper);
     fireRedText.drawString("CANCEL",132,zAvailable?109:80,1);
-  }
-  if (!hasUsableMove) {
-    fireRedText.setTextColor(TFT_RED, kBattlePaper);
-    fireRedText.drawString("STRUGGLE", 27, 170, 1);
   }
   moveSelectVisible = true;
   renderedMoveConfirmSlot = moveConfirmSlot;
@@ -25703,11 +25445,12 @@ void drawSummaryHeader(const char* title, uint8_t page) {
   fireRedText.setTextColor(TFT_DARKGREY, paper);
   fireRedText.drawStringFitted(title, 11, 8, 181, 2);
   for (uint8_t index = 0; index < 3; ++index) {
-    const uint16_t fill = index == page ? TFT_WHITE : (index < page ? themePale() : themePrimary());
+    const uint16_t fill = index == page ? themePrimaryInk() :
+        (index < page ? themePale() : themePrimary());
     display.fillRoundRect(202 + index * 21, 5, 16, 21, 6, fill);
   }
-  display.fillTriangle(264, 16, 273, 9, 273, 23, TFT_WHITE);
-  display.fillTriangle(316, 16, 307, 9, 307, 23, TFT_WHITE);
+  display.fillTriangle(264, 16, 273, 9, 273, 23, themePrimaryInk());
+  display.fillTriangle(316, 16, 307, 9, 307, 23, themePrimaryInk());
   // The three large page dots and arrows are clearer than a tiny PAGE label.
 }
 
@@ -25949,7 +25692,7 @@ void drawFireRedSummaryHeader(uint8_t page, uint8_t pageCount) {
   const int16_t firstDot = pageCount > 4U ? 144 : 151;
   for (uint8_t index = 0; index < pageCount; ++index) {
     const int16_t x = static_cast<int16_t>(firstDot + index * 18);
-    const uint16_t fill = index == page ? TFT_WHITE : themeDark();
+    const uint16_t fill = index == page ? themePrimaryInk() : themeDark();
     display.fillCircle(x, 11, 6, 0x4228);
     display.fillCircle(x, 11, 4, fill);
     if (index == page) display.drawFastHLine(x - 2, 8, 5, themePale());
@@ -25957,9 +25700,9 @@ void drawFireRedSummaryHeader(uint8_t page, uint8_t pageCount) {
   // The arrows make the three original pages discoverable on a touch-only
   // device. Tapping a dot also selects its matching page directly.
   display.fillTriangle(265, 14, 277, 6, 277, 22, 0x4228);
-  display.fillTriangle(268, 14, 276, 9, 276, 19, TFT_WHITE);
+  display.fillTriangle(268, 14, 276, 9, 276, 19, themePrimaryInk());
   display.fillTriangle(314, 14, 302, 6, 302, 22, 0x4228);
-  display.fillTriangle(311, 14, 303, 9, 303, 19, TFT_WHITE);
+  display.fillTriangle(311, 14, 303, 9, 303, 19, themePrimaryInk());
 }
 
 bool drawFireRedSummaryBackground(uint8_t page, uint8_t pageCount) {
@@ -26157,7 +25900,11 @@ const char* moveCategoryName(MoveCategory category) {
 }
 
 const char* moveEffectDescription(const FullMoveData* move) {
-  static char text[320];
+  // generatedMoveDescription() is capped at 159 visible bytes.  Even with
+  // category, contact, chance and signed-priority suffixes the complete line
+  // is at most 230 bytes, so 256 preserves every authored character while
+  // avoiding a permanently reserved 64-byte tail in scarce internal DRAM.
+  static char text[256];
   if (!move) return "NO MOVE SELECTED.";
   // Every one of FireRed's 354 moves has its original purpose-written text.
   // This preserves the exact affected stat and special rule (for example,
@@ -26766,7 +26513,8 @@ const char* inventoryPocketName() {
   if (bagPage == kMachinePocket) return "TMs/HMs";
   if (bagPage == kEggPocket) return "EGGS";
   if (bagPage == kKeyItemsPage) return "KEY ITEMS";
-  if (bagPage == kMultiplayerPage) return "MULTIPLAYER";
+  if (bagPage == kMultiplayerBlePage) return "MULTIPLAYER BLE";
+  if (bagPage == kMultiplayerWifiPage) return "MULTIPLAYER WIFI";
   return "BAG";
 }
 
@@ -26774,7 +26522,7 @@ uint8_t inventoryBagFrame() {
   if (bagPage == kBallPocket) return 0;
   if (bagPage == kMachinePocket) return 2;
   if (bagPage == kKeyItemsPage) return 3;
-  if (bagPage == kMultiplayerPage) return 3;
+  if (isMultiplayerPage(bagPage)) return 3;
   return 1;
 }
 
@@ -26788,7 +26536,7 @@ bool prepareInventoryBrowseScene() {
   if (inventoryMode != InventoryMode::Browse) return true;
   bagPage = inventoryBattleContext ? normalizeBattleBagPage(bagPage)
                                    : normalizeInventoryPage(bagPage);
-  if (!inventoryBattleContext && bagPage == kMultiplayerPage) return true;
+  if (!inventoryBattleContext && isMultiplayerPage(bagPage)) return true;
 
   const InventoryEntry entry = selectedInventoryEntry();
   const uint8_t bagFrame = inventoryBagFrame();
@@ -27152,10 +26900,261 @@ void drawMultiplayerLinkMark(int16_t centerX, int16_t centerY, uint16_t color) {
   display.fillCircle(centerX + 10, centerY, 2, color);
 }
 
+void beginWifiSetup() {
+  wifiSetupVisible = true;
+  wifiSetupKeyboard = false;
+  wifiSetupNetworkPicker = false;
+  wifiSetupField = WifiSetupField::None;
+  std::strncpy(wifiSetupSsid, multiplayer.wifiSsid(), sizeof(wifiSetupSsid) - 1U);
+  std::strncpy(wifiSetupPassword, multiplayer.wifiPassword(), sizeof(wifiSetupPassword) - 1U);
+  inventoryNotice[0] = 0;
+}
+
+void openWifiSetupKeyboard(WifiSetupField field) {
+  wifiSetupField = field;
+  wifiSetupKeyboard = true;
+  wifiSetupShift = true;
+  const char* current = field == WifiSetupField::Password
+      ? wifiSetupPassword : "";
+  std::strncpy(wifiSetupEdit, current, sizeof(wifiSetupEdit) - 1U);
+  wifiSetupEdit[sizeof(wifiSetupEdit) - 1U] = 0;
+}
+
+void commitWifiSetupKeyboard() {
+  char* destination = nullptr;
+  size_t capacity = 0;
+  if (wifiSetupField == WifiSetupField::Password) {
+    destination = wifiSetupPassword; capacity = sizeof(wifiSetupPassword);
+  }
+  if (destination && capacity) {
+    std::strncpy(destination, wifiSetupEdit, capacity - 1U);
+    destination[capacity - 1U] = 0;
+  }
+  wifiSetupKeyboard = false;
+  wifiSetupField = WifiSetupField::None;
+}
+
+void drawWifiSetupKeyboard() {
+  beginScreenPresentation(Screen::Inventory, themeDark());
+  display.fillScreen(0xFFDF);
+  display.fillRoundRect(5, 4, 310, 25, 5, themePrimary());
+  fireRedText.setTextColor(TFT_WHITE, themePrimary());
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawString("TYPE WIFI PASSWORD", 160, 16, 1);
+  display.fillRoundRect(8, 33, 304, 25, 4, TFT_WHITE);
+  fireRedText.setTextColor(TFT_DARKGREY, TFT_WHITE);
+  char shown[66]{};
+  if (wifiSetupField == WifiSetupField::Password) {
+    const size_t length = std::min<size_t>(std::strlen(wifiSetupEdit), sizeof(shown) - 1U);
+    std::memset(shown, '*', length); shown[length] = 0;
+  } else std::strncpy(shown, wifiSetupEdit, sizeof(shown) - 1U);
+  fireRedText.drawStringFitted(shown[0] ? shown : "_", 160, 45, 290, 1);
+  fireRedText.setTextDatum(TL_DATUM);
+  const char* rows[4] = {"1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM._:"};
+  for (uint8_t row = 0; row < 4; ++row) {
+    for (uint8_t column = 0; column < 10; ++column) {
+      char label[2]{rows[row][column], 0};
+      if (!wifiSetupShift && label[0] >= 'A' && label[0] <= 'Z') label[0] += 'a' - 'A';
+      drawMultiplayerButton(5 + column * 31, 62 + row * 34, 29, 30,
+                            label, themeAccent());
+    }
+  }
+  drawMultiplayerButton(5, 201, 47, 34, wifiSetupShift ? "ABC" : "abc", themeAccent());
+  drawMultiplayerButton(55, 201, 82, 34, "SPACE", themeAccent());
+  drawMultiplayerButton(140, 201, 50, 34, "DEL", TFT_DARKGREY);
+  drawMultiplayerButton(193, 201, 57, 34, "DONE", 0x2D68);
+  drawMultiplayerButton(253, 201, 62, 34, "CANCEL", TFT_RED);
+}
+
+void drawWifiSetup() {
+  if (wifiSetupKeyboard) { drawWifiSetupKeyboard(); return; }
+  beginScreenPresentation(Screen::Inventory, themeDark());
+  display.fillScreen(0xFFDF);
+  display.fillRoundRect(5, 4, 310, 31, 5, themePrimary());
+  fireRedText.setTextColor(TFT_WHITE, themePrimary());
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawString(wifiSetupNetworkPicker ? "SELECT WIFI NETWORK" : "MULTIPLAYER WIFI SETUP",
+                         160, 19, 1);
+  fireRedText.setTextDatum(TL_DATUM);
+  if (wifiSetupNetworkPicker) {
+    const uint8_t count = multiplayer.wifiNetworkCount();
+    for (uint8_t index = 0; index < count && index < 6U; ++index) {
+      char label[52]{};
+      std::snprintf(label, sizeof(label), "%s%s  %ddB",
+                    multiplayer.wifiNetworkIsSaved(
+                        multiplayer.wifiNetworkName(index)) ? "* " : "",
+                    multiplayer.wifiNetworkName(index),
+                    static_cast<int>(multiplayer.wifiNetworkRssi(index)));
+      drawMultiplayerButton(18, 41 + index * 27, 284, 24, label, themeAccent());
+    }
+    if (!count) {
+      fireRedText.setTextColor(TFT_DARKGREY, 0xFFDF);
+      fireRedText.setTextDatum(MC_DATUM);
+      fireRedText.drawString(multiplayer.wifiScanInProgress()
+                                 ? "SCANNING WIFI NETWORKS..."
+                                 : "NO WIFI NETWORKS FOUND",
+                             160, 105, 1);
+      fireRedText.setTextDatum(TL_DATUM);
+    }
+    fireRedText.setTextColor(TFT_DARKGREY, 0xFFDF);
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.drawString("* PASSWORD ALREADY SAVED", 160, 194, 1);
+    fireRedText.setTextDatum(TL_DATUM);
+    drawMultiplayerButton(91, 207, 138, 28, "BACK", TFT_RED);
+    return;
+  }
+
+  fireRedText.setTextColor(TFT_DARKGREY, 0xFFDF);
+  fireRedText.drawString("WIFI NETWORK", 12, 43, 1);
+  drawMultiplayerButton(10, 57, 236, 31,
+                        wifiSetupSsid[0] ? wifiSetupSsid : "SELECT A NETWORK",
+                        themeAccent());
+  drawMultiplayerButton(250, 57, 60, 31, "SCAN", 0x2D68);
+  fireRedText.drawString("WIFI PASSWORD", 12, 97, 1);
+  char masked[34]{};
+  const size_t passwordLength = std::min<size_t>(std::strlen(wifiSetupPassword), 32U);
+  std::memset(masked, '*', passwordLength); masked[passwordLength] = 0;
+  drawMultiplayerButton(10, 111, 300, 31,
+                        masked[0] ? masked : "ENTER PASSWORD", themeAccent());
+  char savedSummary[42]{};
+  std::snprintf(savedSummary, sizeof(savedSummary),
+                "AUTO-CONNECT: %u/4 NETWORKS SAVED",
+                static_cast<unsigned>(multiplayer.savedWifiNetworkCount()));
+  fireRedText.setTextColor(TFT_DARKGREY, 0xFFDF);
+  fireRedText.setTextDatum(MC_DATUM);
+  fireRedText.drawString(savedSummary, 160, 153, 1);
+  fireRedText.setTextColor(0x2D68, 0xFFDF);
+  fireRedText.drawString("SERVER FOUND AUTOMATICALLY", 160, 170, 1);
+  if (inventoryNotice[0]) {
+    fireRedText.setTextColor(TFT_RED, 0xFFDF);
+    fireRedText.drawStringAuto(inventoryNotice, 160, 187, 296);
+  }
+  fireRedText.setTextDatum(TL_DATUM);
+  drawMultiplayerButton(35, 201, 120, 34, "USE NETWORK", 0x2D68);
+  drawMultiplayerButton(165, 201, 120, 34, "BACK", TFT_RED);
+}
+
+void handleWifiSetupTouch(const TouchPoint& point) {
+  if (wifiSetupKeyboard) {
+    if (point.y >= 62 && point.y < 194 && point.x >= 5 && point.x < 315) {
+      const uint8_t row = static_cast<uint8_t>((point.y - 62) / 34);
+      const uint8_t column = static_cast<uint8_t>((point.x - 5) / 31);
+      if (row < 4U && column < 10U) {
+        const char* rows[4] = {"1234567890", "QWERTYUIOP", "ASDFGHJKL-", "ZXCVBNM._:"};
+        char value = rows[row][column];
+        if (!wifiSetupShift && value >= 'A' && value <= 'Z') value += 'a' - 'A';
+        size_t maximum = sizeof(wifiSetupEdit) - 1U;
+        const size_t length = std::strlen(wifiSetupEdit);
+        if (length < maximum) { wifiSetupEdit[length] = value; wifiSetupEdit[length + 1U] = 0; }
+        drawWifiSetupKeyboard();
+        return;
+      }
+    }
+    if (inside(point, 5, 201, 47, 34)) wifiSetupShift = !wifiSetupShift;
+    else if (inside(point, 55, 201, 82, 34)) {
+      const size_t length = std::strlen(wifiSetupEdit);
+      if (length + 1U < sizeof(wifiSetupEdit)) {
+        wifiSetupEdit[length] = ' '; wifiSetupEdit[length + 1U] = 0;
+      }
+    } else if (inside(point, 140, 201, 50, 34)) {
+      const size_t length = std::strlen(wifiSetupEdit);
+      if (length) wifiSetupEdit[length - 1U] = 0;
+    } else if (inside(point, 193, 201, 57, 34)) commitWifiSetupKeyboard();
+    else if (inside(point, 253, 201, 62, 34)) {
+      wifiSetupKeyboard = false; wifiSetupField = WifiSetupField::None;
+    }
+    drawWifiSetup();
+    return;
+  }
+  if (wifiSetupNetworkPicker) {
+    const uint8_t count = std::min<uint8_t>(6U, multiplayer.wifiNetworkCount());
+    for (uint8_t index = 0; index < count; ++index) {
+      if (!inside(point, 18, 41 + index * 27, 284, 24)) continue;
+      if (std::strncmp(wifiSetupSsid, multiplayer.wifiNetworkName(index),
+                       sizeof(wifiSetupSsid) - 1U) != 0) {
+        const char* savedPassword = multiplayer.savedWifiPassword(
+            multiplayer.wifiNetworkName(index));
+        std::strncpy(wifiSetupPassword, savedPassword,
+                     sizeof(wifiSetupPassword) - 1U);
+        wifiSetupPassword[sizeof(wifiSetupPassword) - 1U] = 0;
+      }
+      std::strncpy(wifiSetupSsid, multiplayer.wifiNetworkName(index),
+                   sizeof(wifiSetupSsid) - 1U);
+      wifiSetupSsid[sizeof(wifiSetupSsid) - 1U] = 0;
+      wifiSetupNetworkPicker = false;
+      drawWifiSetup();
+      return;
+    }
+    if (inside(point, 91, 207, 138, 28)) {
+      wifiSetupNetworkPicker = false; drawWifiSetup();
+    }
+    return;
+  }
+  if (inside(point, 10, 57, 300, 31)) {
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+    // The native ESP-IDF scan creates its driver task and scan buffers here.
+    // The no-PSRAM board normally keeps the only large contiguous block in
+    // the renderer, so lend it for the complete synchronous scan.
+    AssetRenderer::releaseSceneWorkspaceForRadio();
+    if (!suspendGameSaveForWifi()) {
+      AssetRenderer::restoreSceneWorkspace(false);
+      std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                    "SAVE IS BUSY. TRY AGAIN.");
+      drawWifiSetup();
+      return;
+    }
+#endif
+    multiplayer.scanWifiNetworks();
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+    if (!resumeGameSaveAfterWifi()) {
+      Serial.println("[WIFI] fatal game-state restore failure after scan");
+      delay(100);
+      ESP.restart();
+      return;
+    }
+    // Keep ordinary radio headroom until this setup frame is complete. Home
+    // grows this compact bank back to the full scene arena through
+    // beginScreenPresentation(), and enabling Wi-Fi lends it again.
+    const bool wifiScanWorkspaceRestored =
+        AssetRenderer::restoreSceneWorkspace(true);
+    preparedUiSceneKey = 0U;
+    preparedUiSceneComplete = false;
+    preparedBattleGraphicsKey = 0U;
+    battleArenaVisible = false;
+    rendererSceneRewarmPending = wifiScanWorkspaceRestored;
+    if (!wifiScanWorkspaceRestored)
+      Serial.println("[WIFI] compact renderer workspace restore failed after scan");
+#endif
+    wifiSetupNetworkPicker = true;
+  } else if (inside(point, 10, 111, 300, 31)) {
+    openWifiSetupKeyboard(WifiSetupField::Password);
+  }
+  else if (inside(point, 35, 201, 120, 34)) {
+    const bool saved = wifiSetupSsid[0] &&
+        multiplayer.setWifiCredentials(wifiSetupSsid, wifiSetupPassword);
+    if (saved) {
+      wifiSetupVisible = false;
+      inventoryNotice[0] = 0;
+    } else {
+      std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                    "SELECT A WIFI NETWORK FIRST.");
+    }
+  } else if (inside(point, 165, 201, 120, 34)) wifiSetupVisible = false;
+  drawMultiplayerPocket();
+}
+
 void drawMultiplayerPocket() {
+  if (kWifiNeedsLocalSetup && wifiSetupVisible) { drawWifiSetup(); return; }
   constexpr uint16_t kPaper = 0xFFDF;
   constexpr uint16_t kPanel = 0xFFF6;
-  const bool enabled = multiplayer.enabled();
+  const bool wifi = bagPage == kMultiplayerWifiPage;
+  const Multiplayer::TransportKind requestedTransport = wifi
+      ? Multiplayer::TransportKind::Wifi : Multiplayer::TransportKind::Ble;
+  if (!multiplayer.enabled() && !multiplayerRadioTransitionActive)
+    multiplayer.selectTransport(requestedTransport);
+  const bool enabled = multiplayerRadioTransitionActive
+      ? multiplayerRadioTransitionTargetOn : multiplayer.enabled();
+  const bool activePage = multiplayer.transportKind() == requestedTransport;
   const Multiplayer::State state = multiplayer.state();
 
   beginScreenPresentation(Screen::Inventory, themeDark());
@@ -27171,11 +27170,12 @@ void drawMultiplayerPocket() {
   display.fillRoundRect(15, 16, 82, 22, 7, themePale());
   char id[24];
   std::snprintf(id, sizeof(id), "ID %05lu", static_cast<unsigned long>(multiplayer.playerId()));
-  fireRedText.setTextColor(themeDark(), themePale());
+  fireRedText.setTextColor(themePaleInk(), themePale());
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.drawStringFitted(id, 56, 27, 74, 1);
   fireRedText.setTextColor(TFT_WHITE, themePrimary());
-  fireRedText.drawStringFitted("MULTIPLAYER", 169, 27, 132, 1);
+  fireRedText.drawStringFitted(wifi ? "MULTIPLAYER WIFI" : "MULTIPLAYER BLE",
+                               169, 27, 132, 1);
 
   const uint16_t switchColor = enabled ? 0x2D68 : 0x8410;
   display.fillRoundRect(244, 15, 60, 24, 11, themeDark());
@@ -27191,13 +27191,27 @@ void drawMultiplayerPocket() {
   display.fillRoundRect(16, 54, 288, 131, 5, kPanel);
 
   const char* stateLabel = "READY TO CONNECT";
+  char pagedStateLabel[32]{};
   uint16_t stateColor = themeAccent();
-  if (!enabled || state == Multiplayer::State::Off) {
+  if (multiplayerRadioTransitionActive) {
+    stateLabel = multiplayerRadioTransitionTargetOn
+        ? (wifi ? "STARTING WIFI..." : "STARTING BLUETOOTH...")
+        : (wifi ? "STOPPING WIFI..." : "STOPPING BLUETOOTH...");
+    stateColor = TFT_ORANGE;
+  } else if (!enabled || state == Multiplayer::State::Off) {
     stateLabel = "WIRELESS OFF"; stateColor = 0x8410;
   } else if (state == Multiplayer::State::Error) {
     stateLabel = "CONNECTION ERROR"; stateColor = TFT_RED;
+  } else if (!activePage) {
+    stateLabel = wifi ? "BLE IS ACTIVE" : "WIFI IS ACTIVE"; stateColor = TFT_ORANGE;
   } else if (state == Multiplayer::State::Scanning) {
-    stateLabel = "SEARCHING NEARBY"; stateColor = TFT_ORANGE;
+    if (wifi && !multiplayer.peerSearchInProgress()) {
+      stateLabel = "SELECT ONLINE PLAYER";
+      stateColor = 0x2D68;
+    } else {
+      stateLabel = wifi ? "SEARCHING ONLINE" : "SEARCHING NEARBY";
+      stateColor = TFT_ORANGE;
+    }
   } else if (state == Multiplayer::State::ConfirmOutgoingPeer ||
              state == Multiplayer::State::ConfirmIncomingPeer) {
     stateLabel = "CONNECTION REQUEST"; stateColor = TFT_ORANGE;
@@ -27205,6 +27219,8 @@ void drawMultiplayerPocket() {
     stateLabel = multiplayer.activity() == Multiplayer::Activity::Trade
         ? "TRADE REQUEST" : "BATTLE REQUEST";
     stateColor = TFT_ORANGE;
+  } else if (state == Multiplayer::State::WaitingActivityReply) {
+    stateLabel = "WAITING FOR REPLY"; stateColor = TFT_ORANGE;
   } else if (state == Multiplayer::State::TradeSelecting ||
              state == Multiplayer::State::TradeConfirming) {
     stateLabel = "TRADE ROOM"; stateColor = 0x2D68;
@@ -27218,31 +27234,91 @@ void drawMultiplayerPocket() {
     stateLabel = "LINK ESTABLISHED"; stateColor = 0x2D68;
   }
 
+  uint8_t peerPages = 1;
+  if (state == Multiplayer::State::Scanning) {
+    peerPages = static_cast<uint8_t>((multiplayer.peerCount() + 3u) / 4u);
+    if (!peerPages) peerPages = 1;
+  }
+  if (multiplayerPeerPage >= peerPages) multiplayerPeerPage = peerPages - 1u;
+  const bool pagedPeerList = state == Multiplayer::State::Scanning &&
+                             peerPages > 1 && !multiplayer.peerSearchInProgress();
+  if (pagedPeerList) {
+    std::snprintf(pagedStateLabel, sizeof(pagedStateLabel), "SELECT PLAYER %u/%u",
+                  static_cast<unsigned>(multiplayerPeerPage + 1u),
+                  static_cast<unsigned>(peerPages));
+    stateLabel = pagedStateLabel;
+  }
+
   display.fillRoundRect(20, 58, 280, 21, 5, themePale());
-  display.fillCircle(31, 68, 4, stateColor);
-  fireRedText.setTextColor(themeDark(), themePale());
-  fireRedText.drawStringFitted(stateLabel, 42, 62, 249, 1);
+  fireRedText.setTextColor(themePaleInk(), themePale());
+  if (pagedPeerList) {
+    fireRedText.drawString("<", 28, 62, 1);
+    fireRedText.drawStringFitted(stateLabel, 48, 62, 224, 1);
+    fireRedText.drawString(">", 284, 62, 1);
+  } else {
+    display.fillCircle(31, 68, 4, stateColor);
+    fireRedText.drawStringFitted(stateLabel, 42, 62, 249, 1);
+  }
   fireRedText.setTextColor(TFT_DARKGREY, kPanel);
 
-  if (state == Multiplayer::State::Error) {
+  if (multiplayerRadioTransitionActive) {
+    drawMultiplayerLinkMark(160, 101, TFT_ORANGE);
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.drawString(multiplayerRadioTransitionTargetOn
+        ? (wifi ? "CONNECTING TO WIFI" : "PREPARING BLUETOOTH")
+        : (wifi ? "CLOSING WIFI" : "CLOSING BLUETOOTH"), 160, 126, 2);
+    fireRedText.drawString("PLEASE WAIT...", 160, 150, 1);
+    fireRedText.setTextDatum(TL_DATUM);
+  } else if (state == Multiplayer::State::Error) {
     drawMultiplayerLinkMark(160, 100, TFT_RED);
     fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringAuto(multiplayer.statusText(), 160, 122, 260);
     fireRedText.setTextDatum(TL_DATUM);
-    drawMultiplayerButton(75, 145, 170, 34, "TRY AGAIN", themeAccent());
+    if (wifi && kWifiNeedsLocalSetup) {
+      drawMultiplayerButton(28, 145, 126, 34, "TRY AGAIN", themeAccent());
+      drawMultiplayerButton(166, 145, 126, 34, "CONFIG", TFT_DARKGREY);
+    } else drawMultiplayerButton(75, 145, 170, 34, "TRY AGAIN", themeAccent());
+  } else if (enabled && !activePage) {
+    drawMultiplayerLinkMark(160, 101, TFT_ORANGE);
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.drawString(wifi ? "TURN MULTIPLAYER BLE OFF" : "TURN MULTIPLAYER WIFI OFF",
+                           160, 128, 1);
+    fireRedText.drawString("BEFORE USING THIS PAGE.", 160, 149, 1);
+    fireRedText.setTextDatum(TL_DATUM);
   } else if (!enabled || state == Multiplayer::State::Off) {
     drawMultiplayerLinkMark(160, 101, 0x8410);
     fireRedText.setTextDatum(MC_DATUM);
-    fireRedText.drawString("TURN BLUETOOTH ON", 160, 128, 2);
-    fireRedText.drawString("TO FIND NEARBY PLAYERS.", 160, 153, 1);
+    fireRedText.drawString(wifi ? "TURN WIFI PLAY ON" : "TURN BLUETOOTH ON", 160, 126, 2);
+    if (wifi && kWifiNeedsLocalSetup) {
+      char autoNetwork[52]{};
+      if (multiplayer.savedWifiNetworkCount())
+        std::snprintf(autoNetwork, sizeof(autoNetwork), "AUTO %u/4: %s",
+                      static_cast<unsigned>(multiplayer.savedWifiNetworkCount()),
+                      multiplayer.savedWifiNetworkName(0));
+      else
+        std::snprintf(autoNetwork, sizeof(autoNetwork), "CONFIGURE YOUR FIRST NETWORK");
+      fireRedText.drawStringFitted(autoNetwork, 160, 145, 260, 1);
+    } else {
+      fireRedText.drawString(wifi ? "USES THIS PHONE'S CURRENT NETWORK."
+                                  : "TO FIND NEARBY PLAYERS.",
+                             160, 146, 1);
+    }
     fireRedText.setTextDatum(TL_DATUM);
+    if (wifi && kWifiNeedsLocalSetup)
+      drawMultiplayerButton(105, 154, 110, 27, "CONFIG", TFT_DARKGREY);
   } else if (state == Multiplayer::State::Scanning) {
     const uint8_t count = multiplayer.peerCount();
-    for (uint8_t row = 0; row < count && row < 4; ++row) {
-      const Multiplayer::Peer peer = multiplayer.peer(row);
+    const uint8_t firstPeer = static_cast<uint8_t>(multiplayerPeerPage * 4u);
+    for (uint8_t row = 0; row < 4 && firstPeer + row < count; ++row) {
+      const Multiplayer::Peer peer = multiplayer.peer(firstPeer + row);
       char label[36];
-      std::snprintf(label, sizeof(label), "PLAYER %05lu   %ddB",
-                    static_cast<unsigned long>(peer.playerId), static_cast<int>(peer.rssi));
+      if (wifi)
+        std::snprintf(label, sizeof(label), "P:%05lu   WIN:%lu",
+                      static_cast<unsigned long>(peer.playerId),
+                      static_cast<unsigned long>(peer.balancedWins));
+      else
+        std::snprintf(label, sizeof(label), "PLAYER %05lu   %ddB",
+                      static_cast<unsigned long>(peer.playerId), static_cast<int>(peer.rssi));
       drawMultiplayerButton(25, 83 + row * 25, 270, 23, label, themeAccent());
     }
     if (!count) {
@@ -27250,7 +27326,8 @@ void drawMultiplayerPocket() {
       fireRedText.setTextDatum(MC_DATUM);
       fireRedText.drawStringAuto(multiplayer.statusText(), 160, 122, 250);
       fireRedText.setTextDatum(TL_DATUM);
-      drawMultiplayerButton(87, 148, 146, 30, "SCAN AGAIN", themeAccent());
+      if (!multiplayer.peerSearchInProgress())
+        drawMultiplayerButton(87, 148, 146, 30, "SCAN AGAIN", themeAccent());
     }
   } else if (state == Multiplayer::State::ConfirmOutgoingPeer ||
              state == Multiplayer::State::ConfirmIncomingPeer) {
@@ -27265,14 +27342,23 @@ void drawMultiplayerPocket() {
     drawMultiplayerButton(174, 139, 102, 34, "NO", TFT_RED);
   } else if (state == Multiplayer::State::ConfirmIncomingActivity) {
     char prompt[60];
+    const char* proposal = "A TRADE";
+    if (multiplayer.activity() == Multiplayer::Activity::Battle)
+      proposal = multiplayer.battleRules() == Multiplayer::BattleRules::Balanced
+          ? "A BALANCED BATTLE" : "A NORMAL BATTLE";
     std::snprintf(prompt, sizeof(prompt), "PLAYER %05lu REQUESTS %s.",
-        static_cast<unsigned long>(multiplayer.peerId()),
-        multiplayer.activity() == Multiplayer::Activity::Trade ? "A TRADE" : "A BATTLE");
+        static_cast<unsigned long>(multiplayer.peerId()), proposal);
     fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringAuto(prompt, 160, 101, 250);
     fireRedText.setTextDatum(TL_DATUM);
     drawMultiplayerButton(36, 139, 118, 34, "ACCEPT", 0x2D68);
     drawMultiplayerButton(166, 139, 118, 34, "DECLINE", TFT_RED);
+  } else if (state == Multiplayer::State::WaitingActivityReply) {
+    drawMultiplayerLinkMark(160, 101, TFT_ORANGE);
+    fireRedText.setTextDatum(MC_DATUM);
+    fireRedText.drawStringAuto(multiplayer.statusText(), 160, 128, 260);
+    fireRedText.setTextDatum(TL_DATUM);
+    drawMultiplayerButton(75, 151, 170, 28, "CANCEL REQUEST", TFT_RED);
   } else if (state == Multiplayer::State::TradeSelecting) {
     fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringAuto(multiplayer.statusText(), 160, 94, 250);
@@ -27293,25 +27379,55 @@ void drawMultiplayerPocket() {
     display.drawFastHLine(27, 108, 266, 0xC618);
     fireRedText.drawStringFitted(right, 27, 113, 266, 1);
     if (mine.valid && theirs.valid) {
-      drawMultiplayerButton(44, 143, 102, 33, "CONFIRM", 0x2D68);
+      const bool mineConfirmed = multiplayer.localTradeConfirmed();
+      const bool theirsConfirmed = multiplayer.remoteTradeConfirmed();
+      if (mineConfirmed || theirsConfirmed) {
+        const char* confirmationStatus = mineConfirmed && theirsConfirmed
+            ? "BOTH CONFIRMED - SAVING..."
+            : mineConfirmed
+                ? "CONFIRMED - WAITING FOR PLAYER..."
+                : "OTHER PLAYER CONFIRMED.";
+        fireRedText.setTextDatum(MC_DATUM);
+        fireRedText.drawStringFitted(confirmationStatus, 160, 135, 270, 1);
+        fireRedText.setTextDatum(TL_DATUM);
+      }
+      // Keep the accepted state visibly latched while the other device is
+      // deciding. A touch can no longer look as though it was ignored.
+      drawMultiplayerButton(44, 143, 102, 33,
+                            mineConfirmed ? "CONFIRMED" : "CONFIRM",
+                            mineConfirmed ? 0x1944 : 0x2D68);
       drawMultiplayerButton(174, 143, 102, 33, "CANCEL", TFT_RED);
     } else {
       drawMultiplayerButton(75, 143, 170, 33, "OPEN BOX", themeAccent());
     }
   } else if (state == Multiplayer::State::BattlePreparing) {
-    fireRedText.setTextDatum(MC_DATUM);
-    fireRedText.drawString("ARRANGE YOUR PARTY FIRST.", 160, 95, 1);
-    fireRedText.drawString("THE LINK WILL STAY ACTIVE.", 160, 113, 1);
-    fireRedText.setTextDatum(TL_DATUM);
-    drawMultiplayerButton(30, 132, 127, 34, "OPEN BOX", themeAccent());
-    drawMultiplayerButton(163, 132, 127, 34, "READY", 0x2D68);
-    drawMultiplayerButton(75, 166, 170, 18, "CANCEL BATTLE", TFT_RED);
+    if (!multiplayer.battleRulesReady()) {
+      fireRedText.setTextDatum(MC_DATUM);
+      fireRedText.drawString("CHOOSE THE BATTLE RULES", 160, 91, 1);
+      fireRedText.drawString("BALANCED SETS EVERYONE TO Lv70", 160, 108, 1);
+      fireRedText.setTextDatum(TL_DATUM);
+      drawMultiplayerButton(30, 126, 127, 37, "NORMAL", themeAccent());
+      drawMultiplayerButton(163, 126, 127, 37, "BALANCED", 0x2D68);
+      drawMultiplayerButton(75, 166, 170, 18, "CANCEL BATTLE", TFT_RED);
+    } else {
+      fireRedText.setTextDatum(MC_DATUM);
+      const bool otherReady = multiplayer.remoteBattleReady();
+      fireRedText.drawString(multiplayer.battleRules() == Multiplayer::BattleRules::Balanced
+          ? (otherReady ? "OTHER PLAYER READY - BALANCED" : "BALANCED - ALL POKEMON Lv70")
+          : (otherReady ? "OTHER PLAYER READY - NORMAL" : "NORMAL - ORIGINAL LEVELS"),
+          160, 91, 1);
+      fireRedText.drawString(otherReady
+          ? "ARRANGE PARTY, THEN PRESS READY." : "ARRANGE YOUR PARTY FIRST.", 160, 110, 1);
+      fireRedText.setTextDatum(TL_DATUM);
+      drawMultiplayerButton(30, 132, 127, 34, "OPEN BOX", themeAccent());
+      drawMultiplayerButton(163, 132, 127, 34, "READY", 0x2D68);
+      drawMultiplayerButton(75, 166, 170, 18, "CANCEL BATTLE", TFT_RED);
+    }
   } else if (state == Multiplayer::State::BattleWaitingReady) {
     fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringAuto(multiplayer.statusText(), 160, 99, 260);
+    fireRedText.drawString("YOUR PARTY IS LOCKED.", 160, 132, 1);
     fireRedText.setTextDatum(TL_DATUM);
-    if (!multiplayer.localBattleReady())
-      drawMultiplayerButton(101, 129, 118, 34, "READY", 0x2D68);
     drawMultiplayerButton(75, 164, 170, 20, "CANCEL BATTLE", TFT_RED);
   } else if (state == Multiplayer::State::BattleChoosingLead) {
     fireRedText.setTextDatum(MC_DATUM);
@@ -27338,24 +27454,33 @@ void drawMultiplayerPocket() {
                   static_cast<unsigned long>(multiplayer.peerId()));
     display.fillRoundRect(53, 86, 214, 27, 6, themePale());
     drawMultiplayerLinkMark(77, 99, themePrimary());
-    fireRedText.setTextColor(themeDark(), themePale());
+    fireRedText.setTextColor(themePaleInk(), themePale());
     fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringFitted(connected, 177, 100, 160, 2);
     fireRedText.setTextDatum(TL_DATUM);
-    drawMultiplayerButton(21, 123, 88, 39, "BATTLE", TFT_RED);
-    drawMultiplayerButton(116, 123, 88, 39, "TRADE", themeAccent());
-    drawMultiplayerButton(211, 123, 88, 39, "CANCEL", TFT_DARKGREY);
-    fireRedText.setTextColor(TFT_DARKGREY, kPanel);
-    fireRedText.setTextDatum(MC_DATUM);
-    fireRedText.drawStringAuto(multiplayer.statusText(), 160, 176, 270);
-    fireRedText.setTextDatum(TL_DATUM);
+    if (multiplayer.initiatedConnection()) {
+      drawMultiplayerButton(21, 123, 88, 39, "BATTLE", TFT_RED);
+      drawMultiplayerButton(116, 123, 88, 39, "TRADE", themeAccent());
+      drawMultiplayerButton(211, 123, 88, 39, "CANCEL", TFT_DARKGREY);
+    } else {
+      fireRedText.setTextDatum(MC_DATUM);
+      fireRedText.drawString("WAITING FOR THIS PLAYER TO CHOOSE.", 160, 132, 1);
+      fireRedText.setTextDatum(TL_DATUM);
+      drawMultiplayerButton(75, 151, 170, 28, "CANCEL", TFT_DARKGREY);
+    }
   } else {
     drawMultiplayerLinkMark(160, 101, themeAccent());
     fireRedText.setTextDatum(MC_DATUM);
     fireRedText.drawStringAuto(multiplayer.statusText(), 160, 120, 260);
     fireRedText.setTextDatum(TL_DATUM);
-    if (state == Multiplayer::State::Advertising || state == Multiplayer::State::Error)
-      drawMultiplayerButton(75, 145, 170, 34, "FIND PLAYER", themeAccent());
+    if (state == Multiplayer::State::Advertising || state == Multiplayer::State::Error) {
+      if (wifi && kWifiNeedsLocalSetup) {
+        drawMultiplayerButton(28, 145, 126, 34, "FIND PLAYER", themeAccent());
+        drawMultiplayerButton(166, 145, 126, 34, "CONFIG", TFT_DARKGREY);
+      } else {
+        drawMultiplayerButton(75, 145, 170, 34, "FIND PLAYER", themeAccent());
+      }
+    }
   }
 
   inventoryWindow(10, 199, 38, 29, 0x4228);
@@ -27363,7 +27488,7 @@ void drawMultiplayerPocket() {
   display.fillTriangle(18, 213, 33, 205, 33, 221, TFT_WHITE);
   display.fillTriangle(82, 213, 67, 205, 67, 221, TFT_WHITE);
   fireRedText.setTextColor(themeDark(), kPaper);
-  fireRedText.drawString("WIRELESS CLUB", 104, 207, 1);
+  fireRedText.drawString(wifi ? "ONLINE CLUB" : "WIRELESS CLUB", 104, 207, 1);
   drawMultiplayerButton(220, 199, 83, 29, "BACK", TFT_RED);
 }
 
@@ -27372,7 +27497,9 @@ void drawInventory() {
   if (inventoryMode == InventoryMode::ChooseMove) { drawInventoryMoveTarget(); return; }
 
   bagPage = inventoryBattleContext ? normalizeBattleBagPage(bagPage) : normalizeInventoryPage(bagPage);
-  if (!inventoryBattleContext && bagPage == kMultiplayerPage) { drawMultiplayerPocket(); return; }
+  if (!inventoryBattleContext && isMultiplayerPage(bagPage)) {
+    drawMultiplayerPocket(); return;
+  }
 
   const uint16_t trim = 0x34D0;
   const uint16_t paper = 0xFFDF;
@@ -27456,34 +27583,154 @@ void drawInventory() {
   drawInventoryBrowseActionLabels(paper);
 }
 
-void disableMultiplayerRadioAndRestoreGraphics(const char* reason) {
-  if (!multiplayer.enabled()) return;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+bool resumeGameSaveAfterRadioClose() {
+  if (resumeGameSaveAfterWifi()) return true;
+  // Continuing without GameSave would be genuine state corruption. The
+  // pre-session record is already durable, so a clean boot is the only safe
+  // last resort and is intentionally not part of the normal close path.
+  Serial.println("[BLE] fatal game-state restore failure after radio close");
+  delay(100);
+  ESP.restart();
+  return false;
+}
+#endif
+
+bool disableMultiplayerRadioAndRestoreGraphics(const char* reason) {
   // Closing the Bag is now the explicit lifetime boundary for BLE. Battle
   // setup and Trade may temporarily visit Party/Box and return to the Bag,
   // so those transitions do not call this helper. A real Bag close tears the
   // connection down and immediately gives the large graphics arena its RAM
   // back before Home is composed.
-  Serial.printf("[BLE] %s; shutting radio down\n",
-                reason ? reason : "Session ended");
-  multiplayer.setEnabled(false);
+  const bool hadActiveRadio = multiplayer.enabled();
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  // Wi-Fi/BLE and the 54 KiB GameSave are allocated in opposite orders when
+  // a session starts. If the radio is simply torn down around the live save,
+  // its released blocks remain separated and only a Home-sized graphics bank
+  // can be reacquired. Park the already-durable save first, stop the radio,
+  // then restore Save -> renderer in the same deterministic order used at
+  // boot. This recovers one bank large enough for Summary and Pokemon Center.
+  const bool gameStateParked = !hadActiveRadio || suspendGameSaveForWifi();
+#endif
+  if (hadActiveRadio) {
+    Serial.printf("[BLE] %s; shutting radio down\n",
+                  reason ? reason : "Session ended");
+    multiplayer.setEnabled(false);
+  }
   AssetRenderer::releaseSceneWorkspaceForRadio();
-  AssetRenderer::restoreSceneWorkspace(false);
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  if (gameStateParked && !gameSaveStorage &&
+      !resumeGameSaveAfterRadioClose()) return false;
+#endif
+  const bool restored = AssetRenderer::restoreSceneWorkspace(false);
+  const bool ready = restored && AssetRenderer::uiSceneWorkspaceReady();
+  multiplayerGraphicsRestorePending = !ready;
+  multiplayerGraphicsRestoreAttemptMs = millis();
   preparedUiSceneKey = 0;
   preparedUiSceneComplete = false;
-  requestRetainedFrame();
+  preparedBattleGraphicsKey = 0;
+  battleArenaVisible = false;
+  if (ready) requestRetainedFrame();
+  else Serial.println("[BLE] waiting for complete UI graphics workspace");
+  return ready;
 }
 
-void disableMultiplayerRadioAfterBagClose() {
-  disableMultiplayerRadioAndRestoreGraphics("Bag closed");
+bool disableMultiplayerRadioAfterBagClose() {
+  return disableMultiplayerRadioAndRestoreGraphics("Bag closed");
+}
+
+bool multiplayerGraphicsRecoveryRequiredForBagClose() {
+  // Merely visiting the Bag must not dismantle the healthy 57 KiB scene bank.
+  // That used to make an ordinary CANCEL look like a crash: the allocator
+  // could not reacquire the same contiguous block, so the board rebooted even
+  // though NimBLE had never been started.  A pending recovery means the radio
+  // was already turned off from inside the multiplayer pocket and still owns
+  // this close transaction.
+  return multiplayer.enabled() || multiplayerGraphicsRestorePending;
+}
+
+void drawMultiplayerHomeRecoveryTransition() {
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  // Usually the compact Home bank is restored synchronously and this frame is
+  // never shown. If the radio task needs one more scheduler turn to release a
+  // 14 KiB block, leave a complete surface in TFT GRAM instead of publishing
+  // a half-invalidated retained Bag frame.
+  constexpr uint16_t kBackdrop = 0x10A5;
+  constexpr uint16_t kPanel = 0xFFFF;
+  constexpr uint16_t kFrame = 0x39E7;
+  constexpr uint16_t kAccent = 0x1D9D;
+  multiplayerHomeRecoveryTransitionVisible = true;
+  panel.startWrite();
+  panel.fillScreen(kBackdrop);
+  panel.fillRoundRect(18, 47, 284, 146, 10, kFrame);
+  panel.fillRoundRect(22, 51, 276, 138, 8, kPanel);
+  panel.fillRoundRect(31, 61, 258, 42, 6, kAccent);
+  panel.setTextDatum(MC_DATUM);
+  panel.setTextColor(TFT_WHITE, kAccent);
+  panel.drawString("POKEGOCHI LINK", 160, 82, 2);
+  panel.setTextColor(TFT_DARKGREY, kPanel);
+  panel.drawString("RESTORING DISPLAY...", 160, 129, 2);
+  panel.drawString("PLEASE WAIT", 160, 157, 1);
+  panel.setTextDatum(TL_DATUM);
+  panel.endWrite();
+#endif
 }
 
 void closeInventoryToHome() {
   inventoryMode = InventoryMode::Browse;
   megaStoneKeyItemTargeting = false;
   inventoryBattleContext = false;
-  disableMultiplayerRadioAfterBagClose();
+  if (!multiplayerGraphicsRecoveryRequiredForBagClose()) {
+    // Normal Bag -> Home is an ordinary retained-scene transition.  Keep the
+    // already valid graphics arena and never route it through BLE teardown.
+    multiplayerHomeReturnPending = false;
+    screen = Screen::Home;
+    drawHome();
+    return;
+  }
+  if (!disableMultiplayerRadioAfterBagClose()) {
+    drawMultiplayerHomeRecoveryTransition();
+    multiplayerHomeReturnPending = true;
+    return;
+  }
+  multiplayerHomeReturnPending = false;
+  multiplayerHomeRecoveryTransitionVisible = false;
   screen = Screen::Home;
   drawHome();
+}
+
+void serviceMultiplayerGraphicsRecovery(uint32_t now) {
+  if (!multiplayerGraphicsRestorePending) return;
+  // A new radio session supersedes an old close request. Its compact arena is
+  // intentional and must not be repeatedly replaced by the normal Home bank.
+  if (multiplayer.enabled()) {
+    multiplayerGraphicsRestorePending = false;
+    multiplayerHomeReturnPending = false;
+    multiplayerHomeRecoveryTransitionVisible = false;
+    return;
+  }
+  if (now - multiplayerGraphicsRestoreAttemptMs < 25U) return;
+  multiplayerGraphicsRestoreAttemptMs = now;
+  const bool restored = AssetRenderer::restoreSceneWorkspace(false);
+  if (!restored || !AssetRenderer::uiSceneWorkspaceReady()) return;
+
+  multiplayerGraphicsRestorePending = false;
+  multiplayerHomeRecoveryTransitionVisible = false;
+  preparedUiSceneKey = 0;
+  preparedUiSceneComplete = false;
+  preparedBattleGraphicsKey = 0;
+  battleArenaVisible = false;
+  Serial.println("[BLE] complete UI graphics workspace restored");
+  if (multiplayerHomeReturnPending) {
+    multiplayerHomeReturnPending = false;
+    screen = Screen::Home;
+    drawHome();
+    return;
+  }
+  // Toggling Bluetooth off while remaining inside the Bag still invalidates
+  // every scene descriptor. Rebuild that current page outside composition.
+  rendererSceneRewarmPending = true;
+  requestRetainedFrame();
 }
 
 // Dynamic half of the Bag.  The outer teal frame and the background tiles are
@@ -27492,7 +27739,9 @@ void closeInventoryToHome() {
 void refreshInventoryPanels(bool refreshPocket) {
   if (inventoryMode == InventoryMode::ChooseTarget) return;
   bagPage = inventoryBattleContext ? normalizeBattleBagPage(bagPage) : normalizeInventoryPage(bagPage);
-  if (!inventoryBattleContext && bagPage == kMultiplayerPage) { drawMultiplayerPocket(); return; }
+  if (!inventoryBattleContext && isMultiplayerPage(bagPage)) {
+    drawMultiplayerPocket(); return;
+  }
   // This runs from the touch handler, before the retained presenter starts.
   // Prepare the changed pocket/item now; paintRetainedSceneStripe() must stay
   // completely free of SD reads.
@@ -28322,16 +28571,17 @@ bool prepareBoxSceneAssets() {
   const OwnedPokemon* selected = CollectionLogic::find(gameSave.collection, selectedUid);
   const bool showingParty = boxPartyView || boxOverlay == BoxOverlay::PartyTarget ||
       boxOverlay == BoxOverlay::SoftBoiledTarget;
+  const bool compactTradePreview = multiplayerTradeSelectionActive();
   // 30 paths x 72 bytes used to consume more than 2 KiB of loopTask's stack.
   // Entering FatFs below then crossed the stack canary and rebooted precisely
   // when Box was opened. This manifest is transient but non-reentrant, so keep
   // its workspace in static storage and explicitly initialise every use.
   static const char* assets[40];
-  // The longest form-aware path is still below 72 bytes. Keeping this large
+  // The longest form-aware icon path is 72 bytes before its terminator. Keeping this large
   // manifest compact is essential: it lives in DRAM for the whole firmware,
   // alongside the retained canvas and battle caches.
-  static char iconPaths[30][72];
-  static char previewPath[72];
+  static char iconPaths[30][73];
+  static char previewPath[73];
   std::memset(assets, 0, sizeof(assets));
   std::memset(iconPaths, 0, sizeof(iconPaths));
   std::memset(previewPath, 0, sizeof(previewPath));
@@ -28345,9 +28595,15 @@ bool prepareBoxSceneAssets() {
   uint32_t baseKey = 0x424F5800UL ^ boxPage ^ (showingParty ? 0x80000000UL : 0U);
 
   if (selected) {
-    pokemonAssetPath(previewPath, sizeof(previewPath), *selected, PokemonAssetView::Front);
+    pokemonAssetPath(previewPath, sizeof(previewPath), *selected,
+                     compactTradePreview ? PokemonAssetView::Icon
+                                         : PokemonAssetView::Front,
+                     0U);
     // The selected preview is required UI and is deliberately placed before
-    // the optional grid icons in the pack.
+    // the optional grid icons. A connected Wi-Fi trade reuses the 32x32 Box
+    // icon here: retaining a separate 64/80px front sprite can consume more
+    // than 3 KiB and evict the final grid entries on the constrained radio
+    // heap. The ordinary local Box keeps its full front preview.
     previewAssetIndex = assetCount;
     assets[assetCount++] = previewPath;
   }
@@ -28458,7 +28714,12 @@ void drawBoxPreviewArtwork(const OwnedPokemon* selected) {
                         kInnerWidth + 2, kInnerHeight + 2, 3, themePale());
   // The preview interior is centred at (53,87). Front sprites are 64x64,
   // so this gives equal breathing room on every side of the visible card.
-  if(selected)creature(53,87,*selected,true);
+  if (selected && multiplayerTradeSelectionActive()) {
+    char path[73];
+    pokemonAssetPath(path, sizeof(path), *selected, PokemonAssetView::Icon, 0U);
+    if (!sdReady || !drawCenteredPokemonAsset(path, 53, 87, 32U, 32U))
+      creature(53, 87, *selected, false);
+  } else if (selected) creature(53,87,*selected,true);
   else {
     fireRedText.setTextColor(TFT_DARKGREY, kPreviewBlue);
     fireRedText.setTextDatum(MC_DATUM);
@@ -29767,11 +30028,11 @@ void drawPokedexNavigation() {
   // Like the Bag pockets, Pokedex pages form a ring: both arrows are always
   // active, including at either end of the currently unlocked regional Dex.
   display.fillRoundRect(18, 202, 42, 22, 4, themePrimary());
-  display.drawRoundRect(18, 202, 42, 22, 4, TFT_WHITE);
-  display.fillTriangle(31, 213, 45, 206, 45, 220, TFT_WHITE);
+  display.drawRoundRect(18, 202, 42, 22, 4, themePrimaryInk());
+  display.fillTriangle(31, 213, 45, 206, 45, 220, themePrimaryInk());
   display.fillRoundRect(65, 202, 42, 22, 4, themePrimary());
-  display.drawRoundRect(65, 202, 42, 22, 4, TFT_WHITE);
-  display.fillTriangle(94, 213, 80, 206, 80, 220, TFT_WHITE);
+  display.drawRoundRect(65, 202, 42, 22, 4, themePrimaryInk());
+  display.fillTriangle(94, 213, 80, 206, 80, 220, themePrimaryInk());
   char pageLabel[12];
   std::snprintf(pageLabel, sizeof(pageLabel), "%u/%u", dexPage + 1U,
                 static_cast<unsigned>((limit + 9U) / 10U));
@@ -30253,7 +30514,7 @@ void drawMartInfoPanel() {
   martDescriptionLineCount = drawMartDescription(martNotice[0] ? martNotice : martDescription(selectedOffer),
                                                   martDescriptionScroll);
   if (martDescriptionLineCount > 3)
-    display.fillTriangle(294, 231, 304, 231, 299, 223, TFT_WHITE);
+    display.fillTriangle(294, 231, 304, 231, 299, 223, themePrimaryInk());
 }
 
 // Called for cursor movement, scrolling and purchases.  It never repaints
@@ -30313,12 +30574,19 @@ bool saveCheckpointDue(uint32_t sampledNow) {
 
 void saveNow() {
   if (!saveReady || !saveDirty) return;
+  // The physical PvP renderer aliases the Box tail as volatile graphics RAM.
+  // Refuse every persistence path while that loan exists, independently of
+  // battle/session flags: cable diagnostics and disconnect recovery can
+  // temporarily use the same loan without a normal BattleKind::Pvp state.
+  if (pvpCollectionWorkspaceBorrowed) return;
   // A link battle is a temporary copy of the Party's combat state. Never
   // serialize its HP/PP/status or a half-finished BLE session.
   if (pvpSessionActive && gameSave.battle.kind == BattleKind::Pvp) return;
   CollectionLogic::reconcileFormLifecycles(
       gameSave.collection, currentWorldHour(),
       currentWorldPeriod() == WorldTimePeriod::Night);
+  EncounterLogic::reconcileFirstMasterBallSurprise(
+      gameSave.wildEncounterClock, masterBallHasBeenReceived());
 #if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
   // On the no-PSRAM board a pressure save temporarily lends the renderer's
   // large contiguous arena to SPIFFS.  That is safe between frames, but never
@@ -30361,6 +30629,48 @@ void saveNow() {
 #endif
   if (committed) { saveDirty = false; lastSaveMs = millis(); }
   assertHeapIntegrity("save commit");
+}
+
+bool suspendGameSaveForWifi() {
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  if (!gameSaveStorage || !saveReady) return false;
+  if (saveDirty) saveNow();
+  if (saveDirty) return false;
+  heap_caps_free(gameSaveStorage);
+  gameSaveStorage = nullptr;
+  Serial.printf("[WIFI] game state safely parked heap=%u block=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+#endif
+  return true;
+}
+
+bool resumeGameSaveAfterWifi() {
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  if (gameSaveStorage) return true;
+  gameSaveStorage = static_cast<GameSave*>(
+      heap_caps_calloc(1, sizeof(GameSave), MALLOC_CAP_8BIT));
+  if (!gameSaveStorage) {
+    Serial.printf("[WIFI] game state allocation failed heap=%u block=%u\n",
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    return false;
+  }
+  const SaveLoadResult result = saves.loadOrCreate(gameSave);
+  if (result != SaveLoadResult::Loaded && result != SaveLoadResult::FirstStart) {
+    heap_caps_free(gameSaveStorage);
+    gameSaveStorage = nullptr;
+    Serial.println("[WIFI] parked game state could not be restored");
+    return false;
+  }
+  ownedSinnohMachines = saves.sinnohMachineOwnership();
+  saveReady = true;
+  saveDirty = false;
+  Serial.printf("[WIFI] game state restored heap=%u block=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+#endif
+  return true;
 }
 
 void serviceDeferredHomeGiftSave() {
@@ -30807,7 +31117,7 @@ BattleTowerRewardResult awardTowerReward(const SeriesProgressResult& progress) {
   const uint32_t seed=gameSave.battle.rngState^gameSave.playTimeSeconds^
       (gameSave.bootCount*0x9E3779B9UL);
   return BattleTowerSystem::awardCompletionReward(
-      gameSave.inventory,gameSave.eggInventory,gameSave.pokedex,
+      gameSave.inventory,gameSave.eggInventory,gameSave.egg,gameSave.pokedex,
       unlockedContentGeneration(),seed);
 }
 
@@ -30816,7 +31126,7 @@ BossRewardResult awardBossReward(const SeriesProgressResult& progress) {
   const uint32_t seed = gameSave.battle.rngState ^ gameSave.playTimeSeconds ^
       (gameSave.bootCount * 0x85EBCA6BUL);
   return BossSystem::awardVictoryReward(
-      gameSave.inventory,gameSave.eggInventory,gameSave.pokedex,
+      gameSave.inventory,gameSave.eggInventory,gameSave.egg,gameSave.pokedex,
       unlockedContentGeneration(),seed);
 }
 
@@ -30870,8 +31180,10 @@ void presentBattleMessageNow() {
 }
 
 bool pvpHasUsableLocalReplacement(uint32_t excludedUid) {
-  for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
-    const OwnedPokemon* candidate = CollectionLogic::active(gameSave.collection, slot);
+  const Multiplayer::BattleRoster& roster = multiplayer.localBattleRoster();
+  for (uint8_t slot = 0; slot < roster.count; ++slot) {
+    const OwnedPokemon* candidate = CollectionLogic::find(
+        gameSave.collection, roster.members[slot].uid);
     if (candidate && candidate->uid != excludedUid && candidate->currentHp > 0 &&
         candidate->recoverySecondsRemaining == 0) return true;
   }
@@ -30886,27 +31198,89 @@ bool pvpHasUsableRemoteReplacement(uint8_t excludedIndex) {
   return false;
 }
 
+void resetPvpReplacementTransaction() {
+  pvpLocalReplacementReason = 0U;
+  pvpRemoteReplacementReason = 0U;
+  pvpStagedReplacementReason = 0U;
+  pvpSubmittedReplacementReason = 0U;
+}
+
+// Capture the cause at the instant the engine asks for a replacement. The
+// authoritative snapshot intentionally does not carry this UI transaction,
+// so deriving it again after the ACK barrier is racy: a valid Volt Switch can
+// otherwise arrive at the second command looking like an ordinary switch.
+void latchPvpReplacementRequirements() {
+  if (!pvpSessionActive || !gameSave.battle.active ||
+      gameSave.battle.kind != BattleKind::Pvp) return;
+  const uint8_t localPending = static_cast<uint8_t>(
+      gameSave.battle.pendingPlayerReplacement & 0x0FU);
+  const uint8_t remotePending = static_cast<uint8_t>(
+      (gameSave.battle.pendingPlayerReplacement >> 4U) & 0x0FU);
+  if (localPending) pvpLocalReplacementReason = localPending;
+  if (remotePending) pvpRemoteReplacementReason = remotePending;
+
+  const OwnedPokemon* player = CollectionLogic::find(
+      gameSave.collection, gameSave.battle.playerUid);
+  const OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle);
+  // Healing Wish/Lunar Dance already encode a more specific faint reason;
+  // only synthesize the generic faint marker when no move reason exists.
+  if (player && !player->currentHp && !pvpLocalReplacementReason &&
+      pvpHasUsableLocalReplacement(player->uid))
+    pvpLocalReplacementReason = kPvpFaintReplacementReason;
+  if (opponent && !opponent->currentHp && !pvpRemoteReplacementReason &&
+      pvpHasUsableRemoteReplacement(gameSave.battle.opponentIndex))
+    pvpRemoteReplacementReason = kPvpFaintReplacementReason;
+}
+
+uint8_t pvpFirstSelectableMoveSlot(BattleSide side);
+
 // A faint creates a synchronization barrier, then the defeated player must
 // explicitly choose the replacement.  The other console submits WAIT so the
 // same forced-switch command pair is resolved deterministically on both peers.
 void updatePvpForcedSwitchPhase() {
   if (!pvpSessionActive || !gameSave.battle.active || gameSave.battle.kind != BattleKind::Pvp ||
-      battleFlow.phase != BattleFlowPhase::Idle || pvpStatePublishPending ||
-      pvpAwaitingAuthoritativeState) return;
+      battleFlow.phase != BattleFlowPhase::Idle) return;
+  latchPvpReplacementRequirements();
   const OwnedPokemon* player = CollectionLogic::find(gameSave.collection, gameSave.battle.playerUid);
   const OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle);
-  const bool localNeedsChoice = player && player->currentHp == 0 &&
+  const bool localNeedsChoice = player &&
+      pvpLocalReplacementReason != 0U &&
       pvpHasUsableLocalReplacement(player->uid);
-  const bool remoteNeedsChoice = opponent && opponent->currentHp == 0 &&
+  const bool remoteNeedsChoice = opponent &&
+      pvpRemoteReplacementReason != 0U &&
       pvpHasUsableRemoteReplacement(gameSave.battle.opponentIndex);
 
   if (!localNeedsChoice && !remoteNeedsChoice) {
     pvpForcedChoiceSubmitted = pvpForcedWaitSubmitted = false;
+    pvpStagedForcedRosterSlot = -1;
+    pvpStagedReplacementReason = 0U;
     forcedBattleSwitch = false;
     return;
   }
   if (localNeedsChoice) {
-    if (pvpForcedChoiceSubmitted || forcedBattleSwitch) return;
+    if (pvpForcedChoiceSubmitted) return;
+    if (pvpStagedForcedRosterSlot >= 0) {
+      if (!pvpStatePublishPending && !pvpAwaitingAuthoritativeState &&
+          multiplayer.submitBattleCommand(
+              Multiplayer::BattleCommandKind::Switch,
+              static_cast<uint8_t>(pvpStagedForcedRosterSlot),
+              gameSave.battle.turn)) {
+        pvpForcedChoiceSubmitted = true;
+        pvpExpectedForcedRosterSlot = pvpStagedForcedRosterSlot;
+        pvpSubmittedReplacementReason = pvpStagedReplacementReason
+            ? pvpStagedReplacementReason : pvpLocalReplacementReason;
+        pvpStagedForcedRosterSlot = -1;
+        pvpStagedReplacementReason = 0U;
+        forcedBattleSwitch = false;
+        std::snprintf(message, sizeof(message),
+                      "SWITCH LOCKED IN. WAITING...");
+        screen = Screen::Battle;
+        refreshBattleHud();
+      }
+      return;
+    }
+    if (pvpStatePublishPending || pvpAwaitingAuthoritativeState ||
+        forcedBattleSwitch) return;
     forcedBattleSwitch = true;
     battlePartySelection = -1;
     std::snprintf(message, sizeof(message), "CHOOSE YOUR NEXT POKEMON.");
@@ -30914,7 +31288,8 @@ void updatePvpForcedSwitchPhase() {
     drawBattleParty();
     return;
   }
-  if (remoteNeedsChoice && !pvpForcedWaitSubmitted &&
+  if (remoteNeedsChoice && !pvpStatePublishPending &&
+      !pvpAwaitingAuthoritativeState && !pvpForcedWaitSubmitted &&
       multiplayer.submitBattleCommand(Multiplayer::BattleCommandKind::Wait, 0,
                                       gameSave.battle.turn)) {
     pvpForcedWaitSubmitted = true;
@@ -30924,11 +31299,105 @@ void updatePvpForcedSwitchPhase() {
   }
 }
 
+int8_t pvpFirstUsableLocalRosterSlot() {
+  const Multiplayer::BattleRoster& roster = multiplayer.localBattleRoster();
+  for (uint8_t slot = 0; slot < roster.count; ++slot) {
+    const OwnedPokemon* candidate = CollectionLogic::find(
+        gameSave.collection, roster.members[slot].uid);
+    if (candidate && candidate->uid != gameSave.battle.playerUid &&
+        candidate->currentHp > 0 && candidate->recoverySecondsRemaining == 0)
+      return static_cast<int8_t>(slot);
+  }
+  return -1;
+}
+
+void servicePvpDecisionClock(uint32_t now) {
+  if (!pvpSessionActive || !gameSave.battle.active ||
+      gameSave.battle.kind != BattleKind::Pvp ||
+      multiplayer.state() != Multiplayer::State::BattleActive) {
+    resetPvpDecisionClock();
+    return;
+  }
+  // Animations and authoritative-state transfer are presentation/sync time,
+  // not decision time. The clock starts only when this client can act.
+  if (battleFlow.phase != BattleFlowPhase::Idle ||
+      pvpStatePublishPending || pvpAwaitingAuthoritativeState) return;
+  if (multiplayer.localBattleCommandPending()) {
+    resetPvpDecisionClock();
+    return;
+  }
+
+  const OwnedPokemon* player = CollectionLogic::find(
+      gameSave.collection, gameSave.battle.playerUid);
+  const OwnedPokemon* opponent = BattleEngine::currentOpponent(gameSave.battle);
+  latchPvpReplacementRequirements();
+  const bool localNeedsChoice = player &&
+      pvpLocalReplacementReason != 0U &&
+      pvpHasUsableLocalReplacement(player->uid);
+  const bool remoteNeedsChoice = opponent &&
+      pvpRemoteReplacementReason != 0U &&
+      pvpHasUsableRemoteReplacement(gameSave.battle.opponentIndex);
+  // The non-fainted side submits WAIT automatically in
+  // updatePvpForcedSwitchPhase(); it has no decision to time.
+  if (remoteNeedsChoice && !localNeedsChoice) {
+    resetPvpDecisionClock();
+    return;
+  }
+
+  if (!pvpDecisionStartedMs || pvpDecisionTurn != gameSave.battle.turn ||
+      pvpDecisionForcedSwitch != localNeedsChoice) {
+    pvpDecisionStartedMs = now ? now : 1U;
+    pvpDecisionTurn = gameSave.battle.turn;
+    pvpDecisionForcedSwitch = localNeedsChoice;
+    pvpDecisionLastShownSeconds = 0xFFU;
+  }
+
+  const uint8_t seconds = pvpDecisionSecondsRemaining(now);
+  if (seconds != pvpDecisionLastShownSeconds) {
+    pvpDecisionLastShownSeconds = seconds;
+    if (screen == Screen::Battle) {
+      invalidatePixels(274, 160, 44, 16);
+      requestRetainedFrame();
+    }
+  }
+  if (now - pvpDecisionStartedMs < kPvpTurnDecisionLimitMs) return;
+
+  bool submitted = false;
+  if (localNeedsChoice) {
+    pvpStagedForcedRosterSlot = pvpFirstUsableLocalRosterSlot();
+    if (pvpStagedForcedRosterSlot >= 0) {
+      pvpStagedReplacementReason = pvpLocalReplacementReason;
+      updatePvpForcedSwitchPhase();
+      submitted = multiplayer.localBattleCommandPending();
+    }
+  } else {
+    const uint8_t fallbackMove = pvpFirstSelectableMoveSlot(BattleSide::Player);
+    submitted = multiplayer.submitBattleCommand(
+        Multiplayer::BattleCommandKind::Move,
+        packPvpMoveCommand(fallbackMove, false), gameSave.battle.turn);
+  }
+  if (!submitted) return;
+
+  resetPvpDecisionClock();
+  runConfirmVisible = false;
+  moveConfirmSlot = -1;
+  renderedMoveConfirmSlot = -2;
+  moveSelectVisible = false;
+  inventoryBattleContext = false;
+  battlePartySelection = -1;
+  screen = Screen::Battle;
+  std::snprintf(message, sizeof(message), localNeedsChoice
+      ? "TIME UP - POKEMON AUTO-SELECTED."
+      : "TIME UP - MOVE AUTO-SELECTED.");
+  drawBattle();
+}
+
 void finishPendingBattleFlow() {
   // Keep the result in its global journal while it is consumed.  The old
   // local value copy plus `battleFlow = BattleFlow{}` was the reset-time stack
   // overflow seen after a completed attack.
   battleFlow.phase = BattleFlowPhase::Idle;
+  latchPvpReplacementRequirements();
   const BattleActionResult& result = battleFlow.result;
   const BattleKind completedKind=gameSave.battle.kind;
   const bool completedSinnohBattle = sinnohBattleActive &&
@@ -30974,9 +31443,8 @@ void finishPendingBattleFlow() {
       UnovaForms::reconcileUniqueItems(gameSave.collection,
                                        gameSave.gen5UniqueItems, true))
     saveDirty = true;
-  if (result.outcome == BattleOutcome::Captured && alolaUnlocked() &&
-      AlolaForms::reconcileUniqueItems(gameSave.collection,
-                                       gameSave.gen7UniqueItems))
+  if (result.outcome == BattleOutcome::Captured &&
+      reconcileAlolaSpeciesItems(false))
     saveDirty = true;
   if (completedKind != BattleKind::None && completedKind != BattleKind::Pvp) {
     BurmyCloak cloak = BurmyCloak::Plant;
@@ -31262,11 +31730,41 @@ void finishPendingBattleFlow() {
     screen = Screen::BattleParty;
     drawBattleParty();
   } else if (completedKind == BattleKind::Pvp && gameSave.battle.active &&
+      activeAfterTurn && activeAfterTurn->currentHp == 0 &&
+      pvpHasUsableLocalReplacement(activeAfterTurn->uid)) {
+    // Local simulation already knows this battler fainted.  Show the picker
+    // immediately instead of hiding it behind the state round trip.  If the
+    // player chooses before the authoritative snapshot arrives, the roster
+    // slot is staged and transmitted as soon as synchronization completes.
+    forcedBattleSwitch = true;
+    battlePartySelection = -1;
+    std::snprintf(message, sizeof(message), "CHOOSE YOUR NEXT POKEMON.");
+    screen = Screen::BattleParty;
+    drawBattleParty();
+  } else if (completedKind == BattleKind::Pvp && gameSave.battle.active &&
+      activeAfterTurn &&
+      (gameSave.battle.pendingPlayerReplacement&0x0FU)!=0U&&
+      pvpHasUsableLocalReplacement(activeAfterTurn->uid)) {
+    // Volt Switch/U-turn is a two-phase link command. The choice may be made
+    // while the first authoritative snapshot is in flight; the roster slot is
+    // staged by the BattleParty handler and submitted after the ACK barrier.
+    forcedBattleSwitch = true;
+    battlePartySelection = -1;
+    std::snprintf(message, sizeof(message),
+                  "CHOOSE A POKEMON TO SWITCH IN.");
+    screen = Screen::BattleParty;
+    drawBattleParty();
+  } else if (completedKind == BattleKind::Pvp && gameSave.battle.active &&
       ((activeAfterTurn && activeAfterTurn->currentHp == 0) ||
        (opponentAfterTurn && opponentAfterTurn->currentHp == 0))) {
     std::snprintf(message, sizeof(message), "SYNCING LINK BATTLE...");
     screen = Screen::Battle;
-    refreshBattleHud();
+    // The faint journal and waiting HUD touch disjoint retained stripes.
+    // Commit one hidden, complete panel transaction here so the physical
+    // ILI9341 never exposes vertical half-old/half-new bands while waiting for
+    // the replacement command.
+    requestPvpFullBattleSurfaceRefresh("faint-barrier");
+    drawBattle();
   } else if (gameSave.battle.active && activeAfterTurn && activeAfterTurn->currentHp == 0) {
     forcedBattleSwitch = true;
     battlePartySelection = -1;
@@ -31377,6 +31875,7 @@ BattleHpAnimationOutcome animateBattleHpEvent(
       if (eventPokemon) {
         battleFlow.displayPlayerSpeciesId = eventPokemon->speciesId;
         battleFlow.displayPlayerForm = CollectionLogic::resolvedForm(*eventPokemon);
+        battleFlow.displayPlayerMega = MegaEvolution::variantFor(*eventPokemon);
         battleFlow.displayPlayerMaximumHp = eventPokemon->maximumHp;
       }
     } else {
@@ -31385,6 +31884,7 @@ BattleHpAnimationOutcome animateBattleHpEvent(
       if (eventPokemon) {
         battleFlow.displayOpponentSpeciesId = eventPokemon->speciesId;
         battleFlow.displayOpponentForm = CollectionLogic::resolvedForm(*eventPokemon);
+        battleFlow.displayOpponentMega = MegaEvolution::variantFor(*eventPokemon);
         battleFlow.displayOpponentMaximumHp = eventPokemon->maximumHp;
       }
     }
@@ -32055,23 +32555,53 @@ void showCurrentBattleEvent() {
           case BattleMoveEffect::FormChanged:
             if (event.side == BattleSide::Player &&
                 event.pokemonUid == battleFlow.displayPlayerUid) {
-              battleFlow.displayPlayerForm = static_cast<uint8_t>(event.after);
               if(const OwnedPokemon* live=battleEventPokemon(event)){
                 OwnedPokemon staged=*live;
-                staged.form=static_cast<uint8_t>(event.after);
+                const bool rayquazaMega=staged.speciesId==384U&&
+                    event.move==static_cast<MoveId>(620U);
+                if(rayquazaMega){
+                  if(event.after)MegaEvolution::activateRayquazaBattleMega(staged);
+                  else MegaEvolution::resetRayquazaBattleMega(staged);
+                }else{
+                  staged.form=static_cast<uint8_t>(event.after);
+                  battleFlow.displayPlayerForm=staged.form;
+                }
+                battleFlow.displayPlayerMega=MegaEvolution::variantFor(staged);
                 battleFlow.displayPlayerMaximumHp=
                     CollectionLogic::calculatedMaximumHp(staged);
               }
             } else if (event.side == BattleSide::Opponent &&
                        event.pokemonUid == battleFlow.displayOpponentUid) {
-              battleFlow.displayOpponentForm = static_cast<uint8_t>(event.after);
               if(const OwnedPokemon* live=battleEventPokemon(event)){
                 OwnedPokemon staged=*live;
-                staged.form=static_cast<uint8_t>(event.after);
+                const bool rayquazaMega=staged.speciesId==384U&&
+                    event.move==static_cast<MoveId>(620U);
+                if(rayquazaMega){
+                  if(event.after)MegaEvolution::activateRayquazaBattleMega(staged);
+                  else MegaEvolution::resetRayquazaBattleMega(staged);
+                }else{
+                  staged.form=static_cast<uint8_t>(event.after);
+                  battleFlow.displayOpponentForm=staged.form;
+                }
+                battleFlow.displayOpponentMega=MegaEvolution::variantFor(staged);
                 battleFlow.displayOpponentMaximumHp=
                     CollectionLogic::calculatedMaximumHp(staged);
               }
             }
+#if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+            if(const OwnedPokemon* live=battleEventPokemon(event);
+               live&&live->speciesId==384U)
+              Serial.printf("[RAY_DIAG] PRESENT form-event side=%u live=%u shown=%u "
+                            "form=%u arena=%u/%u\n",
+                  static_cast<unsigned>(event.side),
+                  static_cast<unsigned>(MegaEvolution::variantFor(*live)),
+                  static_cast<unsigned>(presentedBattleMegaVariant(
+                      live,event.side==BattleSide::Player)),
+                  static_cast<unsigned>(presentedBattleForm(
+                      live,event.side==BattleSide::Player)),
+                  static_cast<unsigned>(battleArenaPlayerMega),
+                  static_cast<unsigned>(battleArenaOpponentMega));
+#endif
             // FireRed's STRINGID_PKMNTRANSFORMED intentionally does not name
             // the weather form; the new sprite/type supplies that context.
             std::snprintf(message,sizeof(message),"%s transformed!",name); break;
@@ -32308,7 +32838,8 @@ void showCurrentBattleEvent() {
         std::snprintf(message, sizeof(message), event.side == BattleSide::Opponent ? "The foe used %s!" : "Player used %s!",
                       BattleEngine::itemName(static_cast<BattleItem>(event.value))); break;
       case BattleEventType::HeldItemActivated:
-        std::snprintf(message, sizeof(message), "%s's held item activated!", name); break;
+        std::snprintf(message, sizeof(message), "%s's %s activated!", name,
+                      heldItemName(static_cast<HeldItem>(event.value))); break;
       case BattleEventType::AbilityActivated: {
         const AbilityData* ability=findAbility(static_cast<uint8_t>(event.value));
         std::snprintf(message,sizeof(message),"%s's %s activated!",name,
@@ -32341,6 +32872,7 @@ void showCurrentBattleEvent() {
             battleFlow.displayPlayerStatus = incoming->status;
             battleFlow.displayPlayerSpeciesId = incoming->speciesId;
             battleFlow.displayPlayerForm = CollectionLogic::resolvedForm(*incoming);
+            battleFlow.displayPlayerMega = MegaEvolution::variantFor(*incoming);
             battleFlow.displayPlayerMaximumHp = incoming->maximumHp;
           }
         } else {
@@ -32353,6 +32885,7 @@ void showCurrentBattleEvent() {
             battleFlow.displayOpponentStatus = incoming->status;
             battleFlow.displayOpponentSpeciesId = incoming->speciesId;
             battleFlow.displayOpponentForm = CollectionLogic::resolvedForm(*incoming);
+            battleFlow.displayOpponentMega = MegaEvolution::variantFor(*incoming);
             battleFlow.displayOpponentMaximumHp = incoming->maximumHp;
           }
         }
@@ -32377,6 +32910,12 @@ void showCurrentBattleEvent() {
             break;
           }
         }
+        // Queue the atomic refresh only after the presentation journal points
+        // at the incoming battler. The presenter can now preload one coherent
+        // terrain/player/opponent manifest instead of beginning with the
+        // fainted Pokemon's stale scene key.
+        requestPvpFullBattleSurfaceRefresh(
+            event.side == BattleSide::Player ? "player-switch" : "opponent-switch");
         battleArenaVisible = false;
         std::snprintf(message, sizeof(message), event.side == BattleSide::Player ? "Go! %s!" : "The foe sent out %s!", name); break;
       case BattleEventType::ExperienceGained:
@@ -32423,13 +32962,17 @@ void showCurrentBattleEvent() {
     const uint16_t stagedOpponentSpecies = presentedBattleSpeciesId(stagedOpponent, false);
     const uint8_t stagedPlayerForm = presentedBattleForm(stagedPlayer, true);
     const uint8_t stagedOpponentForm = presentedBattleForm(stagedOpponent, false);
+    const MegaVariant stagedPlayerMega = presentedBattleMegaVariant(stagedPlayer, true);
+    const MegaVariant stagedOpponentMega = presentedBattleMegaVariant(stagedOpponent, false);
     if (!battleArenaVisible ||
         battleArenaPlayerUid != (stagedPlayer ? stagedPlayer->uid : 0U) ||
         battleArenaOpponentUid != (stagedOpponent ? stagedOpponent->uid : 0U) ||
         battleArenaPlayerSpeciesId != stagedPlayerSpecies ||
         battleArenaOpponentSpeciesId != stagedOpponentSpecies ||
         battleArenaPlayerForm != stagedPlayerForm ||
-        battleArenaOpponentForm != stagedOpponentForm) {
+        battleArenaOpponentForm != stagedOpponentForm ||
+        battleArenaPlayerMega != stagedPlayerMega ||
+        battleArenaOpponentMega != stagedOpponentMega) {
       battleFlowPresentationDeferred = true;
       if (newlyConfused)
         queueConfusionStatusAnimation(battleFlow.eventIndex, event.side);
@@ -32641,6 +33184,8 @@ void beginBattleEventFlow(const BattleActionResult& result, uint32_t playerUid, 
                           StatusCondition playerStatusBefore, StatusCondition opponentStatusBefore,
                           uint16_t playerSpeciesBefore, uint16_t opponentSpeciesBefore,
                           uint8_t playerFormBefore, uint8_t opponentFormBefore,
+                          MegaVariant playerMegaBefore,
+                          MegaVariant opponentMegaBefore,
                           uint16_t playerMaximumHpBefore,
                           uint16_t opponentMaximumHpBefore) {
   clearBattleFlowState();
@@ -32656,6 +33201,14 @@ void beginBattleEventFlow(const BattleActionResult& result, uint32_t playerUid, 
   // Zygarde's storage form before its animation has even played.
   battleFlow.displayPlayerForm = playerFormBefore;
   battleFlow.displayOpponentForm = opponentFormBefore;
+  // Rayquaza stores Dragon Ascent's Mega state outside `form`. The resolver
+  // restores that marker before this journal starts, so reading the live
+  // Pokemon here swaps Mega -> normal from inside the retained compositor.
+  // Preserve the exact pre-action identity just like species/form; the
+  // eventual shallow battle-flow boundary can then rebuild the normal scene
+  // once, with SD access allowed.
+  battleFlow.displayPlayerMega = playerMegaBefore;
+  battleFlow.displayOpponentMega = opponentMegaBefore;
   battleFlow.displayPlayerMaximumHp = playerMaximumHpBefore;
   battleFlow.displayOpponentMaximumHp = opponentMaximumHpBefore;
   // Resolution has already advanced the live form. Rewind presentation to
@@ -32668,20 +33221,36 @@ void beginBattleEventFlow(const BattleActionResult& result, uint32_t playerUid, 
         event.value != static_cast<uint16_t>(BattleMoveEffect::FormChanged)) continue;
     if (!rewoundPlayerForm && event.side == BattleSide::Player &&
         event.pokemonUid == playerUid) {
-      battleFlow.displayPlayerForm = static_cast<uint8_t>(event.before);
       if(const OwnedPokemon* live=CollectionLogic::find(gameSave.collection,playerUid)){
         OwnedPokemon staged=*live;
-        staged.form=static_cast<uint8_t>(event.before);
+        const bool rayquazaMega=staged.speciesId==384U&&
+            event.move==static_cast<MoveId>(620U);
+        if(rayquazaMega){
+          if(event.before)MegaEvolution::activateRayquazaBattleMega(staged);
+          else MegaEvolution::resetRayquazaBattleMega(staged);
+        }else{
+          staged.form=static_cast<uint8_t>(event.before);
+          battleFlow.displayPlayerForm=staged.form;
+        }
+        battleFlow.displayPlayerMega=MegaEvolution::variantFor(staged);
         battleFlow.displayPlayerMaximumHp=
             CollectionLogic::calculatedMaximumHp(staged);
       }
       rewoundPlayerForm = true;
     } else if (!rewoundOpponentForm && event.side == BattleSide::Opponent &&
                event.pokemonUid == opponentUid) {
-      battleFlow.displayOpponentForm = static_cast<uint8_t>(event.before);
       if(const OwnedPokemon* live=battleOpponentByUid(opponentUid)){
         OwnedPokemon staged=*live;
-        staged.form=static_cast<uint8_t>(event.before);
+        const bool rayquazaMega=staged.speciesId==384U&&
+            event.move==static_cast<MoveId>(620U);
+        if(rayquazaMega){
+          if(event.before)MegaEvolution::activateRayquazaBattleMega(staged);
+          else MegaEvolution::resetRayquazaBattleMega(staged);
+        }else{
+          staged.form=static_cast<uint8_t>(event.before);
+          battleFlow.displayOpponentForm=staged.form;
+        }
+        battleFlow.displayOpponentMega=MegaEvolution::variantFor(staged);
         battleFlow.displayOpponentMaximumHp=
             CollectionLogic::calculatedMaximumHp(staged);
       }
@@ -32844,6 +33413,9 @@ void executeConfirmedBattleMove(uint8_t slot) {
   const uint8_t playerFormBefore=CollectionLogic::resolvedForm(*attacker);
   const uint8_t opponentFormBefore=opponentBefore?
       CollectionLogic::resolvedForm(*opponentBefore):0U;
+  const MegaVariant playerMegaBefore=MegaEvolution::variantFor(*attacker);
+  const MegaVariant opponentMegaBefore=opponentBefore?
+      MegaEvolution::variantFor(*opponentBefore):MegaVariant::None;
   const uint16_t playerMaximumHpBefore=attacker->maximumHp;
   const uint16_t opponentMaximumHpBefore=opponentBefore?
       opponentBefore->maximumHp:0U;
@@ -32851,7 +33423,9 @@ void executeConfirmedBattleMove(uint8_t slot) {
   const StatusCondition opponentStatusBefore = opponentBefore ? opponentBefore->status : StatusCondition::None;
   leaveMoveSelectionForBattle();
   if (gameSave.battle.kind == BattleKind::Pvp && pvpSessionActive) {
-    if (!multiplayer.submitBattleCommand(Multiplayer::BattleCommandKind::Move, slot,
+    const uint8_t command = packPvpMoveCommand(
+        slot, gameSave.battle.playerZMoveArmed);
+    if (!multiplayer.submitBattleCommand(Multiplayer::BattleCommandKind::Move, command,
                                          gameSave.battle.turn)) {
       std::snprintf(message, sizeof(message), "WAITING FOR THE OTHER PLAYER...");
     } else {
@@ -32880,6 +33454,7 @@ void executeConfirmedBattleMove(uint8_t slot) {
                        playerStatusBefore, opponentStatusBefore,
                        playerSpeciesBefore, opponentSpeciesBefore,
                        playerFormBefore, opponentFormBefore,
+                       playerMegaBefore, opponentMegaBefore,
                        playerMaximumHpBefore, opponentMaximumHpBefore);
 }
 
@@ -32898,6 +33473,22 @@ uint8_t pvpOpponentIndexForRosterSlot(uint8_t rosterSlot) {
   return 0xFFU;
 }
 
+uint8_t pvpFirstSelectableMoveSlot(BattleSide side) {
+  OwnedPokemon* battler = side == BattleSide::Player
+      ? CollectionLogic::find(gameSave.collection, gameSave.battle.playerUid)
+      : BattleEngine::currentOpponent(gameSave.battle);
+  if (!battler) return kMoveSlots;
+  for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
+    const MoveId move = battler->moves[slot];
+    if (move != MoveId::None && battler->movePp[slot] > 0 &&
+        isMoveAvailableInSingleBattle(move) &&
+        BattleEngine::moveIsSelectable(
+            gameSave.battle, gameSave.collection, move, side))
+      return slot;
+  }
+  return kMoveSlots;
+}
+
 void prependPvpEvents(BattleActionResult& destination, const BattleActionResult& prefix) {
   const uint8_t room = destination.eventCount < kBattleEventCapacity
       ? static_cast<uint8_t>(kBattleEventCapacity - destination.eventCount) : 0U;
@@ -32911,23 +33502,72 @@ void prependPvpEvents(BattleActionResult& destination, const BattleActionResult&
 
 void restorePartyAfterPvp() {
   if (!pvpSessionActive) return;
-  for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
-    if (!pvpPartyBackupUids[slot]) continue;
-    OwnedPokemon* live = CollectionLogic::find(gameSave.collection, pvpPartyBackupUids[slot]);
-    if (live) *live = pvpPartyBackup[slot];
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  if (pvpCollectionWorkspaceBorrowed) {
+    // No collection traversal is legal until the aliased renderer descriptors
+    // are invalidated and the complete durable GameSave has replaced the Box
+    // bytes used by the battle scene bank.
+    AssetRenderer::releaseBorrowedSceneWorkspace();
+    pvpCollectionWorkspaceBorrowed = false;
+    const SaveLoadResult restored = saves.loadOrCreate(gameSave);
+    if (restored != SaveLoadResult::Loaded &&
+        restored != SaveLoadResult::FirstStart) {
+      Serial.println("[LINK] persistent party restore failed; rebooting safely");
+      delay(80);
+      ESP.restart();
+      return;
+    }
+    ownedSinnohMachines = saves.sinnohMachineOwnership();
+    saveDirty = false;
+    preparedUiSceneKey = 0U;
+    preparedUiSceneComplete = false;
+    preparedBattleGraphicsKey = 0U;
+    battleArenaVisible = false;
+    if (!AssetRenderer::restoreSceneWorkspace(multiplayer.enabled()))
+      Serial.println("[LINK] renderer workspace restore failed after PvP");
+  } else
+#endif
+  {
+    for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
+      if (!pvpPartyBackupUids[slot]) continue;
+      OwnedPokemon* live = CollectionLogic::find(
+          gameSave.collection, pvpPartyBackupUids[slot]);
+      if (live) *live = pvpPartyBackup[slot];
+    }
   }
   pvpSessionActive = false;
   pvpStatePublishPending = false;
   pvpAwaitingAuthoritativeState = false;
   pvpForcedChoiceSubmitted = false;
   pvpForcedWaitSubmitted = false;
+  pvpStagedForcedRosterSlot = -1;
+  resetPvpReplacementTransaction();
+  pvpExpectedForcedRosterSlot = -1;
+  pvpFullBattleSurfaceRefreshPending = false;
   forcedBattleSwitch = false;
   pvpLastStatePublishAttemptMs = 0;
+  pvpStateAckRetryPending = false;
+  pvpStateAckRetryTurn = 0;
+  pvpStateAckRetryChecksum = 0;
+  pvpLastStateAckAttemptMs = 0;
+  pvpLastAppliedSnapshotTurn = 0;
+  pvpLastAppliedSnapshotChecksum = 0;
+  resetPvpDecisionClock();
 }
 
 void startPvpBattle(const Multiplayer::BattleLaunch& launch) {
   if (!launch.ready || !launch.local.valid || !launch.remote.valid ||
       launch.localLeadSlot >= launch.local.count || launch.remoteLeadSlot >= launch.remote.count) return;
+  // The physical renderer is about to reuse volatile collection bytes. Make
+  // every base-game mutation durable first; a failed commit cancels launch
+  // instead of risking an incomplete restore after the link battle.
+  if (saveDirty) saveNow();
+  if (saveDirty) {
+    Serial.println("[LINK] PvP launch cancelled: save could not be committed");
+    multiplayer.clearActivity();
+    drawMultiplayerPocket();
+    return;
+  }
   std::memset(pvpPartyBackup, 0, sizeof(pvpPartyBackup));
   std::memset(pvpPartyBackupUids, 0, sizeof(pvpPartyBackupUids));
   for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
@@ -32935,6 +33575,53 @@ void startPvpBattle(const Multiplayer::BattleLaunch& launch) {
     if (!pokemon) continue;
     pvpPartyBackup[slot] = *pokemon; pvpPartyBackupUids[slot] = pokemon->uid;
   }
+  // Run the battle against the prepared wire snapshots, not the persistent
+  // Party records. NORMAL still starts fully healed/refilled; BALANCED also
+  // arrives here with its temporary level-70 derived stats.
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  // Keep the selected roster in the first three records so every existing
+  // CollectionLogic lookup still works. The remaining 813 records are not
+  // gameplay state during PvP and form one contiguous ~52 KiB graphics bank,
+  // enough for link terrain, both battlers and authored move planes.
+  for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
+    if (slot < launch.local.count) {
+      gameSave.collection.box[slot] = launch.local.members[slot];
+      gameSave.collection.party[slot] = launch.local.members[slot].uid;
+    } else {
+      gameSave.collection.box[slot] = OwnedPokemon{};
+      gameSave.collection.party[slot] = kEmptyPokemonUid;
+    }
+  }
+  void* volatileBoxTail = &gameSave.collection.box[kPartyCapacity];
+  const size_t volatileBoxBytes =
+      static_cast<size_t>(kBoxCapacity - kPartyCapacity) * sizeof(OwnedPokemon);
+  if (!AssetRenderer::borrowSceneWorkspace(volatileBoxTail,
+                                            volatileBoxBytes)) {
+    Serial.println("[LINK] PvP launch cancelled: graphics loan unavailable");
+    const SaveLoadResult restored = saves.loadOrCreate(gameSave);
+    if (restored != SaveLoadResult::Loaded &&
+        restored != SaveLoadResult::FirstStart) {
+      delay(80);
+      ESP.restart();
+      return;
+    }
+    ownedSinnohMachines = saves.sinnohMachineOwnership();
+    multiplayer.clearActivity();
+    AssetRenderer::restoreSceneWorkspace(multiplayer.enabled());
+    drawMultiplayerPocket();
+    return;
+  }
+  pvpCollectionWorkspaceBorrowed = true;
+#else
+  for (uint8_t slot = 0; slot < launch.local.count; ++slot) {
+    OwnedPokemon* live = CollectionLogic::find(gameSave.collection, launch.local.members[slot].uid);
+    if (!live) continue;
+    const uint32_t uid = live->uid;
+    *live = launch.local.members[slot];
+    live->uid = uid;
+  }
+#endif
+  resetPvpBattleBags();
 
   BattleEngine::clear(gameSave.battle);
   gameSave.battle.active = true; gameSave.battle.kind = BattleKind::Pvp;
@@ -32982,22 +33669,39 @@ void startPvpBattle(const Multiplayer::BattleLaunch& launch) {
   pvpAwaitingAuthoritativeState = false;
   pvpForcedChoiceSubmitted = false;
   pvpForcedWaitSubmitted = false;
+  pvpStagedForcedRosterSlot = -1;
+  resetPvpReplacementTransaction();
+  pvpExpectedForcedRosterSlot = -1;
+  pvpFullBattleSurfaceRefreshPending = false;
   forcedBattleSwitch = false;
   pvpLastStatePublishAttemptMs = 0;
+  pvpStateAckRetryPending = false;
+  pvpStateAckRetryTurn = 0;
+  pvpStateAckRetryChecksum = 0;
+  pvpLastStateAckAttemptMs = 0;
+  pvpLastAppliedSnapshotTurn = 0;
+  pvpLastAppliedSnapshotChecksum = 0;
+  resetPvpDecisionClock();
   pendingBattleKind = BattleKind::None;
   selectedBattleTerrainSceneKey = 0; battleArenaVisible = false;
   battleEntryAnimationPending = true;
   battlePresentationPlayerHidden = battlePresentationOpponentHidden = false;
   message[0] = 0; runConfirmVisible = false; clearBattleFlowState();
   screen = Screen::Battle; drawBattle();
-  Serial.printf("[BLE] PvP started peer=%05lu party=%u/%u seed=%08lx\n",
-                static_cast<unsigned long>(multiplayer.peerId()), launch.local.count,
-                launch.remote.count, static_cast<unsigned long>(launch.seed));
+  Serial.printf("[LINK] PvP started peer=%05lu mode=%s party=%u/%u seed=%08lx\n",
+                static_cast<unsigned long>(multiplayer.peerId()),
+                launch.rules == Multiplayer::BattleRules::Balanced ? "balanced" : "normal",
+                launch.local.count, launch.remote.count,
+                static_cast<unsigned long>(launch.seed));
 }
 
-void resolvePvpCommands(const Multiplayer::BattleCommand& local,
-                        const Multiplayer::BattleCommand& remote) {
+void resolvePvpCommands(const Multiplayer::BattleCommand& localCommand,
+                        const Multiplayer::BattleCommand& remoteCommand) {
   if (!pvpSessionActive || !gameSave.battle.active || battleFlow.phase != BattleFlowPhase::Idle) return;
+  resetPvpDecisionClock();
+  latchPvpReplacementRequirements();
+  Multiplayer::BattleCommand local = localCommand;
+  Multiplayer::BattleCommand remote = remoteCommand;
   OwnedPokemon* playerBefore = CollectionLogic::find(gameSave.collection, gameSave.battle.playerUid);
   OwnedPokemon* opponentBefore = BattleEngine::currentOpponent(gameSave.battle);
   const uint32_t playerUidBefore = playerBefore ? playerBefore->uid : 0U;
@@ -33010,55 +33714,134 @@ void resolvePvpCommands(const Multiplayer::BattleCommand& local,
       CollectionLogic::resolvedForm(*playerBefore):0U;
   const uint8_t opponentFormBefore=opponentBefore?
       CollectionLogic::resolvedForm(*opponentBefore):0U;
+  const MegaVariant playerMegaBefore=playerBefore?
+      MegaEvolution::variantFor(*playerBefore):MegaVariant::None;
+  const MegaVariant opponentMegaBefore=opponentBefore?
+      MegaEvolution::variantFor(*opponentBefore):MegaVariant::None;
   const uint16_t playerMaximumHpBefore=playerBefore?
       playerBefore->maximumHp:0U;
   const uint16_t opponentMaximumHpBefore=opponentBefore?
       opponentBefore->maximumHp:0U;
   const StatusCondition playerStatusBefore = playerBefore ? playerBefore->status : StatusCondition::None;
   const StatusCondition opponentStatusBefore = opponentBefore ? opponentBefore->status : StatusCondition::None;
-  const bool localForcedSwitch = playerBefore && playerBefore->currentHp == 0 &&
+  const uint8_t localReplacementReason = pvpSubmittedReplacementReason
+      ? pvpSubmittedReplacementReason : pvpLocalReplacementReason;
+  const uint8_t remoteReplacementReason = pvpRemoteReplacementReason;
+  const bool localForcedSwitch = playerBefore &&
+      localReplacementReason == kPvpFaintReplacementReason &&
       pvpHasUsableLocalReplacement(playerBefore->uid);
-  const bool remoteForcedSwitch = opponentBefore && opponentBefore->currentHp == 0 &&
+  const bool remoteForcedSwitch = opponentBefore &&
+      remoteReplacementReason == kPvpFaintReplacementReason &&
       pvpHasUsableRemoteReplacement(gameSave.battle.opponentIndex);
+  const bool localPivotSwitch=playerBefore&&
+      localReplacementReason!=0U&&
+      localReplacementReason!=kPvpFaintReplacementReason&&
+      pvpHasUsableLocalReplacement(playerBefore->uid);
+  const bool remotePivotSwitch=opponentBefore&&
+      remoteReplacementReason!=0U&&
+      remoteReplacementReason!=kPvpFaintReplacementReason&&
+      pvpHasUsableRemoteReplacement(gameSave.battle.opponentIndex);
+  const bool localReplacementSwitch=localForcedSwitch||localPivotSwitch;
+  const bool remoteReplacementSwitch=remoteForcedSwitch||remotePivotSwitch;
+  const uint8_t localMoveSlot = pvpCommandMoveSlot(local.value);
+  const uint8_t remoteMoveSlot = pvpCommandMoveSlot(remote.value);
+  const bool remoteUsesZMove = remote.kind == Multiplayer::BattleCommandKind::Move &&
+      pvpCommandUsesZMove(remote.value);
   std::memset(&pvpResolvedAction, 0, sizeof(pvpResolvedAction));
   std::memset(&pvpPreludeAction, 0, sizeof(pvpPreludeAction));
+  bool localReplacementCompleted = false;
+  bool remoteReplacementCompleted = false;
 
-  if (localForcedSwitch || remoteForcedSwitch) {
+  if (localReplacementSwitch || remoteReplacementSwitch) {
     const bool validPair =
-        (localForcedSwitch ? local.kind == Multiplayer::BattleCommandKind::Switch
-                           : local.kind == Multiplayer::BattleCommandKind::Wait) &&
-        (remoteForcedSwitch ? remote.kind == Multiplayer::BattleCommandKind::Switch
-                            : remote.kind == Multiplayer::BattleCommandKind::Wait);
+        (localReplacementSwitch ? local.kind == Multiplayer::BattleCommandKind::Switch
+                                : local.kind == Multiplayer::BattleCommandKind::Wait) &&
+        (remoteReplacementSwitch ? remote.kind == Multiplayer::BattleCommandKind::Switch
+                                 : remote.kind == Multiplayer::BattleCommandKind::Wait);
     if (!validPair) {
       pvpForcedChoiceSubmitted = pvpForcedWaitSubmitted = false;
+      pvpStagedForcedRosterSlot = -1;
+      pvpExpectedForcedRosterSlot = -1;
       forcedBattleSwitch = false;
       std::snprintf(message, sizeof(message), "LINK SWITCH DESYNC. RETRYING...");
       screen = Screen::Battle; refreshBattleHud(); return;
     }
-    if (remoteForcedSwitch) {
+    if (remoteReplacementSwitch) {
       const uint8_t opponentIndex = pvpOpponentIndexForRosterSlot(remote.value);
       if (opponentIndex >= gameSave.battle.opponentCount) return;
       pvpPreludeAction = BattleEngine::switchOpponentPvp(gameSave.battle, gameSave.collection,
-                                                          opponentIndex);
+                                                          opponentIndex, true);
+      remoteReplacementCompleted = pvpPreludeAction.accepted;
       if (pvpPreludeAction.accepted)
         std::swap(pvpRemoteRosterSlotAtIndex[gameSave.battle.opponentIndex],
                   pvpRemoteRosterSlotAtIndex[opponentIndex]);
+      if(remotePivotSwitch&&pvpPreludeAction.accepted){
+        const uint8_t queuedPlayerMove=gameSave.battle.pendingOpponentMoveSlot;
+        pvpResolvedAction=BattleEngine::completeOpponentPivotPvp(
+            gameSave.battle,gameSave.collection,queuedPlayerMove,
+            remoteReplacementReason);
+        if(pvpResolvedAction.accepted)
+          prependPvpEvents(pvpResolvedAction,pvpPreludeAction);
+      }
     }
-    if (localForcedSwitch) {
+    if (localReplacementSwitch) {
       const Multiplayer::BattleRoster& localRoster = multiplayer.localBattleRoster();
       if (local.value >= localRoster.count) return;
-      pvpResolvedAction = BattleEngine::switchToPokemonPvp(gameSave.battle, gameSave.collection,
-          localRoster.members[local.value].uid, 0xFEU, true);
-      if (remoteForcedSwitch) prependPvpEvents(pvpResolvedAction, pvpPreludeAction);
-    } else {
+      pvpResolvedAction=localPivotSwitch?
+          BattleEngine::completeBatonPassSwitch(
+              gameSave.battle,gameSave.collection,
+              localRoster.members[local.value].uid,
+              gameSave.battle.pendingOpponentMoveSlot,
+              localReplacementReason):
+          BattleEngine::switchToPokemonPvp(
+              gameSave.battle,gameSave.collection,
+              localRoster.members[local.value].uid,0xFEU,true);
+      localReplacementCompleted = pvpResolvedAction.accepted;
+      if(remoteReplacementSwitch&&!remotePivotSwitch)
+        prependPvpEvents(pvpResolvedAction,pvpPreludeAction);
+    } else if(!remotePivotSwitch) {
       pvpResolvedAction = pvpPreludeAction;
     }
     pvpForcedChoiceSubmitted = pvpForcedWaitSubmitted = false;
+    pvpStagedForcedRosterSlot = -1;
+    pvpStagedReplacementReason = 0U;
     forcedBattleSwitch = false;
   } else if (local.kind == Multiplayer::BattleCommandKind::Forfeit ||
       remote.kind == Multiplayer::BattleCommandKind::Forfeit) {
     pvpResolvedAction = BattleEngine::forfeitPvp(gameSave.battle, gameSave.collection,
         local.kind == Multiplayer::BattleCommandKind::Forfeit);
+  } else if (local.kind == Multiplayer::BattleCommandKind::Item) {
+    const BattleItem item = pvpCommandItem(local.value);
+    const uint8_t rosterSlot = pvpCommandRosterSlot(local.value);
+    const Multiplayer::BattleRoster& localRoster = multiplayer.localBattleRoster();
+    if (!pvpBattleItemAllowed(item) || rosterSlot >= localRoster.count) return;
+    if (remote.kind == Multiplayer::BattleCommandKind::Switch) {
+      const uint8_t opponentIndex = pvpOpponentIndexForRosterSlot(remote.value);
+      if (opponentIndex >= gameSave.battle.opponentCount) return;
+      pvpPreludeAction = BattleEngine::switchOpponentPvp(
+          gameSave.battle, gameSave.collection, opponentIndex);
+      if (pvpPreludeAction.accepted)
+        std::swap(pvpRemoteRosterSlotAtIndex[gameSave.battle.opponentIndex],
+                  pvpRemoteRosterSlotAtIndex[opponentIndex]);
+    } else if (remote.kind == Multiplayer::BattleCommandKind::Item) {
+      const BattleItem remoteItem = pvpCommandItem(remote.value);
+      const uint8_t remoteRosterSlot = pvpCommandRosterSlot(remote.value);
+      const uint8_t opponentIndex = pvpOpponentIndexForRosterSlot(remoteRosterSlot);
+      if (!pvpBattleItemAllowed(remoteItem) ||
+          opponentIndex >= gameSave.battle.opponentCount) return;
+      pvpPreludeAction = BattleEngine::useOpponentItemPvp(
+          gameSave.battle, pvpRemoteInventory, pvpRemotePpItems,
+          remoteItem, opponentIndex);
+    }
+    const uint8_t opponentMoveSlot = remote.kind == Multiplayer::BattleCommandKind::Move
+        ? remoteMoveSlot : 0xFEU;
+    pvpResolvedAction = BattleEngine::useItemPvp(
+        gameSave.battle, gameSave.collection, pvpLocalInventory, item,
+        localRoster.members[rosterSlot].uid, &pvpLocalPpItems, opponentMoveSlot,
+        remoteUsesZMove);
+    if (remote.kind == Multiplayer::BattleCommandKind::Switch ||
+        remote.kind == Multiplayer::BattleCommandKind::Item)
+      prependPvpEvents(pvpResolvedAction, pvpPreludeAction);
   } else if (local.kind == Multiplayer::BattleCommandKind::Switch) {
     const Multiplayer::BattleRoster& localRoster = multiplayer.localBattleRoster();
     if (local.value >= localRoster.count) return;
@@ -33071,9 +33854,23 @@ void resolvePvpCommands(const Multiplayer::BattleCommand& local,
       pvpResolvedAction = BattleEngine::switchToPokemonPvp(gameSave.battle, gameSave.collection,
           localRoster.members[local.value].uid, 0xFEU);
       prependPvpEvents(pvpResolvedAction, pvpPreludeAction);
+    } else if (remote.kind == Multiplayer::BattleCommandKind::Item) {
+      const BattleItem remoteItem = pvpCommandItem(remote.value);
+      const uint8_t opponentIndex = pvpOpponentIndexForRosterSlot(
+          pvpCommandRosterSlot(remote.value));
+      if (!pvpBattleItemAllowed(remoteItem) ||
+          opponentIndex >= gameSave.battle.opponentCount) return;
+      pvpPreludeAction = BattleEngine::useOpponentItemPvp(
+          gameSave.battle, pvpRemoteInventory, pvpRemotePpItems,
+          remoteItem, opponentIndex);
+      pvpResolvedAction = BattleEngine::switchToPokemonPvp(
+          gameSave.battle, gameSave.collection,
+          localRoster.members[local.value].uid, 0xFEU);
+      prependPvpEvents(pvpResolvedAction, pvpPreludeAction);
     } else {
       pvpResolvedAction = BattleEngine::switchToPokemonPvp(gameSave.battle, gameSave.collection,
-          localRoster.members[local.value].uid, remote.value);
+          localRoster.members[local.value].uid, remoteMoveSlot, false,
+          remoteUsesZMove);
     }
   } else if (local.kind == Multiplayer::BattleCommandKind::Move) {
     if (remote.kind == Multiplayer::BattleCommandKind::Switch) {
@@ -33082,15 +33879,30 @@ void resolvePvpCommands(const Multiplayer::BattleCommand& local,
       if (pvpPreludeAction.accepted)
         std::swap(pvpRemoteRosterSlotAtIndex[gameSave.battle.opponentIndex],
                   pvpRemoteRosterSlotAtIndex[opponentIndex]);
-      pvpResolvedAction = BattleEngine::fightPvp(gameSave.battle, gameSave.collection, local.value, 0xFEU);
+      pvpResolvedAction = BattleEngine::fightPvp(
+          gameSave.battle, gameSave.collection, localMoveSlot, 0xFEU);
+      prependPvpEvents(pvpResolvedAction, pvpPreludeAction);
+    } else if (remote.kind == Multiplayer::BattleCommandKind::Item) {
+      const BattleItem remoteItem = pvpCommandItem(remote.value);
+      const uint8_t opponentIndex = pvpOpponentIndexForRosterSlot(
+          pvpCommandRosterSlot(remote.value));
+      if (!pvpBattleItemAllowed(remoteItem) ||
+          opponentIndex >= gameSave.battle.opponentCount) return;
+      pvpPreludeAction = BattleEngine::useOpponentItemPvp(
+          gameSave.battle, pvpRemoteInventory, pvpRemotePpItems,
+          remoteItem, opponentIndex);
+      pvpResolvedAction = BattleEngine::fightPvp(
+          gameSave.battle, gameSave.collection, localMoveSlot, 0xFEU);
       prependPvpEvents(pvpResolvedAction, pvpPreludeAction);
     } else {
       pvpResolvedAction = BattleEngine::fightPvp(gameSave.battle, gameSave.collection,
-                                                  local.value, remote.value);
+          localMoveSlot, remoteMoveSlot, remoteUsesZMove);
     }
   }
   if (!pvpResolvedAction.accepted) {
     pvpForcedChoiceSubmitted = pvpForcedWaitSubmitted = false;
+    pvpStagedForcedRosterSlot = -1;
+    pvpExpectedForcedRosterSlot = -1;
     forcedBattleSwitch = false;
     std::snprintf(message, sizeof(message), "THE LINK ACTION FAILED.");
     screen = Screen::Battle; refreshBattleHud(); return;
@@ -33100,11 +33912,30 @@ void resolvePvpCommands(const Multiplayer::BattleCommand& local,
   // cannot choose another action until that compact snapshot is applied.
   pvpStatePublishPending = multiplayer.isBattleHost();
   pvpAwaitingAuthoritativeState = !multiplayer.isBattleHost();
+  Serial.printf("[LINK] turn=%u sync-role host=%u publish=%u await=%u\n",
+                static_cast<unsigned>(gameSave.battle.turn),
+                multiplayer.isBattleHost() ? 1U : 0U,
+                pvpStatePublishPending ? 1U : 0U,
+                pvpAwaitingAuthoritativeState ? 1U : 0U);
+  if (pvpStatePublishPending) {
+    pvpExpectedForcedRosterSlot = -1;
+    pvpLastStatePublishAttemptMs = 0;
+  }
+  if (localReplacementCompleted) {
+    pvpLocalReplacementReason = 0U;
+    pvpSubmittedReplacementReason = 0U;
+  }
+  if (remoteReplacementCompleted) pvpRemoteReplacementReason = 0U;
+  // A normal move may have opened a new two-command replacement phase.
+  // Capture it before state publication/ACK can alter the transient battle
+  // fields used by the engine to request the picker.
+  latchPvpReplacementRequirements();
   screen = Screen::Battle;
   beginBattleEventFlow(pvpResolvedAction, playerUidBefore, opponentUidBefore,
                        playerHpBefore, opponentHpBefore, playerStatusBefore, opponentStatusBefore,
                        playerSpeciesBefore, opponentSpeciesBefore,
                        playerFormBefore, opponentFormBefore,
+                       playerMegaBefore, opponentMegaBefore,
                        playerMaximumHpBefore, opponentMaximumHpBefore);
 }
 
@@ -33116,13 +33947,49 @@ BattleOutcome pvpGuestOutcome(BattleOutcome hostOutcome) {
 
 bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
   if (!pvpSessionActive || multiplayer.isBattleHost() || !sync.ready ||
+      !sync.snapshotChecksum ||
       sync.hostCount == 0 || sync.guestCount == 0 ||
       sync.turn != gameSave.battle.turn) return false;
+  latchPvpReplacementRequirements();
   const Multiplayer::BattleRoster& localRoster = multiplayer.localBattleRoster();
   const Multiplayer::BattleRoster& remoteRoster = multiplayer.remoteBattleRoster();
   if (sync.guestCount != localRoster.count || sync.hostCount != remoteRoster.count ||
       sync.guestActiveRosterSlot >= sync.guestCount ||
       sync.hostActiveRosterSlot >= sync.hostCount) return false;
+  if (pvpLastAppliedSnapshotTurn == sync.turn &&
+      pvpLastAppliedSnapshotChecksum == sync.snapshotChecksum) {
+    // A state retry is transport recovery, not another battle event. In
+    // particular, replaying SwitchedIn redraws the replacement twice and can
+    // leave the TFT halfway between the old and new arena. ACK the exact
+    // digest again, but preserve a wait for a genuinely newer same-turn
+    // snapshot when no ACK retry was pending locally.
+    const bool acknowledged = multiplayer.acknowledgeBattleState(
+        sync.turn, sync.snapshotChecksum);
+    if (pvpStateAckRetryPending &&
+        pvpStateAckRetryTurn == sync.turn &&
+        pvpStateAckRetryChecksum == sync.snapshotChecksum) {
+      pvpStateAckRetryPending = !acknowledged;
+      pvpAwaitingAuthoritativeState = pvpStateAckRetryPending;
+    }
+    Serial.printf("[LINK] duplicate authoritative snapshot ignored turn=%u checksum=%08lx ack=%u\n",
+                  static_cast<unsigned>(sync.turn),
+                  static_cast<unsigned long>(sync.snapshotChecksum),
+                  acknowledged ? 1U : 0U);
+    return true;
+  }
+  if (pvpExpectedForcedRosterSlot >= 0) {
+    const uint8_t expected = static_cast<uint8_t>(pvpExpectedForcedRosterSlot);
+    if (expected >= sync.guestCount || sync.guestActiveRosterSlot != expected ||
+        sync.guestParty[expected].currentHp == 0U) {
+      Serial.printf("[LINK] ignored stale forced-switch snapshot turn=%u active=%u expected=%u hp=%u\n",
+                    static_cast<unsigned>(sync.turn),
+                    static_cast<unsigned>(sync.guestActiveRosterSlot),
+                    static_cast<unsigned>(expected),
+                    static_cast<unsigned>(expected < sync.guestCount
+                        ? sync.guestParty[expected].currentHp : 0U));
+      return false;
+    }
+  }
 
   const uint32_t previousPlayerUid = gameSave.battle.playerUid;
   const OwnedPokemon* previousOpponent = BattleEngine::currentOpponent(gameSave.battle);
@@ -33186,6 +34053,8 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
   gameSave.battle.opponentEndureThisTurn = sync.hostEndureThisTurn;
   gameSave.battle.playerNightmare = sync.guestNightmare;
   gameSave.battle.opponentNightmares[gameSave.battle.opponentIndex] = sync.hostNightmare;
+  gameSave.battle.playerZMoveUsed = sync.guestZMoveUsed;
+  gameSave.battle.opponentZMoveUsed = sync.hostZMoveUsed;
   gameSave.battle.playerSpikesLayers = sync.guestSpikesLayers;
   gameSave.battle.opponentSpikesLayers = sync.hostSpikesLayers;
   gameSave.battle.playerToxicSpikesLayers = sync.guestToxicSpikesLayers;
@@ -33203,7 +34072,19 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
   gameSave.battle.delayedToOpponent = sync.delayedToHost;
   gameSave.battle.active = sync.active;
   gameSave.battle.outcome = pvpGuestOutcome(sync.hostOutcome);
-  pvpAwaitingAuthoritativeState = !multiplayer.acknowledgeBattleState(sync.turn);
+  latchPvpReplacementRequirements();
+  pvpLastAppliedSnapshotTurn = sync.turn;
+  pvpLastAppliedSnapshotChecksum = sync.snapshotChecksum;
+  pvpStateAckRetryTurn = sync.turn;
+  pvpStateAckRetryChecksum = sync.snapshotChecksum;
+  pvpLastStateAckAttemptMs = millis();
+  pvpStateAckRetryPending = !multiplayer.acknowledgeBattleState(
+      sync.turn, sync.snapshotChecksum);
+  pvpAwaitingAuthoritativeState = pvpStateAckRetryPending;
+  if (!pvpAwaitingAuthoritativeState && pvpExpectedForcedRosterSlot >= 0) {
+    pvpExpectedForcedRosterSlot = -1;
+    pvpForcedChoiceSubmitted = false;
+  }
 
   const OwnedPokemon* currentOpponent = BattleEngine::currentOpponent(gameSave.battle);
   const bool activeChanged = previousPlayerUid != gameSave.battle.playerUid ||
@@ -33211,13 +34092,19 @@ bool applyPvpAuthoritativeState(const Multiplayer::BattleStateSync& sync) {
   if (!gameSave.battle.active) {
     std::snprintf(message, sizeof(message), gameSave.battle.outcome == BattleOutcome::Victory
         ? "YOU WON THE LINK BATTLE!" : "YOU LOST THE LINK BATTLE.");
-  } else if (message[0] && std::strstr(message, "WAITING")) message[0] = 0;
+  } else if (!pvpAwaitingAuthoritativeState) {
+    clearPvpTransientBattlePrompt("authoritative-applied");
+  }
   if (screen == Screen::Battle) {
-    if (activeChanged) drawBattle();
+    if (activeChanged) {
+      requestPvpFullBattleSurfaceRefresh("authoritative-active");
+      drawBattle();
+    }
     else refreshBattleHud();
   }
-  Serial.printf("[BLE] authoritative turn %u applied, rng=%08lx\n",
-                sync.turn, static_cast<unsigned long>(sync.rngState));
+  Serial.printf("[BLE] authoritative turn %u applied, checksum=%08lx rng=%08lx\n",
+                sync.turn, static_cast<unsigned long>(sync.snapshotChecksum),
+                static_cast<unsigned long>(sync.rngState));
   return true;
 }
 
@@ -33357,6 +34244,10 @@ void useSelectedPpMoveItem(OwnedPokemon& target,uint8_t moveSlot){
     const uint16_t playerSpeciesBefore=active?active->speciesId:0U,opponentSpeciesBefore=opponent?opponent->speciesId:0U;
     const uint8_t playerFormBefore=active?CollectionLogic::resolvedForm(*active):0U;
     const uint8_t opponentFormBefore=opponent?CollectionLogic::resolvedForm(*opponent):0U;
+    const MegaVariant playerMegaBefore=active?
+        MegaEvolution::variantFor(*active):MegaVariant::None;
+    const MegaVariant opponentMegaBefore=opponent?
+        MegaEvolution::variantFor(*opponent):MegaVariant::None;
     const uint16_t playerMaximumHpBefore=active?active->maximumHp:0U;
     const uint16_t opponentMaximumHpBefore=opponent?opponent->maximumHp:0U;
     const StatusCondition playerStatusBefore=active?active->status:StatusCondition::None,opponentStatusBefore=opponent?opponent->status:StatusCondition::None;
@@ -33368,6 +34259,7 @@ void useSelectedPpMoveItem(OwnedPokemon& target,uint8_t moveSlot){
       beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,playerHpBefore,opponentHpBefore,
                            playerStatusBefore,opponentStatusBefore,playerSpeciesBefore,opponentSpeciesBefore,
                            playerFormBefore,opponentFormBefore,
+                           playerMegaBefore,opponentMegaBefore,
                            playerMaximumHpBefore,opponentMaximumHpBefore);
       saveDirty=true;saveNow();
       return;
@@ -33403,6 +34295,8 @@ struct BattlePresentationSnapshot {
   uint16_t opponentSpecies = 0;
   uint8_t playerForm = 0;
   uint8_t opponentForm = 0;
+  MegaVariant playerMega = MegaVariant::None;
+  MegaVariant opponentMega = MegaVariant::None;
   uint16_t playerMaximumHp = 0;
   uint16_t opponentMaximumHp = 0;
   StatusCondition playerStatus = StatusCondition::None;
@@ -33418,6 +34312,7 @@ BattlePresentationSnapshot captureBattlePresentationSnapshot() {
     snapshot.playerHp = player->currentHp;
     snapshot.playerSpecies = player->speciesId;
     snapshot.playerForm = CollectionLogic::resolvedForm(*player);
+    snapshot.playerMega = MegaEvolution::variantFor(*player);
     snapshot.playerMaximumHp = player->maximumHp;
     snapshot.playerStatus = player->status;
   }
@@ -33427,6 +34322,7 @@ BattlePresentationSnapshot captureBattlePresentationSnapshot() {
         ? BossSystem::battleCurrentHp(gameSave.battle):opponent->currentHp;
     snapshot.opponentSpecies = opponent->speciesId;
     snapshot.opponentForm = CollectionLogic::resolvedForm(*opponent);
+    snapshot.opponentMega = MegaEvolution::variantFor(*opponent);
     snapshot.opponentMaximumHp = opponent->maximumHp;
     snapshot.opponentStatus = opponent->status;
   }
@@ -33440,6 +34336,7 @@ void beginBattleEventFlow(const BattleActionResult& result,
                        snapshot.playerStatus, snapshot.opponentStatus,
                        snapshot.playerSpecies, snapshot.opponentSpecies,
                        snapshot.playerForm, snapshot.opponentForm,
+                       snapshot.playerMega, snapshot.opponentMega,
                        snapshot.playerMaximumHp, snapshot.opponentMaximumHp);
 }
 
@@ -33457,7 +34354,24 @@ __attribute__((noinline)) void executeBattleRunAttempt() {
 
 __attribute__((noinline)) void executeStruggleBattleMove() {
   const BattlePresentationSnapshot snapshot = captureBattlePresentationSnapshot();
-  screen = Screen::Battle;
+  gameSave.battle.playerZMoveArmed = false;
+  leaveMoveSelectionForBattle();
+  if (gameSave.battle.kind == BattleKind::Pvp && pvpSessionActive) {
+    if (pvpStatePublishPending || pvpAwaitingAuthoritativeState) {
+      std::snprintf(message, sizeof(message), "SYNCING LINK BATTLE...");
+      refreshBattleHud();
+      return;
+    }
+    const uint8_t command = packPvpMoveCommand(kMoveSlots, false);
+    if (!multiplayer.submitBattleCommand(Multiplayer::BattleCommandKind::Move,
+                                         command, gameSave.battle.turn))
+      std::snprintf(message, sizeof(message),
+                    "STRUGGLE COULD NOT BE SENT. TRY AGAIN.");
+    else
+      std::snprintf(message, sizeof(message), "MOVE LOCKED IN. WAITING...");
+    refreshBattleHud();
+    return;
+  }
   BattleEngine::fightInto(gameSave.battle, gameSave.collection, kMoveSlots, pvpResolvedAction);
   if (!pvpResolvedAction.accepted) return;
   saveDirty = true;
@@ -33903,11 +34817,24 @@ void handleTap(const TouchPoint& p) {
 #if !defined(POKEGOCHI_ANDROID)
       if (settingsScroll == 0 && inside(p, 18, 71, 42, 27) && gameSave.settings.brightnessPercent > 20) {
         gameSave.settings.brightnessPercent -= 20; backlight.setBrightness(gameSave.settings.brightnessPercent);
-        saveDirty = true; saveNow(); refreshSettingsBrightness(); return;
+        saveDirty = true;
+        // Persisting the complete save is deliberately slower than a UI tap.
+        // Publish the new percentage/bar first so the control acknowledges
+        // the touch immediately, then commit the already-visible value.
+        refreshSettingsBrightness();
+        requestRetainedFrame();
+        presentRetainedFrame();
+        saveNow();
+        return;
       }
       if (settingsScroll == 0 && inside(p, 260, 71, 42, 27) && gameSave.settings.brightnessPercent < 100) {
         gameSave.settings.brightnessPercent += 20; backlight.setBrightness(gameSave.settings.brightnessPercent);
-        saveDirty = true; saveNow(); refreshSettingsBrightness(); return;
+        saveDirty = true;
+        refreshSettingsBrightness();
+        requestRetainedFrame();
+        presentRetainedFrame();
+        saveNow();
+        return;
       }
 #endif
       if (settingsScroll == 0 && inside(p, 126, kSettingsScreenTimeoutY + 6, 35, 33)) {
@@ -33978,12 +34905,6 @@ void handleTap(const TouchPoint& p) {
       if(settingsScroll==4&&inside(p,kSettingsMoreButtonX,kSettingsMoreWirelessY+10,
                                    kSettingsMoreButtonWidth,kSettingsMoreButtonHeight)){
         openWirelessUpdate();return;
-      }
-#endif
-#if !defined(POKEGOCHI_ANDROID)
-      if(settingsScroll==4&&inside(p,kSettingsMoreButtonX,kSettingsMoreKidsY+10,
-                                   kSettingsMoreButtonWidth,kSettingsMoreButtonHeight)){
-        screen=Screen::KidsMenu;drawKidsMenu();return;
       }
 #endif
       return;
@@ -34088,149 +35009,6 @@ void handleTap(const TouchPoint& p) {
     if((inside(p,12,124,295,91)||inside(p,291,175,16,40))&&playerStatsOffset<2){++playerStatsOffset;drawPlayerStats();return;}
     return;
   }
-  if (screen == Screen::KidsMenu) {
-    if (inside(p,18,45,284,40)) { resetKidsMemory();screen=Screen::KidsMemory;drawKidsMemory();return; }
-    if (inside(p,18,89,284,40)) { resetKidsCatch();screen=Screen::KidsCatch;drawKidsCatch();return; }
-    if (inside(p,18,133,284,40)) {
-      AssetRenderer::clearCache();
-      beginKidsPaintCanvas();kidsPaintLastX=-1;kidsPaintLastY=-1;
-      screen=Screen::KidsPaint;drawKidsPaint();return;
-    }
-    if (inside(p,18,177,284,40)) {
-      TowerDefense::reconcile(gameSave.towerDefense);
-      kidsTowerBrowseStage = gameSave.towerDefense.selectedStage;
-      kidsTowerNotice[0] = '\0';
-      screen = Screen::KidsTowerCampaign;drawKidsTowerCampaign();return;
-    }
-    return;
-  }
-  if (screen == Screen::KidsMemory) {
-    for (uint8_t index=0;index<12U;++index) {
-      const int16_t x=12+(index%4U)*77; const int16_t y=48+(index/4U)*61;
-      if (!inside(p,x,y,68,53)) continue;
-      const KidsMemoryGame::SelectionResult result = KidsMemoryGame::select(
-          kidsMemoryCards, 12U, index, kidsMemoryState);
-      if(result!=KidsMemoryGame::SelectionResult::Ignored)drawKidsMemory();
-      return;
-    }
-    return;
-  }
-  if(screen==Screen::KidsCatch){
-    if(kidsCatchScore<10U&&inside(p,kidsCatchX-23,kidsCatchY-27,46,50)){
-      if(!kidsCatchTimerStarted){
-        kidsCatchTimerStarted=true;
-        kidsCatchStartedMs=millis();
-      }
-      ++kidsCatchScore;
-      if(kidsCatchScore>=10U)kidsCatchFinishedMs=millis();
-      kidsCatchBerry=static_cast<uint8_t>(nextKidsRandom()%BerryGarden::kPlantableBerryCount);
-      kidsCatchX=static_cast<int16_t>(30+nextKidsRandom()%260U);
-      kidsCatchY=static_cast<int16_t>(67+nextKidsRandom()%112U);
-      drawKidsCatch();
-    }
-    return;
-  }
-  if (screen == Screen::KidsTowerCampaign) {
-    if (inside(p, 10, 183, 44, 26)) {
-      kidsTowerBrowseStage = kidsTowerBrowseStage == 0U ? TowerDefense::kStageCount - 1U :
-          static_cast<uint8_t>(kidsTowerBrowseStage - 1U);
-      gameSave.towerDefense.selectedStage = kidsTowerBrowseStage;
-      saveDirty = true;
-      drawKidsTowerCampaign();return;
-    }
-    if (inside(p, 266, 183, 44, 26)) {
-      kidsTowerBrowseStage = static_cast<uint8_t>((kidsTowerBrowseStage + 1U) % TowerDefense::kStageCount);
-      gameSave.towerDefense.selectedStage = kidsTowerBrowseStage;
-      saveDirty = true;
-      drawKidsTowerCampaign();return;
-    }
-    if (inside(p, 65, 212, 95, 25)) {
-      kidsTowerNotice[0] = '\0';
-      screen = Screen::KidsTowerTeam;drawKidsTowerTeam();return;
-    }
-    if (inside(p, 165, 212, 145, 25)) {
-      if (!TowerDefense::isUnlocked(gameSave.towerDefense, kidsTowerBrowseStage)) return;
-      resetKidsTowerBattle(kidsTowerBrowseStage);
-      screen = Screen::KidsTowerBattle;drawKidsTowerBattle();return;
-    }
-    return;
-  }
-  if (screen == Screen::KidsTowerTeam) {
-    if (inside(p, 10, 212, 118, 25)) {
-      kidsTowerNotice[0] = '\0';
-      screen = Screen::KidsTowerCampaign;drawKidsTowerCampaign();return;
-    }
-    if (inside(p, 192, 212, 118, 25)) {
-      refreshKidsTowerDefenders();
-      if (!kidsTowerAvailableDefenderCount()) {
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "ARM A PARTY POKEMON FIRST.");
-        drawKidsTowerTeam();return;
-      }
-      resetKidsTowerBattle(kidsTowerBrowseStage);
-      screen = Screen::KidsTowerBattle;drawKidsTowerBattle();return;
-    }
-    for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index) {
-      const int16_t x = 12 + index * 103;
-      if (!inside(p, x, 89, 94, 88)) continue;
-      if (!CollectionLogic::active(gameSave.collection, index)) return;
-      const uint8_t bit = static_cast<uint8_t>(1U << index);
-      const bool enabled = (gameSave.towerDefense.enabledDefendersMask & bit) != 0U;
-      refreshKidsTowerDefenders();
-      if (enabled && kidsTowerAvailableDefenderCount() <= 1U) {
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "KEEP ONE DEFENDER ARMED.");
-        drawKidsTowerTeam();return;
-      }
-      if (enabled) gameSave.towerDefense.enabledDefendersMask = static_cast<uint8_t>(
-          gameSave.towerDefense.enabledDefendersMask & ~bit);
-      else gameSave.towerDefense.enabledDefendersMask = static_cast<uint8_t>(
-          gameSave.towerDefense.enabledDefendersMask | bit);
-      kidsTowerNotice[0] = '\0';
-      saveDirty = true;saveNow();
-      drawKidsTowerTeam();return;
-    }
-    return;
-  }
-  if (screen == Screen::KidsTowerBattle) {
-    if (inside(p, 224, 212, 86, 26)) {
-      if (kidsTowerRuntime.phase == TowerDefense::Phase::Setup) {
-        refreshKidsTowerDefenders();
-        if (TowerDefense::beginWave(kidsTowerRuntime, kidsTowerDefenders, TowerDefense::kDefenderCount)) {
-          kidsTowerNotice[0] = '\0';
-          kidsTowerLastTickMs = millis();
-        } else {
-          std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "PLACE AN ARMED POKEMON FIRST.");
-        }
-        drawKidsTowerBattle();return;
-      }
-      if (kidsTowerRuntime.phase == TowerDefense::Phase::Active)
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "DEFENSE RETREATED.");
-      screen = Screen::KidsTowerCampaign;drawKidsTowerCampaign();return;
-    }
-    if (kidsTowerRuntime.phase != TowerDefense::Phase::Setup) return;
-    for (uint8_t index = 0; index < TowerDefense::kDefenderCount; ++index) {
-      if (!inside(p, 10 + index * 70, 214, 64, 23)) continue;
-      if (!kidsTowerDefenders[index].active) {
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "THAT PARTY SLOT IS BENCHED.");
-      } else {
-        kidsTowerRuntime.selectedDefender = index;
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "TAP A PAD TO POSITION P%u.",
-                      static_cast<unsigned>(index + 1U));
-      }
-      drawKidsTowerBattle();return;
-    }
-    for (uint8_t slot = 0; slot < TowerDefense::kTowerSlotCount; ++slot) {
-      const TowerDefense::Point pad = TowerDefense::towerPosition(kidsTowerRuntime.stage, slot);
-      if (!inside(p, kTowerBoardX + pad.x - 20, kTowerBoardY + pad.y - 20, 40, 40)) continue;
-      const uint8_t defender = kidsTowerRuntime.selectedDefender;
-      if (!kidsTowerDefenders[defender].active) {
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "SELECT AN ARMED PARTY POKEMON.");
-      } else if (TowerDefense::placeDefender(kidsTowerRuntime, slot, defender)) {
-        std::snprintf(kidsTowerNotice, sizeof(kidsTowerNotice), "POKEMON POSITIONED.");
-      }
-      drawKidsTowerBattle();return;
-    }
-    return;
-  }
   if(screen==Screen::MegaFormSelect){
     if(inside(p,105,202,110,29)){
       megaVariantTargetUid=0;megaStoneKeyItemTargeting=false;
@@ -34261,16 +35039,6 @@ void handleTap(const TouchPoint& p) {
     }
     return;
   }
-  if (screen == Screen::KidsPaint) {
-    if (inside(p,233,197,76,29)) {
-      if (kidsPaintPixels) std::memset(kidsPaintPixels,0,kKidsCanvasBytes);
-      drawKidsPaint();return;
-    }
-    for (uint8_t color=1;color<4U;++color) {
-      if (inside(p,18+(color-1U)*52,197,29,29)) { kidsPaintColor=color;drawKidsPaint();return; }
-    }
-    return;
-  }
   if (screen == Screen::WirelessUpdate) {
     if (inside(p, 86, 199, 148, 29)) {
       if (wirelessUpdate.canAbort()) {
@@ -34284,7 +35052,7 @@ void handleTap(const TouchPoint& p) {
     return;
   }
   if(screen==Screen::EggOffer){if(inside(p,25,190,125,31)){EggSystem::accept(gameSave.egg);saveDirty=true;saveNow();screen=Screen::EggStatus;drawEggStatus();return;}if(inside(p,170,190,125,31)){EggSystem::reject(gameSave.egg);saveDirty=true;saveNow();screen=Screen::Home;drawHome();return;}return;}
-  if(screen==Screen::EggStatus){if(inside(p,170,195,112,30)){screen=Screen::Home;drawHome();return;}if(inside(p,38,195,112,30)&&EggSystem::ready(gameSave.egg)){const uint16_t species=gameSave.egg.speciesId;const bool shiny=CollectionLogic::isShinyRoll(gameSave.egg.shinyRoll);uint32_t uid=0;if(EggSystem::hatch(gameSave.egg,gameSave.collection,gameSave.gymProgress,&uid)){const OwnedPokemon* hatched=CollectionLogic::find(gameSave.collection,uid);const uint8_t hatchLevel=hatched?hatched->level:EggSystem::hatchLevel(gameSave.gymProgress);PokedexLogic::markCaught(gameSave.pokedex,species);++gameSave.statistics.eggsHatched;saveDirty=true;saveNow();playEggHatch(species,shiny,hatchLevel);}else{drawEggStatusNotice("BOX IS FULL",TFT_RED);}return;}return;}
+  if(screen==Screen::EggStatus){if(inside(p,170,195,112,30)){screen=Screen::Home;drawHome();return;}if(inside(p,38,195,112,30)&&EggSystem::ready(gameSave.egg)){EggSystem::reconcileSpecialEgg(gameSave.egg,gameSave.eggInventory,gameSave.pokedex,unlockedContentGeneration());const uint16_t species=gameSave.egg.speciesId;const bool shiny=CollectionLogic::isShinyRoll(gameSave.egg.shinyRoll);uint32_t uid=0;if(EggSystem::hatch(gameSave.egg,gameSave.collection,gameSave.gymProgress,&uid)){const OwnedPokemon* hatched=CollectionLogic::find(gameSave.collection,uid);const uint8_t hatchLevel=hatched?hatched->level:EggSystem::hatchLevel(gameSave.gymProgress);PokedexLogic::markCaught(gameSave.pokedex,species);++gameSave.statistics.eggsHatched;saveDirty=true;saveNow();playEggHatch(species,shiny,hatchLevel);}else{drawEggStatusNotice("BOX IS FULL",TFT_RED);}return;}return;}
   if(screen==Screen::EggHatch){
     if(eggHatchVisualStage==6U&&inside(p,95,207,130,26)){
       eggHatchSpecies=0;eggHatchShiny=false;eggHatchLevel=5;eggHatchVisualStage=0;
@@ -34588,9 +35356,17 @@ void handleTap(const TouchPoint& p) {
       if (runAction == BattleTouch::RunConfirmationAction::Accept) {
         closeRunConfirmation();
         if (gameSave.battle.kind == BattleKind::Pvp && pvpSessionActive) {
-          multiplayer.submitBattleCommand(Multiplayer::BattleCommandKind::Forfeit, 0,
-                                           gameSave.battle.turn);
-          std::snprintf(message, sizeof(message), "WAITING FOR THE OTHER PLAYER...");
+          if (multiplayer.submitBattleCommand(
+                  Multiplayer::BattleCommandKind::Forfeit, 0,
+                  gameSave.battle.turn))
+            std::snprintf(message, sizeof(message), "FORFEITING LINK BATTLE...");
+          else {
+            // RUN remains a local guarantee even after transport failure.
+            // The standard link-close path restores the persistent Party and
+            // the complete Home renderer on the next shallow loop.
+            std::snprintf(message, sizeof(message), "LEAVING LINK BATTLE...");
+            multiplayer.disconnect();
+          }
           refreshBattleHud(); return;
         }
         executeBattleRunAttempt();
@@ -34653,7 +35429,17 @@ void handleTap(const TouchPoint& p) {
       const bool completedUnovaTournament = unovaTournamentBattleResultPending;
       const bool completedKalos = kalosBattleResultPending;
       const bool completedAlola = alolaBattleResultPending;
-      if (completedPvp) { restorePartyAfterPvp(); multiplayer.clearActivity(); }
+      const bool completedBalancedOnlineVictory = completedPvp &&
+          gameSave.battle.outcome == BattleOutcome::Victory &&
+          multiplayer.transportKind() == Multiplayer::TransportKind::Wifi &&
+          multiplayer.battleRules() == Multiplayer::BattleRules::Balanced;
+      if (completedPvp) {
+        restorePartyAfterPvp();
+        if (completedBalancedOnlineVictory && gameSave.wifiBalancedWins != UINT32_MAX)
+          ++gameSave.wifiBalancedWins;
+        multiplayer.setOnlineBalancedWins(gameSave.wifiBalancedWins);
+        multiplayer.clearActivity();
+      }
       BattleEngine::clear(gameSave.battle);
       if (wildChainDecision == WildChainDecision::StartNext) {
         const bool startedNext = completedSinnoh
@@ -34703,6 +35489,16 @@ void handleTap(const TouchPoint& p) {
         screen = Screen::AlolaAdventure;
         drawAlolaAdventure();
       }
+      else if (completedPvp) {
+        // The radio remains active after a completed link battle. Return to
+        // its compact multiplayer page instead of asking the reduced radio
+        // renderer workspace to rebuild the much larger Home scene.
+        bagPage=activeMultiplayerPage();
+        inventoryBattleContext=false;
+        inventoryMode=InventoryMode::Browse;
+        screen=Screen::Inventory;
+        drawInventory();
+      }
       else if(leagueWon){screen=Screen::LeagueComplete;drawLeagueComplete();}
       else if (GymSystem::needsRegionalStarter(gameSave.gymProgress)) {
         regionalDiscoveryPage=0;screen=Screen::RegionalDiscovery;drawRegionalDiscovery();
@@ -34738,8 +35534,8 @@ void handleTap(const TouchPoint& p) {
     }
     else if (inside(p, 235, 164, 80, 35)) {
       if (gameSave.battle.kind == BattleKind::Pvp) {
-        std::snprintf(message, sizeof(message), "ITEMS CAN'T BE USED IN LINK BATTLES.");
-        refreshBattleHud(); return;
+        bagPage=kMedicinePocket;inventoryBattleContext=true;resetInventorySelection();
+        screen=Screen::Inventory;drawInventory();return;
       }
       if (unovaTournamentBattleInProgress() ||
           ((unovaAreaBattleInProgress() || kalosBattleInProgress()) &&
@@ -34914,16 +35710,37 @@ void handleTap(const TouchPoint& p) {
     if (battlePartySelection>=0 && inside(p,12,202,88,31)) {
       OwnedPokemon* target=CollectionLogic::active(gameSave.collection,static_cast<uint8_t>(battlePartySelection));
       if (gameSave.battle.kind == BattleKind::Pvp && pvpSessionActive && target) {
-        if (pvpStatePublishPending || pvpAwaitingAuthoritativeState) {
+        latchPvpReplacementRequirements();
+        if ((pvpStatePublishPending || pvpAwaitingAuthoritativeState) &&
+            !forcedBattleSwitch) {
           std::snprintf(message,sizeof(message),"SYNCING LINK BATTLE...");
           battlePartySelection=-1;screen=Screen::Battle;refreshBattleHud();return;
         }
         if (target->uid == gameSave.battle.playerUid || target->currentHp == 0 ||
             target->recoverySecondsRemaining != 0) return;
         const uint8_t rosterSlot = pvpLocalRosterSlotForUid(target->uid);
+        if (rosterSlot >= multiplayer.localBattleRoster().count) return;
+        if (forcedBattleSwitch &&
+            (pvpStatePublishPending || pvpAwaitingAuthoritativeState)) {
+          pvpStagedForcedRosterSlot = static_cast<int8_t>(rosterSlot);
+          pvpStagedReplacementReason = pvpLocalReplacementReason;
+          forcedBattleSwitch = false;
+          battlePartySelection = -1;
+          screen = Screen::Battle;
+          std::snprintf(message, sizeof(message),
+                        "SWITCH CHOSEN. SYNCING...");
+          refreshBattleHud();
+          return;
+        }
         if (rosterSlot < kPartyCapacity && multiplayer.submitBattleCommand(
               Multiplayer::BattleCommandKind::Switch, rosterSlot, gameSave.battle.turn)) {
           pvpForcedChoiceSubmitted = forcedBattleSwitch;
+          if (forcedBattleSwitch) {
+            pvpExpectedForcedRosterSlot = static_cast<int8_t>(rosterSlot);
+            pvpSubmittedReplacementReason = pvpLocalReplacementReason;
+          } else {
+            pvpSubmittedReplacementReason = 0U;
+          }
           forcedBattleSwitch = false;
           battlePartySelection=-1;screen=Screen::Battle;
           std::snprintf(message,sizeof(message),"SWITCH LOCKED IN. WAITING...");refreshBattleHud();
@@ -35146,6 +35963,10 @@ void handleTap(const TouchPoint& p) {
       const uint16_t playerSpeciesBefore=player?player->speciesId:0U,opponentSpeciesBefore=opponent?opponent->speciesId:0U;
       const uint8_t playerFormBefore=player?CollectionLogic::resolvedForm(*player):0U;
       const uint8_t opponentFormBefore=opponent?CollectionLogic::resolvedForm(*opponent):0U;
+      const MegaVariant playerMegaBefore=player?
+          MegaEvolution::variantFor(*player):MegaVariant::None;
+      const MegaVariant opponentMegaBefore=opponent?
+          MegaEvolution::variantFor(*opponent):MegaVariant::None;
       const uint16_t playerMaximumHpBefore=player?player->maximumHp:0U;
       const uint16_t opponentMaximumHpBefore=opponent?opponent->maximumHp:0U;
       const StatusCondition playerStatusBefore=player?player->status:StatusCondition::None,opponentStatusBefore=opponent?opponent->status:StatusCondition::None;
@@ -35156,7 +35977,8 @@ void handleTap(const TouchPoint& p) {
         beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,
             playerHpBefore,opponentHpBefore,playerStatusBefore,opponentStatusBefore,
             playerSpeciesBefore,opponentSpeciesBefore,playerFormBefore,
-            opponentFormBefore,playerMaximumHpBefore,opponentMaximumHpBefore);
+            opponentFormBefore,playerMegaBefore,opponentMegaBefore,
+            playerMaximumHpBefore,opponentMaximumHpBefore);
         saveDirty=true;saveNow();
       }
       return;
@@ -35195,6 +36017,29 @@ void handleTap(const TouchPoint& p) {
           inventoryMoveTargetUid=target->uid;inventoryMode=InventoryMode::ChooseMove;drawInventory();return;
         }
         if (inventoryBattleContext && entry.kind == InventoryEntryKind::Medicine) {
+          if (gameSave.battle.kind == BattleKind::Pvp && pvpSessionActive) {
+            const BattleItem item = static_cast<BattleItem>(entry.id);
+            const uint8_t rosterSlot = pvpLocalRosterSlotForUid(target->uid);
+            const OwnedPokemon* active = CollectionLogic::find(
+                gameSave.collection, gameSave.battle.playerUid);
+            const bool activeConfused = active && active->uid == target->uid &&
+                gameSave.battle.playerVolatile.confusionTurns;
+            if (rosterSlot >= kPartyCapacity ||
+                !battleItemWouldHelp(target, item, activeConfused)) {
+              std::snprintf(inventoryNotice,sizeof(inventoryNotice),"IT WON'T HAVE ANY EFFECT.");
+              inventoryDescriptionScroll=0;inventoryMode=InventoryMode::Browse;drawInventory();return;
+            }
+            const uint8_t command = packPvpItemCommand(item, rosterSlot);
+            if (!multiplayer.submitBattleCommand(Multiplayer::BattleCommandKind::Item,
+                                                  command, gameSave.battle.turn)) {
+              std::snprintf(inventoryNotice,sizeof(inventoryNotice),"THE LINK IS NOT READY.");
+              inventoryDescriptionScroll=0;inventoryMode=InventoryMode::Browse;drawInventory();return;
+            }
+            inventoryMode=InventoryMode::Browse;inventoryBattleContext=false;
+            screen=Screen::Battle;
+            std::snprintf(message,sizeof(message),"ITEM LOCKED IN. WAITING...");
+            refreshBattleHud();return;
+          }
           OwnedPokemon* active=CollectionLogic::find(gameSave.collection,gameSave.battle.playerUid);
           OwnedPokemon* opponent=BattleEngine::currentOpponent(gameSave.battle);
           const uint32_t playerUidBefore=active?active->uid:0U,opponentUidBefore=opponent?opponent->uid:0U;
@@ -35203,6 +36048,10 @@ void handleTap(const TouchPoint& p) {
           const uint16_t playerSpeciesBefore=active?active->speciesId:0U,opponentSpeciesBefore=opponent?opponent->speciesId:0U;
           const uint8_t playerFormBefore=active?CollectionLogic::resolvedForm(*active):0U;
           const uint8_t opponentFormBefore=opponent?CollectionLogic::resolvedForm(*opponent):0U;
+          const MegaVariant playerMegaBefore=active?
+              MegaEvolution::variantFor(*active):MegaVariant::None;
+          const MegaVariant opponentMegaBefore=opponent?
+              MegaEvolution::variantFor(*opponent):MegaVariant::None;
           const uint16_t playerMaximumHpBefore=active?active->maximumHp:0U;
           const uint16_t opponentMaximumHpBefore=opponent?opponent->maximumHp:0U;
           const StatusCondition playerStatusBefore=active?active->status:StatusCondition::None,opponentStatusBefore=opponent?opponent->status:StatusCondition::None;
@@ -35214,7 +36063,8 @@ void handleTap(const TouchPoint& p) {
             beginBattleEventFlow(pvpResolvedAction,playerUidBefore,opponentUidBefore,
                 playerHpBefore,opponentHpBefore,playerStatusBefore,opponentStatusBefore,
                 playerSpeciesBefore,opponentSpeciesBefore,playerFormBefore,
-                opponentFormBefore,playerMaximumHpBefore,opponentMaximumHpBefore);
+                opponentFormBefore,playerMegaBefore,opponentMegaBefore,
+                playerMaximumHpBefore,opponentMaximumHpBefore);
             saveDirty=true;saveNow();return;
           }
           std::snprintf(inventoryNotice,sizeof(inventoryNotice),"IT WON'T HAVE ANY EFFECT.");
@@ -35225,23 +36075,115 @@ void handleTap(const TouchPoint& p) {
       }
       return;
     }
-    if (!inventoryBattleContext && bagPage == kMultiplayerPage) {
+    if (!inventoryBattleContext && isMultiplayerPage(bagPage)) {
+      if (kWifiNeedsLocalSetup && wifiSetupVisible) {
+        handleWifiSetupTouch(p); return;
+      }
+      const Multiplayer::TransportKind requestedTransport =
+          bagPage == kMultiplayerWifiPage ? Multiplayer::TransportKind::Wifi
+                                          : Multiplayer::TransportKind::Ble;
       const Multiplayer::State multiplayerState = multiplayer.state();
       // Treat the complete header area around the switch as the toggle. The
       // resistive panel does not require pixel-perfect contact on the small
       // ON/OFF label.
       if (inside(p, 225, 8, 84, 36)) {
         const bool enable = !multiplayer.enabled();
+        multiplayerRadioTransitionActive = true;
+        multiplayerRadioTransitionTargetOn = enable;
+        // Commit the switch and loading card to TFT GRAM before any blocking
+        // radio/scan call. Without this explicit presentation the main loop
+        // cannot flush the frame until association has already completed.
+        drawMultiplayerPocket();
+        requestRetainedFrame();
+        presentRetainedFrame();
+        Serial.printf("[RADIO_UI] transition=%s transport=%s presented\n",
+                      enable ? "ON" : "OFF",
+                      requestedTransport == Multiplayer::TransportKind::Wifi
+                          ? "WIFI" : "BLE");
         if (enable) {
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+          if (requestedTransport == Multiplayer::TransportKind::Ble &&
+              btMemReleased(BT_MODE_BLE)) {
+            // The ESP32 cannot reclaim a released controller pool in-process.
+            // Reboot only when BLE is actually requested, then resume this
+            // exact pocket with a fresh controller reservation.
+            resumeBlePocketMarker = kResumeBlePocketMagic;
+            if (saveDirty) saveNow();
+            Serial.println("[BLE] restoring controller pool for BLE page");
+            delay(100);
+            ESP.restart();
+            return;
+          }
+#endif
+          // The upcoming link battle is deliberately non-persistent. Commit
+          // every durable base-game mutation before temporary Lv70/HP/PP
+          // snapshots can replace the live Party records in RAM.
+          if (saveDirty) saveNow();
+          multiplayer.selectTransport(requestedTransport);
           // NimBLE's controller/PHY must be created while one contiguous block
           // is free. Afterwards the renderer reacquires a smaller arena so the
           // connection can remain alive while the player visits Box/Party.
           AssetRenderer::releaseSceneWorkspaceForRadio();
-          const bool started = multiplayer.setEnabled(true);
+          bool gameStateParked = true;
+          bool radioMemoryReady = true;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+          if (requestedTransport == Multiplayer::TransportKind::Wifi) {
+            gameStateParked = suspendGameSaveForWifi();
+            if (gameStateParked && !btMemReleased(BT_MODE_BLE)) {
+              // Wi-Fi and the 54 KiB save do not fit beside the unused BLE
+              // controller pool on this no-PSRAM board. BLE and Wi-Fi are
+              // separate UI modes, so lend that pool only for Wi-Fi. A later
+              // BLE request follows the controlled resume path above.
+              radioMemoryReady = btMemRelease(BT_MODE_BLE);
+              if (radioMemoryReady && !btMemReleased(BT_MODE_BLE))
+                btMarkMemReleased(BT_MODE_BLE);
+              Serial.printf("[WIFI] BLE pool release ok=%u released=%u heap=%u block=%u\n",
+                            radioMemoryReady ? 1U : 0U,
+                            btMemReleased(BT_MODE_BLE) ? 1U : 0U,
+                            static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                            static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+            }
+          }
+#endif
+          bool started = gameStateParked && radioMemoryReady &&
+              multiplayer.setEnabled(true);
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+          if (!gameStateParked)
+            std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                          "SAVE IS BUSY. TRY AGAIN.");
+          else if (!radioMemoryReady)
+            std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                          "WIFI MEMORY COULD NOT START.");
+#endif
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+          if (requestedTransport == Multiplayer::TransportKind::Wifi &&
+              !resumeGameSaveAfterWifi()) {
+            // The radio initialized but left too little contiguous RAM for
+            // the 54 KiB save. Shut it down first, then recover the complete
+            // game state; never continue with a null/partial save.
+            multiplayer.setEnabled(false);
+            started = false;
+            if (!resumeGameSaveAfterWifi()) {
+              Serial.println("[WIFI] fatal game-state restore failure after start");
+              delay(100);
+              ESP.restart();
+              return;
+            }
+            std::snprintf(inventoryNotice, sizeof(inventoryNotice),
+                          "NOT ENOUGH MEMORY FOR WIFI.");
+          }
+#endif
           AssetRenderer::restoreSceneWorkspace(started);
         } else {
-          disableMultiplayerRadioAfterBagClose();
+          if (!disableMultiplayerRadioAfterBagClose()) {
+            // Recovery may need another scheduler turn, but the synchronous
+            // switch transition is over. Do not leave the header permanently
+            // latched in its orange STOPPING state while recovery owns TFT.
+            multiplayerRadioTransitionActive = false;
+            return;
+          }
         }
+        multiplayerRadioTransitionActive = false;
         preparedUiSceneKey = 0;
         preparedUiSceneComplete = false;
         requestRetainedFrame();
@@ -35255,17 +36197,53 @@ void handleTap(const TouchPoint& p) {
       }
       if (inside(p, 220, 198, 83, 28)) { closeInventoryToHome(); return; }
       if (multiplayerState == Multiplayer::State::Advertising || multiplayerState == Multiplayer::State::Error) {
-        if (inside(p, 75, 145, 170, 34)) { multiplayer.startScan(); drawMultiplayerPocket(); }
+        if (kWifiNeedsLocalSetup && bagPage == kMultiplayerWifiPage &&
+            inside(p, 166, 145, 126, 34)) {
+          if (multiplayer.enabled()) multiplayer.setEnabled(false);
+          beginWifiSetup(); drawWifiSetup(); return;
+        }
+        const bool findPressed = bagPage == kMultiplayerWifiPage &&
+                                 kWifiNeedsLocalSetup
+            ? inside(p, 28, 145, 126, 34) : inside(p, 75, 145, 170, 34);
+        if (findPressed) {
+          multiplayerPeerPage = 0;
+          multiplayer.startScan();
+          drawMultiplayerPocket();
+        }
         return;
+      }
+      if (kWifiNeedsLocalSetup && bagPage == kMultiplayerWifiPage &&
+          (multiplayerState == Multiplayer::State::Off || !multiplayer.enabled()) &&
+          inside(p, 105, 154, 110, 27)) {
+        beginWifiSetup(); drawWifiSetup(); return;
       }
       if (multiplayerState == Multiplayer::State::Scanning) {
         const uint8_t count = multiplayer.peerCount();
-        for (uint8_t row = 0; row < count && row < 4; ++row) {
-          if (inside(p, 25, 83 + row * 25, 270, 23)) {
-            multiplayer.choosePeer(row); drawMultiplayerPocket(); return;
+        uint8_t peerPages = static_cast<uint8_t>((count + 3u) / 4u);
+        if (!peerPages) peerPages = 1;
+        if (multiplayerPeerPage >= peerPages) multiplayerPeerPage = peerPages - 1u;
+        if (peerPages > 1 && !multiplayer.peerSearchInProgress()) {
+          if (inside(p, 20, 58, 25, 21)) {
+            multiplayerPeerPage = multiplayerPeerPage
+                ? multiplayerPeerPage - 1u : peerPages - 1u;
+            drawMultiplayerPocket(); return;
+          }
+          if (inside(p, 275, 58, 25, 21)) {
+            multiplayerPeerPage = static_cast<uint8_t>((multiplayerPeerPage + 1u) % peerPages);
+            drawMultiplayerPocket(); return;
           }
         }
-        if (!count && inside(p, 87, 148, 146, 30)) { multiplayer.startScan(); drawMultiplayerPocket(); }
+        const uint8_t firstPeer = static_cast<uint8_t>(multiplayerPeerPage * 4u);
+        for (uint8_t row = 0; row < 4 && firstPeer + row < count; ++row) {
+          if (inside(p, 25, 83 + row * 25, 270, 23)) {
+            multiplayer.choosePeer(firstPeer + row); drawMultiplayerPocket(); return;
+          }
+        }
+        if (!count && !multiplayer.peerSearchInProgress() &&
+            inside(p, 87, 148, 146, 30)) {
+          multiplayerPeerPage = 0;
+          multiplayer.startScan(); drawMultiplayerPocket();
+        }
         return;
       }
       if (multiplayerState == Multiplayer::State::ConfirmOutgoingPeer ||
@@ -35279,10 +36257,20 @@ void handleTap(const TouchPoint& p) {
         else if (inside(p, 166, 139, 118, 34)) multiplayer.answerActivity(false);
         drawMultiplayerPocket(); return;
       }
+      if (multiplayerState == Multiplayer::State::WaitingActivityReply) {
+        if (inside(p, 75, 151, 170, 28)) multiplayer.clearActivity();
+        drawMultiplayerPocket(); return;
+      }
       if (multiplayerState == Multiplayer::State::Connected) {
-        if (inside(p, 21, 123, 88, 39)) multiplayer.requestActivity(Multiplayer::Activity::Battle);
-        else if (inside(p, 116, 123, 88, 39)) multiplayer.requestActivity(Multiplayer::Activity::Trade);
-        else if (inside(p, 211, 123, 88, 39)) multiplayer.disconnect();
+        if (multiplayer.initiatedConnection()) {
+          if (inside(p, 21, 123, 88, 39))
+            multiplayer.requestActivity(Multiplayer::Activity::Battle);
+          else if (inside(p, 116, 123, 88, 39))
+            multiplayer.requestActivity(Multiplayer::Activity::Trade);
+          else if (inside(p, 211, 123, 88, 39)) multiplayer.disconnect();
+        } else {
+          if (inside(p, 75, 151, 170, 28)) multiplayer.disconnect();
+        }
         drawMultiplayerPocket(); return;
       }
       if (multiplayerState == Multiplayer::State::TradeSelecting) {
@@ -35304,6 +36292,15 @@ void handleTap(const TouchPoint& p) {
         drawMultiplayerPocket(); return;
       }
       if (multiplayerState == Multiplayer::State::BattlePreparing) {
+        if (!multiplayer.battleRulesReady()) {
+          if (inside(p, 30, 126, 127, 37))
+            multiplayer.chooseBattleRules(Multiplayer::BattleRules::Normal);
+          else if (inside(p, 163, 126, 127, 37))
+            multiplayer.chooseBattleRules(Multiplayer::BattleRules::Balanced);
+          else if (inside(p, 75, 166, 170, 18))
+            multiplayer.clearActivity();
+          drawMultiplayerPocket(); return;
+        }
         if (inside(p, 30, 132, 127, 34)) {
           selectedUid = currentPet() ? currentPet()->uid : 0; boxOverlay = BoxOverlay::None;
           boxPartyView = true; screen = Screen::Box; drawBox(); return;
@@ -35313,8 +36310,6 @@ void handleTap(const TouchPoint& p) {
         drawMultiplayerPocket(); return;
       }
       if (multiplayerState == Multiplayer::State::BattleWaitingReady) {
-        if (!multiplayer.localBattleReady() && inside(p, 101, 129, 118, 34))
-          multiplayer.setBattleReady(gameSave.collection);
         if (inside(p, 75, 164, 170, 20)) multiplayer.clearActivity();
         drawMultiplayerPocket(); return;
       }
@@ -35531,7 +36526,7 @@ void handleTap(const TouchPoint& p) {
       }
       boxOverlay = BoxOverlay::None; boxPartyView = false; boxNotice[0] = 0;
       if (multiplayer.connected() && multiplayer.activity() != Multiplayer::Activity::None) {
-        bagPage = kMultiplayerPage; inventoryBattleContext = false; screen = Screen::Inventory; drawInventory();
+        bagPage = activeMultiplayerPage(); inventoryBattleContext = false; screen = Screen::Inventory; drawInventory();
       } else { screen = Screen::Home; drawHome(); }
       return;
     }
@@ -35719,7 +36714,7 @@ void handleTap(const TouchPoint& p) {
           }
           multiplayer.submitTradeOffer(*selected);
           boxOverlay = BoxOverlay::None; boxPartyView = false; boxNotice[0] = 0;
-          bagPage = kMultiplayerPage; inventoryBattleContext = false;
+          bagPage = activeMultiplayerPage(); inventoryBattleContext = false;
           screen = Screen::Inventory; drawInventory(); return;
         }
         // CANCEL, including a tap outside the compact menu, keeps the link and
@@ -36080,9 +37075,12 @@ void handleTap(const TouchPoint& p) {
         return;
       }
       if (inside(p, 8, 205, 304, 29)) {
+        const bool kept =
+            UnovaAdventure::willPreserveChoicesOnAbandon(gameSave.unova);
         UnovaAdventure::abandon(gameSave.unova);
         std::snprintf(unovaNotice, sizeof(unovaNotice),
-                      "AREA ABANDONED. ITS PROGRESS WAS RESET.");
+                      kept ? "AREA LEFT. ITS OPTIONS WERE KEPT." :
+                             "AREA ABANDONED. ITS PROGRESS WAS RESET.");
         saveDirty = true;
         saveNow();
         drawUnovaAdventure();
@@ -36261,9 +37259,12 @@ void handleTap(const TouchPoint& p) {
         return;
       }
       if (inside(p, 8, 205, 304, 29)) {
+        const bool kept =
+            KalosAdventure::willPreserveChoicesOnAbandon(gameSave.kalos);
         KalosAdventure::abandon(gameSave.kalos);
         std::snprintf(kalosNotice, sizeof(kalosNotice),
-                      "ROUTE ABANDONED. ITS PROGRESS WAS RESET.");
+                      kept ? "ROUTE LEFT. ITS OPTIONS WERE KEPT." :
+                             "ROUTE ABANDONED. ITS PROGRESS WAS RESET.");
         saveDirty = true;
         saveNow();
         drawKalosAdventure();
@@ -36345,8 +37346,12 @@ void handleTap(const TouchPoint& p) {
         if(result.startsBattle){if(!launchAlolaBattle()){std::snprintf(alolaNotice,sizeof(alolaNotice),"NO HEALTHY PARTY POKEMON CAN BATTLE.");drawAlolaAdventure();}return;}
         drawAlolaAdventure();return;
       }
-      if(inside(p,8,205,304,29)){AlolaAdventure::abandon(gameSave.alola);
-        std::snprintf(alolaNotice,sizeof(alolaNotice),"TRIAL ABANDONED. ITS PATH WAS RESET.");
+      if(inside(p,8,205,304,29)){const bool kept=
+            AlolaAdventure::willPreserveChoicesOnAbandon(gameSave.alola);
+        AlolaAdventure::abandon(gameSave.alola);
+        std::snprintf(alolaNotice,sizeof(alolaNotice),kept?
+            "TRIAL LEFT. ITS OPTIONS WERE KEPT.":
+            "TRIAL ABANDONED. ITS PATH WAS RESET.");
         saveDirty=true;saveNow();drawAlolaAdventure();}
       return;
     }
@@ -36526,13 +37531,6 @@ void redrawCurrentScreen() {
     case Screen::BerryGarden: drawBerryGarden(); break;
     case Screen::PlayerStats: drawPlayerStats(); break;
     case Screen::WirelessUpdate: drawWirelessUpdate(); break;
-    case Screen::KidsMenu: drawKidsMenu(); break;
-    case Screen::KidsMemory: drawKidsMemory(); break;
-    case Screen::KidsPaint: drawKidsPaint(); break;
-    case Screen::KidsCatch: drawKidsCatch(); break;
-    case Screen::KidsTowerCampaign: drawKidsTowerCampaign(); break;
-    case Screen::KidsTowerTeam: drawKidsTowerTeam(); break;
-    case Screen::KidsTowerBattle: drawKidsTowerBattle(); break;
     case Screen::MegaFormSelect: drawMegaFormSelect(); break;
     case Screen::EggOffer: drawEggOffer(); break;
     case Screen::EggStatus: drawEggStatus(); break;
@@ -36595,28 +37593,37 @@ void drawUnlockPokeball(int16_t centerX, int16_t centerY) {
 }
 
 void drawUnlockScreen() {
-  const uint16_t deepBlue = themeDark();
-  const uint16_t middleBlue = themePrimary();
-  const uint16_t paleBlue = themePale();
+  const bool whiteTheme = selectedUiTheme() == UiColorTheme::White;
+  // `themeDark()` is intentionally black in the White palette because most
+  // screens use it as ink. The lock screen formerly reused it as a full-screen
+  // surface and therefore made the WHITE theme mostly black. Give this scene
+  // explicit surface roles while retaining black ink and a visible slider.
+  const uint16_t lockSurface = whiteTheme ? TFT_WHITE : themeDark();
+  const uint16_t lockBand = whiteTheme ? 0xDEFB : themePrimary();
+  const uint16_t lockWell = whiteTheme ? 0xC618 : themePale();
+  const uint16_t lockInk = readableInkOn(lockSurface);
+  const uint16_t frameInset = whiteTheme ? TFT_BLACK : TFT_WHITE;
+  const uint16_t track = whiteTheme ? 0x4208 : themeDark();
+  const uint16_t trackInterior = whiteTheme ? 0xDEFB : themePrimary();
+  const uint16_t chevron = whiteTheme ? 0x4208 : themePale();
   constexpr uint16_t gold = 0xF5C0;
-  const uint16_t track = themeDark();
-  display.fillScreen(deepBlue);
+  display.fillScreen(lockSurface);
   // Subtle horizontal bands keep the screen lively while remaining entirely
   // resident primitives; waking never opens the SD card.
   for (int16_t y = 12; y < 228; y += 16)
-    display.fillRect(12, y, 296, 1, middleBlue);
+    display.fillRect(12, y, 296, 1, lockBand);
   display.fillRoundRect(6, 6, 308, 228, 10, gold);
-  display.fillRoundRect(9, 9, 302, 222, 8, TFT_WHITE);
-  display.fillRoundRect(12, 12, 296, 216, 6, deepBlue);
+  display.fillRoundRect(9, 9, 302, 222, 8, frameInset);
+  display.fillRoundRect(12, 12, 296, 216, 6, lockSurface);
 
-  display.fillRoundRect(38, 25, 244, 55, 7, paleBlue);
+  display.fillRoundRect(38, 25, 244, 55, 7, lockWell);
   display.fillRoundRect(42, 29, 236, 47, 5, TFT_WHITE);
   fireRedText.setTextDatum(MC_DATUM);
   fireRedText.setTextColor(TFT_RED, TFT_WHITE);
   fireRedText.drawString("POKEGOCHI", 160, 45, 2);
-  fireRedText.setTextColor(deepBlue, TFT_WHITE);
+  fireRedText.setTextColor(TFT_BLACK, TFT_WHITE);
   fireRedText.drawString("SCREEN LOCKED", 160, 65, 1);
-  fireRedText.setTextColor(TFT_WHITE, deepBlue);
+  fireRedText.setTextColor(lockInk, lockSurface);
   fireRedText.drawString("SLIDE THE POKE BALL TO PLAY", 160, 116, 1);
 
   display.fillRoundRect(SwipeUnlock::kTrackX - 3, SwipeUnlock::kTrackY - 3,
@@ -36627,12 +37634,12 @@ void drawUnlockScreen() {
                         27, track);
   display.fillRoundRect(SwipeUnlock::kTrackX + 4, SwipeUnlock::kTrackY + 4,
                         SwipeUnlock::kTrackWidth - 8, SwipeUnlock::kTrackHeight - 8,
-                        23, middleBlue);
+                        23, trackInterior);
   // Direction chevrons sit near the destination but cannot be mistaken for a
   // tappable button: the state machine only accepts a gesture from the ball.
   for (int16_t x = 226; x <= 250; x += 12) {
-    display.drawLine(x, 181, x + 8, SwipeUnlock::kCenterY, paleBlue);
-    display.drawLine(x + 8, SwipeUnlock::kCenterY, x, 201, paleBlue);
+    display.drawLine(x, 181, x + 8, SwipeUnlock::kCenterY, chevron);
+    display.drawLine(x + 8, SwipeUnlock::kCenterY, x, 201, chevron);
   }
   drawUnlockPokeball(swipeUnlock.ballX(), SwipeUnlock::kCenterY);
   fireRedText.setTextDatum(TL_DATUM);
@@ -36683,15 +37690,30 @@ bool composeRetainedStripe(uint8_t stripe, int16_t compositionLeft,
 }
 
 uint32_t pushRetainedStripeTiles(uint8_t stripe, uint8_t firstTile,
-                                 uint8_t lastTile, uint16_t* pixels) {
+                                 uint8_t lastTile, uint16_t* pixels,
+                                 bool forceAllTiles = false) {
   const uint16_t stripeY = static_cast<uint16_t>(stripe) * kRetainedBandHeight;
   bool changed[kRetainedTileColumns]{};
   uint32_t transferredPixels = 0U;
   for (uint8_t tile = firstTile; tile <= lastTile; ++tile) {
     const uint32_t hash = retainedTileCrc(pixels, tile);
-    changed[tile] = retainedTileHash[stripe][tile] == 0U ||
+    changed[tile] = forceAllTiles || retainedTileHash[stripe][tile] == 0U ||
         retainedTileHash[stripe][tile] != hash;
     retainedTileHash[stripe][tile] = hash;
+  }
+  // A physical PvP frame always owns the complete 320-pixel row. Send its
+  // eight RGB565 rows as one contiguous RAMWR payload. The previous loop
+  // split the same address window into eight separate pushPixels() calls;
+  // under simultaneous Wi-Fi traffic the ESP32/ILI9341 pair could lose a
+  // word boundary between calls and repeat that displaced column through
+  // the rest of the band, which is visible as vertical lines even though the
+  // composed scene and every tile hash are correct.
+  if (forceAllTiles && firstTile == 0U &&
+      lastTile + 1U == kRetainedTileColumns) {
+    panel.setAddrWindow(0, stripeY, 320, kRetainedBandHeight);
+    panel.pushPixels(pixels,
+                     static_cast<uint32_t>(320U) * kRetainedBandHeight);
+    return static_cast<uint32_t>(320U) * kRetainedBandHeight;
   }
   for (uint8_t tile = firstTile; tile <= lastTile;) {
     if (!changed[tile]) { ++tile; continue; }
@@ -36778,6 +37800,34 @@ bool presentAndroidFullFrame() {
     firstPixel = 0;
     lastColumn = 320;
     lastPixel = std::max<int16_t>(lastPixel, 184);
+  }
+  const bool fullPvpBattleRefresh = pvpFullBattleSurfaceRefreshPending &&
+      pvpSessionActive && screen == Screen::Battle;
+  if (fullPvpBattleRefresh) {
+    firstColumn = 0;
+    firstPixel = 0;
+    lastColumn = 320;
+    lastPixel = 240;
+
+    // Resolve the complete canonical battle manifest while SD I/O is still
+    // legal and before renderingRetainedFrame raises the no-I/O fence. A
+    // forced replacement changes the battler asset without changing Screen;
+    // discovering that change in the first stripe is already too late.
+    char canonicalTerrainPath[80]{};
+    const char* canonicalTerrain =
+        chooseBattleTerrain(presentedBattleOpponent());
+    std::snprintf(canonicalTerrainPath, sizeof(canonicalTerrainPath),
+                  "/pokegochi/assets/firered/battle_terrain/%s.pkg",
+                  canonicalTerrain);
+    if (!prepareBattleGraphics(presentedBattlePlayer(),
+                               presentedBattleOpponent(),
+                               canonicalTerrainPath)) {
+      retainedFrameRequested = true;
+      invalidatePixels(0, 0, 320, 240);
+      battleAnimationRetainedCompositionWarm = false;
+      Serial.println("[GFX] PvP full refresh waiting for canonical scene");
+      return false;
+    }
   }
   const bool hasDamage = lastColumn > firstColumn && lastPixel > firstPixel;
   if (!hasDamage) {
@@ -36890,10 +37940,16 @@ bool presentRetainedFrame(uint32_t* transferredPixels) {
   // A cancelled compose must keep the latch armed for the exact same retry.
   if (committed) {
     battleAnimationAtomicRevealPending = false;
+    pvpFullBattleSurfaceRefreshPending = false;
     if (transferredPixels) *transferredPixels = 320U * 240U;
   }
   return committed;
 #endif
+  // drawMultiplayerHomeRecoveryTransition() owns TFT GRAM until the compact
+  // Home arena is restored. A touch handler can still leave a stale Bag frame
+  // queued in the retained canvas; publishing it here would flash that stale
+  // frame over the recovery surface.
+  if (multiplayerHomeRecoveryTransitionVisible) return true;
   BattleAnimationDiagnosticTrace* animationTrace =
       battleAnimationCurrentMove != 0U
           ? battleAnimationDiagnosticTraceForSide(
@@ -36925,11 +37981,54 @@ bool presentRetainedFrame(uint32_t* transferredPixels) {
     lastColumn = 320;
     lastPixel = std::max<int16_t>(lastPixel, 184);
   }
+  const bool fullPvpBattleRefresh = pvpFullBattleSurfaceRefreshPending &&
+      pvpSessionActive && screen == Screen::Battle;
+  if (fullPvpBattleRefresh) {
+    firstColumn = 0;
+    firstPixel = 0;
+    lastColumn = 320;
+    lastPixel = 240;
+
+    // Resolve the replacement battler before entering the retained
+    // compositor.  Once renderingRetainedFrame is set, SD/cache mutation is
+    // forbidden; discovering the new sprite there would otherwise mix the
+    // previous and incoming scenes across the 8-pixel presentation bands.
+    char canonicalTerrainPath[80]{};
+    const char* canonicalTerrain =
+        chooseBattleTerrain(presentedBattleOpponent());
+    std::snprintf(canonicalTerrainPath, sizeof(canonicalTerrainPath),
+                  "/pokegochi/assets/firered/battle_terrain/%s.pkg",
+                  canonicalTerrain);
+    if (!prepareBattleGraphics(presentedBattlePlayer(),
+                               presentedBattleOpponent(),
+                               canonicalTerrainPath)) {
+      retainedFrameRequested = true;
+      invalidatePixels(0, 0, 320, 240);
+      battleAnimationRetainedCompositionWarm = false;
+      Serial.println("[GFX] PvP full refresh waiting for canonical scene");
+      return false;
+    }
+  }
   display.resetDamage();
   renderDamage.reset();
   if (lastColumn <= firstColumn || lastPixel <= firstPixel) {
     if (!renderingRetainedFrame) AssetRenderer::setCompositionActive(false);
     return false;
+  }
+  // The physical Wi-Fi PvP path has enough contiguous renderer workspace for
+  // a complete 320-pixel row, but not for a second framebuffer. Publishing
+  // adjacent dirty tile windows (and later one RAMWR command per 8-pixel
+  // stripe) still let an interrupted switch refresh restart the ILI9341's
+  // address cursor at a visible column. Compose every affected PvP row at full
+  // width and stream the complete vertical region through one address window
+  // and one RAMWR transaction below. The normal game and Android keep their
+  // existing damage strategy.
+  const bool coherentPvpRows = pvpSessionActive &&
+      (screen == Screen::Battle || screen == Screen::MoveSelect ||
+       screen == Screen::BattleParty);
+  if (coherentPvpRows) {
+    firstColumn = 0;
+    lastColumn = 320;
   }
   firstColumn = std::max<int16_t>(0, firstColumn);
   lastColumn = std::min<int16_t>(320, lastColumn);
@@ -37012,6 +38111,11 @@ bool presentRetainedFrame(uint32_t* transferredPixels) {
   const bool swapWasEnabled = panel.getSwapBytes();
   panel.setSwapBytes(false);
   const bool atomicReveal = battleAnimationAtomicRevealPending;
+  // Keep the panel enabled during a PvP replacement. The full-width path
+  // below now owns one CASET/PASET/RAMWR stream for the entire vertical
+  // region, so the old per-stripe column tearing is already impossible.
+  // Sending ILI9341 Display Off/On around that same stream merely replaced
+  // the tearing with a very visible black blink between turns.
   uint32_t frameTransferredPixels = 0U;
   if (atomicReveal) {
     beginAtomicBattleBackgroundReveal();
@@ -37020,6 +38124,13 @@ bool presentRetainedFrame(uint32_t* transferredPixels) {
                                static_cast<unsigned>(lastStripe - firstStripe + 1U));
   }
   panel.startWrite();
+  if (coherentPvpRows) {
+    const uint16_t streamTop = static_cast<uint16_t>(firstStripe) *
+        kRetainedBandHeight;
+    const uint16_t streamHeight = static_cast<uint16_t>(
+        lastStripe - firstStripe + 1U) * kRetainedBandHeight;
+    panel.setAddrWindow(0, streamTop, 320, streamHeight);
+  }
   for (uint8_t stripe = firstStripe; stripe <= lastStripe; ++stripe) {
     const uint32_t composeStartedUs = micros();
     if (!composeRetainedStripe(stripe, compositionLeft, compositionRight)) {
@@ -37046,9 +38157,19 @@ bool presentRetainedFrame(uint32_t* transferredPixels) {
       ++animationTrace->composedStripes;
     }
     const uint32_t transferStartedUs = micros();
-    const uint32_t stripeTransferredPixels = pushRetainedStripeTiles(
-        stripe, firstTile, lastTile,
-        static_cast<uint16_t*>(display.getPointer()));
+    uint32_t stripeTransferredPixels = 0U;
+    if (coherentPvpRows) {
+      // Keep the controller's GRAM cursor continuous across stripe boundaries.
+      // No CASET/PASET/RAMWR command is allowed between these payloads.
+      panel.pushPixels(static_cast<uint16_t*>(display.getPointer()),
+                       static_cast<uint32_t>(320U) * kRetainedBandHeight);
+      stripeTransferredPixels = static_cast<uint32_t>(320U) *
+          kRetainedBandHeight;
+    } else {
+      stripeTransferredPixels = pushRetainedStripeTiles(
+          stripe, firstTile, lastTile,
+          static_cast<uint16_t*>(display.getPointer()));
+    }
     frameTransferredPixels += stripeTransferredPixels;
     if (animationTrace) {
       animationTrace->transferTotalUs += micros() - transferStartedUs;
@@ -37074,6 +38195,11 @@ bool presentRetainedFrame(uint32_t* transferredPixels) {
   }
   if (sdOpensDuringComposition)
     Serial.printf("[SD] ERROR render-pass opens=%lu\n", static_cast<unsigned long>(sdOpensDuringComposition));
+  if (fullPvpBattleRefresh) {
+    pvpFullBattleSurfaceRefreshPending = false;
+    Serial.printf("[GFX] PvP full battle refresh committed pixels=%lu\n",
+                  static_cast<unsigned long>(frameTransferredPixels));
+  }
   if (transferredPixels) *transferredPixels = frameTransferredPixels;
   return true;
 }
@@ -37104,6 +38230,12 @@ void applyGameClockSeconds(uint32_t seconds) {
   const uint32_t previousPlayTime = gameSave.playTimeSeconds;
   gameSave.playTimeSeconds += seconds;
   if(gameSave.clockLocalEpochSeconds)gameSave.clockLocalEpochSeconds+=seconds;
+  // Battle time is deliberately excluded. A transformed Greninja carries
+  // into the next encounter with the exact outside-battle time remaining;
+  // an offline clock catch-up consumes the same real-world window.
+  if(!gameSave.battle.active&&AlolaForms::advanceAshBondOutsideTime(
+         gameSave.collection,seconds))
+    ashBondPresentationRefreshPending=true;
   if(unovaUnlocked()&&currentUnovaSeason()!=previousUnovaSeason&&
      CollectionLogic::applyUnovaSeason(gameSave.collection,
                                        currentUnovaSeason()))
@@ -37166,11 +38298,13 @@ void applyGameClockSeconds(uint32_t seconds) {
         CollectionLogic::advanceRecovery(pokemon, recoverySeconds, inParty, recoveryWorldTime);
     }
   }
-  for (uint32_t uid : gameSave.collection.party) {
+  // Link battles use disposable Party copies. Clock-driven friendship or
+  // form changes would mutate the host snapshot while it waits for an ACK.
+  if (!pvpSessionActive) for (uint32_t uid : gameSave.collection.party) {
     if (OwnedPokemon* pokemon = CollectionLogic::find(gameSave.collection, uid))
       CollectionLogic::advanceFriendship(*pokemon, seconds);
   }
-  if(currentWorldHour()!=previousWorldHour&&
+  if(!pvpSessionActive&&currentWorldHour()!=previousWorldHour&&
      CollectionLogic::reconcileFormLifecycles(
          gameSave.collection,currentWorldHour(),
          currentWorldPeriod()==WorldTimePeriod::Night))
@@ -37189,6 +38323,21 @@ void advanceGameClocks() {
 }
 
 void processTimedEvents(uint32_t now) {
+  if(ashBondPresentationRefreshPending&&!displaySleeping&&
+     !swipeUnlock.active()&&!gameSave.battle.active){
+    ashBondPresentationRefreshPending=false;
+    // The form byte participates in every scene key. Force a fresh manifest
+    // before repainting so Home/Box/Summary cannot keep the expired Ash icon
+    // from the resident sprite cache.
+    preparedUiSceneKey=0U;preparedUiSceneComplete=false;
+    if(screen==Screen::Home){
+      homeLayeredBackground=false;
+      drawHome();
+    }else if(screen==Screen::Box)drawBox();
+    else if(screen==Screen::BattleSummary)drawBattleSummary();
+    else if(screen==Screen::BattleParty)drawBattleParty();
+    else if(screen==Screen::ChooseBattler)drawChooseBattler();
+  }
   if(!displaySleeping&&!swipeUnlock.active()&&screen==Screen::Home){
     const uint16_t minute=currentWorldMinute();
     if(lastRenderedWorldMinute!=minute){
@@ -37308,7 +38457,7 @@ esp_sleep_wakeup_cause_t lightSleepOneSecond(bool allowTouchWake) {
 // tiny and dormant unless a command is received, so production interaction is
 // unchanged. `STATE` provides a synchronization point for scripted tests.
 void processSerialTestInput(uint32_t loopNow) {
-  static char line[40]{};
+  static char line[64]{};
   static uint8_t length = 0;
   while (Serial.available()) {
     const char value = static_cast<char>(Serial.read());
@@ -37343,19 +38492,189 @@ void processSerialTestInput(uint32_t loopNow) {
       injected.y = static_cast<int16_t>(std::clamp(y, 0, 239));
       const uint8_t before = static_cast<uint8_t>(screen);
       Serial.printf("[TEST] TAP %d,%d screen=%u\n", injected.x, injected.y, before);
-      // Traverse the complete physical-touch pipeline.  Paint strokes and the
-      // Kids exit slider are serviced before ordinary tap dispatch in loop();
-      // bypassing them here made autonomous hardware regression unable to
-      // exercise either feature even though the same coordinates worked on
-      // the resistive panel.  Keeping consecutive TAP commands in one serial
-      // burst also preserves the held/drag state used by both controls.
-      serviceKidsPaintStroke(injected);
-      if (!serviceKidsExitSlider(injected)) handleTap(injected);
+      handleTap(injected);
       Serial.printf("[TEST] RESULT screen=%u stack-free=%u heap=%u largest=%u\n",
                     static_cast<unsigned>(screen),
                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)),
                     static_cast<unsigned>(ESP.getFreeHeap()),
                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)));
+    } else if (!std::strcmp(line, "PVPSTATE")) {
+      const OwnedPokemon* local = CollectionLogic::find(
+          gameSave.collection, gameSave.battle.playerUid);
+      const OwnedPokemon* remote = BattleEngine::currentOpponent(
+          gameSave.battle);
+      Serial.printf("[PVP] screen=%u active=%u connected=%u activity=%u host=%u "
+                    "turn=%u phase=%u event=%u/%u hp=%u/%u foe=%u/%u "
+                    "publish=%u await=%u ackretry=%u checksum=%08lx last=%08lx "
+                    "forced=%u/%u expected=%d message=\"%s\"\n",
+                    static_cast<unsigned>(screen), pvpSessionActive ? 1U : 0U,
+                    multiplayer.connected() ? 1U : 0U,
+                    static_cast<unsigned>(multiplayer.activity()),
+                    multiplayer.isBattleHost() ? 1U : 0U,
+                    static_cast<unsigned>(gameSave.battle.turn),
+                    static_cast<unsigned>(battleFlow.phase),
+                    static_cast<unsigned>(battleFlow.eventIndex),
+                    static_cast<unsigned>(battleFlow.result.eventCount),
+                    local ? static_cast<unsigned>(local->currentHp) : 0U,
+                    local ? static_cast<unsigned>(local->maximumHp) : 0U,
+                    remote ? static_cast<unsigned>(remote->currentHp) : 0U,
+                    remote ? static_cast<unsigned>(remote->maximumHp) : 0U,
+                    pvpStatePublishPending ? 1U : 0U,
+                    pvpAwaitingAuthoritativeState ? 1U : 0U,
+                    pvpStateAckRetryPending ? 1U : 0U,
+                    static_cast<unsigned long>(pvpStateAckRetryChecksum),
+                    static_cast<unsigned long>(pvpLastAppliedSnapshotChecksum),
+                    pvpForcedChoiceSubmitted ? 1U : 0U,
+                    pvpForcedWaitSubmitted ? 1U : 0U,
+                     static_cast<int>(pvpExpectedForcedRosterSlot), message);
+    } else if (!std::strcmp(line, "PVPREFRESH")) {
+      if (!pvpSessionActive || screen != Screen::Battle) {
+        Serial.println("[GFXCHECK] unavailable: no active PvP battle");
+        continue;
+      }
+      requestPvpFullBattleSurfaceRefresh("serial-check");
+      uint32_t transferred = 0U;
+      const bool committed = presentRetainedFrame(&transferred);
+      Serial.printf("[GFXCHECK] forced-refresh committed=%u pixels=%lu\n",
+                    committed ? 1U : 0U,
+                    static_cast<unsigned long>(transferred));
+    } else if (!std::strcmp(line, "TFTCHECK")) {
+#if defined(POKEGOCHI_ANDROID)
+      Serial.println("[GFXCHECK] unavailable: Android has no physical TFT GRAM");
+#else
+      if (!pvpSessionActive || screen != Screen::Battle ||
+          displaySleeping || !display.created()) {
+        Serial.println("[GFXCHECK] unavailable: no visible PvP battle");
+        continue;
+      }
+      // First establish one canonical full panel frame. Then rebuild the same
+      // scene stripe-by-stripe without writing it and compare it with the
+      // ILI9341 GRAM readback. This distinguishes a compositor bug from a lost
+      // SPI word/column on the physical panel instead of inferring from hashes.
+      requestPvpFullBattleSurfaceRefresh("serial-readback");
+      uint32_t transferred = 0U;
+      if (!presentRetainedFrame(&transferred) || transferred != 320U * 240U) {
+        Serial.printf("[GFXCHECK] readback cancelled pixels=%lu\n",
+                      static_cast<unsigned long>(transferred));
+        continue;
+      }
+      // Keep diagnostics off .bss: the retail no-PSRAM image deliberately
+      // leaves that memory to lwIP while Wi-Fi PvP is active.
+      uint16_t* diagnosticRows = static_cast<uint16_t*>(heap_caps_malloc(
+          320U * 3U * sizeof(uint16_t), MALLOC_CAP_8BIT));
+      if (!diagnosticRows) {
+        Serial.println("[GFXCHECK] unavailable: diagnostic heap exhausted");
+        continue;
+      }
+      uint16_t* panelRow = diagnosticRows;
+      uint16_t* directColumnMismatches = diagnosticRows + 320U;
+      uint16_t* swappedColumnMismatches = diagnosticRows + 640U;
+      std::memset(directColumnMismatches, 0, 320U * sizeof(uint16_t));
+      std::memset(swappedColumnMismatches, 0, 320U * sizeof(uint16_t));
+      uint32_t directMismatches = 0U;
+      uint32_t swappedMismatches = 0U;
+      renderingRetainedFrame = true;
+      display.setDamageTracking(false);
+      display.resetLogicalClip();
+      AssetRenderer::setCompositionActive(true);
+      for (uint8_t stripe = 0; stripe < 240U / kRetainedBandHeight; ++stripe) {
+        if (!composeRetainedStripe(stripe, 0, 320)) {
+          Serial.printf("[GFXCHECK] compose failed stripe=%u\n",
+                        static_cast<unsigned>(stripe));
+          directMismatches = swappedMismatches = 0xFFFFFFFFUL;
+          break;
+        }
+        const uint16_t* expected =
+            static_cast<const uint16_t*>(display.getPointer());
+        const uint16_t stripeY = static_cast<uint16_t>(stripe) *
+            kRetainedBandHeight;
+        for (uint8_t row = 0; row < kRetainedBandHeight; ++row) {
+          panel.readRect(0, stripeY + row, 320, 1, panelRow);
+          const uint16_t* expectedRow = expected +
+              static_cast<size_t>(row) * 320U;
+          for (uint16_t column = 0; column < 320U; ++column) {
+            const uint16_t read = panelRow[column];
+            if (read != expectedRow[column]) {
+              ++directMismatches;
+              ++directColumnMismatches[column];
+            }
+            const uint16_t byteSwapped = static_cast<uint16_t>(
+                (read << 8U) | (read >> 8U));
+            if (byteSwapped != expectedRow[column]) {
+              ++swappedMismatches;
+              ++swappedColumnMismatches[column];
+            }
+          }
+        }
+      }
+      AssetRenderer::setCompositionActive(false);
+      display.setDamageTracking(true);
+      display.resetLogicalClip();
+      display.resetViewport();
+      display.setOrigin(0, 0);
+      renderingRetainedFrame = false;
+      const bool swappedReadback = swappedMismatches < directMismatches;
+      const uint16_t* columnMismatches = swappedReadback
+          ? swappedColumnMismatches : directColumnMismatches;
+      const uint32_t mismatchCount = swappedReadback
+          ? swappedMismatches : directMismatches;
+      Serial.printf("[GFXCHECK] panel-readback pixels=%lu mismatches=%lu "
+                    "direct=%lu swapped=%lu mode=%s\n",
+                    static_cast<unsigned long>(transferred),
+                    static_cast<unsigned long>(mismatchCount),
+                    static_cast<unsigned long>(directMismatches),
+                    static_cast<unsigned long>(swappedMismatches),
+                    swappedReadback ? "byte-swapped" : "direct");
+      for (uint8_t rank = 0; rank < 12U; ++rank) {
+        uint16_t worstColumn = 0U;
+        uint16_t worstCount = 0U;
+        for (uint16_t column = 0; column < 320U; ++column) {
+          if (columnMismatches[column] > worstCount) {
+            worstCount = columnMismatches[column];
+            worstColumn = column;
+          }
+        }
+        if (!worstCount) break;
+        Serial.printf("[GFXCHECK] bad-column rank=%u x=%u rows=%u\n",
+                      static_cast<unsigned>(rank + 1U),
+                      static_cast<unsigned>(worstColumn),
+                      static_cast<unsigned>(worstCount));
+        if (swappedReadback) swappedColumnMismatches[worstColumn] = 0U;
+        else directColumnMismatches[worstColumn] = 0U;
+      }
+      heap_caps_free(diagnosticRows);
+#endif
+#if defined(POKEGOCHI_GRENINJA_BOX_FIXTURE)
+    } else if (!std::strcmp(line, "ADDGRENINJA")) {
+      // Cable-only, idempotent save fixture for R20261104-331. Keep this
+      // separate from the large extended harness so the service image still
+      // fits the same OTA slot as production and can never duplicate the
+      // requested Pokemon when the command is repeated after a reboot.
+      for (const OwnedPokemon& existing : gameSave.collection.box) {
+        if (existing.uid == kEmptyPokemonUid || existing.speciesId != 658U ||
+            existing.level != 100U || !existing.shiny)
+          continue;
+        Serial.printf("[TEST] ADDGRENINJA EXISTS species=658 level=100 shiny=1 uid=%lu box-count=%u\n",
+                      static_cast<unsigned long>(existing.uid),
+                      static_cast<unsigned>(CollectionLogic::count(gameSave.collection)));
+        return;
+      }
+      const uint32_t seed = 0x47524E4AU ^ gameSave.collection.nextUid ^
+                            (static_cast<uint32_t>(gameSave.bootCount) << 16U);
+      OwnedPokemon pokemon = CollectionLogic::createPokemon(
+          0U, 658U, 100U, true, seed, 7U);
+      uint32_t assignedUid = 0U;
+      if (CollectionLogic::add(gameSave.collection, pokemon, &assignedUid)) {
+        PokedexLogic::markCaught(gameSave.pokedex, 658U);
+        saveDirty = true;
+        saveNow();
+        Serial.printf("[TEST] ADDGRENINJA OK species=658 level=100 shiny=1 uid=%lu box-count=%u\n",
+                      static_cast<unsigned long>(assignedUid),
+                      static_cast<unsigned>(CollectionLogic::count(gameSave.collection)));
+      } else {
+        Serial.println("[TEST] ADDGRENINJA FAILED box-full");
+      }
+#endif
 #if defined(POKEGOCHI_EXTENDED_SERIAL_HARNESS)
     } else if (std::sscanf(line, "ADDMON %d %d", &x, &y) == 2) {
       // The extended harness follows the currently implemented National Dex;
@@ -37956,10 +39275,124 @@ void processSerialTestInput(uint32_t loopNow) {
       Serial.println("[TEST] ABORTBATTLE OK");
 #endif
 #if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+    } else if (!std::strcmp(line, "RAYSETUP") ||
+               !std::strcmp(line, "RAYSETUP HOLD")) {
+      // Cable-only Dragon Ascent fixture. It mutates RAM only; the production
+      // image has no command and a reset reloads the player's untouched save.
+      BattleEngine::clear(gameSave.battle);
+      clearBattleFlowState();
+      OwnedPokemon* player = nullptr;
+      for (uint8_t slot = 0U; slot < kPartyCapacity && !player; ++slot)
+        player = CollectionLogic::active(gameSave.collection, slot);
+      if (!player) {
+        Serial.println("[RAY_DIAG] SETUP REJECTED no-party");
+      } else {
+        const uint32_t uid = player->uid;
+        *player = CollectionLogic::createPokemon(
+            uid, 384U, 100U, false, 0x384DA620U, 7U);
+        for (uint8_t slot = 0U; slot < kMoveSlots; ++slot) {
+          player->moves[slot] = MoveId::None;
+          player->movePp[slot] = 0U;
+        }
+        player->moves[0] = static_cast<MoveId>(620U);
+        player->movePp[0] = findFullMove(player->moves[0])->pp;
+        MegaEvolution::resetRayquazaBattleMega(*player);
+        CollectionLogic::refreshAbility(*player, 7U);
+        CollectionLogic::refreshDerivedStats(*player, false);
+        bool started = BattleEngine::startWild(
+            gameSave.battle, gameSave.collection, uid, 0x38462001U, 7U);
+        OwnedPokemon* opponent = started
+            ? BattleEngine::currentOpponent(gameSave.battle) : nullptr;
+        if (opponent) {
+          const bool holdFixture=!std::strcmp(line, "RAYSETUP HOLD");
+          const uint32_t opponentUid = opponent->uid;
+          *opponent = CollectionLogic::createPokemon(
+              opponentUid, holdFixture?213U:1U, holdFixture?100U:5U,
+              false, holdFixture?0x00000213U:0x00000001U, 7U);
+          opponent->moves[0] = static_cast<MoveId>(150U);  // SPLASH
+          opponent->movePp[0] = findFullMove(opponent->moves[0])->pp;
+          for (uint8_t slot = 1U; slot < kMoveSlots; ++slot) {
+            opponent->moves[slot] = MoveId::None;
+            opponent->movePp[slot] = 0U;
+          }
+        }
+        if (!started || !opponent) {
+          Serial.println("[RAY_DIAG] SETUP REJECTED battle");
+        } else {
+          selectedBattleTerrainSceneKey = 0U;
+          battleEntryAnimationPending = false;
+          battlePresentationPlayerHidden = false;
+          battlePresentationOpponentHidden = false;
+          battleCaptureOpponentHidden = false;
+          clearBattleFlowState();
+          clearBattleAnimationPresentationState();
+          battleArenaVisible = false;
+          screen = Screen::Battle;
+          drawBattle();
+          Serial.printf("[RAY_DIAG] READY mode=%s hp=%u/%u live=%u shown=%u\n",
+              !std::strcmp(line, "RAYSETUP HOLD") ? "hold" : "ko",
+              static_cast<unsigned>(opponent->currentHp),
+              static_cast<unsigned>(opponent->maximumHp),
+              static_cast<unsigned>(MegaEvolution::variantFor(*player)),
+              static_cast<unsigned>(presentedBattleMegaVariant(player, true)));
+        }
+      }
+    } else if (!std::strcmp(line, "RAYTURN")) {
+      OwnedPokemon* player = CollectionLogic::find(
+          gameSave.collection, gameSave.battle.playerUid);
+      if (!gameSave.battle.active || !player || player->speciesId != 384U) {
+        Serial.println("[RAY_DIAG] TURN REJECTED");
+      } else {
+        Serial.printf("[RAY_DIAG] TURN before live=%u shown=%u form=%u\n",
+            static_cast<unsigned>(MegaEvolution::variantFor(*player)),
+            static_cast<unsigned>(presentedBattleMegaVariant(player, true)),
+            static_cast<unsigned>(presentedBattleForm(player, true)));
+        executeConfirmedBattleMove(0U);
+        Serial.printf("[RAY_DIAG] TURN resolved active=%u events=%u live=%u shown=%u\n",
+            gameSave.battle.active ? 1U : 0U,
+            static_cast<unsigned>(battleFlow.result.eventCount),
+            static_cast<unsigned>(MegaEvolution::variantFor(*player)),
+            static_cast<unsigned>(presentedBattleMegaVariant(player, true)));
+        for (uint8_t index = 0U; index < battleFlow.result.eventCount; ++index) {
+          const BattleEvent& event = battleFlow.result.events[index];
+          if (event.type == BattleEventType::MoveUsed ||
+              (event.type == BattleEventType::MoveEffect &&
+               event.value == static_cast<uint16_t>(BattleMoveEffect::FormChanged)) ||
+              event.type == BattleEventType::BattleEnded)
+            Serial.printf("[RAY_DIAG] EVENT i=%u type=%u value=%u before=%u after=%u\n",
+                static_cast<unsigned>(index), static_cast<unsigned>(event.type),
+                static_cast<unsigned>(event.value), static_cast<unsigned>(event.before),
+                static_cast<unsigned>(event.after));
+        }
+      }
+    } else if (!std::strcmp(line, "RAYSTATE")) {
+      OwnedPokemon* player = CollectionLogic::find(
+          gameSave.collection, gameSave.battle.playerUid);
+      if (!player || player->speciesId != 384U) {
+        Serial.println("[RAY_DIAG] STATE no-rayquaza");
+      } else {
+        OwnedPokemon visual = *player;
+        applyPresentedBattleAppearance(visual, true);
+        char path[112]{};
+        pokemonAssetPath(path, sizeof(path), visual, PokemonAssetView::Back);
+        Serial.printf("[RAY_DIAG] STATE phase=%u event=%u/%u active=%u live=%u shown=%u "
+                      "form=%u arena=%u/%u resident=%u path=%s\n",
+            static_cast<unsigned>(battleFlow.phase),
+            static_cast<unsigned>(battleFlow.eventIndex),
+            static_cast<unsigned>(battleFlow.result.eventCount),
+            gameSave.battle.active ? 1U : 0U,
+            static_cast<unsigned>(MegaEvolution::variantFor(*player)),
+            static_cast<unsigned>(presentedBattleMegaVariant(player, true)),
+            static_cast<unsigned>(presentedBattleForm(player, true)),
+            static_cast<unsigned>(battleArenaPlayerForm),
+            static_cast<unsigned>(battleArenaPlayerMega),
+            AssetRenderer::isPreloaded(path) ? 1U : 0U, path);
+      }
     } else if (!std::strcmp(line, "ANIMSETUP")) {
       // Cable-only renderer fixture. It starts a transient battle around the
       // first healthy party member and never writes the altered battle state
       // back to the player's save.
+      lastInteractionMs = millis();
       OwnedPokemon* player = nullptr;
       for (uint8_t slot = 0; slot < kPartyCapacity; ++slot) {
         OwnedPokemon* candidate = CollectionLogic::active(
@@ -38004,16 +39437,136 @@ void processSerialTestInput(uint32_t loopNow) {
         battleTextAutoAdvanceAtMs = 0U;
         Serial.printf("[ANIM_DIAG] SPEED %ux\n", static_cast<unsigned>(speed));
       }
+    } else if (!std::strcmp(line, "ANIMRADIO BLE") ||
+               !std::strcmp(line, "ANIMRADIO WIFI")) {
+      // Allocate the same controller/network runtime that remains alive
+      // during a real linked battle. This stays out of production builds and
+      // lets the cable sweep distinguish an animation defect from a radio-
+      // pressure renderer defect.
+      const bool wifi = !std::strcmp(line, "ANIMRADIO WIFI");
+      if (multiplayer.enabled()) multiplayer.setEnabled(false);
+      multiplayer.selectTransport(wifi ? Multiplayer::TransportKind::Wifi
+                                       : Multiplayer::TransportKind::Ble);
+      AssetRenderer::releaseSceneWorkspaceForRadio();
+      bool gameStateParked = true;
+      bool radioMemoryReady = true;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+      if (wifi) {
+        gameStateParked = suspendGameSaveForWifi();
+        if (gameStateParked && !btMemReleased(BT_MODE_BLE)) {
+          radioMemoryReady = btMemRelease(BT_MODE_BLE);
+          if (radioMemoryReady && !btMemReleased(BT_MODE_BLE))
+            btMarkMemReleased(BT_MODE_BLE);
+        }
+      }
+#endif
+      bool started = gameStateParked && radioMemoryReady &&
+          multiplayer.setEnabled(true);
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+      if (wifi && !resumeGameSaveAfterWifi()) {
+        multiplayer.setEnabled(false);
+        started = false;
+      }
+#endif
+      const bool restored = AssetRenderer::restoreSceneWorkspace(started);
+      preparedUiSceneKey = 0U;
+      preparedUiSceneComplete = false;
+      preparedBattleGraphicsKey = 0U;
+      battleArenaVisible = false;
+      Serial.printf("[ANIM_DIAG] RADIO %s started=%u workspace=%u\n",
+                    wifi ? "WIFI" : "BLE", started ? 1U : 0U,
+                    restored ? 1U : 0U);
+    } else if (!std::strcmp(line, "ANIMPVP OFF")) {
+      if (!pvpCollectionWorkspaceBorrowed) {
+        Serial.println("[ANIM_DIAG] PVP RELEASED already-clear");
+      } else {
+        // ANIMPVP marks the synthetic fixture as a disposable PvP session so
+        // the production restore path releases every renderer descriptor and
+        // reloads the complete durable Box before any traversal can resume.
+        if (!pvpSessionActive) pvpSessionActive = true;
+        restorePartyAfterPvp();
+        Serial.println("[ANIM_DIAG] PVP RELEASED");
+      }
+    } else if (!std::strcmp(line, "ANIMPVP")) {
+      // Reproduce the exact graphics memory contract used by a live link
+      // battle. PvP stores the selected three-Pokemon roster at the start of
+      // the Box and lends the otherwise unused tail to the renderer. Earlier
+      // cable audits used the normal heap arena and therefore could not catch
+      // authored programs that exceeded this smaller borrowed bank.
+      if (pvpCollectionWorkspaceBorrowed) {
+        Serial.println("[ANIM_DIAG] PVP REJECTED already-borrowed");
+      } else {
+        // Make the real collection durable before replacing it with the
+        // synthetic three-slot roster. No later autosave may serialize the
+        // borrowed graphics bytes; saveNow has an unconditional loan guard.
+        if (saveDirty) saveNow();
+        OwnedPokemon* player = saveDirty ? nullptr : CollectionLogic::find(
+            gameSave.collection, gameSave.battle.playerUid);
+        if (!gameSave.battle.active || screen != Screen::Battle || !player) {
+        Serial.println("[ANIM_DIAG] PVP REJECTED");
+        } else {
+        const OwnedPokemon fixturePlayer = *player;
+        for (uint8_t slot = 0U; slot < kPartyCapacity; ++slot) {
+          gameSave.collection.box[slot] = OwnedPokemon{};
+          gameSave.collection.party[slot] = kEmptyPokemonUid;
+        }
+        gameSave.collection.box[0] = fixturePlayer;
+        gameSave.collection.party[0] = fixturePlayer.uid;
+        gameSave.battle.playerUid = fixturePlayer.uid;
+        AssetRenderer::releaseSceneWorkspaceForRadio();
+        void* volatileBoxTail =
+            &gameSave.collection.box[kPartyCapacity];
+        const size_t volatileBoxBytes =
+            static_cast<size_t>(kBoxCapacity - kPartyCapacity) *
+            sizeof(OwnedPokemon);
+        const bool borrowed = AssetRenderer::borrowSceneWorkspace(
+            volatileBoxTail, volatileBoxBytes);
+        if (borrowed) {
+          pvpCollectionWorkspaceBorrowed = true;
+          pvpSessionActive = true;
+        } else {
+          const SaveLoadResult restored = saves.loadOrCreate(gameSave);
+          if (restored != SaveLoadResult::Loaded &&
+              restored != SaveLoadResult::FirstStart) {
+            Serial.println("[ANIM_DIAG] PVP RESTORE FAILED");
+            delay(80);
+            ESP.restart();
+            return;
+          }
+          ownedSinnohMachines = saves.sinnohMachineOwnership();
+          saveDirty = false;
+        }
+        preparedUiSceneKey = 0U;
+        preparedUiSceneComplete = false;
+        preparedBattleGraphicsKey = 0U;
+        battleArenaVisible = false;
+        if (borrowed) refreshBattleHud();
+        Serial.printf("[ANIM_DIAG] PVP %s bytes=%u\n",
+                      borrowed ? "READY" : "REJECTED",
+                      static_cast<unsigned>(volatileBoxBytes));
+        }
+      }
     } else if (!std::strncmp(line, "ANIMPLAY ", 9U)) {
+      // Serial profiling is deliberate interaction. Keep the panel awake for
+      // a complete 35-program sweep so a display timeout cannot masquerade
+      // as an animation whose geometry advanced without being presented.
+      lastInteractionMs = millis();
       char* afterMove = nullptr;
       char* afterSide = nullptr;
+      char* afterTurn = nullptr;
       const long requestedMove = std::strtol(line + 9U, &afterMove, 10);
       while (afterMove && *afterMove == ' ') ++afterMove;
       const long requestedSide = afterMove
           ? std::strtol(afterMove, &afterSide, 10) : -1;
       while (afterSide && *afterSide == ' ') ++afterSide;
+      const bool hasTurn = afterSide && *afterSide;
+      const long requestedTurn = hasTurn
+          ? std::strtol(afterSide, &afterTurn, 10) : 0;
+      if (!hasTurn) afterTurn = afterSide;
+      while (afterTurn && *afterTurn == ' ') ++afterTurn;
       const bool validSyntax = afterMove != line + 9U &&
-          afterSide != afterMove && afterSide && !*afterSide;
+          afterSide != afterMove && afterTurn && !*afterTurn &&
+          requestedTurn >= 0 && requestedTurn <= 1;
       const BattleAnimationData* descriptor = validSyntax && requestedMove > 0
           ? findBattleAnimation(static_cast<uint16_t>(requestedMove)) : nullptr;
       if (!gameSave.battle.active || screen != Screen::Battle ||
@@ -38030,15 +39583,29 @@ void processSerialTestInput(uint32_t loopNow) {
         const MoveId presentationMove = presentationOnly
             ? requestedVisual : MoveId::None;
         const bool enemyAttacking = requestedSide != 0;
+        const uint8_t animationTurn = static_cast<uint8_t>(requestedTurn);
         const bool ready = preloadMoveAnimationWithCapacityRetry(
-            testMove, enemyAttacking, 0U, 0U, 0U, false, false,
+            testMove, enemyAttacking, animationTurn, 0U, 0U, false, false,
             presentationMove);
+        Serial.printf("[ANIM_DIAG] PRELOAD move=%ld ready=%u\n",
+                      requestedMove, ready ? 1U : 0U);
         if (ready)
-          playMoveAnimation(testMove, enemyAttacking, 0U, 0U, 0U, 0U,
+          playMoveAnimation(testMove, enemyAttacking, 0U, animationTurn, 0U, 0U,
                             false, false, presentationMove);
         Serial.println("[ANIM_DIAG] DONE");
       }
 #endif
+    } else if (!std::strncmp(line, "CABLE_WIFI_RELAY ", 17U)) {
+      char relayHost[16]{};
+      char relayCode[7]{};
+      unsigned relayPort = 0U;
+      const bool parsed = std::sscanf(line + 17U, "%15s %u %6s",
+                                      relayHost, &relayPort, relayCode) == 3;
+      const bool configured = parsed && relayPort <= UINT16_MAX &&
+          multiplayer.setOnlineConfiguration(
+              relayHost, static_cast<uint16_t>(relayPort), relayCode);
+      Serial.printf("[TEST] CABLE_WIFI_RELAY %s host=%s port=%u\n",
+                    configured ? "OK" : "REJECTED", relayHost, relayPort);
     } else if (!std::strcmp(line, "OTAP")) {
       // Maintenance entry point for a cabled unit. Unlike ABORTBATTLE this
       // deliberately preserves a persisted battle: the updater can service
@@ -38095,6 +39662,28 @@ void setup() {
   Serial.printf("[BOOT] firmware=%s running=%s selected=%s\n", kGameVersion,
                 runningPartition ? runningPartition->label : "(none)",
                 bootPartition ? bootPartition->label : "(none)");
+#if defined(ARDUINO_ARCH_ESP32)
+  // Pokegochi has always used BLE only. The combined BLE + Wi-Fi image links
+  // the dual-mode ESP32 controller, whose unused Classic Bluetooth pools stay
+  // reserved unless they are released explicitly before the first large
+  // graphics allocation. Reclaim only Classic here; NimBLE remains available
+  // and its later duplicate release request is guarded by the Arduino HAL.
+  const bool classicBtReleaseOk = btMemRelease(BT_MODE_CLASSIC_BT);
+  // Some optimized framework builds call the ESP-IDF release symbol directly
+  // before the HAL bookkeeping assignment survives LTO. Keep the software
+  // state aligned with the physical controller pools so NimBLE's defensive
+  // Classic-only release is treated as an idempotent no-op. BLE is deliberately
+  // never marked or released here.
+  if (classicBtReleaseOk && !btMemReleased(BT_MODE_CLASSIC_BT)) {
+    btMarkMemReleased(BT_MODE_CLASSIC_BT);
+  }
+  Serial.printf("[BOOT] BT memory classic-release-ok=%u classic-released=%u ble-released=%u heap=%u block=%u\n",
+                classicBtReleaseOk ? 1U : 0U,
+                btMemReleased(BT_MODE_CLASSIC_BT) ? 1U : 0U,
+                btMemReleased(BT_MODE_BLE) ? 1U : 0U,
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
   resumeLowBatteryDormancyAtBoot();
   // Reserve the sole 80 KiB scene arena before NVS, the TFT canvas and FAT
   // split the internal heap into smaller blocks.  Its lifetime is the whole
@@ -38112,6 +39701,19 @@ void setup() {
   const bool battleVisualLayersReady = ensureBattleVisualLayers();
   if (!rendererWorkspaceReady || !rendererCacheReady || !battleVisualLayersReady)
     Serial.println("[BOOT] renderer memory reservation FAILED");
+#if defined(ARDUINO_ARCH_ESP32)
+  // esp-netif cannot be deinitialized on this target, so create its small
+  // permanent core before SD/FAT and GameSave establish the runtime heap
+  // layout. Do this after the renderer's lifetime allocation: a temporary
+  // placement guard was tested on hardware, but made the remaining UI bank
+  // smaller (and an 8 KiB variant could stall inside esp_netif_init()). The
+  // allocator's natural tail placement here leaves the largest post-save bank.
+  const esp_err_t netifInitResult = esp_netif_init();
+  Serial.printf("[BOOT] netif core %s heap=%u block=%u\n",
+                esp_err_to_name(netifInitResult),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
 #if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[GFX] battle layer table %s bytes=%u heap=%u block=%u\n",
                 battleVisualLayersReady ? "READY" : "FAILED",
@@ -38188,15 +39790,31 @@ void setup() {
   // exact resident tilemap representation, so that bank no longer needs to
   // hold their redundant flat 512x112 pixels beside the terrain.
   AssetRenderer::releaseSceneWorkspaceForStorage();
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("[BOOT] before GameSave heap=%u block=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
   gameSaveStorage = static_cast<GameSave*>(heap_caps_calloc(1, sizeof(GameSave), MALLOC_CAP_8BIT));
   if (!gameSaveStorage) {
     Serial.println("[BOOT] GameSave allocation failed");
     abort();
   }
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("[BOOT] after GameSave bytes=%u heap=%u block=%u\n",
+                static_cast<unsigned>(sizeof(GameSave)),
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
   if (!AssetRenderer::restoreSceneWorkspace(false)) {
     Serial.println("[BOOT] renderer restore failed");
     abort();
   }
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("[BOOT] after renderer restore heap=%u block=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
 #if defined(POKEGOCHI_SERIAL_PROFILING)
   Serial.printf("[BOOT] GameSave bytes=%u heap=%u block=%u\n",
                 static_cast<unsigned>(sizeof(GameSave)),
@@ -38211,6 +39829,11 @@ void setup() {
   void* saveMigrationScratch = AssetRenderer::bootScratch(saveMigrationScratchBytes);
   const bool persistentStorageReady =
       saves.begin(saveMigrationScratch, saveMigrationScratchBytes);
+#if defined(ARDUINO_ARCH_ESP32)
+  Serial.printf("[BOOT] after persistent storage heap=%u block=%u\n",
+                static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)),
+                static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
+#endif
   configureBatteryAdc();
   beginBatterySampleBurst(millis());
   backlight.begin(board::kBacklightPin, board::kBacklightOnLevel);
@@ -38378,6 +40001,11 @@ void setup() {
 #if defined(POKEGOCHI_ANDROID_LEGENDARY_BOX_FIXTURE)
     seedAndroidLegendaryBoxFixture();
 #endif
+    if(!gameSave.battle.active&&
+       AlolaForms::advanceAshBondOutsideTime(gameSave.collection,0U))
+      Serial.println("[SAVE] normalized expired Ash-Greninja state");
+    if(reconcileAlolaSpeciesItems(false))
+      Serial.println("[SAVE] reconciled Alola species items");
     const HeldItem speciesItem=SpeciesHeldItems::reconcile(
         gameSave.collection,gameSave.specialHeldItems);
     if(speciesItem!=HeldItem::None)
@@ -38431,11 +40059,24 @@ void setup() {
   if (!retainedCanvasReady) Serial.println("[GFX] retained canvas allocation failed");
   wirelessUpdate.confirmBoot(true);
   Serial.println("[BOOT] Multiplayer identity");
+  multiplayer.setOnlineBalancedWins(gameSave.wifiBalancedWins);
   if (!multiplayer.begin()) Serial.println("[BLE] multiplayer service preference init failed");
   else Serial.printf("[BLE] player ID %05lu, radio %s\n",
                      static_cast<unsigned long>(multiplayer.playerId()),
                      multiplayer.enabled() ? "ON" : "OFF");
   Serial.println("[BOOT] Draw diagnostic");
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  const bool resumeBlePocket = resumeBlePocketMarker == kResumeBlePocketMagic;
+  resumeBlePocketMarker = 0;
+  if (resumeBlePocket) {
+    bagPage = kMultiplayerBlePage;
+    inventoryMode = InventoryMode::Browse;
+    inventoryBattleContext = false;
+    screen = Screen::Inventory;
+    drawMultiplayerPocket();
+    Serial.println("[BLE] resumed BLE multiplayer page after Wi-Fi mode");
+  } else
+#endif
   if (screen == Screen::Recovery) drawRecovery(); else drawDiagnostic();
   requestRetainedFrame();
   presentRetainedFrame();
@@ -38450,9 +40091,43 @@ void setup() {
 __attribute__((noinline)) void serviceMultiplayerConnectionAndLaunch() {
   multiplayer.update();
   const bool unexpectedDisconnect = multiplayer.takeUnexpectedDisconnect();
-  const bool linkBattleEnded = pvpSessionActive && (!multiplayer.connected() ||
-      multiplayer.activity() != Multiplayer::Activity::Battle);
-  if (unexpectedDisconnect || linkBattleEnded) {
+#if defined(POKEGOCHI_ANIMATION_DIAGNOSTICS)
+  // ANIMPVP borrows the exact volatile Box arena and marks the synthetic
+  // fixture as PvP, but intentionally has no remote PGCH endpoint.  Do not
+  // let the production disconnect guard dismantle that fixture before the
+  // requested move reaches the panel.
+  const bool syntheticPvpAnimationFixture = pvpCollectionWorkspaceBorrowed;
+#else
+  const bool syntheticPvpAnimationFixture = false;
+#endif
+  const bool physicalLinkBattleEnded = pvpSessionActive &&
+      !multiplayer.connected() && !syntheticPvpAnimationFixture;
+  const bool logicalBattleEnded = pvpSessionActive &&
+      multiplayer.connected() &&
+      multiplayer.activity() != Multiplayer::Activity::Battle;
+
+  // ActivityCancel ends only the current battle room. The physical BLE/TCP
+  // session is deliberately reusable, so receiving that packet must restore
+  // the disposable Party and return to the compact multiplayer page without
+  // tearing down the radio. Treating it like a transport loss made the peer
+  // vanish after every first battle and forced both players to reconnect.
+  if (logicalBattleEnded) {
+    restorePartyAfterPvp();
+    BattleEngine::clear(gameSave.battle);
+    clearBattleFlowState();
+    inventoryMode = InventoryMode::Browse;
+    inventoryBattleContext = false;
+    boxOverlay = BoxOverlay::None;
+    boxPartyView = false;
+    runConfirmVisible = false;
+    bagPage = activeMultiplayerPage();
+    screen = Screen::Inventory;
+    drawMultiplayerPocket();
+    Serial.println("[LINK] logical battle ended; physical session retained");
+    return;
+  }
+
+  if (unexpectedDisconnect || physicalLinkBattleEnded) {
     if (pvpSessionActive) {
       restorePartyAfterPvp();
       BattleEngine::clear(gameSave.battle);
@@ -38468,13 +40143,20 @@ __attribute__((noinline)) void serviceMultiplayerConnectionAndLaunch() {
     boxOverlay = BoxOverlay::None;
     boxPartyView = false;
     runConfirmVisible = false;
-    disableMultiplayerRadioAndRestoreGraphics(
+    const bool graphicsReady = disableMultiplayerRadioAndRestoreGraphics(
         unexpectedDisconnect ? "Peer disconnected" : "Link battle ended");
     std::snprintf(homeNotice, sizeof(homeNotice), "%s",
-        linkBattleEnded ? "THE LINK BATTLE ENDED." : "PLAYER DISCONNECTED.");
+        physicalLinkBattleEnded ? "THE LINK BATTLE ENDED." : "PLAYER DISCONNECTED.");
     homeNoticeAwaitingTap = true;
-    screen = Screen::Home;
-    drawHome();
+    if (graphicsReady) {
+      multiplayerHomeReturnPending = false;
+      multiplayerHomeRecoveryTransitionVisible = false;
+      screen = Screen::Home;
+      drawHome();
+    } else {
+      drawMultiplayerHomeRecoveryTransition();
+      multiplayerHomeReturnPending = true;
+    }
     return;
   }
   Multiplayer::BattleLaunch multiplayerBattleLaunch{};
@@ -38484,12 +40166,25 @@ __attribute__((noinline)) void serviceMultiplayerConnectionAndLaunch() {
 
 __attribute__((noinline)) void servicePvpSynchronization(uint32_t now) {
   uint16_t acknowledgedTurn = 0;
+  uint32_t acknowledgedChecksum = 0;
   if (pvpSessionActive && multiplayer.isBattleHost() &&
-      multiplayer.takeBattleStateAcknowledgement(acknowledgedTurn) &&
-      acknowledgedTurn == gameSave.battle.turn) {
-    pvpStatePublishPending = false;
-    if (message[0] && std::strstr(message, "SYNCING")) message[0] = 0;
-    Serial.printf("[BLE] authoritative turn %u acknowledged\n", acknowledgedTurn);
+      multiplayer.takeBattleStateAcknowledgement(
+          acknowledgedTurn, acknowledgedChecksum)) {
+    if (acknowledgedTurn == gameSave.battle.turn &&
+        acknowledgedChecksum ==
+            multiplayer.publishedBattleStateChecksum()) {
+      pvpStatePublishPending = false;
+      clearPvpTransientBattlePrompt("state-acknowledged");
+      Serial.printf("[BLE] authoritative turn %u checksum=%08lx acknowledged\n",
+                    acknowledgedTurn,
+                    static_cast<unsigned long>(acknowledgedChecksum));
+    } else {
+      Serial.printf("[LINK] stale authoritative ACK ignored turn=%u checksum=%08lx expected=%08lx\n",
+                    acknowledgedTurn,
+                    static_cast<unsigned long>(acknowledgedChecksum),
+                    static_cast<unsigned long>(
+                        multiplayer.publishedBattleStateChecksum()));
+    }
   }
 
   Multiplayer::BattleStateSync authoritativeState{};
@@ -38500,19 +40195,49 @@ __attribute__((noinline)) void servicePvpSynchronization(uint32_t now) {
       Serial.printf("[BLE] rejected authoritative turn %u\n", authoritativeState.turn);
   }
 
+  // A full state ACK is the forced-switch barrier. TCP/MQTT can reject one
+  // write transiently while the renderer releases its arena workspace; retry
+  // the tiny ACK itself instead of relying on another thirteen-packet state
+  // dump to happen to arrive.
+  if (pvpSessionActive && !multiplayer.isBattleHost() &&
+      pvpStateAckRetryPending &&
+      now - pvpLastStateAckAttemptMs >= 250U) {
+    pvpLastStateAckAttemptMs = now;
+    if (multiplayer.acknowledgeBattleState(
+            pvpStateAckRetryTurn, pvpStateAckRetryChecksum)) {
+      pvpStateAckRetryPending = false;
+      pvpAwaitingAuthoritativeState = false;
+      clearPvpTransientBattlePrompt("state-ack-retry");
+      if (pvpExpectedForcedRosterSlot >= 0) {
+        pvpExpectedForcedRosterSlot = -1;
+        pvpForcedChoiceSubmitted = false;
+      }
+      Serial.printf("[LINK] authoritative ACK retry sent turn=%u checksum=%08lx\n",
+                    static_cast<unsigned>(pvpStateAckRetryTurn),
+                    static_cast<unsigned long>(pvpStateAckRetryChecksum));
+    }
+  }
+
   // Notifications are not acknowledged by the BLE link layer. Keep sending
   // the complete compact snapshot until the guest explicitly acknowledges
   // applying it; duplicate packets are idempotent by turn and roster slot.
   if (pvpSessionActive && pvpStatePublishPending && multiplayer.isBattleHost() &&
       battleFlow.phase == BattleFlowPhase::Idle &&
-      now - pvpLastStatePublishAttemptMs >= 500U) {
+      now - pvpLastStatePublishAttemptMs >= 2000U) {
     pvpLastStatePublishAttemptMs = now;
-    if (!multiplayer.publishBattleState(gameSave.battle, gameSave.collection,
-                                        pvpRemoteRosterSlotAtIndex))
+    const bool published = multiplayer.publishBattleState(
+        gameSave.battle, gameSave.collection, pvpRemoteRosterSlotAtIndex);
+    Serial.printf("[LINK] authoritative snapshot turn=%u sent=%u checksum=%08lx\n",
+                  static_cast<unsigned>(gameSave.battle.turn),
+                  published ? 1U : 0U,
+                  static_cast<unsigned long>(
+                      multiplayer.publishedBattleStateChecksum()));
+    if (!published)
       Serial.printf("[BLE] authoritative turn %u send failed; retrying\n", gameSave.battle.turn);
   }
 
   updatePvpForcedSwitchPhase();
+  servicePvpDecisionClock(now);
 
   Multiplayer::BattleCommand localBattleCommand{}, remoteBattleCommand{};
   if (pvpSessionActive && !pvpStatePublishPending && !pvpAwaitingAuthoritativeState &&
@@ -38541,6 +40266,8 @@ __attribute__((noinline)) void serviceMultiplayerTradeCommit() {
     const OwnedPokemon outgoingBackup = gameSave.collection.box[outgoingIndex];
     const uint32_t nextUidBackup = gameSave.collection.nextUid;
     const PokedexState pokedexBackup = gameSave.pokedex;
+    const Gen5UniqueItemInventory gen5ItemsBackup=gameSave.gen5UniqueItems;
+    const Gen7UniqueItemInventory gen7ItemsBackup=gameSave.gen7UniqueItems;
     uint32_t partyBackup[kPartyCapacity]{};
     std::memcpy(partyBackup, gameSave.collection.party, sizeof(partyBackup));
     uint32_t receivedUid = 0;
@@ -38550,6 +40277,7 @@ __attribute__((noinline)) void serviceMultiplayerTradeCommit() {
       if (unovaUnlocked())
         UnovaForms::reconcileUniqueItems(gameSave.collection,
                                          gameSave.gen5UniqueItems, true);
+      reconcileAlolaSpeciesItems(false);
       if (saves.commit(gameSave)) {
         applied = true; saveDirty = false; lastSaveMs = millis();
         selectedUid = receivedUid;
@@ -38564,6 +40292,8 @@ __attribute__((noinline)) void serviceMultiplayerTradeCommit() {
         gameSave.collection.nextUid = nextUidBackup;
         std::memcpy(gameSave.collection.party, partyBackup, sizeof(partyBackup));
         gameSave.pokedex = pokedexBackup;
+        gameSave.gen5UniqueItems=gen5ItemsBackup;
+        gameSave.gen7UniqueItems=gen7ItemsBackup;
       }
     }
   }
@@ -38577,6 +40307,7 @@ __attribute__((noinline)) void serviceMultiplayerTradeCommit() {
 }
 
 __attribute__((noinline)) void serviceMultiplayerScreenUpdates() {
+  if (multiplayerGraphicsRestorePending) return;
   if (!multiplayer.takeChanged()) return;
   // Connection requests, offers and confirmations are input arriving through
   // BLE. Keep the display deadline in sync without waking a device the player
@@ -38590,11 +40321,11 @@ __attribute__((noinline)) void serviceMultiplayerScreenUpdates() {
       multiplayer.answerPeerInvitation(false);
     else multiplayer.answerActivity(false);
   } else if (needsAnswer) {
-    bagPage = kMultiplayerPage; inventoryBattleContext = false;
+    bagPage = activeMultiplayerPage(); inventoryBattleContext = false;
     inventoryMode = InventoryMode::Browse;
     screen = Screen::Inventory; drawMultiplayerPocket();
   } else if (screen == Screen::Inventory && !inventoryBattleContext &&
-             bagPage == kMultiplayerPage) {
+             isMultiplayerPage(bagPage)) {
     drawMultiplayerPocket();
   }
 }
@@ -38667,6 +40398,7 @@ void loop() {
     refreshWirelessUpdate();
   }
   serviceMultiplayerConnectionAndLaunch();
+  serviceMultiplayerGraphicsRecovery(now);
   servicePvpSynchronization(now);
   serviceMultiplayerTradeCommit();
   serviceMultiplayerScreenUpdates();
@@ -38839,16 +40571,6 @@ void loop() {
   const TouchPoint rawPoint = touch.read();
   const TouchPoint point = filterGameTouch(rawPoint);
   if (point.touched) lastInteractionMs = now;
-  serviceKidsPaintStroke(point);
-  if(serviceKidsExitSlider(point)){
-    wasTouched=point.touched;
-    advanceGameClocks();processTimedEvents(now);
-    if(saveCheckpointDue(now))saveNow();
-    presentRetainedFrame();
-    delay(2);
-    return;
-  }
-
   if (swipeUnlock.active()) {
     const SwipeUnlock::Event unlockEvent = swipeUnlock.update(point.touched, point.x, point.y);
     if (unlockEvent == SwipeUnlock::Event::PositionChanged ||
@@ -38960,7 +40682,6 @@ void loop() {
   if (saveCheckpointDue(now) &&
       !(screen == Screen::Settings && settingsPage == 1)) saveNow();
   serviceAutomaticBattleText(now);
-  serviceKidsTowerBattle(now);
   // The home scene now repaints only its playfield, so it can run at a
   // smoother cadence without flashing the surrounding UI.
   if (backlight.isEnabled() && now - lastAnimationMs >= kHomeAnimationIntervalMs && screen == Screen::Home &&
@@ -39086,9 +40807,9 @@ extern "C" void pokegochi_android_flush_save() {
   saveNow();
 }
 
-// Android supplies only the BLE transport.  The firmware Multiplayer object
-// remains the sole owner of discovery, invitations, battle/trade packets and
-// all session state, exactly as it is on the ESP32 build.
+// Android supplies the BLE/TCP radio glue. The firmware Multiplayer object
+// remains the sole owner of its menus, Wi-Fi picker, invitations and session
+// state, exactly as it is on the ESP32 build.
 extern "C" uint32_t pokegochi_android_multiplayer_player_id() {
   return multiplayer.playerId();
 }
@@ -39099,6 +40820,34 @@ extern "C" bool pokegochi_android_multiplayer_enabled() {
 
 extern "C" uint8_t pokegochi_android_multiplayer_state() {
   return static_cast<uint8_t>(multiplayer.state());
+}
+
+extern "C" uint8_t pokegochi_android_multiplayer_transport_kind() {
+  return static_cast<uint8_t>(multiplayer.transportKind());
+}
+
+extern "C" const char* pokegochi_android_multiplayer_online_host() {
+  return multiplayer.onlineHost();
+}
+
+extern "C" uint16_t pokegochi_android_multiplayer_online_port() {
+  return multiplayer.onlinePort();
+}
+
+extern "C" const char* pokegochi_android_multiplayer_online_code() {
+  return multiplayer.onlineAccessCode();
+}
+
+extern "C" uint32_t pokegochi_android_multiplayer_online_balanced_wins() {
+  return multiplayer.onlineBalancedWins();
+}
+
+extern "C" void pokegochi_android_multiplayer_start_wifi_player_search() {
+  multiplayer.startScan();
+}
+
+extern "C" void pokegochi_android_multiplayer_complete_wifi_player_search() {
+  multiplayer.completeOnlinePeerScan();
 }
 
 extern "C" uint32_t pokegochi_android_multiplayer_peer_id() {
@@ -39124,8 +40873,10 @@ extern "C" void pokegochi_android_multiplayer_receive(
 }
 
 extern "C" void pokegochi_android_multiplayer_discovered(
-    uint32_t playerId, int8_t rssi, const char* address, uint8_t addressType) {
-  multiplayer.transportDiscovered(playerId, rssi, address, addressType);
+    uint32_t playerId, int8_t rssi, const char* address, uint8_t addressType,
+    uint32_t balancedWins) {
+  multiplayer.transportDiscovered(playerId, rssi, address, addressType,
+                                  balancedWins);
 }
 
 extern "C" void pokegochi_android_multiplayer_transport_connected(bool outbound) {

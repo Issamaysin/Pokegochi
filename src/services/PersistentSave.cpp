@@ -61,9 +61,6 @@ void initializeNewSave(GameSave& save) {
   save.unova.rngState = 0x554E4F56UL;
   save.unova.royalUnovaLastDay = UINT32_MAX;
   save.alola.rngState = 0x414C4F4CUL;
-  save.towerDefense.rngState = 0x544F5745UL;
-  save.towerDefense.unlockedStages = 1U;
-  save.towerDefense.enabledDefendersMask = 0x07U;
   save.lastNpcGiftDay = UINT32_MAX;
 }
 
@@ -244,6 +241,48 @@ bool PersistentSave::inspectCurrentRecord(const char* key, uint32_t& sequence) c
   return true;
 }
 
+bool PersistentSave::inspectV51Record(const char* key, uint32_t& sequence) const {
+  static_assert(offsetof(RecordV51, payload) == sizeof(CurrentSaveHeader),
+                "Streamed V51 header layout changed");
+  static_assert(offsetof(RecordV51, crc) ==
+                    sizeof(CurrentSaveHeader) + sizeof(GameSaveV51),
+                "Streamed V51 payload layout changed");
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file || file.size() != static_cast<size_t>(sizeof(RecordV51))) {
+    if (file) file.close();
+    return false;
+  }
+  CurrentSaveHeader header{};
+  if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) != sizeof(header) ||
+      header.magic != kMagic || header.version != 51U ||
+      header.payloadSize != sizeof(GameSaveV51)) {
+    file.close();
+    return false;
+  }
+  uint32_t crc = crc32Update(0xFFFFFFFFU,
+      reinterpret_cast<const uint8_t*>(&header), sizeof(header));
+  uint8_t chunk[256];
+  size_t remaining = sizeof(GameSaveV51);
+  while (remaining) {
+    const size_t requested = std::min(remaining, sizeof(chunk));
+    if (file.readBytes(reinterpret_cast<char*>(chunk), requested) != requested) {
+      file.close();
+      return false;
+    }
+    crc = crc32Update(crc, chunk, requested);
+    remaining -= requested;
+  }
+  uint32_t storedCrc = 0;
+  uint32_t trailingPadding = 0;
+  const bool complete =
+      file.readBytes(reinterpret_cast<char*>(&storedCrc), sizeof(storedCrc)) == sizeof(storedCrc) &&
+      file.readBytes(reinterpret_cast<char*>(&trailingPadding), sizeof(trailingPadding)) == sizeof(trailingPadding);
+  file.close();
+  if (!complete || storedCrc != ~crc) return false;
+  sequence = header.sequence;
+  return true;
+}
+
 bool PersistentSave::inspectAnyFileRecord(const char* key, uint32_t& sequence) const {
   File file = SPIFFS.open(savePath(key), "r");
   if (!file || file.size() < sizeof(CurrentSaveHeader) + 2U * sizeof(uint32_t)) {
@@ -309,6 +348,42 @@ bool PersistentSave::loadCurrentRecord(const char* key, GameSave& save, uint32_t
   crc = crc32Update(crc, reinterpret_cast<const uint8_t*>(&save), sizeof(save));
   if (!complete || storedCrc != ~crc) return false;
   discardRetiredHeldItems(save);
+  sequence = header.sequence;
+  return true;
+}
+
+bool PersistentSave::loadV51Record(const char* key, GameSave& save,
+                                   uint32_t& sequence) const {
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file || file.size() != static_cast<size_t>(sizeof(RecordV51))) {
+    if (file) file.close();
+    return false;
+  }
+  CurrentSaveHeader header{};
+  if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) != sizeof(header) ||
+      header.magic != kMagic || header.version != 51U ||
+      header.payloadSize != sizeof(GameSaveV51)) {
+    file.close();
+    return false;
+  }
+  initializeNewSave(save);
+  if (file.readBytes(reinterpret_cast<char*>(&save), sizeof(GameSaveV51)) !=
+      sizeof(GameSaveV51)) {
+    file.close();
+    return false;
+  }
+  uint32_t storedCrc = 0;
+  uint32_t trailingPadding = 0;
+  const bool complete =
+      file.readBytes(reinterpret_cast<char*>(&storedCrc), sizeof(storedCrc)) == sizeof(storedCrc) &&
+      file.readBytes(reinterpret_cast<char*>(&trailingPadding), sizeof(trailingPadding)) == sizeof(trailingPadding);
+  file.close();
+  uint32_t crc = crc32Update(0xFFFFFFFFU,
+      reinterpret_cast<const uint8_t*>(&header), sizeof(header));
+  crc = crc32Update(crc, reinterpret_cast<const uint8_t*>(&save),
+                    sizeof(GameSaveV51));
+  if (!complete || storedCrc != ~crc) return false;
+  save.wifiBalancedWins = 0U;
   sequence = header.sequence;
   return true;
 }
@@ -826,6 +901,22 @@ bool PersistentSave::readRecordV50(const char* key, RecordV50& record) {
   return read && record.magic == kMagic && record.version == 50 &&
          record.payloadSize == sizeof(GameSaveV50) && record.crc == calculatedCrc;
 }
+bool PersistentSave::readRecordV51(const char* key, RecordV51& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV51)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record), sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV51) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) == sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(RecordV51, crc)) : 0;
+  return read && record.magic == kMagic && record.version == 51 &&
+         record.payloadSize == sizeof(GameSaveV51) && record.crc == calculatedCrc;
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -854,6 +945,34 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     uint32_t loadedSequence = 0;
     if (!loadCurrentRecord(selectedKey, save, loadedSequence) || loadedSequence != selectedSequence)
       return SaveLoadResult::StorageError;
+  }
+  // V52 only appends the local online Balanced-win counter. Upgrade the
+  // immediately preceding 55 KiB record as a stream into the caller-owned
+  // GameSave. The no-PSRAM board has no second contiguous 55 KiB buffer after
+  // the renderer is reserved, so the generic legacy scratch path cannot do
+  // this safely on physical hardware.
+  if (!found) {
+    const char* selectedV51Key = nullptr;
+    uint32_t selectedV51Sequence = 0U;
+    for (const char* key : {"save_a", "save_b"}) {
+      uint32_t candidateSequence = 0U;
+      if (!inspectV51Record(key, candidateSequence)) continue;
+      if (!selectedV51Key || isNewer(candidateSequence, selectedV51Sequence)) {
+        selectedV51Key = key;
+        selectedV51Sequence = candidateSequence;
+      }
+    }
+    if (selectedV51Key) {
+      uint32_t loadedSequence = 0U;
+      if (!loadV51Record(selectedV51Key, save, loadedSequence) ||
+          loadedSequence != selectedV51Sequence)
+        return SaveLoadResult::StorageError;
+      sequence_ = loadedSequence;
+      nextSlotA_ = true;
+      discardRetiredHeldItems(save);
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
   }
 #else
   if (!record) return SaveLoadResult::StorageError;
@@ -1042,6 +1161,32 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     save.battle.playerEncoreTurns=0;
     std::memset(save.battle.opponentEncoreTurns,0,sizeof(save.battle.opponentEncoreTurns));
   };
+  if (!found) {
+    // V52 appends only the local Wi-Fi Balanced victory counter. The relay
+    // never persists this value, so every migrated player starts at zero.
+    if (scratchBytes_ >= sizeof(RecordV51)) {
+      RecordV51* legacy51 = reinterpret_cast<RecordV51*>(record);
+      bool legacy51Found = false;
+      uint32_t legacy51Sequence = 0;
+      for (const char* key : {"save_a", "save_b"}) {
+        std::memset(legacy51, 0, sizeof(*legacy51));
+        if (!readRecordV51(key, *legacy51) ||
+            (legacy51Found && !isNewer(legacy51->sequence, legacy51Sequence))) continue;
+        initializeNewSave(save);
+        std::memcpy(&save, legacy51->payload.bytes, sizeof(legacy51->payload.bytes));
+        save.wifiBalancedWins = 0;
+        legacy51Sequence = legacy51->sequence;
+        legacy51Found = true;
+      }
+      if (legacy51Found) {
+        sequence_ = legacy51Sequence;
+        nextSlotA_ = true;
+        discardRetiredHeldItems(save);
+        if (!commit(save)) return SaveLoadResult::StorageError;
+        return SaveLoadResult::Loaded;
+      }
+    }
+  }
   if (!found) {
     // V51 appends only the counted Gen-IV--VII held-item inventory. Copy the
     // complete shipped V50 payload and leave every new quantity at zero.
@@ -2207,55 +2352,180 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     }
 #endif
 
-    // Migrate the original shipped layout without another large heap
-    // allocation. On a factory-erased ESP32 only about 14 KiB remains here,
-    // while the renderer has already lent us a 64 KiB migration arena.
-    // Reusing it also keeps the desktop persistence test on the same path.
+    // Direct migration for the first three shipped NVS formats. Their frozen
+    // structs are intentionally independent from every current gameplay type;
+    // all fields added since then start from initializeNewSave() defaults.
+    auto copyPokemonV11 = [](OwnedPokemon& destination,
+                             const OwnedPokemonV11& source) {
+      if (source.uid == kEmptyPokemonUid || !source.speciesId) {
+        destination = OwnedPokemon{};
+        return;
+      }
+      const uint32_t personalitySeed = 0x9E3779B9U ^
+          (source.uid * 0x85EBCA6BU) ^
+          (static_cast<uint32_t>(source.speciesId) << 8U) ^ source.level;
+      destination = CollectionLogic::createPokemon(
+          source.uid, source.speciesId, source.level, false, personalitySeed, 1U);
+      destination.experience = source.experience;
+      destination.currentHp = source.currentHp;
+      destination.maximumHp = source.maximumHp;
+      destination.status = source.status;
+      destination.form = 0U;
+      destination.friendship = source.happiness;
+      destination.friendshipRemainderSeconds = source.careRemainderSeconds;
+      destination.legacyCareCounterReserved = 0U;
+      destination.recoverySecondsRemaining = source.recoverySecondsRemaining;
+      std::memcpy(destination.moves, source.moves, sizeof(destination.moves));
+      std::memcpy(destination.movePp, source.movePp, sizeof(destination.movePp));
+      destination.abilityId = source.abilityId;
+      destination.heldItem = HeldItem::None;
+      destination.shiny = false;
+      destination.evs = EffortValues{};
+    };
+    auto copyVolatileV11 = [](CombatVolatile& destination,
+                              const CombatVolatileV11& source) {
+      destination = CombatVolatile{};
+      destination.attackStage = source.attackStage;
+      destination.defenseStage = source.defenseStage;
+      destination.spAttackStage = source.spAttackStage;
+      destination.spDefenseStage = source.spDefenseStage;
+      destination.speedStage = source.speedStage;
+      destination.accuracyStage = source.accuracyStage;
+      destination.evasionStage = source.evasionStage;
+      destination.confusionTurns = source.confusionTurns;
+      destination.trappedTurns = source.trappedTurns;
+      destination.criticalStage = source.criticalStage;
+      destination.flinched = source.flinched;
+      destination.protectedThisTurn = source.protectedThisTurn;
+      destination.recharging = source.recharging;
+      destination.substituteHp = source.substituteHp;
+      destination.disabledMove = source.disabledMove;
+      destination.encoreMove = source.encoreMove;
+      destination.chargingMove = source.chargingMove;
+    };
+    auto battleKindV11 = [](BattleKindV11 kind) {
+      switch (kind) {
+        case BattleKindV11::Wild: return BattleKind::Wild;
+        case BattleKindV11::Trainer: return BattleKind::Trainer;
+        case BattleKindV11::Gym: return BattleKind::Gym;
+        case BattleKindV11::Pvp: return BattleKind::Pvp;
+        default: return BattleKind::None;
+      }
+    };
+    auto migrateV11Common = [&](const auto& old) {
+      initializeNewSave(save);
+      save.playTimeSeconds = old.playTimeSeconds;
+      save.bootCount = old.bootCount;
+      save.flags = old.flags;
+      save.activePetSlot = old.activePetSlot;
+      for (uint16_t index = 0; index < kBoxCapacityV11; ++index)
+        copyPokemonV11(save.collection.box[index], old.collection.box[index]);
+      std::memcpy(save.collection.party, old.collection.party,
+                  sizeof(old.collection.party));
+      save.collection.nextUid = old.collection.nextUid;
+      std::memcpy(save.inventory.balls, old.inventory.balls,
+                  sizeof(old.inventory.balls));
+      std::memcpy(save.inventory.medicine, old.inventory.medicine,
+                  sizeof(old.inventory.medicine));
+      save.encounterCharges.available = old.encounterCharges.available;
+      save.encounterCharges.rechargeProgressSeconds =
+          old.encounterCharges.rechargeProgressSeconds;
+      save.wildEncounterClock.elapsedSeconds = old.wildEncounterClock.elapsedSeconds;
+      save.wildEncounterClock.targetSeconds = old.wildEncounterClock.targetSeconds;
+      save.wildEncounterClock.rngState = old.wildEncounterClock.rngState;
+      save.wildEncounterClock.pending = old.wildEncounterClock.pending;
+
+      BattleState& upgraded = save.battle;
+      const auto& previous = old.battle;
+      upgraded.active = previous.active;
+      upgraded.kind = battleKindV11(previous.kind);
+      upgraded.outcome = previous.outcome;
+      upgraded.playerUid = previous.playerUid;
+      for (uint8_t index = 0; index < kOpponentTeamCapacity; ++index)
+        copyPokemonV11(upgraded.opponents[index], previous.opponents[index]);
+      upgraded.opponentCount = previous.opponentCount;
+      upgraded.opponentIndex = previous.opponentIndex;
+      upgraded.trainerProfileId = previous.trainerProfileId;
+      upgraded.gymId = previous.gymId;
+      copyVolatileV11(upgraded.playerVolatile, previous.playerVolatile);
+      for (uint8_t index = 0; index < kOpponentTeamCapacity; ++index)
+        copyVolatileV11(upgraded.opponentVolatiles[index],
+                        previous.opponentVolatiles[index]);
+      upgraded.rngState = previous.rngState;
+      upgraded.turn = previous.turn;
+      upgraded.rewardMoney = previous.rewardMoney;
+
+      std::memcpy(save.pokedex.seen, old.pokedex.seen, sizeof(old.pokedex.seen));
+      std::memcpy(save.pokedex.caught, old.pokedex.caught, sizeof(old.pokedex.caught));
+      save.gymProgress.badgeBits = old.gymProgress.badgeBits;
+      save.money = old.money;
+      migrateLegacyMart(old.mart);
+    };
+
+    static_assert(sizeof(Record) >= sizeof(RecordV11),
+                  "Current migration arena must hold the V11 record");
+    RecordV11* legacy11 = reinterpret_cast<RecordV11*>(record);
+    bool legacy11Found = false;
+    uint32_t legacy11Sequence = 0;
+    for (const char* key : {"save_a", "save_b"}) {
+      std::memset(legacy11, 0, sizeof(*legacy11));
+      if (!readRecordV11(key, *legacy11) ||
+          (legacy11Found && !isNewer(legacy11->sequence, legacy11Sequence))) continue;
+      migrateV11Common(legacy11->payload);
+      save.battle.opponentItemUses = legacy11->payload.battle.opponentItemUses;
+      for (uint8_t index = 0; index < kPartyCapacity; ++index)
+        save.moveLearning.entries[index] = legacy11->payload.moveLearning.entries[index];
+      save.moveLearning.count = legacy11->payload.moveLearning.count <= kPartyCapacity
+          ? legacy11->payload.moveLearning.count : kPartyCapacity;
+      save.moveLearning.index = legacy11->payload.moveLearning.index <= save.moveLearning.count
+          ? legacy11->payload.moveLearning.index : save.moveLearning.count;
+      save.moveLearning.origin = 0U;
+      legacy11Sequence = legacy11->sequence;
+      legacy11Found = true;
+    }
+    if (legacy11Found) {
+      sequence_ = legacy11Sequence;
+      nextSlotA_ = true;
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
+
+    RecordV10* legacy10 = reinterpret_cast<RecordV10*>(record);
+    bool legacy10Found = false;
+    uint32_t legacy10Sequence = 0;
+    for (const char* key : {"save_a", "save_b"}) {
+      std::memset(legacy10, 0, sizeof(*legacy10));
+      if (!readRecordV10(key, *legacy10) ||
+          (legacy10Found && !isNewer(legacy10->sequence, legacy10Sequence))) continue;
+      migrateV11Common(legacy10->payload);
+      save.battle.opponentItemUses = legacy10->payload.battle.opponentItemUses;
+      legacy10Sequence = legacy10->sequence;
+      legacy10Found = true;
+    }
+    if (legacy10Found) {
+      sequence_ = legacy10Sequence;
+      nextSlotA_ = true;
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
+
+    // V9 predates only opponentItemUses and the move-learning queue, so it
+    // shares the field-wise converter while retaining its shorter battle ABI.
     static_assert(sizeof(Record) >= sizeof(RecordV9),
                   "Current migration arena must hold the V9 record");
-    RecordV9* legacy = reinterpret_cast<RecordV9*>(record);
-    bool legacyFound = false;
-    uint32_t legacySequence = 0;
+    RecordV9* legacy9 = reinterpret_cast<RecordV9*>(record);
+    bool legacy9Found = false;
+    uint32_t legacy9Sequence = 0;
     for (const char* key : {"save_a", "save_b"}) {
-      std::memset(legacy, 0, sizeof(*legacy));
-      if (!readRecordV9(key, *legacy)) continue;
-      if (legacyFound && !isNewer(legacy->sequence, legacySequence)) continue;
-
-      // Clear all fields introduced after V9 before copying the compatible
-      // part of the battle state.
-      initializeNewSave(save);
-      save.playTimeSeconds = legacy->payload.playTimeSeconds;
-      save.bootCount = legacy->payload.bootCount;
-      save.flags = legacy->payload.flags;
-      save.activePetSlot = legacy->payload.activePetSlot;
-      save.collection = legacy->payload.collection;
-      save.inventory = legacy->payload.inventory;
-      save.encounterCharges = legacy->payload.encounterCharges;
-      save.wildEncounterClock = legacy->payload.wildEncounterClock;
-      save.battle.active = legacy->payload.battle.active;
-      save.battle.kind = legacy->payload.battle.kind;
-      save.battle.outcome = legacy->payload.battle.outcome;
-      save.battle.playerUid = legacy->payload.battle.playerUid;
-      std::memcpy(save.battle.opponents, legacy->payload.battle.opponents, sizeof(save.battle.opponents));
-      save.battle.opponentCount = legacy->payload.battle.opponentCount;
-      save.battle.opponentIndex = legacy->payload.battle.opponentIndex;
-      save.battle.trainerProfileId = legacy->payload.battle.trainerProfileId;
-      save.battle.gymId = legacy->payload.battle.gymId;
-      save.battle.playerVolatile = legacy->payload.battle.playerVolatile;
-      std::memcpy(save.battle.opponentVolatiles, legacy->payload.battle.opponentVolatiles,
-                  sizeof(save.battle.opponentVolatiles));
-      save.battle.rngState = legacy->payload.battle.rngState;
-      save.battle.turn = legacy->payload.battle.turn;
-      save.battle.rewardMoney = legacy->payload.battle.rewardMoney;
-      save.pokedex = legacy->payload.pokedex;
-      save.gymProgress = legacy->payload.gymProgress;
-      save.money = legacy->payload.money;
-      migrateLegacyMart(legacy->payload.mart);
-      legacySequence = legacy->sequence;
-      legacyFound = true;
+      std::memset(legacy9, 0, sizeof(*legacy9));
+      if (!readRecordV9(key, *legacy9) ||
+          (legacy9Found && !isNewer(legacy9->sequence, legacy9Sequence))) continue;
+      migrateV11Common(legacy9->payload);
+      legacy9Sequence = legacy9->sequence;
+      legacy9Found = true;
     }
-    if (legacyFound) {
-      sequence_ = legacySequence;
+    if (legacy9Found) {
+      sequence_ = legacy9Sequence;
       nextSlotA_ = true;
       if (!commit(save)) return SaveLoadResult::StorageError;
       return SaveLoadResult::Loaded;

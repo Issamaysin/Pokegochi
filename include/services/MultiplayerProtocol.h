@@ -10,9 +10,16 @@
 // discovery, framing and protocol versioning.
 namespace PokegochiMultiplayerProtocol {
 
-constexpr uint8_t kVersion = 7;
+constexpr uint8_t kVersion = 10;
 constexpr uint16_t kPacketMagic = 0x4750; // bytes "PG" in little-endian order
 constexpr uint16_t kMaximumPayload = 160;
+// Every link battle receives a disposable inventory. These values are shared
+// by BLE, Wi-Fi, Android, the physical firmware and the server bot so the two
+// transports cannot silently drift to different battle rules.
+constexpr uint8_t kBattleBagHyperPotionCount = 3;
+constexpr uint8_t kBattleBagFullHealCount = 4;
+constexpr uint8_t kBattleBagMaxReviveCount = 1;
+constexpr uint8_t kBattleBagMaxElixirCount = 1;
 // Android's BLE API separates the mandatory two-byte manufacturer id from
 // its value, while NimBLE exposes the complete manufacturer field.  The
 // original PGCH wire signature already starts with bytes P,G, so those bytes
@@ -48,6 +55,7 @@ enum PacketType : uint8_t {
   BattleSyncVolatile,
   BattleSyncCore,
   BattleSyncAck,
+  BattleRulesChoice,
 };
 
 #pragma pack(push, 1)

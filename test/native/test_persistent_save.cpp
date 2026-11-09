@@ -8,19 +8,70 @@ namespace {
 struct MartStateLegacy7Test { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
 struct MartStateLegacy10Test { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
 struct MartStateLegacy15Test { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
+constexpr uint16_t kBoxCapacityV11Test=151;
+constexpr uint8_t kPokedexBytesV11Test=19;
+struct OwnedPokemonV11Test {
+  uint32_t uid=kEmptyPokemonUid;uint16_t speciesId=0;uint32_t experience=0;
+  uint16_t currentHp=0,maximumHp=0;uint8_t level=1;StatusCondition status=StatusCondition::None;
+  uint8_t fullness=80,happiness=80;uint32_t careRemainderSeconds=0,careTickCounter=0;
+  uint32_t recoverySecondsRemaining=0;
+  MoveId moves[kMoveSlots]={MoveId::None,MoveId::None,MoveId::None,MoveId::None};
+  uint8_t movePp[kMoveSlots]{};uint8_t abilityId=0;
+};
+struct PokemonCollectionV11Test {
+  OwnedPokemonV11Test box[kBoxCapacityV11Test]{};uint32_t party[kPartyCapacity]{};uint32_t nextUid=1;
+};
+struct InventoryV11Test {uint16_t balls[4]={10,3,1,0};uint16_t medicine[16]{};};
+struct EncounterChargesV11Test {uint8_t available=3;uint32_t rechargeProgressSeconds=0;};
+struct WildEncounterClockV11Test {
+  uint32_t elapsedSeconds=0,targetSeconds=3600,rngState=0x91E10DA5U;bool pending=false;
+};
+enum class BattleKindV11Test:uint8_t {None,Wild,Trainer,Gym,Pvp};
+struct CombatVolatileV11Test {
+  int8_t attackStage=0,defenseStage=0,spAttackStage=0,spDefenseStage=0;
+  int8_t speedStage=0,accuracyStage=0,evasionStage=0;
+  uint8_t confusionTurns=0,trappedTurns=0,criticalStage=0;
+  bool flinched=false,protectedThisTurn=false,recharging=false;uint16_t substituteHp=0;
+  MoveId disabledMove=MoveId::None,encoreMove=MoveId::None,chargingMove=MoveId::None;
+};
+struct PokedexStateV11Test {uint8_t seen[kPokedexBytesV11Test]{};uint8_t caught[kPokedexBytesV11Test]{};};
+struct GymProgressV11Test {uint8_t badgeBits=0;};
+struct MoveLearningQueueV11Test {
+  PendingMoveLearning entries[kPartyCapacity]{};uint8_t count=0,index=0;
+};
 struct BattleStateV9Test {
-  bool active; BattleKind kind; BattleOutcome outcome; uint32_t playerUid;
-  OwnedPokemon opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
-  uint8_t trainerProfileId; uint8_t gymId; CombatVolatile playerVolatile;
-  CombatVolatile opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn; uint32_t rewardMoney;
+  bool active; BattleKindV11Test kind; BattleOutcome outcome; uint32_t playerUid;
+  OwnedPokemonV11Test opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
+  uint8_t trainerProfileId; uint8_t gymId; CombatVolatileV11Test playerVolatile;
+  CombatVolatileV11Test opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn; uint32_t rewardMoney;
 };
 struct GameSaveV9Test {
   uint32_t playTimeSeconds; uint32_t bootCount; uint8_t flags; uint8_t activePetSlot;
-  PokemonCollectionV41 collection; Inventory inventory; EncounterCharges encounterCharges;
-  WildEncounterClock wildEncounterClock; BattleStateV9Test battle; PokedexStateV41 pokedex;
-  GymProgress gymProgress; uint32_t money; MartStateLegacy7Test mart;
+  PokemonCollectionV11Test collection; InventoryV11Test inventory; EncounterChargesV11Test encounterCharges;
+  WildEncounterClockV11Test wildEncounterClock; BattleStateV9Test battle; PokedexStateV11Test pokedex;
+  GymProgressV11Test gymProgress; uint32_t money; MartStateLegacy7Test mart;
 };
 struct RecordV9Test { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV9Test payload; uint32_t crc; };
+struct BattleStateV10Test {
+  bool active;BattleKindV11Test kind;BattleOutcome outcome;uint32_t playerUid;
+  OwnedPokemonV11Test opponents[kOpponentTeamCapacity];uint8_t opponentCount,opponentIndex,trainerProfileId,gymId;
+  CombatVolatileV11Test playerVolatile;CombatVolatileV11Test opponentVolatiles[kOpponentTeamCapacity];
+  uint32_t rngState;uint16_t turn;uint32_t rewardMoney;uint8_t opponentItemUses;
+};
+struct GameSaveV10Test {
+  uint32_t playTimeSeconds,bootCount;uint8_t flags,activePetSlot;
+  PokemonCollectionV11Test collection;InventoryV11Test inventory;EncounterChargesV11Test encounterCharges;
+  WildEncounterClockV11Test wildEncounterClock;BattleStateV10Test battle;PokedexStateV11Test pokedex;
+  GymProgressV11Test gymProgress;uint32_t money;MartStateLegacy7Test mart;
+};
+struct RecordV10Test {uint32_t magic;uint16_t version,payloadSize;uint32_t sequence;GameSaveV10Test payload;uint32_t crc;};
+struct GameSaveV11Test {
+  uint32_t playTimeSeconds,bootCount;uint8_t flags,activePetSlot;
+  PokemonCollectionV11Test collection;InventoryV11Test inventory;EncounterChargesV11Test encounterCharges;
+  WildEncounterClockV11Test wildEncounterClock;BattleStateV10Test battle;PokedexStateV11Test pokedex;
+  GymProgressV11Test gymProgress;uint32_t money;MartStateLegacy7Test mart;MoveLearningQueueV11Test moveLearning;
+};
+struct RecordV11Test {uint32_t magic;uint16_t version,payloadSize;uint32_t sequence;GameSaveV11Test payload;uint32_t crc;};
 // Exact V21 record layout: this regression test proves a board with the beta
 // firmware can receive the EV update without losing its permanent save.
 struct OwnedPokemonV21Test {
@@ -248,8 +299,16 @@ constexpr size_t kGameSaveV50TestSize=(kGameSaveV50PrefixTestSize+alignof(GameSa
     ~(alignof(GameSave)-1U);
 struct alignas(GameSave) GameSaveV50Test {uint8_t bytes[kGameSaveV50TestSize]{};};
 struct RecordV50Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV50Test payload;uint32_t crc;};
+constexpr size_t kGameSaveV51TestSize=offsetof(GameSave,wifiBalancedWins);
+struct alignas(GameSave) GameSaveV51Test {uint8_t bytes[kGameSaveV51TestSize]{};};
+struct RecordV51Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV51Test payload;uint32_t crc;};
 static_assert(sizeof(BattleStateV33Test)==684);
 static_assert(sizeof(GameSaveV33Test)==25912);
+static_assert(sizeof(OwnedPokemonV11Test)==48U);
+static_assert(sizeof(PokemonCollectionV11Test)==7264U);
+static_assert(sizeof(RecordV9Test)==7712U);
+static_assert(sizeof(RecordV10Test)==7716U);
+static_assert(sizeof(RecordV11Test)==7744U);
 static_assert(sizeof(RecordV33Test)==25936);
 static_assert(sizeof(GameSaveV34Test)==26000);
 static_assert(offsetof(RecordV34Test,crc)==26016);
@@ -282,7 +341,20 @@ static_assert(sizeof(GameSaveV49Test)==kGameSaveV49TestSize);
 static_assert(sizeof(GameSaveV50Test)==kGameSaveV50TestSize);
 static_assert(sizeof(GameSaveV50Test)==54936U);
 static_assert(sizeof(RecordV50Test)==54960U);
+static_assert(sizeof(GameSaveV51Test)==54984U);
+static_assert(sizeof(RecordV51Test)==55008U);
 uint32_t crc32(const uint8_t* data,size_t length){uint32_t crc=0xFFFFFFFFU;for(size_t i=0;i<length;++i){crc^=data[i];for(uint8_t bit=0;bit<8;++bit)crc=(crc>>1U)^(0xEDB88320U&(0U-(crc&1U)));}return ~crc;}
+
+PokemonCollectionV11Test legacyCollectionV11WithStarter(uint16_t speciesId) {
+  PokemonCollectionV11Test legacy{};
+  OwnedPokemonV11Test& starter=legacy.box[0];
+  starter.uid=1U;starter.speciesId=speciesId;starter.experience=125U;
+  starter.currentHp=19U;starter.maximumHp=21U;starter.level=5U;
+  starter.happiness=91U;starter.careRemainderSeconds=73U;
+  starter.moves[0]=MoveId::Tackle;starter.movePp[0]=17U;starter.abilityId=1U;
+  legacy.party[0]=starter.uid;legacy.nextUid=2U;
+  return legacy;
+}
 
 PokemonCollectionV41 legacyCollectionWithStarter(uint16_t speciesId) {
   PokemonCollection current{};
@@ -379,6 +451,7 @@ int main() {
   original.unovaForms.fusedDonor=CollectionLogic::createPokemon(
       0x643U,643U,75U,false,0x643U,5U);
   original.unovaForms.kyuremOriginalMoves[0]=static_cast<MoveId>(549U);
+  original.wifiBalancedWins=42U;
   assert(original.settings.screenTimeout() == 3);
   assert(original.settings.battleSpeedMultiplier() == 2);
   assert(original.settings.autoBattleText());
@@ -409,6 +482,7 @@ int main() {
   GameSave loaded;
   assert(reboot.loadOrCreate(loaded) == SaveLoadResult::Loaded);
   assert(loaded.playTimeSeconds == 1234);
+  assert(loaded.wifiBalancedWins == 42U);
   assert(loaded.encounterCharges.available == 1);
   assert(loaded.inventory.balls[static_cast<uint8_t>(PokeBallType::PokeBall)] == 6);
   assert(loaded.inventory.heldItems[static_cast<uint8_t>(HeldItem::ShellBell)]==2);
@@ -503,22 +577,68 @@ int main() {
   assert(corruptedBoot.loadOrCreate(untouched) == SaveLoadResult::Corrupted);
   assert(untouched.playTimeSeconds == 9999);
 
-  // A genuine version-9 record is upgraded in place to version 10. No reset,
-  // second save or loss of collection/progression is permitted.
+  // Genuine V9/V10/V11 NVS records use the original 151-slot, pre-personality
+  // Pokemon ABI. A direct jump to V51 must preserve progress and synthesize
+  // only the fields that did not exist yet.
   Preferences::resetTestStorage();
   RecordV9Test old{}; old.magic=0x504F4B45;old.version=9;old.payloadSize=sizeof(GameSaveV9Test);old.sequence=41;
-  old.payload.collection=legacyCollectionWithStarter(4);
+  old.payload.collection=legacyCollectionV11WithStarter(4);
   old.payload.playTimeSeconds=777;old.payload.money=5432;old.payload.battle.active=true;
-  old.payload.battle.kind=BattleKind::Trainer;old.payload.battle.playerUid=old.payload.collection.party[0];
-  old.payload.battle.opponentCount=1;old.payload.battle.opponents[0]=CollectionLogic::createPokemon(0,19,8);
+  old.payload.gymProgress.badgeBits=0x35U;old.payload.inventory.balls[2]=7U;
+  old.payload.battle.kind=BattleKindV11Test::Pvp;old.payload.battle.playerUid=old.payload.collection.party[0];
+  old.payload.battle.opponentCount=1;old.payload.battle.opponents[0]=legacyCollectionV11WithStarter(19).box[0];
   old.crc=crc32(reinterpret_cast<const uint8_t*>(&old),offsetof(RecordV9Test,crc));
   Preferences raw;assert(raw.begin("pokegochi",false));assert(raw.putBytes("save_a",&old,sizeof(old))==sizeof(old));assert(raw.putBool("started",true)==1);
   PersistentSave migrator;assert(migrator.begin());GameSave migrated;
   assert(migrator.loadOrCreate(migrated)==SaveLoadResult::Loaded);
   assert(migrated.playTimeSeconds==777&&migrated.money==5432);
-  assert(CollectionLogic::active(migrated.collection,0)->speciesId==4);
-  assert(migrated.battle.active&&migrated.battle.opponents[0].speciesId==19);
+  const OwnedPokemon* migratedV9Starter=CollectionLogic::active(migrated.collection,0);
+  assert(migratedV9Starter&&migratedV9Starter->speciesId==4&&migratedV9Starter->level==5U);
+  assert(migratedV9Starter->friendship==91U&&migratedV9Starter->form==0U);
+  assert(migratedV9Starter->personality!=0U&&migratedV9Starter->moves[0]==MoveId::Tackle);
+  assert(migrated.inventory.balls[2]==7U&&migrated.gymProgress.badgeBits==0x35U);
+  assert(migrated.battle.active&&migrated.battle.kind==BattleKind::Pvp&&
+         migrated.battle.opponents[0].speciesId==19);
   assert(migrated.battle.opponentItemUses==0);
+
+  Preferences::resetTestStorage();
+  RecordV10Test old10{};old10.magic=0x504F4B45;old10.version=10U;
+  old10.payloadSize=sizeof(GameSaveV10Test);old10.sequence=55U;
+  old10.payload.collection=legacyCollectionV11WithStarter(7U);
+  old10.payload.playTimeSeconds=1010U;old10.payload.money=10010U;
+  old10.payload.encounterCharges.available=2U;
+  old10.payload.encounterCharges.rechargeProgressSeconds=321U;
+  old10.payload.battle.active=true;old10.payload.battle.kind=BattleKindV11Test::Trainer;
+  old10.payload.battle.playerUid=old10.payload.collection.party[0];
+  old10.payload.battle.opponentItemUses=2U;
+  old10.crc=crc32(reinterpret_cast<const uint8_t*>(&old10),offsetof(RecordV10Test,crc));
+  assert(raw.putBytes("save_a",&old10,sizeof(old10))==sizeof(old10));assert(raw.putBool("started",true)==1);
+  PersistentSave v10Migrator;assert(v10Migrator.begin());GameSave v10Migrated;
+  assert(v10Migrator.loadOrCreate(v10Migrated)==SaveLoadResult::Loaded);
+  assert(v10Migrated.playTimeSeconds==1010U&&v10Migrated.money==10010U);
+  assert(CollectionLogic::active(v10Migrated.collection,0)->speciesId==7U);
+  assert(v10Migrated.encounterCharges.available==2U&&
+         v10Migrated.encounterCharges.rechargeProgressSeconds==321U);
+  assert(v10Migrated.battle.active&&v10Migrated.battle.kind==BattleKind::Trainer&&
+         v10Migrated.battle.opponentItemUses==2U);
+
+  Preferences::resetTestStorage();
+  RecordV11Test old11{};old11.magic=0x504F4B45;old11.version=11U;
+  old11.payloadSize=sizeof(GameSaveV11Test);old11.sequence=67U;
+  old11.payload.collection=legacyCollectionV11WithStarter(1U);
+  old11.payload.playTimeSeconds=1111U;old11.payload.money=11011U;
+  old11.payload.moveLearning.entries[0]={1U,MoveId::Scratch};
+  old11.payload.moveLearning.count=1U;old11.payload.moveLearning.index=0U;
+  old11.crc=crc32(reinterpret_cast<const uint8_t*>(&old11),offsetof(RecordV11Test,crc));
+  assert(raw.putBytes("save_b",&old11,sizeof(old11))==sizeof(old11));assert(raw.putBool("started",true)==1);
+  PersistentSave v11Migrator;assert(v11Migrator.begin());GameSave v11Migrated;
+  assert(v11Migrator.loadOrCreate(v11Migrated)==SaveLoadResult::Loaded);
+  assert(v11Migrated.playTimeSeconds==1111U&&v11Migrated.money==11011U);
+  assert(CollectionLogic::active(v11Migrated.collection,0)->speciesId==1U);
+  assert(v11Migrated.moveLearning.count==1U&&v11Migrated.moveLearning.index==0U);
+  assert(v11Migrated.moveLearning.entries[0].pokemonUid==1U&&
+         v11Migrated.moveLearning.entries[0].move==MoveId::Scratch&&
+         v11Migrated.moveLearning.origin==0U);
 
   // A real V21 record differs only by the six EV bytes per Pokémon. It must
   // migrate all established game state and begin every pre-update Pokémon at
@@ -801,8 +921,8 @@ int main() {
   assert(v41Migrated.sinnoh.research==0U&&v41Migrated.sinnoh.unlockedSites==0U&&
          v41Migrated.sinnoh.rngState==0x53494E4EU);
 
-  // V43 leaves every completed Sinnoh field intact and appends only Poke
-  // Defense's isolated campaign record with a playable first arena.
+  // V43 leaves every completed Sinnoh field intact and appends a frozen
+  // 32-byte reservation. The retired feature stays zeroed for a V42 save.
   Preferences::resetTestStorage();
   GameSaveV42Test v42Prefix{};
   v42Prefix.collection=legacyCollectionWithStarter(4U);
@@ -822,8 +942,9 @@ int main() {
   assert(CollectionLogic::active(v42Migrated.collection,0)->speciesId==4U);
   assert(v42Migrated.sinnoh.research==123U&&v42Migrated.sinnoh.unlockedSites==0x07U&&
          v42Migrated.sinnoh.selectedSite==2U&&v42Migrated.sinnoh.rngState==0x12345678U);
-  assert(v42Migrated.towerDefense.unlockedStages==1U&&
-         v42Migrated.towerDefense.enabledDefendersMask==0x07U&&
+  assert(v42Migrated.towerDefense.rngState==0U&&
+         v42Migrated.towerDefense.unlockedStages==0U&&
+         v42Migrated.towerDefense.enabledDefendersMask==0U&&
          v42Migrated.towerDefense.totalScore==0U);
 
   // V46 migrates the last Sinnoh-only V45 record without touching any of its
@@ -1064,6 +1185,27 @@ int main() {
          v51Migrated.alolaForms.fusedDonor.speciesId==791U);
   for(uint8_t i=0;i<kModernHeldItemCount;++i)
     assert(v51Migrated.modernHeldItems.quantities[i]==0U);
+
+  // V52 adds the local online Balanced-win count without making the relay a
+  // source of truth. A shipped V51 save preserves all data and starts at 0.
+  Preferences::resetTestStorage();
+  GameSave v51Source{};
+  v51Source.playTimeSeconds=520051U;v51Source.money=777052U;
+  v51Source.modernHeldItems.quantities[0]=19U;
+  v51Source.modernHeldItems.quantities[kModernHeldItemCount-1U]=7U;
+  RecordV51Test old51{};old51.magic=0x504F4B45;old51.version=51U;
+  old51.payloadSize=sizeof(GameSaveV51Test);old51.sequence=101451U;
+  std::memcpy(old51.payload.bytes,&v51Source,sizeof(old51.payload.bytes));
+  old51.crc=crc32(reinterpret_cast<const uint8_t*>(&old51),
+                  offsetof(RecordV51Test,crc));
+  assert(raw.putBytes("save_a",&old51,sizeof(old51))==sizeof(old51));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v51Migrator;assert(v51Migrator.begin());GameSave v52Migrated;
+  assert(v51Migrator.loadOrCreate(v52Migrated)==SaveLoadResult::Loaded);
+  assert(v52Migrated.playTimeSeconds==520051U&&v52Migrated.money==777052U);
+  assert(v52Migrated.modernHeldItems.quantities[0]==19U);
+  assert(v52Migrated.modernHeldItems.quantities[kModernHeldItemCount-1U]==7U);
+  assert(v52Migrated.wifiBalancedWins==0U);
 
   PokemonCollectionV47 fullV47{};
   for(uint16_t i=0;i<kBoxCapacityV47;++i)fullV47.box[i].uid=static_cast<uint32_t>(i)+1U;

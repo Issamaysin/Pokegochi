@@ -1,5 +1,6 @@
 #include "drivers/FireRedFont.h"
 #include "drivers/AssetRenderer.h"
+#include "game/Localization.h"
 #include <algorithm>
 #include <cstring>
 
@@ -11,8 +12,9 @@ namespace {
 // characters issued thousands of ILI9341 window commands. One 320x16 staging
 // line keeps the exact FireRed glyphs while making every UI screen faster.
 constexpr uint16_t kFontTransparent = 0xF81F;
-// Keep the original FireRed glyphs clean. Colour contrast is handled by the
-// UI palettes; even a one-pixel shadow looks artificial at this resolution.
+// Keep the original FireRed glyphs clean. The two-colour setter below resolves
+// exact foreground/background collisions; even a one-pixel shadow looks
+// artificial at this resolution.
 constexpr uint16_t kTextRasterWidth = 320U;
 // Body text is 16 pixels high and dominates every menu. A second 16-pixel
 // half used only by doubled headings cost 10 KiB of permanent internal RAM,
@@ -35,7 +37,14 @@ void FireRedFont::setTextColor(uint16_t foreground) {
   // text request that used it with solid black ink.
   foreground_ = foreground == TFT_DARKGREY ? TFT_BLACK : foreground;
 }
-void FireRedFont::setTextColor(uint16_t foreground, uint16_t) { setTextColor(foreground); }
+void FireRedFont::setTextColor(uint16_t foreground, uint16_t background) {
+  // Text is transparent, but callers still provide the surface colour. Use it
+  // to prevent white-on-white (the literal White theme) and black-on-black
+  // labels. Other colour pairs retain their authored appearance exactly.
+  if (foreground == background)
+    foreground = background == TFT_WHITE ? TFT_BLACK : TFT_WHITE;
+  setTextColor(foreground);
+}
 
 uint8_t FireRedFont::glyphCode(char character) {
   if (character >= 'A' && character <= 'Z') return static_cast<uint8_t>(0xBB + character - 'A');
@@ -43,7 +52,7 @@ uint8_t FireRedFont::glyphCode(char character) {
   if (character >= '0' && character <= '9') return static_cast<uint8_t>(0xA1 + character - '0');
   switch (character) {
     case ' ': return 0x00; case '!': return 0xAB; case '?': return 0xAC; case '.': return 0xAD;
-    case '-': return 0xAE; case ',': return 0xB8; case '/': return 0xBA; case ':': return 0xF0;
+    case '-': return 0xAE; case '_': return 0xB0; case ',': return 0xB8; case '/': return 0xBA; case ':': return 0xF0;
     case '+': return 0x2E; case '&': return 0x2D; case '=': return 0x35; case '%': return 0x5B;
     case '(': return 0x5C; case ')': return 0x5D; case '$': return 0xB7; case '*': return 0xB9;
     case '\'': return 0xB3; case '\"': return 0xB1;
@@ -101,6 +110,11 @@ void FireRedFont::drawGlyph(uint8_t code, int16_t x, int16_t y, uint8_t style) {
 }
 
 void FireRedFont::drawString(const char* text, int16_t x, int16_t y, uint8_t style) {
+  drawStringLocalized(Localization::translate(text), x, y, style);
+}
+
+void FireRedFont::drawStringLocalized(const char* text, int16_t x, int16_t y,
+                                      uint8_t style) {
   if (!text) return;
   const int16_t width = textWidth(text, style), height = lineHeight(style);
   switch (datum_) {
@@ -204,6 +218,7 @@ void FireRedFont::drawString(const char* text, int16_t x, int16_t y, uint8_t sty
 void FireRedFont::drawStringFitted(const char* text, int16_t x, int16_t y,
                                    int16_t maxWidth, uint8_t style) {
   if (!text || maxWidth <= 0) return;
+  text = Localization::translate(text);
   // Establish a hard raster clip matching the content width and the current
   // datum. This guards against malformed/custom glyph bearings as well as
   // arithmetic mistakes in a caller. Nested clips (notably prose boxes) are
@@ -230,7 +245,7 @@ void FireRedFont::drawStringFitted(const char* text, int16_t x, int16_t y,
     clipRight_ = previousRight; clipBottom_ = previousBottom;
   };
   if (textWidth(text, style) <= maxWidth) {
-    drawString(text, x, y, style);
+    drawStringLocalized(text, x, y, style);
     restoreClip();
     return;
   }
@@ -250,7 +265,7 @@ void FireRedFont::drawStringFitted(const char* text, int16_t x, int16_t y,
     }
     ++accepted;
   }
-  if (fitted[0]) drawString(fitted, x, y, style);
+  if (fitted[0]) drawStringLocalized(fitted, x, y, style);
   restoreClip();
 }
 
@@ -261,6 +276,7 @@ void FireRedFont::drawStringAuto(const char* text, int16_t x, int16_t y, int16_t
 uint8_t FireRedFont::drawTextBox(const char* text, int16_t x, int16_t y, int16_t maxWidth,
                                  int16_t maxHeight, uint8_t scrollLines) {
   if (!text || maxWidth <= 0 || maxHeight <= 0) return 0;
+  text = Localization::translate(text);
   // Treat the supplied rectangle as the box interior and preserve a minimum
   // one-pixel horizontal safety inset. Vertical placement remains controlled
   // by the caller because a native FireRed row is exactly 16 pixels high.
@@ -354,7 +370,8 @@ uint8_t FireRedFont::drawTextBox(const char* text, int16_t x, int16_t y, int16_t
   const uint8_t first = std::min<uint8_t>(scrollLines, lineCount ? lineCount - 1U : 0U);
   const uint8_t last = std::min<uint8_t>(lineCount, static_cast<uint8_t>(first + visibleLines));
   for (uint8_t line = first; line < last; ++line)
-    drawStringAuto(textBoxLines[line], x, y + static_cast<int16_t>(line - first) * lineHeight(kStyle), maxWidth);
+    drawStringLocalized(textBoxLines[line], x,
+        y + static_cast<int16_t>(line - first) * lineHeight(kStyle), kStyle);
   clipEnabled_ = previousClipEnabled;
   clipLeft_ = previousLeft; clipTop_ = previousTop;
   clipRight_ = previousRight; clipBottom_ = previousBottom;

@@ -6,8 +6,9 @@
 #include "game/Pokedex.h"
 
 namespace {
-constexpr uint8_t kRunActive=1U<<0U,kHealUsed=1U<<1U,kHiddenAbility=1U<<0U,
-    kAlolanForm=1U<<1U;
+constexpr uint8_t kRunActive=1U<<0U,kHealUsed=1U<<1U,
+    kChoiceEntered=1U<<2U,kChoicesCached=1U<<3U,
+    kHiddenAbility=1U<<0U,kAlolanForm=1U<<1U;
 uint32_t advance(uint32_t& x){if(!x)x=0x414C4F4CUL;x^=x<<13;x^=x>>17;x^=x<<5;return x;}
 uint32_t mixed(uint32_t x){x^=x>>16;x*=0x7FEB352DUL;x^=x>>15;x*=0x846CA68BUL;return x^(x>>16);}
 
@@ -187,6 +188,10 @@ bool healthy(const AlolaRunState& run,const PokemonCollection& c,uint32_t uid){
  bool selected=false;for(uint32_t member:run.partyUids)if(member==uid&&uid)selected=true;
  const OwnedPokemon* p=CollectionLogic::find(c,uid);return selected&&p&&CollectionLogic::isInParty(c,uid)&&p->currentHp&&!p->recoverySecondsRemaining;
 }
+bool enteredAnyChoice(const AlolaRunState& run){return
+    (run.flags&static_cast<uint8_t>(kChoiceEntered|kHealUsed))!=0U||
+    run.step!=0U||run.pendingBattle!=AlolaBattleRole::None||
+    run.pendingFlags!=0U||run.pendingSpecies!=0U;}
 bool regional(uint16_t id){return AlolaForms::isRegionalSpecies(id);}
 void makeAlolan(OwnedPokemon& p){if(regional(p.speciesId)){p.form=1U;CollectionLogic::refreshAbility(p,7U);CollectionLogic::refreshDerivedStats(p,true);}}
 void initBattle(BattleState& b,uint32_t uid,uint32_t seed,BattleKind kind){BattleEngine::clear(b);b.active=true;b.kind=kind;b.outcome=BattleOutcome::Ongoing;b.playerUid=uid;b.unlockedGeneration=7U;b.rngState=seed?seed:0x414C4F4CUL;}
@@ -236,8 +241,9 @@ HeldItem AlolaAdventure::areaBonusZCrystal(AlolaArea a){
  }
 }
 
-bool AlolaAdventure::begin(AlolaAdventureState& s,AlolaArea a,uint32_t seed,const PokemonCollection& c){if(!isAreaUnlocked(s,a))return false;bool ready=false;for(uint8_t slot=0;slot<kPartyCapacity;++slot){const auto* p=CollectionLogic::active(c,slot);ready|=p&&p->currentHp&&!p->recoverySecondsRemaining;}if(!ready)return false;s.run=AlolaRunState{};s.run.seed=seed?seed:mixed(advance(s.rngState));s.run.area=areaIndex(a);s.run.flags=kRunActive;std::copy(std::begin(c.party),std::end(c.party),std::begin(s.run.partyUids));return true;}
-bool AlolaAdventure::abandon(AlolaAdventureState& s){if(!active(s))return false;s.run=AlolaRunState{};return true;}
+bool AlolaAdventure::begin(AlolaAdventureState& s,AlolaArea a,uint32_t seed,const PokemonCollection& c){if(!isAreaUnlocked(s,a))return false;bool ready=false;for(uint8_t slot=0;slot<kPartyCapacity;++slot){const auto* p=CollectionLogic::active(c,slot);ready|=p&&p->currentHp&&!p->recoverySecondsRemaining;}if(!ready)return false;const bool restore=(s.run.flags&kChoicesCached)!=0U&&(s.run.flags&kRunActive)==0U;const uint32_t cachedSeed=s.run.seed;s.run=AlolaRunState{};s.run.seed=restore?cachedSeed:(seed?seed:mixed(advance(s.rngState)));s.run.area=areaIndex(a);s.run.flags=kRunActive;std::copy(std::begin(c.party),std::end(c.party),std::begin(s.run.partyUids));return true;}
+bool AlolaAdventure::willPreserveChoicesOnAbandon(const AlolaAdventureState& s){return active(s)&&!enteredAnyChoice(s.run);}
+bool AlolaAdventure::abandon(AlolaAdventureState& s){if(!active(s))return false;const bool preserve=willPreserveChoicesOnAbandon(s);const uint32_t cachedSeed=s.run.seed;s.run=AlolaRunState{};if(preserve){s.run.seed=cachedSeed;s.run.flags=kChoicesCached;}return true;}
 bool AlolaAdventure::active(const AlolaAdventureState& s){return s.run.flags&kRunActive;}
 uint8_t AlolaAdventure::choices(const AlolaAdventureState& s,AlolaRoomChoice out[2]){
  if(!out||!active(s)||s.run.pendingBattle!=AlolaBattleRole::None)return 0;if(s.run.step>=kStepsPerArea){out[0]={AlolaRoomKind::Trial,0,true};return 1;}
@@ -252,6 +258,7 @@ AlolaRoomResult AlolaAdventure::choose(AlolaAdventureState& s,uint8_t choice,
                                        PokemonCollection& c){
  AlolaRoomResult r;AlolaRoomChoice options[2]{};
  const uint8_t count=choices(s,options);if(choice>=count)return r;
+ s.run.flags|=kChoiceEntered;
  r.kind=options[choice].kind;
  const uint32_t roll=mixed(s.run.seed^
      (static_cast<uint32_t>(s.run.step+1U)<<16U)^choice);

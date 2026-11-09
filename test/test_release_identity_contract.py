@@ -16,23 +16,23 @@ PROTOCOL = (ROOT / "include/services/MultiplayerProtocol.h").read_text(
     encoding="utf-8"
 )
 README = (ROOT / "README.md").read_text(encoding="utf-8")
-NOTES = (ROOT / "docs/RELEASE_NOTES_V4.0.md").read_text(encoding="utf-8")
+NOTES = (ROOT / "docs/RELEASE_NOTES_V4.1.md").read_text(encoding="utf-8")
 
 
-def test_coordinated_v4_v3_release_identity():
-    assert 'constexpr char kGameVersion[] = "4.0 ALOLA";' in MAIN
-    assert '"APP 3.0 RELEASE"' in MAIN
-    assert "versionCode = 104" in GRADLE
-    assert 'versionName = "3.0"' in GRADLE
-    assert '"android-app-" + BuildConfig.VERSION_NAME + "-r317-"' in ACTIVITY
-    assert "kRequiredAssetPackVersion = 54" in PACK
-    assert "kFormatVersion = 51" in SAVE
-    assert "constexpr uint8_t kVersion = 7;" in PROTOCOL
-    assert README.startswith("# Pokegochi Firmware 4.0 / Android App 3.0")
-    assert "docs/RELEASE_NOTES_V4.0.md" in README
-    assert NOTES.startswith("# Pokegochi Firmware 4.0 / Android App 3.0")
+def test_coordinated_v41_v31_release_identity():
+    assert 'constexpr char kGameVersion[] = "4.1 WIFI";' in MAIN
+    assert '"APP 3.1 RELEASE"' in MAIN
+    assert "versionCode = 117" in GRADLE
+    assert 'versionName = "3.1"' in GRADLE
+    assert '"android-app-" + BuildConfig.VERSION_NAME + "-r410-"' in ACTIVITY
+    assert "kRequiredAssetPackVersion = 55" in PACK
+    assert "kFormatVersion = 52" in SAVE
+    assert "constexpr uint8_t kVersion = 10;" in PROTOCOL
+    assert README.startswith("# Pokegochi Firmware 4.1 / Android App 3.1")
+    assert "docs/RELEASE_NOTES_V4.1.md" in README
+    assert NOTES.startswith("# Pokegochi Firmware 4.1 / Android App 3.1")
 
 
 if __name__ == "__main__":
-    test_coordinated_v4_v3_release_identity()
+    test_coordinated_v41_v31_release_identity()
     print("Release identity contract passed.")

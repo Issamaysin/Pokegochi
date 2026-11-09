@@ -20,6 +20,7 @@
 #include <mbedtls/ecp.h>
 #include <mbedtls/sha256.h>
 #include "config/UpdateSigningKey.h"
+#include "services/RecoveryUpdateProtocol.h"
 #endif
 
 namespace {
@@ -27,7 +28,7 @@ using namespace PokegochiUpdateProtocol;
 
 constexpr char kJournalPath[] = "/pokegochi/update/state.bin";
 constexpr char kJournalTempPath[] = "/pokegochi/update/state.tmp";
-constexpr uint8_t kJournalVersion = 1;
+constexpr uint8_t kJournalVersion = 2;
 constexpr char kSaveExportPath[] = "/pokegochi_save_export.pgsav";
 constexpr char kSaveImportPath[] = "/pokegochi_save_import.tmp";
 
@@ -85,6 +86,34 @@ uint32_t crc32Update(uint32_t value, const uint8_t* bytes, size_t length) {
 }
 
 #if defined(ARDUINO_ARCH_ESP32)
+bool loadRecoveryMarker(PokegochiRecovery::Marker& marker) {
+  Preferences preferences;
+  if (!preferences.begin(PokegochiRecovery::kNamespace, true)) return false;
+  const bool okay = preferences.getBytesLength(PokegochiRecovery::kMarkerKey) == sizeof(marker) &&
+      preferences.getBytes(PokegochiRecovery::kMarkerKey, &marker, sizeof(marker)) == sizeof(marker) &&
+      PokegochiRecovery::valid(marker);
+  preferences.end();
+  return okay;
+}
+
+bool saveRecoveryMarker(PokegochiRecovery::Marker& marker) {
+  PokegochiRecovery::seal(marker);
+  Preferences preferences;
+  if (!preferences.begin(PokegochiRecovery::kNamespace, false)) return false;
+  const bool okay = preferences.putBytes(PokegochiRecovery::kMarkerKey,
+                                         &marker, sizeof(marker)) == sizeof(marker);
+  preferences.end();
+  return okay;
+}
+
+void clearRecoveryMarker() {
+  Preferences preferences;
+  if (preferences.begin(PokegochiRecovery::kNamespace, false)) {
+    preferences.clear();
+    preferences.end();
+  }
+}
+
 WirelessUpdate* gUpdater = nullptr;
 NimBLEServer* gUpdateServer = nullptr;
 NimBLECharacteristic* gStatusCharacteristic = nullptr;
@@ -725,7 +754,11 @@ void WirelessUpdate::processData(const uint8_t* bytes, size_t length) {
     written = saveTransferFile_ &&
         saveTransferFile_.write(payload, payloadBytes) == payloadBytes;
   } else if (objectKind_ == ObjectKind::Firmware) {
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+    written = firmwareFile_ && firmwareFile_.write(payload, payloadBytes) == payloadBytes;
+#else
     written = otaHandle_ && esp_ota_write(otaHandle_, payload, payloadBytes) == ESP_OK;
+#endif
   } else {
     written = assetFile_ && assetFile_.write(payload, payloadBytes) == payloadBytes;
   }
@@ -921,11 +954,28 @@ bool WirelessUpdate::finishSaveImport() {
     payloadCrcState = crc32Update(payloadCrcState, buffer, count);
     remaining -= static_cast<uint32_t>(count);
   }
-  if (~payloadCrcState != header.payloadCrc32 || !input.seek(sizeof(header)) ||
-      input.read(reinterpret_cast<uint8_t*>(saveData_), saveBytes_) != saveBytes_) {
+  if (~payloadCrcState != header.payloadCrc32 || !input.seek(sizeof(header))) {
     input.close();
     fail(ErrorCode::SaveChecksum, "SAVE PAYLOAD CHECKSUM FAILED.");
     return false;
+  }
+  // GameSave is now roughly 55 KiB. Asking the ESP32 VFS for that entire
+  // range in one read can require a transient contiguous allocation that is
+  // unavailable while BLE is active, even though the already-verified file
+  // itself is complete. Stream into the caller-owned GameSave just like the
+  // durable save writer does; this keeps every VFS request bounded without
+  // changing a single byte of the PGS1 format.
+  uint8_t* destination = static_cast<uint8_t*>(saveData_);
+  uint32_t copied = 0U;
+  while (copied < saveBytes_) {
+    const size_t requested = std::min<size_t>(sizeof(buffer), saveBytes_ - copied);
+    const size_t count = input.read(destination + copied, requested);
+    if (count != requested) {
+      input.close();
+      fail(ErrorCode::SaveFormat, "SAVE PAYLOAD COULD NOT BE LOADED.");
+      return false;
+    }
+    copied += static_cast<uint32_t>(count);
   }
   input.close();
   if (!saveCommitCallback_(saveCallbackContext_)) {
@@ -1003,7 +1053,14 @@ bool WirelessUpdate::verifyManifest() {
   uint8_t reusableAssets = 0;
   uint64_t reusableBytes = 0;
 #if defined(ARDUINO_ARCH_ESP32)
-  const esp_partition_t* candidate = esp_ota_get_next_update_partition(nullptr);
+  const esp_partition_t* candidate =
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+      esp_partition_find_first(ESP_PARTITION_TYPE_APP,
+                               ESP_PARTITION_SUBTYPE_APP_OTA_0,
+                               PokegochiRecovery::kMainPartitionLabel);
+#else
+      esp_ota_get_next_update_partition(nullptr);
+#endif
   if (!candidate || manifest_.firmwareSize > candidate->size) {
     fail(ErrorCode::FirmwareBegin, "FIRMWARE DOES NOT FIT THE OTA SLOT."); return false;
   }
@@ -1039,7 +1096,15 @@ bool WirelessUpdate::verifyManifest() {
   }
   const uint64_t bytesToStage = assetBytes > reusableBytes ? assetBytes - reusableBytes : 0;
   const uint64_t stillRequired = bytesToStage > stagedAlready ? bytesToStage - stagedAlready : 0;
-  if (freeBytes < stillRequired + 512ULL * 1024ULL) {
+  uint64_t recoveryRequired = 0U;
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+  File stagedFirmware = SD.open(PokegochiRecovery::kFirmwareReadyPath, FILE_READ);
+  const bool firmwareAlreadyStaged = stagedFirmware &&
+      stagedFirmware.size() == manifest_.firmwareSize;
+  if (stagedFirmware) stagedFirmware.close();
+  recoveryRequired = (firmwareAlreadyStaged ? 0ULL : manifest_.firmwareSize) + candidate->size;
+#endif
+  if (freeBytes < stillRequired + recoveryRequired + 512ULL * 1024ULL) {
     fail(ErrorCode::NotEnoughSpace, "MICROSD NEEDS MORE FREE SPACE."); return false;
   }
 #endif
@@ -1048,6 +1113,9 @@ bool WirelessUpdate::verifyManifest() {
     journal_.verifiedAssetMask &= static_cast<uint8_t>(~journal_.reusedAssetMask);
     journal_.reusedAssetMask = reusableAssets;
     journal_.verifiedAssetMask |= reusableAssets;
+    journal_.firmwareSize = manifest_.firmwareSize;
+    std::memcpy(journal_.firmwareSha256, manifest_.firmwareSha256,
+                sizeof(journal_.firmwareSha256));
     if (!saveJournal(journal_)) {
       fail(ErrorCode::ObjectWrite, "UPDATE JOURNAL COULD NOT BE RESUMED."); return false;
     }
@@ -1058,6 +1126,9 @@ bool WirelessUpdate::verifyManifest() {
     journal_.version = kJournalVersion;
     journal_.phase = static_cast<uint8_t>(JournalPhase::Receiving);
     journal_.packageSequence = manifest_.packageSequence;
+    journal_.firmwareSize = manifest_.firmwareSize;
+    std::memcpy(journal_.firmwareSha256, manifest_.firmwareSha256,
+                sizeof(journal_.firmwareSha256));
     journal_.reusedAssetMask = reusableAssets;
     journal_.verifiedAssetMask = reusableAssets;
     if (!saveJournal(journal_)) {
@@ -1105,6 +1176,48 @@ bool WirelessUpdate::beginFirmware() {
   objectSize_ = manifest_.firmwareSize;
   objectHash_ = manifest_.firmwareSha256;
 #if defined(ARDUINO_ARCH_ESP32)
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+  targetPartition_ = esp_partition_find_first(
+      ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0,
+      PokegochiRecovery::kMainPartitionLabel);
+  if (!targetPartition_ || objectSize_ > targetPartition_->size) {
+    fail(ErrorCode::FirmwareBegin, "THE MAIN PARTITION IS TOO SMALL."); return false;
+  }
+  if (journal_.firmwareReady) {
+    File ready = SD.open(PokegochiRecovery::kFirmwareReadyPath, FILE_READ);
+    const bool complete = ready && ready.size() == objectSize_;
+    if (ready) ready.close();
+    uint8_t digest[32]{};
+    if (complete && hashFile(PokegochiRecovery::kFirmwareReadyPath, digest) &&
+        !std::memcmp(digest, objectHash_, sizeof(digest))) {
+      objectOffset_ = objectSize_;
+      return true;
+    }
+    journal_.firmwareReady = 0U;
+    saveJournal(journal_);
+    SD.remove(PokegochiRecovery::kFirmwareReadyPath);
+  }
+  File partial = SD.open(PokegochiRecovery::kFirmwarePartPath, FILE_READ);
+  if (partial) {
+    objectOffset_ = partial.size();
+    partial.close();
+  }
+  if (objectOffset_ > objectSize_) {
+    SD.remove(PokegochiRecovery::kFirmwarePartPath);
+    objectOffset_ = 0U;
+  }
+  firmwareFile_ = SD.open(PokegochiRecovery::kFirmwarePartPath,
+                          objectOffset_ ? FILE_APPEND : FILE_WRITE);
+  if (!firmwareFile_) {
+    fail(ErrorCode::FirmwareBegin, "FIRMWARE STAGING FILE COULD NOT OPEN."); return false;
+  }
+  std::strncpy(journal_.targetPartition, PokegochiRecovery::kMainPartitionLabel,
+               sizeof(journal_.targetPartition) - 1U);
+  std::strncpy(journal_.previousPartition, PokegochiRecovery::kRecoveryPartitionLabel,
+               sizeof(journal_.previousPartition) - 1U);
+  journal_.firmwareReady = 0U;
+  saveJournal(journal_);
+#else
   if (journal_.firmwareReady && journal_.targetPartition[0]) {
     targetPartition_ = esp_partition_find_first(
         ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.targetPartition);
@@ -1129,6 +1242,7 @@ bool WirelessUpdate::beginFirmware() {
                             sizeof(journal_.previousPartition) - 1U);
   journal_.firmwareReady = 0;
   saveJournal(journal_);
+#endif
 #endif
   return true;
 }
@@ -1187,6 +1301,23 @@ bool WirelessUpdate::finishObject() {
 bool WirelessUpdate::finishFirmware() {
   if (!journal_.firmwareReady) {
 #if defined(ARDUINO_ARCH_ESP32)
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+    if (firmwareFile_) {
+      firmwareFile_.flush();
+      firmwareFile_.close();
+    }
+    uint8_t digest[32]{};
+    if (!hashFile(PokegochiRecovery::kFirmwarePartPath, digest) ||
+        std::memcmp(digest, objectHash_, sizeof(digest))) {
+      SD.remove(PokegochiRecovery::kFirmwarePartPath);
+      fail(ErrorCode::ObjectHash, "FIRMWARE SHA-256 DID NOT MATCH."); return false;
+    }
+    SD.remove(PokegochiRecovery::kFirmwareReadyPath);
+    if (!SD.rename(PokegochiRecovery::kFirmwarePartPath,
+                   PokegochiRecovery::kFirmwareReadyPath)) {
+      fail(ErrorCode::ObjectWrite, "FIRMWARE COULD NOT BE STAGED."); return false;
+    }
+#else
     if (!otaHandle_ || esp_ota_end(otaHandle_) != ESP_OK) {
       otaHandle_ = 0;
       fail(ErrorCode::FirmwareValidation, "FIRMWARE IMAGE VALIDATION FAILED."); return false;
@@ -1197,6 +1328,7 @@ bool WirelessUpdate::finishFirmware() {
         std::memcmp(digest, objectHash_, sizeof(digest))) {
       fail(ErrorCode::ObjectHash, "FIRMWARE SHA-256 DID NOT MATCH."); return false;
     }
+#endif
 #endif
     journal_.firmwareReady = 1;
     if (!saveJournal(journal_)) {
@@ -1239,6 +1371,7 @@ bool WirelessUpdate::finishAsset() {
 
 void WirelessUpdate::closeCurrentObject(bool abortFirmware) {
 #if defined(ARDUINO_ARCH_ESP32)
+  if (firmwareFile_) { firmwareFile_.flush(); firmwareFile_.close(); }
   if (assetFile_) { assetFile_.flush(); assetFile_.close(); }
   if (otaHandle_) {
     if (abortFirmware) esp_ota_abort(otaHandle_);
@@ -1270,10 +1403,11 @@ bool WirelessUpdate::commit() {
     fail(ErrorCode::CommitFailed, "FINAL UPDATE STATE COULD NOT BE SAVED."); return false;
   }
 #if defined(ARDUINO_ARCH_ESP32)
-  if (!storePendingBoot(journal_.targetPartition, journal_.previousPartition,
-                        journal_.packageSequence, 0U) ||
-      !selectBootPartition(journal_.targetPartition)) {
+  if (!scheduleFirmwareInstall()) {
     clearPendingBoot();
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+    clearRecoveryMarker();
+#endif
     rollbackAssets(journal_);
     clearTransferArtifacts();
     fail(ErrorCode::CommitFailed, "FIRMWARE COULD NOT BE SELECTED."); return false;
@@ -1289,6 +1423,30 @@ bool WirelessUpdate::commit() {
   rebootAtMs_ = millis() + 1200U;
 #endif
   return true;
+}
+
+bool WirelessUpdate::scheduleFirmwareInstall() {
+#if !defined(ARDUINO_ARCH_ESP32)
+  return true;
+#elif defined(POKEGOCHI_RECOVERY_LAYOUT)
+  uint8_t digest[32]{};
+  File staged = SD.open(PokegochiRecovery::kFirmwareReadyPath, FILE_READ);
+  const bool correctSize = staged && staged.size() == journal_.firmwareSize;
+  if (staged) staged.close();
+  if (!correctSize || !hashFile(PokegochiRecovery::kFirmwareReadyPath, digest) ||
+      std::memcmp(digest, journal_.firmwareSha256, sizeof(digest))) return false;
+  PokegochiRecovery::Marker marker = PokegochiRecovery::makeMarker(
+      journal_.packageSequence, journal_.firmwareSize, journal_.firmwareSha256);
+  return saveRecoveryMarker(marker) &&
+      storePendingBoot(PokegochiRecovery::kMainPartitionLabel,
+                       PokegochiRecovery::kRecoveryPartitionLabel,
+                       journal_.packageSequence, 0U) &&
+      selectBootPartition(PokegochiRecovery::kRecoveryPartitionLabel);
+#else
+  return storePendingBoot(journal_.targetPartition, journal_.previousPartition,
+                          journal_.packageSequence, 0U) &&
+      selectBootPartition(journal_.targetPartition);
+#endif
 }
 
 bool WirelessUpdate::commitAssets(Journal& journal) {
@@ -1389,6 +1547,7 @@ bool WirelessUpdate::rollbackAssets(Journal& journal) {
 
 bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
   bootValidationPending_ = false;
+  factoryHandoffPending_ = false;
   char pendingTarget[8]{};
   char pendingPrevious[8]{};
   uint32_t pendingSequence = 0;
@@ -1397,6 +1556,57 @@ bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
       pendingTarget, pendingPrevious, pendingSequence, pendingAttempts);
 #if defined(ARDUINO_ARCH_ESP32)
   const esp_partition_t* running = esp_ota_get_running_partition();
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+  PokegochiRecovery::Marker recoveryMarker{};
+  const bool hasRecoveryMarker = loadRecoveryMarker(recoveryMarker);
+  const PokegochiRecovery::Phase recoveryPhase = hasRecoveryMarker
+      ? static_cast<PokegochiRecovery::Phase>(recoveryMarker.phase)
+      : PokegochiRecovery::Phase::None;
+  // The factory image marks a restored rollback before returning here.  The
+  // previous game then restores the matching asset backups and clears every
+  // update marker; the ordinary save and NVS namespaces are untouched.
+  if (recoveryPhase == PokegochiRecovery::Phase::Restored) {
+    if (!sdMounted) return false;
+    Journal restoredJournal{};
+    if (loadJournal(restoredJournal)) {
+      journal_ = restoredJournal;
+      rollbackAssets(journal_);
+    }
+    clearTransferArtifacts();
+    clearPendingBoot();
+    clearRecoveryMarker();
+    SD.remove(PokegochiRecovery::kPreviousImagePath);
+    factoryHandoffPending_ = true;
+    bootValidationPending_ = true;
+    Serial.println("[OTAP] previous main image and assets restored by recovery");
+    return true;
+  }
+  // Power may disappear after the marker is durable but before the reboot.
+  // Resume by selecting the immutable recovery image instead of treating the
+  // still-running old application as a candidate.
+  if (recoveryPhase == PokegochiRecovery::Phase::Staged && running &&
+      !std::strcmp(running->label, PokegochiRecovery::kMainPartitionLabel)) {
+    if (selectBootPartition(PokegochiRecovery::kRecoveryPartitionLabel)) {
+      Serial.println("[OTAP] resuming staged recovery install");
+      ESP.restart();
+    }
+    return false;
+  }
+  // A cable install erases otadata, so the bootloader enters `rescue`, which
+  // then selects `app` without an update marker.  With rollback enabled that
+  // first boot is still PENDING_VERIFY and must be accepted only after the
+  // ordinary save/asset diagnostics below complete.
+  if (!hasRecoveryMarker && !hasPendingBoot && running &&
+      !std::strcmp(running->label, PokegochiRecovery::kMainPartitionLabel)) {
+    esp_ota_img_states_t imageState = ESP_OTA_IMG_UNDEFINED;
+    if (esp_ota_get_state_partition(running, &imageState) == ESP_OK &&
+        (imageState == ESP_OTA_IMG_NEW || imageState == ESP_OTA_IMG_PENDING_VERIFY)) {
+      factoryHandoffPending_ = true;
+      bootValidationPending_ = true;
+      Serial.println("[OTAP] factory recovery handoff awaits normal boot self-test");
+    }
+  }
+#endif
   if (hasPendingBoot && running &&
       !std::strncmp(running->label, pendingTarget, sizeof(pendingTarget))) {
     std::memset(&journal_, 0, sizeof(journal_));
@@ -1422,10 +1632,11 @@ bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
       removeJournal();
       return false;
     }
-    if (!storePendingBoot(journal_.targetPartition, journal_.previousPartition,
-                          journal_.packageSequence, 0U) ||
-        !selectBootPartition(journal_.targetPartition)) {
+    if (!scheduleFirmwareInstall()) {
       clearPendingBoot();
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+      clearRecoveryMarker();
+#endif
       rollbackAssets(journal_);
       removeJournal();
       return false;
@@ -1488,6 +1699,18 @@ bool WirelessUpdate::recoverAtBoot(bool sdMounted) {
 void WirelessUpdate::confirmBoot(bool healthy) {
   if (!bootValidationPending_) return;
 #if defined(ARDUINO_ARCH_ESP32)
+  if (factoryHandoffPending_) {
+    if (healthy) {
+      const esp_err_t marked = esp_ota_mark_app_valid_cancel_rollback();
+      Serial.printf("[OTAP] factory handoff accepted result=%s\n",
+                    esp_err_to_name(marked));
+      factoryHandoffPending_ = false;
+      bootValidationPending_ = false;
+      return;
+    }
+    esp_ota_mark_app_invalid_rollback_and_reboot();
+    return;
+  }
   if (healthy) {
     const esp_err_t marked = esp_ota_mark_app_valid_cancel_rollback();
     Serial.printf("[OTAP] candidate accepted result=%s\n", esp_err_to_name(marked));
@@ -1503,6 +1726,13 @@ void WirelessUpdate::confirmBoot(bool healthy) {
     return;
   }
   Serial.println("[OTAP] candidate self-test failed; restoring application and assets");
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+  // Recovery owns the previous firmware backup.  Leave the asset journal and
+  // marker intact so the restored application can roll both halves back as
+  // one transaction.
+  if (selectBootPartition(PokegochiRecovery::kRecoveryPartitionLabel)) ESP.restart();
+  return;
+#else
   rollbackAssets(journal_);
   const esp_partition_t* previous = esp_partition_find_first(
       ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY, journal_.previousPartition);
@@ -1510,6 +1740,7 @@ void WirelessUpdate::confirmBoot(bool healthy) {
   clearPendingBoot();
   if (previous) selectBootPartition(previous->label);
   ESP.restart();
+#endif
 #else
   (void)healthy;
 #endif
@@ -1522,6 +1753,12 @@ void WirelessUpdate::finishSuccessfulUpdate() {
     SD.remove(paths.partial);
     SD.remove(paths.ready);
   }
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+  SD.remove(PokegochiRecovery::kFirmwarePartPath);
+  SD.remove(PokegochiRecovery::kFirmwareReadyPath);
+  SD.remove(PokegochiRecovery::kPreviousImagePath);
+  clearRecoveryMarker();
+#endif
   removeJournal();
 #endif
 }
@@ -1547,6 +1784,11 @@ void WirelessUpdate::clearTransferArtifacts(bool keepBackups) {
     SD.remove(paths.ready);
     if (!keepBackups) SD.remove(paths.backup);
   }
+#if defined(POKEGOCHI_RECOVERY_LAYOUT)
+  SD.remove(PokegochiRecovery::kFirmwarePartPath);
+  SD.remove(PokegochiRecovery::kFirmwareReadyPath);
+  if (!keepBackups) SD.remove(PokegochiRecovery::kPreviousImagePath);
+#endif
   removeJournal();
 #else
   (void)keepBackups;

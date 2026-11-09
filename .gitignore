@@ -2,6 +2,9 @@
 .pio-r*/
 .pio-core/
 .pio-core-sandbox/
+.pio-core-server/
+.dummy/
+managed_components/
 .tools/
 .test-build/
 .test-build-*/
@@ -23,6 +26,7 @@ __pycache__/
 data/generated/
 .keys/
 *.pgota
+/server/PokegochiOnlineServer/include/ServerLocalConfig.h
 
 # Local Codex/debug/reference material and device backups.
 .codex-*
@@ -54,3 +58,4 @@ legend-fighter/
 /android/PokegochiApp/app/.cxx/
 /android/PokegochiApp/app/build/
 /android/PokegochiApp/firmware-*.png
+/server/**/.pio/

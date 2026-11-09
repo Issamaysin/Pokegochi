@@ -87,6 +87,11 @@ int main() {
   assert(std::strcmp(SinnohExpedition::siteName(SinnohSite::LakeVerity),"LAKE VERITY")==0);
   assert(SinnohExpedition::chooseEncounterSpecies(state,SinnohSite::LakeVerity,10U,4U)>=387U);
   assert(SinnohExpedition::chooseEncounterSpecies(state,SinnohSite::LakeVerity,10U,4U)<=419U);
+  for(uint32_t seed=1U;seed<=32U;++seed){
+    const uint16_t forcedLegendary=SinnohExpedition::chooseEncounterSpecies(
+        state,SinnohSite::LakeVerity,10U,seed,true);
+    assert(forcedLegendary==480U);
+  }
   uint16_t visibleSpecies[32]{};
   const uint8_t visibleCount = SinnohExpedition::availableSpecies(
       SinnohSite::LakeVerity, visibleSpecies, 32U);

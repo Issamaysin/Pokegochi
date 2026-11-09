@@ -52,7 +52,7 @@ public final class MainActivity extends Activity {
     private static final String ANDROID_ASSET_REVISION =
             BuildConfig.VERSION_NAME + "-" + BuildConfig.VERSION_CODE;
     private static final String NATIVE_BUILD_ID =
-            "android-app-" + BuildConfig.VERSION_NAME + "-r317-" + BuildConfig.BUILD_TYPE;
+            "android-app-" + BuildConfig.VERSION_NAME + "-r410-" + BuildConfig.BUILD_TYPE;
     // Release builds must not create private or public diagnostic artifacts.
     // Debug builds keep the existing dump path for development diagnostics.
     private static final boolean DIAGNOSTICS_ENABLED =
@@ -60,6 +60,7 @@ public final class MainActivity extends Activity {
     private FirmwareView firmwareView;
     private volatile NativeFirmware firmware;
     private BleMultiplayer bleMultiplayer;
+    private WifiMultiplayer wifiMultiplayer;
     private ExecutorService initializationExecutor;
     private volatile boolean destroyed;
     private BroadcastReceiver phoneBatteryReceiver;
@@ -171,6 +172,13 @@ public final class MainActivity extends Activity {
                     }
                 });
         bleMultiplayer.start();
+        wifiMultiplayer = new WifiMultiplayer(this, readyFirmware,
+                new WifiMultiplayer.Listener() {
+                    @Override public void onStatus(String status) {
+                        android.util.Log.i("PokegochiWiFi", status);
+                    }
+                });
+        wifiMultiplayer.start();
     }
 
     private static void syncPhoneClock(NativeFirmware target) {
@@ -576,6 +584,7 @@ public final class MainActivity extends Activity {
         }
         if (firmwareView != null) firmwareView.stop();
         if (bleMultiplayer != null) bleMultiplayer.close();
+        if (wifiMultiplayer != null) wifiMultiplayer.close();
         if (phoneBatteryReceiverRegistered && phoneBatteryReceiver != null) {
             unregisterReceiver(phoneBatteryReceiver);
             phoneBatteryReceiverRegistered = false;

@@ -24,10 +24,14 @@ if (-not (Test-Path -LiteralPath $pioPython)) {
 }
 $platformioLauncher = Join-Path $PSScriptRoot 'platformio_local.py'
 $environmentName = 'esp32-2432S028R'
+$recoveryEnvironmentName = 'recovery'
 $esptool = Join-Path $platformIoCore 'packages\tool-esptoolpy\esptool.py'
 $partitionTool = Join-Path $platformIoCore 'packages\framework-arduinoespressif32\tools\gen_esp32part.py'
 $mkspiffs = Join-Path $projectRoot '.tools\mkspiffs-0.2.3\mkspiffs-0.2.3-arduino-esp32-win32\mkspiffs.exe'
-$targetOtaSlotSize = 0x1E0000
+$targetRecoveryOffset = 0x10000
+$targetRecoverySize = 0xB0000
+$targetMainOffset = 0xC0000
+$targetMainSize = 0x310000
 $targetSpiffsOffset = 0x3D0000
 $targetSpiffsSize = 0x30000
 
@@ -137,12 +141,22 @@ function Prepare-SaveLayoutMigration([string]$SerialPort) {
     }
     $oldOffset = Convert-HexNumber $spiffsFields[3]
     $oldSize = Convert-HexNumber $spiffsFields[4]
+    $nvsBackup = Join-Path $backupDir 'nvs-before.bin'
+    if (-not (Test-Path -LiteralPath $nvsBackup)) {
+        Invoke-Checked 'Backup das preferencias NVS' $pioPython @(
+            $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
+            'read-flash', '0x9000', '0x5000', $nvsBackup)
+    }
     if ($pending) {
         Write-Host "Retomando migracao de save interrompida para a placa $deviceId." -ForegroundColor Yellow
         return $pending
     }
     if ($oldOffset -eq $targetSpiffsOffset -and $oldSize -eq $targetSpiffsSize) {
-        Write-Host 'Layout OTA ampliado ja esta instalado; o save permanecera no lugar.' -ForegroundColor DarkGray
+        $saveBackup = Join-Path $backupDir 'spiffs-before.bin'
+        Invoke-Checked 'Backup preventivo da particao de save' $pioPython @(
+            $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
+            'read-flash', ('0x{0:X}' -f $oldOffset), ('0x{0:X}' -f $oldSize), $saveBackup)
+        Write-Host "Save e NVS preservados em $backupDir; o SPIFFS permanecera no mesmo endereco." -ForegroundColor DarkGray
         return $null
     }
 
@@ -211,69 +225,78 @@ function Restore-MigratedSave($Migration, [string]$SerialPort) {
 }
 
 function Reset-OtaBootSelection([string]$SerialPort) {
-    # PlatformIO writes the current USB firmware to app0.  If a previous OTA
-    # left app1 selected in the two 4 KiB otadata records, the ESP32 would
-    # still boot the old app even though the flash write itself succeeded.
-    # Erasing only this metadata makes the bootloader pick app0 on the next
-    # reset. NVS and SPIFFS (the pairing/save data) are outside this region.
+    # With no OTA record the bootloader enters the immutable factory recovery.
+    # Recovery validates the partition table and selects the large main image.
+    # NVS and SPIFFS (pairing/settings/save data) remain outside this region.
     Invoke-Checked 'Selecao da nova particao de firmware' $pioPython @(
         $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         '--before', 'default-reset', '--after', 'hard-reset',
         'erase-region', '0xE000', '0x2000')
-    Write-Host 'Metadados OTA reiniciados: o proximo boot usara a app0 gravada agora.' -ForegroundColor Green
+    Write-Host 'Metadados OTA reiniciados: o recovery validara e iniciara o app principal.' -ForegroundColor Green
 }
 
 function Verify-FlashedFirmware([string]$SerialPort) {
-    $firmware = Join-Path $projectRoot ".pio\build\$environmentName\firmware.bin"
-    if (-not (Test-Path -LiteralPath $firmware)) {
-        throw "Firmware compilado nao encontrado para verificacao: '$firmware'."
+    $mainFirmware = Join-Path $projectRoot ".pio\build\$environmentName\firmware.bin"
+    $recoveryFirmware = Join-Path $projectRoot ".pio\build\$recoveryEnvironmentName\firmware.bin"
+    foreach ($firmware in @($mainFirmware, $recoveryFirmware)) {
+        if (-not (Test-Path -LiteralPath $firmware)) {
+            throw "Firmware compilado nao encontrado para verificacao: '$firmware'."
+        }
     }
-    # Verify the image at the actual app0 offset. This catches a future board
-    # configuration regression before the script claims a USB update worked.
-    Invoke-Checked 'Verificacao da firmware na app0' $pioPython @(
+    Invoke-Checked 'Verificacao do recovery' $pioPython @(
         $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
-        'verify-flash', '0x10000', $firmware)
+        'verify-flash', ('0x{0:X}' -f $targetRecoveryOffset), $recoveryFirmware)
+    Invoke-Checked 'Verificacao do app principal' $pioPython @(
+        $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
+        'verify-flash', ('0x{0:X}' -f $targetMainOffset), $mainFirmware)
 }
 
-function Assert-FirmwareFitsOtaSlot {
-    $firmware = Join-Path $projectRoot ".pio\build\$environmentName\firmware.bin"
-    if (-not (Test-Path -LiteralPath $firmware)) {
-        throw "Firmware compilado nao encontrado: '$firmware'."
+function Assert-FirmwareFitsPartitions {
+    $images = @(
+        [pscustomobject]@{ Label = 'recovery'; Path = Join-Path $projectRoot ".pio\build\$recoveryEnvironmentName\firmware.bin"; Limit = $targetRecoverySize },
+        [pscustomobject]@{ Label = 'app principal'; Path = Join-Path $projectRoot ".pio\build\$environmentName\firmware.bin"; Limit = $targetMainSize }
+    )
+    foreach ($image in $images) {
+        if (-not (Test-Path -LiteralPath $image.Path)) {
+            throw "Firmware compilado nao encontrado: '$($image.Path)'."
+        }
+        $firmwareBytes = (Get-Item -LiteralPath $image.Path).Length
+        if ($firmwareBytes -gt $image.Limit) {
+            throw (("Imagem {0} possui {1} bytes e excede sua particao de {2} bytes por {3} bytes. " +
+                    "A gravacao foi bloqueada antes de tocar na flash.") -f
+                    $image.Label, $firmwareBytes, $image.Limit,
+                    ($firmwareBytes - $image.Limit))
+        }
+        Write-Host ("Imagem {0} validada: {1}/{2} bytes ({3} bytes livres)." -f
+            $image.Label, $firmwareBytes, $image.Limit,
+            ($image.Limit - $firmwareBytes)) -ForegroundColor DarkGray
     }
-    $firmwareBytes = (Get-Item -LiteralPath $firmware).Length
-    if ($firmwareBytes -gt $targetOtaSlotSize) {
-        throw (("Firmware real possui {0} bytes e excede o slot OTA de {1} bytes por {2} bytes. " +
-                "A gravacao foi bloqueada antes de tocar na flash.") -f
-                $firmwareBytes, $targetOtaSlotSize,
-                ($firmwareBytes - $targetOtaSlotSize))
-    }
-    Write-Host ("Imagem OTA validada: {0}/{1} bytes ({2} bytes livres)." -f
-        $firmwareBytes, $targetOtaSlotSize,
-        ($targetOtaSlotSize - $firmwareBytes)) -ForegroundColor DarkGray
 }
 
 function Write-UsbFirmware([string]$SerialPort) {
     $buildDir = Join-Path $projectRoot ".pio\build\$environmentName"
     $bootloader = Join-Path $buildDir 'bootloader.bin'
     $partitions = Join-Path $buildDir 'partitions.bin'
-    $firmware = Join-Path $buildDir 'firmware.bin'
+    $mainFirmware = Join-Path $buildDir 'firmware.bin'
+    $recoveryFirmware = Join-Path $projectRoot ".pio\build\$recoveryEnvironmentName\firmware.bin"
     $bootApp0 = Join-Path $platformIoCore 'packages\framework-arduinoespressif32\tools\partitions\boot_app0.bin'
-    foreach ($required in @($bootloader, $partitions, $bootApp0, $firmware)) {
+    foreach ($required in @($bootloader, $partitions, $bootApp0, $recoveryFirmware, $mainFirmware)) {
         if (-not (Test-Path -LiteralPath $required)) {
             throw "Imagem necessaria para gravacao USB nao encontrada: '$required'."
         }
     }
-    # Do not delegate this address to PlatformIO's generic ESP32 uploader.
-    # The compact preference/OTA header ends at 0x10000, so the USB
-    # application must start exactly at the aligned app0 boundary.
-    Invoke-Checked 'Gravacao da firmware e da tabela OTA' $pioPython @(
+    # Explicit addresses are mandatory: PlatformIO's generic uploader chooses
+    # only one app image, while this layout always installs both the immutable
+    # recovery and the larger game image without touching NVS or SPIFFS.
+    Invoke-Checked 'Gravacao do recovery, app e tabela de particoes' $pioPython @(
         $esptool, '--chip', 'esp32', '--port', $SerialPort, '--baud', '115200',
         '--before', 'default-reset', '--after', 'hard-reset', 'write-flash', '-z',
         '--flash-mode', 'dio', '--flash-freq', '40m', '--flash-size', 'detect',
         '0x1000', $bootloader,
         '0x8000', $partitions,
         '0xe000', $bootApp0,
-        '0x10000', $firmware)
+        ('0x{0:X}' -f $targetRecoveryOffset), $recoveryFirmware,
+        ('0x{0:X}' -f $targetMainOffset), $mainFirmware)
 }
 
 function Find-Esp32Ports {
@@ -330,6 +353,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $arguments = @($platformioLauncher, 'run', '-e', $environmentName)
+$recoveryArguments = @($platformioLauncher, 'run', '-e', $recoveryEnvironmentName)
 $saveMigration = $null
 if (-not $BuildOnly) {
     $saveMigration = Prepare-SaveLayoutMigration $Port
@@ -351,7 +375,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Falha ao gerar os treinadores da Battle Tower do Emerald.' }
     & $python @arguments
     if ($LASTEXITCODE -ne 0) { throw "PlatformIO terminou com codigo $LASTEXITCODE." }
-    Assert-FirmwareFitsOtaSlot
+    & $python @recoveryArguments
+    if ($LASTEXITCODE -ne 0) { throw "Build do recovery terminou com codigo $LASTEXITCODE." }
+    Assert-FirmwareFitsPartitions
     if (-not $BuildOnly) {
         Write-UsbFirmware $Port
         Restore-MigratedSave $saveMigration $Port

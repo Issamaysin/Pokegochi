@@ -33,22 +33,25 @@ def main() -> None:
     rows = partition_rows()
     assert rows["nvs"] == (0x9000, 0x5000)
     assert rows["otadata"] == (0xE000, 0x2000)
-    assert rows["app0"] == (0x10000, 0x1E0000)
-    assert rows["app1"] == (0x1F0000, 0x1E0000)
+    assert rows["rescue"] == (0x10000, 0xB0000)
+    assert rows["app"] == (0xC0000, 0x310000)
     assert rows["spiffs"] == (0x3D0000, 0x30000)
-    assert rows["app0"][0] % 0x10000 == 0
-    assert rows["app1"][0] % 0x10000 == 0
-    assert rows["app1"][0] + rows["app1"][1] == rows["spiffs"][0]
+    assert rows["rescue"][0] % 0x10000 == 0
+    assert rows["app"][0] % 0x10000 == 0
+    assert rows["rescue"][0] + rows["rescue"][1] == rows["app"][0]
+    assert rows["app"][0] + rows["app"][1] == rows["spiffs"][0]
     assert rows["spiffs"][0] + rows["spiffs"][1] == 0x400000
 
     script = FLASH_SCRIPT.read_text(encoding="utf-8")
     assert "function Write-UsbFirmware" in script
-    assert "'0x10000', $firmware" in script
-    assert "'verify-flash', '0x10000', $firmware" in script
+    assert "$targetRecoveryOffset = 0x10000" in script
+    assert "$targetMainOffset = 0xC0000" in script
+    assert "Verify-FlashedFirmware" in script
     assert "'erase-region', '0xE000', '0x2000'" in script
-    assert "$targetOtaSlotSize = 0x1E0000" in script
-    assert "function Assert-FirmwareFitsOtaSlot" in script
-    assert "Assert-FirmwareFitsOtaSlot" in script
+    assert "$targetRecoverySize = 0xB0000" in script
+    assert "$targetMainSize = 0x310000" in script
+    assert "function Assert-FirmwareFitsPartitions" in script
+    assert "Assert-FirmwareFitsPartitions" in script
     assert "A gravacao foi bloqueada antes de tocar na flash." in script
     assert "$targetSpiffsOffset = 0x3D0000" in script
     assert "$targetSpiffsSize = 0x30000" in script

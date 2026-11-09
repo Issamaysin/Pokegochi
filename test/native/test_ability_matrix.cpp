@@ -893,6 +893,56 @@ int main(){
     assert(damageFor(bypassed,MoveId::Tackle)>damageFor(blocked,MoveId::Tackle));
   }
 
+  // Stance Change swaps Aegislash's base stat profile, not its battler. Stat
+  // stages therefore survive Shield -> Blade -> Shield exactly once and are
+  // applied to whichever base stats the current forme exposes.
+  {
+    Fixture stance(moveNamed("SWORDS DANCE"));
+    const uint32_t uid=stance.player().uid;
+    stance.player()=CollectionLogic::createPokemon(
+        uid,681U,50U,false,0xAE615A11U,6U);
+    stance.player().abilityId=abilityNamed("STANCE CHANGE");
+    stance.player().moves[0]=moveNamed("SWORDS DANCE");
+    stance.player().movePp[0]=findFullMove(stance.player().moves[0])->pp;
+    stance.player().moves[1]=moveNamed("KINGS SHIELD");
+    stance.player().movePp[1]=findFullMove(stance.player().moves[1])->pp;
+    stance.battle.unlockedGeneration=6U;
+    stance.opponent().maximumHp=stance.opponent().currentHp=60000U;
+
+    const uint16_t shieldAttack=CollectionLogic::calculatedStat(
+        stance.player(),PokemonStat::Attack);
+    const uint16_t shieldDefense=CollectionLogic::calculatedStat(
+        stance.player(),PokemonStat::Defense);
+    assert(stance.act().accepted&&stance.player().form==0U&&
+           stance.battle.playerVolatile.attackStage==2);
+    stance.battle.playerVolatile.defenseStage=2;
+
+    stance.player().moves[0]=MoveId::Tackle;
+    stance.player().movePp[0]=findFullMove(MoveId::Tackle)->pp;
+    const BattleActionResult blade=stance.act();
+    assert(blade.accepted&&stance.player().form==1U&&
+           stance.battle.playerVolatile.attackStage==2&&
+           stance.battle.playerVolatile.defenseStage==2&&
+           saw(blade,BattleEventType::MoveEffect,BattleSide::Player,
+               static_cast<uint16_t>(BattleMoveEffect::FormChanged)));
+    assert(CollectionLogic::calculatedStat(stance.player(),PokemonStat::Attack)>
+           shieldAttack);
+    assert(CollectionLogic::calculatedStat(stance.player(),PokemonStat::Defense)<
+           shieldDefense);
+
+    const BattleActionResult shield=BattleEngine::fightPvp(
+        stance.battle,stance.collection,1U,0xFEU);
+    assert(shield.accepted&&stance.player().form==0U&&
+           stance.battle.playerVolatile.attackStage==2&&
+           stance.battle.playerVolatile.defenseStage==2&&
+           saw(shield,BattleEventType::MoveEffect,BattleSide::Player,
+               static_cast<uint16_t>(BattleMoveEffect::FormChanged)));
+    assert(CollectionLogic::calculatedStat(stance.player(),PokemonStat::Attack)==
+           shieldAttack);
+    assert(CollectionLogic::calculatedStat(stance.player(),PokemonStat::Defense)==
+           shieldDefense);
+  }
+
   // Generation-IV absorption/weather details.
   {
     Fixture f(static_cast<MoveId>(86)); // THUNDER WAVE

@@ -141,6 +141,10 @@ classified: dict[str, str] = {}
 IMPLEMENTATION_TOKENS = {
     # These mechanics are intentionally species/form-driven and therefore do
     # not need a repeated display-name string in their C++ hot paths.
+    # Battle Bond is deliberately granted by Ash's Bond in Pokegochi; the
+    # transformed form still exposes ability 211, but cannot recursively
+    # trigger from its own ability.
+    "BATTLE BOND": "HeldItem::AshsBond",
     "POWER CONSTRUCT": "updateZygardeAssembly(",
     "RKS SYSTEM": "memoryType(",
 }

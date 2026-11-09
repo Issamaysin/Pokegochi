@@ -337,7 +337,7 @@ def main() -> None:
     # before calling prepareUiScene(); reversing those two calls discards the
     # freshly loaded pack and makes the retained no-I/O pass draw placeholders.
     ui_scene_painters = (
-        "drawHome", "drawKidsCatch", "drawPokecenterConfirm",
+        "drawHome", "drawPokecenterConfirm",
         "drawTowerInvite", "drawMegaChallengeInvite", "drawBossInvite",
         "drawLeagueComplete", "drawChooseBattler", "drawInventoryTarget",
         "drawBadgeCase", "drawMart",
@@ -350,9 +350,6 @@ def main() -> None:
             raise RuntimeError(
                 f"{painter} prepares its cache before transition cleanup")
     ui_scene_helper_callers = {
-        "drawKidsTowerCampaign": "prepareKidsTowerScene(",
-        "drawKidsTowerTeam": "prepareKidsTowerScene(",
-        "drawKidsTowerBattle": "prepareKidsTowerScene(",
         "drawBattleParty": "prepareBattlePartySceneAssets(",
         "drawBattleSummary": "prepareSummarySceneAssets(",
         "drawInventory": "prepareInventoryBrowseScene(",

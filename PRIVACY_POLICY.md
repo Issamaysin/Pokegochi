@@ -1,6 +1,6 @@
 # Pokegochi Privacy Policy
 
-**Effective date:** October 15, 2026
+**Effective date:** November 4, 2026
 
 Pokegochi is an offline-first Android game. This policy explains what data the
 Pokegochi Android application handles.
@@ -23,15 +23,30 @@ or to a third-party service.
 
 ## Bluetooth multiplayer
 
-Multiplayer uses Bluetooth Low Energy only when the user opens and uses the
-multiplayer feature. Nearby devices exchange the gameplay/session data needed
-for that connection directly. Pokegochi does not send that data to a remote
-server.
+Bluetooth multiplayer uses Bluetooth Low Energy only when the user opens and
+uses that multiplayer page. Nearby devices exchange the gameplay/session data
+needed for that connection directly.
 
 On Android versions that require it for Bluetooth scanning, the operating
 system may request location permission. Pokegochi uses that permission only to
 perform Bluetooth discovery and does not collect, store, or transmit the
 device's physical location.
+
+## Wi-Fi multiplayer
+
+Wi-Fi multiplayer is optional and uses the Android device's already active
+network connection. The app does not scan for Wi-Fi networks, ask for a Wi-Fi
+password, change the selected network, or request a Wi-Fi/location permission.
+It discovers the Pokegochi server automatically.
+
+The server receives a random five-digit player ID and relays only the temporary
+packets needed for player discovery and a battle. It does not receive the game
+save, account information, physical location, Wi-Fi password, or device
+identifiers. The bundled home ESP32 server keeps clients and battle rooms only
+in memory and clears them when disconnected or restarted.
+
+The connection uses ordinary TCP and is not end-to-end encrypted. Users should
+connect only to a network and server they trust.
 
 ## Diagnostics
 

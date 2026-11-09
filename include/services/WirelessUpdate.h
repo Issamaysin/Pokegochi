@@ -101,6 +101,8 @@ class WirelessUpdate {
     char targetPartition[8];
     char previousPartition[8];
     uint32_t packageSequence;
+    uint32_t firmwareSize;
+    uint8_t firmwareSha256[32];
     uint32_t checksum;
   };
 #pragma pack(pop)
@@ -123,6 +125,7 @@ class WirelessUpdate {
   bool finishFirmware();
   bool finishAsset();
   bool commit();
+  bool scheduleFirmwareInstall();
   bool commitAssets(Journal& journal);
   bool verifyInstalledAssets() const;
   bool rollbackAssets(Journal& journal);
@@ -164,6 +167,7 @@ class WirelessUpdate {
   bool manifestValid_ = false;
   bool changed_ = true;
   bool bootValidationPending_ = false;
+  bool factoryHandoffPending_ = false;
   bool rebootScheduled_ = false;
   uint32_t rebootAtMs_ = 0;
   uint32_t playerId_ = 0;
@@ -212,6 +216,7 @@ class WirelessUpdate {
 
 #if defined(ARDUINO_ARCH_ESP32)
   File assetFile_{};
+  File firmwareFile_{};
   File saveTransferFile_{};
   esp_ota_handle_t otaHandle_ = 0;
   const esp_partition_t* targetPartition_ = nullptr;

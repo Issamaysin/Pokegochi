@@ -849,7 +849,14 @@ def template_visual_asset_spec(template: str, tag: str,
         }
 
     spec = template_specs.get(template)
-    gfx = tag_to_gfx_by_source.get(source_name, tag_to_gfx).get(tag)
+    # Expansion represents Water Shuriken's repeated impacts with the tall
+    # BLUE_RING_2 Water Pulse cel. On the retained 320x240 renderer that oval
+    # dominates the move and reads as a small whirlwind, while the authored
+    # blue throwing-star projectile is visible only briefly. Reuse that exact
+    # water-paletted star for the three impact pulses as well, preserving the
+    # source callback/timing but making every strike visibly a shuriken.
+    asset_tag = "YELLOW_STAR" if template == "gWaterShurikenRingTemplate" else tag
+    gfx = tag_to_gfx_by_source.get(source_name, tag_to_gfx).get(asset_tag)
     palette_tag = str(spec.get("paletteTag", tag)) if spec else tag
     palette = tag_to_palette_by_source.get(source_name, tag_to_palette).get(palette_tag)
     if not spec or not gfx or not palette:
@@ -858,6 +865,8 @@ def template_visual_asset_spec(template: str, tag: str,
     palette_source, palette_name = palette
     width = int(spec.get("width", 0))
     height = int(spec.get("height", 0))
+    if template == "gWaterShurikenRingTemplate":
+        width = height = 32
     if width <= 0 or height <= 0 or width % 8 or height % 8:
         raise RuntimeError(f"Invalid OAM dimensions for {template}: {width}x{height}")
 
@@ -995,7 +1004,7 @@ def template_visual_asset_spec(template: str, tag: str,
 
     return {
         "key": f"tpl_{hashlib.sha1(template.encode('ascii')).hexdigest()[:12]}",
-        "tag": tag,
+        "tag": asset_tag,
         "gfx": gfx_name,
         "palette": palette_name,
         "source": gfx_source,
@@ -1763,8 +1772,11 @@ AUDITED_GENERIC_SPRITE_CALLBACKS: dict[str, tuple[str, int]] = {
     "AnimPunishment": ("BattleAnimationMotion::Static", 64),
     "AnimRockPolishSparkle": ("BattleAnimationMotion::Static", 32),
     # Reflect Type and later expansion moves place a guard ring 40px below
-    # the attacker and linearly raise it 72px over thirteen frames.
-    "SpriteCB_SurroundingRing": ("BattleAnimationMotion::RaiseSprite", 14),
+    # the attacker and linearly raise it 72px over thirteen frames. The
+    # callback takes no arguments, so sharing AnimRaiseSprite's five-argument
+    # ABI leaves the ring stationary and alive for the wrong duration.
+    "SpriteCB_SurroundingRing":
+        ("BattleAnimationMotion::SurroundingRingRise", 14),
     # The Pledge orb starts one half target-height below its target anchor,
     # applies arg1, then rises by arg3 until its y2 reaches arg2.
     "AnimFlyUpTarget": ("BattleAnimationMotion::PledgeOrbRise", 48),
@@ -2189,7 +2201,7 @@ def sprite_motion(template: str, callback: str, tag: str) -> tuple[str, int]:
         "AnimStealthRock": ("BattleAnimationMotion::StealthRockArc", 64),
         "AnimSuckerPunch": ("BattleAnimationMotion::TargetSinWave", 31),
         "AnimMoveWorrySeed": ("BattleAnimationMotion::WorrySeedArc", 31),
-        "AnimLavaPlumeOrbitScatter": ("BattleAnimationMotion::LavaPlumeDrift", 20),
+        "AnimLavaPlumeOrbitScatter": ("BattleAnimationMotion::LavaPlumeDrift", 32),
         "AnimPluck": ("BattleAnimationMotion::PluckParticleJump", 32),
         "AnimMoveTrumpCardParticle": ("BattleAnimationMotion::TrumpCardParticleScatter", 32),
         "AnimRockPolishStreak": ("BattleAnimationMotion::RockPolishStreak", 27),

@@ -478,10 +478,13 @@ Java_com_pokegochi_app_NativeFirmware_create(JNIEnv* env, jclass,
           loop();
           publishFrame(*session);
         }
-        // Keep the native firmware task cooperative with Android's compositor
-        // on phones that have only a few big cores. The firmware's own delays
-        // and timing remain unchanged; this only gives the UI a scheduling turn.
-        std::this_thread::yield();
+        // Give transport JNI calls a real scheduling window. `yield()` is only
+        // a hint and Android repeatedly let this worker reacquire runtimeMutex
+        // first; after a faint the Wi-Fi thread then could not drain the
+        // thirteen-packet canonical snapshot before retries filled the queue.
+        // Authored animation timing lives inside loop(), so this 1 ms pause is
+        // outside the frame clock and does not slow move playback.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     });
   } catch (...) {
@@ -734,6 +737,70 @@ Java_com_pokegochi_app_NativeFirmware_multiplayerState(JNIEnv*, jclass, jlong ha
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerTransportKind(JNIEnv*, jclass,
+                                                                jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return 0;
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  return static_cast<jint>(pokegochi_android_multiplayer_transport_kind());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerOnlineHost(JNIEnv* env, jclass,
+                                                             jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return env->NewStringUTF("");
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  return env->NewStringUTF(pokegochi_android_multiplayer_online_host());
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerOnlinePort(JNIEnv*, jclass,
+                                                             jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return 0;
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  return static_cast<jint>(pokegochi_android_multiplayer_online_port());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerOnlineCode(JNIEnv* env, jclass,
+                                                             jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return env->NewStringUTF("");
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  return env->NewStringUTF(pokegochi_android_multiplayer_online_code());
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerOnlineBalancedWins(
+    JNIEnv*, jclass, jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return 0;
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  return static_cast<jint>(
+      pokegochi_android_multiplayer_online_balanced_wins());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerStartWifiPlayerSearch(
+    JNIEnv*, jclass, jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return;
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  pokegochi_android_multiplayer_start_wifi_player_search();
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pokegochi_app_NativeFirmware_multiplayerCompleteWifiPlayerSearch(
+    JNIEnv*, jclass, jlong handle) {
+  auto* session = reinterpret_cast<FirmwareSession*>(handle);
+  if (!session) return;
+  std::lock_guard<std::mutex> lock(session->runtimeMutex);
+  pokegochi_android_multiplayer_complete_wifi_player_search();
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_com_pokegochi_app_NativeFirmware_multiplayerPeerId(JNIEnv*, jclass, jlong handle) {
   auto* session = reinterpret_cast<FirmwareSession*>(handle);
   if (!session) return 0;
@@ -783,7 +850,8 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_pokegochi_app_NativeFirmware_multiplayerDiscovered(JNIEnv* env, jclass,
                                                              jlong handle, jint playerId,
                                                              jint rssi, jstring address,
-                                                             jint addressType) {
+                                                             jint addressType,
+                                                             jint balancedWins) {
   auto* session = reinterpret_cast<FirmwareSession*>(handle);
   if (!session || !address) return;
   const char* addressBytes = env->GetStringUTFChars(address, nullptr);
@@ -791,7 +859,7 @@ Java_com_pokegochi_app_NativeFirmware_multiplayerDiscovered(JNIEnv* env, jclass,
   std::lock_guard<std::mutex> lock(session->runtimeMutex);
   pokegochi_android_multiplayer_discovered(
       static_cast<uint32_t>(playerId), static_cast<int8_t>(rssi), addressBytes,
-      static_cast<uint8_t>(addressType));
+      static_cast<uint8_t>(addressType), static_cast<uint32_t>(balancedWins));
   env->ReleaseStringUTFChars(address, addressBytes);
 }
 

@@ -2,15 +2,15 @@ package com.pokegochi.app;
 
 import java.util.Arrays;
 
-/** No-dependency golden-vector test for the v7 packet ABI. */
+/** No-dependency golden-vector test for the v10 BLE and online packet ABI. */
 public final class ProtocolSelfTest {
     public static void main(String[] args) {
         byte[] advertisement = MultiplayerProtocol.advertisement(0x01020304);
-        assertHex(advertisement, "504743480704030201");
+        assertHex(advertisement, "504743480a04030201");
         MultiplayerProtocol.Advertisement parsedAdvertisement = MultiplayerProtocol.parseAdvertisement(advertisement);
         check(parsedAdvertisement != null && parsedAdvertisement.playerId == 0x01020304, "advertisement round trip");
         byte[] androidPayload = MultiplayerProtocol.androidManufacturerPayload(0x01020304);
-        assertHex(androidPayload, "43480704030201");
+        assertHex(androidPayload, "43480a04030201");
         parsedAdvertisement = MultiplayerProtocol.parseManufacturerAdvertisement(
                 MultiplayerProtocol.MANUFACTURER_ID, androidPayload);
         check(parsedAdvertisement != null && parsedAdvertisement.playerId == 0x01020304,
@@ -23,7 +23,7 @@ public final class ProtocolSelfTest {
                 "unrelated manufacturer rejection");
 
         byte[] packet = MultiplayerProtocol.packet(5, 0x01020304, 0xAABBCCDD, new byte[] {1, 2, 3});
-        assertHex(packet, "5047070504030201ddccbbaa0300010203");
+        assertHex(packet, "50470a0504030201ddccbbaa0300010203");
         MultiplayerProtocol.Packet parsedPacket = MultiplayerProtocol.parsePacket(packet, 99);
         check(parsedPacket != null && parsedPacket.type == 5 && parsedPacket.sourceId == 0x01020304,
                 "packet header round trip");
@@ -33,6 +33,17 @@ public final class ProtocolSelfTest {
         check(MultiplayerProtocol.parsePacket(packet, 0x01020304) == null, "self packet rejection");
         byte[] wrongVersion = packet.clone(); wrongVersion[2] = 5;
         check(MultiplayerProtocol.parsePacket(wrongVersion, 99) == null, "version rejection");
+        byte[] helloPayload = OnlineMultiplayerProtocol.helloPayload("123456", 27);
+        byte[] hello = OnlineMultiplayerProtocol.frame(OnlineMultiplayerProtocol.HELLO,
+                0x01020304, 0, 0, helloPayload);
+        assertHex(hello, "50474f4e02010c000403020100000000000000000a00000040e201001b000000");
+        OnlineMultiplayerProtocol.Header online = OnlineMultiplayerProtocol.parseHeader(
+                Arrays.copyOf(hello, OnlineMultiplayerProtocol.HEADER_BYTES));
+        check(online != null && online.type == OnlineMultiplayerProtocol.HELLO &&
+                online.payloadLength == 12 && online.sourceId == 0x01020304,
+                "online envelope round trip");
+        check(OnlineMultiplayerProtocol.peerBalancedWins(
+                new byte[] {27, 0, 0, 0}) == 27, "peer wins round trip");
         check(BleTransportPolicy.isIdleProtocolState(BleTransportPolicy.STATE_ADVERTISING),
                 "advertising is idle");
         check(BleTransportPolicy.isIdleProtocolState(BleTransportPolicy.STATE_SCANNING),
@@ -75,7 +86,7 @@ public final class ProtocolSelfTest {
                         BleTransportPolicy.STATE_CONNECTED,
                         BleTransportPolicy.MAX_HANDSHAKE_REPLAYS),
                 "handshake replay is bounded");
-        System.out.println("MultiplayerProtocol v7 discovery and packet vectors: OK");
+        System.out.println("MultiplayerProtocol v10 BLE/online vectors: OK");
     }
 
     private static void assertHex(byte[] actual, String expected) {

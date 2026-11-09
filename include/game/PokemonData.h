@@ -168,6 +168,11 @@ const EvolutionData* evolutionFor(uint16_t speciesId);
 uint8_t evolutionChoices(uint16_t speciesId, uint8_t level, uint16_t attack, uint16_t defense,
                          uint8_t unlockedGeneration, uint16_t output[], uint8_t maximum);
 uint16_t chooseEncounterSpecies(uint8_t teamLevel, uint8_t unlockedGeneration, uint32_t roll);
+// Selects uniformly from the Legendary/Mythical members of the standard
+// Wild table whose generation is already unlocked. Returns zero if none are
+// available (the regional Gen-IV+ encounter systems own their own pools).
+uint16_t chooseLegendaryEncounterSpecies(uint8_t unlockedGeneration,
+                                         uint32_t roll);
 uint8_t minimumEncounterLevel(uint16_t speciesId);
 uint8_t encounterWeight(uint16_t speciesId);
 const AbilityData* findAbility(uint8_t id);

@@ -138,6 +138,61 @@ int main(){
     assert(program&&program->moveId==animation&&program->commandCount>0U);
   }
 
+  // A peer Z selection must survive the multiplayer command and execute on
+  // the opponent path. Mimikyu + Play Rough uses Let's Snuggle Forever (876),
+  // while another Fairy user keeps the generic Twinkle Tackle program (865).
+  for(bool mimikyu:{false,true}){
+    Fixture fixture(static_cast<MoveId>(583U),true);
+    OwnedPokemon& user=fixture.battle.opponents[0];
+    user.speciesId=mimikyu?778U:151U;
+    user.heldItem=HeldItem::FairiumZ;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        fixture.battle,fixture.collection,0U,0U,true);
+    assert(result.accepted&&fixture.battle.opponentZMoveUsed);
+    bool announced=false;
+    for(uint8_t i=0;i<result.eventCount;++i){
+      const BattleEvent& event=result.events[i];
+      if(event.type!=BattleEventType::MoveEffect||
+         event.value!=static_cast<uint16_t>(BattleMoveEffect::ZMoveUsed)||
+         event.side!=BattleSide::Opponent||
+         event.move!=static_cast<MoveId>(583U))continue;
+      const uint16_t animation=BattleEngine::zMovePresentationAnimationMoveId(
+          event.after,event.move);
+      assert(animation==(mimikyu?876U:865U));
+      assert(findBattleAnimation(animation));
+      assert(findBattleAnimationProgram(animation));
+      announced=true;
+    }
+    assert(announced);
+  }
+
+  // The local player follows the same PvP presentation route. This is the
+  // exact reported case: Play Rough from Mimikyu must retain move mechanics
+  // 583 while selecting Let's Snuggle Forever's authored program 876.
+  {
+    Fixture fixture(static_cast<MoveId>(583U),false);
+    OwnedPokemon* user=CollectionLogic::find(
+        fixture.collection,fixture.battle.playerUid);assert(user);
+    user->speciesId=778U;
+    user->heldItem=HeldItem::FairiumZ;
+    assert(BattleEngine::armPlayerZMove(
+        fixture.battle,fixture.collection,static_cast<MoveId>(583U)));
+    const BattleActionResult result=fixture.use();
+    assert(result.accepted&&fixture.battle.playerZMoveUsed);
+    bool announced=false;
+    for(uint8_t i=0;i<result.eventCount;++i){
+      const BattleEvent& event=result.events[i];
+      if(event.type!=BattleEventType::MoveEffect||
+         event.value!=static_cast<uint16_t>(BattleMoveEffect::ZMoveUsed)||
+         event.side!=BattleSide::Player||
+         event.move!=static_cast<MoveId>(583U))continue;
+      assert(BattleEngine::zMovePresentationAnimationMoveId(
+          event.after,event.move)==876U);
+      announced=true;
+    }
+    assert(announced);
+  }
+
   // Exact reported regression: Psycho Cut + Psychium Z must become
   // Shattered Psyche in presentation while mechanics retain move 427.
   {

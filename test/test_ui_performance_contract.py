@@ -265,15 +265,6 @@ def main() -> None:
     assert "battleVisualLayers = battleVisualLayerStorage" in MAIN
     assert "std::memset(battleVisualLayerStorage" in MAIN
 
-    # Kids Paint clears its packed canvas every time the screen opens. Keep the
-    # zero-filled surface out of firmware.bin so production remains OTA-safe.
-    assert "RTC_NOINIT_ATTR alignas(4) uint8_t kidsPaintPixelsStorage" in MAIN
-    paint_open = MAIN.index("bool beginKidsPaintCanvas()")
-    paint_close = MAIN.index("void endKidsPaintCanvas()", paint_open)
-    assert "kidsPaintPixels = kidsPaintPixelsStorage;" in MAIN[paint_open:paint_close]
-    assert "std::memset(kidsPaintPixels, 0, kKidsCanvasBytes);" in MAIN[
-        paint_open:paint_close
-    ]
     esp_layers_start = MAIN.index(
         "#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)\n"
         "// setup() clears this table before first use, so storing thousands of zero\n"

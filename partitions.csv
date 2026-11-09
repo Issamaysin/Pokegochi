@@ -4,9 +4,10 @@
 # migration; only the unused tail is reclaimed.
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xE000,   0x2000,
-# Gen I--V data requires the largest symmetric OTA pair that fits in 4 MiB.
-# The 192 KiB SPIFFS tail still holds both redundant ~49 KiB save records;
-# commits discard only the older target after validating the other copy.
-app0,     app,  ota_0,   0x10000,  0x1E0000,
-app1,     app,  ota_1,   0x1F0000, 0x1E0000,
+# Wi-Fi + BLE no longer fits two complete application copies in 4 MiB.  A
+# small immutable factory recovery image performs signed updates staged on the
+# microSD, while the game gets one large OTA partition.  SPIFFS deliberately
+# stays at its deployed address so USB migration never moves or erases saves.
+rescue,   app,  factory, 0x10000,  0xB0000,
+app,      app,  ota_0,   0xC0000,  0x310000,
 spiffs,   data, spiffs,  0x3D0000, 0x30000,

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from bleak import BleakClient, BleakScanner
 
 
-PROTOCOL_VERSION = 7
+PROTOCOL_VERSION = 10
 PACKET_MAGIC = 0x4750
 MANUFACTURER_ID = 0x4750
 LEGACY_MANUFACTURER_ID = 0xFFFF

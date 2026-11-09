@@ -153,6 +153,24 @@ uint16_t chooseEncounterSpecies(uint8_t teamLevel, uint8_t unlockedGeneration, u
   return 19;
 }
 
+uint16_t chooseLegendaryEncounterSpecies(uint8_t unlockedGeneration,
+                                         uint32_t roll) {
+  uint16_t count = 0U;
+  for (const auto& entry : kEncounterSpecies)
+    if (entry.generation <= unlockedGeneration &&
+        isLegendaryEncounterSpecies(entry.speciesId))
+      ++count;
+  if (!count) return 0U;
+  uint16_t selected = static_cast<uint16_t>(roll % count);
+  for (const auto& entry : kEncounterSpecies) {
+    if (entry.generation > unlockedGeneration ||
+        !isLegendaryEncounterSpecies(entry.speciesId))
+      continue;
+    if (!selected--) return entry.speciesId;
+  }
+  return 0U;
+}
+
 uint8_t minimumEncounterLevel(uint16_t speciesId) {
   for (const auto& entry : kEncounterSpecies)
     if (entry.speciesId == speciesId)

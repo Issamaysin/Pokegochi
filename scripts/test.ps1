@@ -13,6 +13,8 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_move_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $PSScriptRoot 'generate_server_battle_bot.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_move_category_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_pokedex_data.py')
@@ -22,6 +24,10 @@ try {
     & $python (Join-Path $PSScriptRoot 'generate_battle_tower_data.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $PSScriptRoot 'generate_battle_animation_data.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_geomancy_animation_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_lava_plume_animation_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_gen5_animation_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -36,6 +42,10 @@ try {
     & $python (Join-Path $projectRoot 'test\test_alola_asset_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_alolan_identity_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_ash_bond_presentation_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_rayquaza_presentation_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_android_legendary_box_fixture_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -57,19 +67,27 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_wireless_update_package.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_android_updater_current_format_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_usb_flash_layout.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_asset_renderer_archive_paths.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_renderer_capacity_recovery_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_wifi_trade_box_sprite_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_ble_trade_bag_regression.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_ui_performance_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_kids_games_removed_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_release_identity_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_theme_selector_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_language_selector_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_league_complete_render_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -91,7 +109,19 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_evolution_progression_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_first_master_ball_surprise_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_ble_transport_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_wifi_multiplayer_setup_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_multiplayer_invite_authority_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_pvp_faint_online_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_pvp_turn_deadline_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_pvp_prompt_transition_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude test/native/test_wireless_update_protocol.cpp -o "$out/wireless_update_protocol.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -100,6 +130,26 @@ try {
     & $zig c++ -std=c++17 -w -Iinclude test/native/test_multiplayer_protocol.cpp -o "$out/multiplayer_protocol.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/multiplayer_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude test/native/test_online_multiplayer_protocol.cpp -o "$out/online_multiplayer_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/online_multiplayer_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude -Iserver/PokegochiOnlineServer/include server/PokegochiOnlineServer/src/ServerBattleBot.cpp test/native/test_server_battle_bot.cpp -o "$out/server_battle_bot.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/server_battle_bot.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude -Iserver/PokegochiOnlineServer/include src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/AlolaForms.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleAnimationData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/PokedexRewards.cpp server/PokegochiOnlineServer/src/ServerBattleBot.cpp test/native/test_server_bot_full_battles.cpp -o "$out/server_bot_full_battles.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/server_bot_full_battles.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude test/native/test_recovery_update_protocol.cpp -o "$out/recovery_update_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/recovery_update_protocol.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/game/Localization.cpp test/native/test_localization.cpp -o "$out/localization.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/localization.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/AlolaForms.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleAnimationData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/game/PokedexRewards.cpp src/game/GymSystem.cpp src/game/LeagueSystem.cpp src/game/MegaChallengeSystem.cpp src/game/BattleTowerSystem.cpp src/game/BossSystem.cpp src/game/Economy.cpp src/game/EggSystem.cpp src/services/Multiplayer.cpp test/native/test_multiplayer_session.cpp -o "$out/multiplayer_session.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -168,14 +218,6 @@ try {
     & $zig c++ -std=c++17 -w -Itest/native/stubs -Iinclude src/game/HomeBackgrounds.cpp test/native/test_home_backgrounds.cpp -o "$out/home_backgrounds.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/home_backgrounds.exe"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $zig c++ -std=c++17 -w -Iinclude src/game/KidsMemoryGame.cpp test/native/test_kids_memory_game.cpp -o "$out/kids_memory_game.exe"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & "$out/kids_memory_game.exe"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $zig c++ -std=c++17 -w -Iinclude src/game/TowerDefenseSystem.cpp test/native/test_tower_defense.cpp -o "$out/tower_defense.exe"
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & "$out/tower_defense.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude src/game/WildChainSystem.cpp test/native/test_wild_chain.cpp -o "$out/wild_chain.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

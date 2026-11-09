@@ -70,9 +70,9 @@ BATTLER_PRELOAD_END = RENDERER.index(
     "bool preloadBattleAnimationSpriteFrames", BATTLER_PRELOAD_START)
 BATTLER_PRELOAD = RENDERER[BATTLER_PRELOAD_START:BATTLER_PRELOAD_END]
 assert "OwnedPokemon visual = *player;" in BATTLER_PRELOAD
-assert "visual.form = presentedBattleForm(player, true);" in BATTLER_PRELOAD
+assert "applyPresentedBattleAppearance(visual, true);" in BATTLER_PRELOAD
 assert "OwnedPokemon visual = *opponent;" in BATTLER_PRELOAD
-assert "visual.form = presentedBattleForm(opponent, false);" in BATTLER_PRELOAD
+assert "applyPresentedBattleAppearance(visual, false);" in BATTLER_PRELOAD
 PRELOAD_START = RENDERER.index("bool preloadMoveAnimation(")
 PRELOAD_END = RENDERER.index(
     "bool preloadMoveAnimationWithCapacityRetry", PRELOAD_START)

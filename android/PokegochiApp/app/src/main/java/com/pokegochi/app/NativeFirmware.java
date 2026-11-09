@@ -118,6 +118,54 @@ final class NativeFirmware implements AutoCloseable {
         }
     }
 
+    int multiplayerTransportKind() {
+        lifecycleLock.readLock().lock();
+        try { return handle == 0 ? 0 : multiplayerTransportKind(handle); }
+        finally { lifecycleLock.readLock().unlock(); }
+    }
+
+    String multiplayerOnlineHost() {
+        lifecycleLock.readLock().lock();
+        try { return handle == 0 ? "" : multiplayerOnlineHost(handle); }
+        finally { lifecycleLock.readLock().unlock(); }
+    }
+
+    int multiplayerOnlinePort() {
+        lifecycleLock.readLock().lock();
+        try { return handle == 0 ? 0 : multiplayerOnlinePort(handle); }
+        finally { lifecycleLock.readLock().unlock(); }
+    }
+
+    String multiplayerOnlineCode() {
+        lifecycleLock.readLock().lock();
+        try { return handle == 0 ? "" : multiplayerOnlineCode(handle); }
+        finally { lifecycleLock.readLock().unlock(); }
+    }
+
+    int multiplayerOnlineBalancedWins() {
+        lifecycleLock.readLock().lock();
+        try { return handle == 0 ? 0 : multiplayerOnlineBalancedWins(handle); }
+        finally { lifecycleLock.readLock().unlock(); }
+    }
+
+    void multiplayerStartWifiPlayerSearch() {
+        lifecycleLock.readLock().lock();
+        try {
+            if (handle != 0) multiplayerStartWifiPlayerSearch(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
+    void multiplayerCompleteWifiPlayerSearch() {
+        lifecycleLock.readLock().lock();
+        try {
+            if (handle != 0) multiplayerCompleteWifiPlayerSearch(handle);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
     int multiplayerPeerId() {
         lifecycleLock.readLock().lock();
         try {
@@ -154,11 +202,13 @@ final class NativeFirmware implements AutoCloseable {
         }
     }
 
-    void multiplayerDiscovered(int playerId, int rssi, String address, int addressType) {
+    void multiplayerDiscovered(int playerId, int rssi, String address, int addressType,
+                               int balancedWins) {
         lifecycleLock.readLock().lock();
         try {
             if (handle != 0 && address != null)
-                multiplayerDiscovered(handle, playerId, rssi, address, addressType);
+                multiplayerDiscovered(handle, playerId, rssi, address, addressType,
+                        balancedWins);
         } finally {
             lifecycleLock.readLock().unlock();
         }
@@ -208,12 +258,20 @@ final class NativeFirmware implements AutoCloseable {
     private static native int multiplayerPlayerId(long handle);
     private static native boolean multiplayerEnabled(long handle);
     private static native int multiplayerState(long handle);
+    private static native int multiplayerTransportKind(long handle);
+    private static native String multiplayerOnlineHost(long handle);
+    private static native int multiplayerOnlinePort(long handle);
+    private static native String multiplayerOnlineCode(long handle);
+    private static native int multiplayerOnlineBalancedWins(long handle);
+    private static native void multiplayerStartWifiPlayerSearch(long handle);
+    private static native void multiplayerCompleteWifiPlayerSearch(long handle);
     private static native int multiplayerPeerId(long handle);
     private static native boolean multiplayerConnected(long handle);
     private static native byte[] multiplayerTakeOutgoing(long handle);
     private static native void multiplayerReceive(long handle, byte[] packet);
     private static native void multiplayerDiscovered(long handle, int playerId, int rssi,
-                                                     String address, int addressType);
+                                                     String address, int addressType,
+                                                     int balancedWins);
     private static native void multiplayerTransportConnected(long handle, boolean outbound);
     private static native void multiplayerDisconnected(long handle);
 }

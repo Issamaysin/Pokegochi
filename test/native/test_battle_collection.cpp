@@ -12,6 +12,7 @@
 #include "game/EggSystem.h"
 #include "game/TrainerData.h"
 #include "game/MegaEvolution.h"
+#include "game/AlolaForms.h"
 #include "game/WorldFeatures.h"
 #include "game/HomeWeather.h"
 #include "game/BatteryProtection.h"
@@ -580,6 +581,45 @@ int main() {
   // all six fixed explosions are short authored impacts and must survive the
   // faster physical-panel scheduler.
   assert(roarOfTimeShortImpacts==6U);
+  // MAGMA STORM is imported from the expansion's authored Gen-IV program,
+  // including its unique background and the five Fire Spin subroutine calls.
+  // Keep the exact cinematic tasks under test so it cannot silently regress
+  // to a generic Fire animation or a placeholder while still having a valid
+  // move-data row.
+  const BattleAnimationProgram* magmaStormProgram=
+      findBattleAnimationProgram(463U);
+  assert(magmaStormProgram&&magmaStormProgram->commandCount==29U);
+  bool magmaStormVortex=false;
+  bool magmaStormBlendCycle=false;
+  bool magmaStormBackground=false;
+  bool magmaStormBackgroundEnd=false;
+  bool magmaStormShake=false;
+  uint8_t magmaStormFadeCount=0U;
+  visitDefaultAnimationPath(463U,[&](const BattleAnimationCommand& command){
+    const auto opcode=static_cast<BattleAnimationOpcode>(command.opcode());
+    if(opcode==BattleAnimationOpcode::SpawnSprite){
+      const BattleAnimationSpriteResource* sprite=
+          battleAnimationSpriteResource(command.resourceId());
+      assert(sprite);
+      magmaStormVortex|=sprite->motion==BattleAnimationMotion::Vortex;
+    }else if(opcode==BattleAnimationOpcode::VisualTask){
+      const BattleAnimationTaskResource* task=
+          battleAnimationTaskResource(command.resourceId());
+      assert(task);
+      magmaStormBlendCycle|=task->motion==
+          BattleAnimationTaskMotion::BlendColorCycleExact;
+      magmaStormBackground|=task->motion==
+          BattleAnimationTaskMotion::SeismicTossBackground;
+      magmaStormBackgroundEnd|=task->motion==
+          BattleAnimationTaskMotion::SeismicTossBackgroundEnd;
+      magmaStormShake|=task->motion==
+          BattleAnimationTaskMotion::ShakeMonExact;
+    }else if(opcode==BattleAnimationOpcode::FadeToBackground||
+             opcode==BattleAnimationOpcode::FadeRestoreBackground)
+      ++magmaStormFadeCount;
+  });
+  assert(magmaStormVortex&&magmaStormBlendCycle&&magmaStormBackground&&
+         magmaStormBackgroundEnd&&magmaStormShake&&magmaStormFadeCount==2U);
   // FLATTER is the regression reported from a Sinnoh Toxicroak.  Its exact
   // program owns the spotlight/palette window and the confetti subroutine;
   // keep both the object-window mask and the ballistic confetti in the
@@ -1051,7 +1091,8 @@ int main() {
   assert(CollectionLogic::count(eggBox)==1&&!egg.active);
   assert(eggBox.box[0].level==24);
   EggInventory storedEggs{};PokedexState storedEggDex{};
-  assert(EggSystem::storeBattleTowerSpecial(storedEggs,storedEggDex,3U,0xE661U));
+  assert(EggSystem::storeBattleTowerSpecial(
+      storedEggs,EggState{},storedEggDex,3U,0xE661U));
   assert(storedEggs.count==1U&&storedEggs.slots[0].speciesId&&
          storedEggs.slots[0].rarity==EggRarity::Special);
   EggState occupiedIncubator{};occupiedIncubator.active=true;
@@ -2409,6 +2450,278 @@ int main() {
   assert(enemyRecharge.accepted&&enemyRechargeMessage&&
          !beamBattle.opponentVolatiles[1].recharging);
 
+  // Ash's Bond is an alternative to the Mega Stone: normal Greninja enters
+  // the battle, transforms only after earning a KO, receives the complete
+  // three-hit/20-power Water Shuriken override, and keeps the form for five
+  // minutes spent outside battle after a living battle exit.
+  PokemonCollection bondCollection;CollectionLogic::initialize(bondCollection);
+  uint32_t bondGreninjaUid=0U;
+  assert(CollectionLogic::add(bondCollection,CollectionLogic::createPokemon(
+      0U,658U,75U,false,0xA55B0D01U,7U),&bondGreninjaUid));
+  assert(CollectionLogic::setPartySlot(bondCollection,0U,bondGreninjaUid));
+  OwnedPokemon* bondGreninja=CollectionLogic::find(bondCollection,bondGreninjaUid);
+  assert(bondGreninja);
+  bondGreninja->heldItem=HeldItem::AshsBond;
+  bondGreninja->moves[0]=static_cast<MoveId>(594U);
+  bondGreninja->movePp[0]=findFullMove(bondGreninja->moves[0])->pp;
+  BattleState bondBattle;bondBattle.active=true;bondBattle.kind=BattleKind::Trainer;
+  bondBattle.outcome=BattleOutcome::Ongoing;bondBattle.unlockedGeneration=7U;
+  bondBattle.playerUid=bondGreninjaUid;bondBattle.opponentCount=2U;
+  bondBattle.rngState=0xA55B0D02U;
+  bondBattle.opponents[0]=CollectionLogic::createPokemon(
+      0U,19U,5U,false,0xA55B0D03U,7U);
+  bondBattle.opponents[1]=CollectionLogic::createPokemon(
+      0U,16U,5U,false,0xA55B0D04U,7U);
+  for(OwnedPokemon& opponent:bondBattle.opponents){
+    for(uint8_t slot=0U;slot<kMoveSlots;++slot){
+      opponent.moves[slot]=MoveId::None;opponent.movePp[slot]=0U;
+    }
+  }
+  bondBattle.opponents[0].currentHp=1U;
+  bondBattle.opponents[1].currentHp=1U;
+  assert(BattleEngine::ensureOpponentUids(bondBattle));
+  const BattleActionResult bondKo=BattleEngine::fight(
+      bondBattle,bondCollection,0U);
+  bool sawBondActivation=false,sawAshForm=false;
+  int16_t bondMoveEvent=-1,bondFaintEvent=-1,bondActivationEvent=-1,
+          bondFormEvent=-1,bondSwitchEvent=-1;
+  for(uint8_t eventIndex=0U;eventIndex<bondKo.eventCount;++eventIndex){
+    const BattleEvent& event=bondKo.events[eventIndex];
+    if(bondMoveEvent<0&&event.type==BattleEventType::MoveUsed&&
+       event.side==BattleSide::Player)bondMoveEvent=eventIndex;
+    if(bondFaintEvent<0&&event.type==BattleEventType::Fainted&&
+       event.side==BattleSide::Opponent)bondFaintEvent=eventIndex;
+    if(bondSwitchEvent<0&&event.type==BattleEventType::SwitchedIn&&
+       event.side==BattleSide::Opponent)bondSwitchEvent=eventIndex;
+    sawBondActivation|=event.type==BattleEventType::HeldItemActivated&&
+        event.value==static_cast<uint16_t>(HeldItem::AshsBond);
+    if(event.type==BattleEventType::HeldItemActivated&&
+       event.value==static_cast<uint16_t>(HeldItem::AshsBond))
+      bondActivationEvent=eventIndex;
+    sawAshForm|=event.type==BattleEventType::MoveEffect&&
+        event.value==static_cast<uint16_t>(BattleMoveEffect::FormChanged)&&
+        event.before==0U&&event.after==1U;
+    if(event.type==BattleEventType::MoveEffect&&
+       event.value==static_cast<uint16_t>(BattleMoveEffect::FormChanged)&&
+       event.before==0U&&event.after==1U)bondFormEvent=eventIndex;
+  }
+  const AbilityData* ashBondAbility=findAbility(bondGreninja->abilityId);
+  assert(bondKo.accepted&&bondBattle.active&&bondGreninja->form==1U&&
+         ashBondAbility&&std::strcmp(ashBondAbility->name,"BATTLE BOND")==0&&
+         sawBondActivation&&sawAshForm&&
+         bondKo.heldItemActivationCount==1U&&
+         bondKo.heldItemsActivated[0]==HeldItem::AshsBond);
+  assert(bondMoveEvent>=0&&bondFaintEvent>bondMoveEvent&&
+         bondActivationEvent>bondFaintEvent&&bondFormEvent>bondActivationEvent&&
+         bondSwitchEvent>bondFormEvent);
+
+  // A persisted battle checkpoint carries the already-presented Ash form;
+  // resuming it must neither retrigger the item nor lose the form before the
+  // next opponent's Water Shuriken is resolved.
+  PokemonCollection resumedBondCollection=bondCollection;
+  BattleState resumedBondBattle=bondBattle;
+  OwnedPokemon* resumedBondGreninja=CollectionLogic::find(
+      resumedBondCollection,bondGreninjaUid);
+  assert(resumedBondGreninja&&resumedBondGreninja->form==1U&&
+         resumedBondGreninja->heldItem==HeldItem::AshsBond);
+  const BattleActionResult bondVictory=BattleEngine::fight(
+      resumedBondBattle,resumedBondCollection,0U);
+  bool sawTwentyPowerShuriken=false;
+  for(uint8_t eventIndex=0U;eventIndex<bondVictory.eventCount;++eventIndex){
+    const BattleEvent& event=bondVictory.events[eventIndex];
+    sawTwentyPowerShuriken|=event.type==BattleEventType::MoveUsed&&
+        event.move==static_cast<MoveId>(594U)&&event.after==20U;
+  }
+  assert(bondVictory.accepted&&bondVictory.outcome==BattleOutcome::Victory&&
+         sawTwentyPowerShuriken&&resumedBondGreninja->form==1U&&
+         resumedBondGreninja->heldItem==HeldItem::AshsBond&&
+         std::strcmp(findAbility(resumedBondGreninja->abilityId)->name,
+                     "BATTLE BOND")==0&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==
+             AlolaForms::kAshBondOutsideDurationSeconds);
+
+  // Starting another encounter pauses the outside timer and must not undo
+  // the carried form. This is the transition used by multi-wild chains.
+  BattleState carriedBondBattle{};
+  carriedBondBattle.active=true;carriedBondBattle.kind=BattleKind::Wild;
+  carriedBondBattle.outcome=BattleOutcome::Ongoing;
+  carriedBondBattle.unlockedGeneration=7U;
+  carriedBondBattle.playerUid=bondGreninjaUid;
+  carriedBondBattle.opponentCount=1U;
+  carriedBondBattle.opponents[0]=CollectionLogic::createPokemon(
+      0U,19U,5U,false,0xA55B0D09U,7U);
+  assert(BattleEngine::ensureOpponentUids(carriedBondBattle));
+  BattleEngine::applyEntryAbilities(carriedBondBattle,resumedBondCollection);
+  assert(resumedBondGreninja->form==1U&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==
+             0U);
+
+  // Abandoning a trainer/gym-style battle alive refreshes the full window.
+  carriedBondBattle.kind=BattleKind::Trainer;
+  const BattleActionResult bondEscape=BattleEngine::run(
+      carriedBondBattle,resumedBondCollection);
+  assert(bondEscape.outcome==BattleOutcome::Escaped&&
+         resumedBondGreninja->form==1U&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==
+             AlolaForms::kAshBondOutsideDurationSeconds);
+
+  AlolaForms::advanceAshBondOutsideTime(resumedBondCollection,125U);
+  assert(AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==175U);
+  // A transformed Greninja that did not enter somebody else's battle keeps
+  // the paused remainder instead of receiving a free five-minute refresh.
+  assert(!AlolaForms::finishAshBondBattle(resumedBondCollection)&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==175U);
+
+  BattleState secondCarriedBondBattle{};
+  secondCarriedBondBattle.active=true;
+  secondCarriedBondBattle.kind=BattleKind::Trainer;
+  secondCarriedBondBattle.outcome=BattleOutcome::Ongoing;
+  secondCarriedBondBattle.unlockedGeneration=7U;
+  secondCarriedBondBattle.playerUid=bondGreninjaUid;
+  secondCarriedBondBattle.opponentCount=1U;
+  secondCarriedBondBattle.opponents[0]=CollectionLogic::createPokemon(
+      0U,19U,5U,false,0xA55B0D0AU,7U);
+  assert(BattleEngine::ensureOpponentUids(secondCarriedBondBattle));
+  BattleEngine::applyEntryAbilities(
+      secondCarriedBondBattle,resumedBondCollection);
+  assert(AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==0U);
+  const BattleActionResult secondBondEscape=BattleEngine::run(
+      secondCarriedBondBattle,resumedBondCollection);
+  assert(secondBondEscape.outcome==BattleOutcome::Escaped&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*resumedBondGreninja)==
+             AlolaForms::kAshBondOutsideDurationSeconds);
+
+  PokemonCollection expiredBondCollection=resumedBondCollection;
+  OwnedPokemon* expiredBondGreninja=CollectionLogic::find(
+      expiredBondCollection,bondGreninjaUid);
+  assert(expiredBondGreninja);
+  assert(!AlolaForms::advanceAshBondOutsideTime(expiredBondCollection,299U)&&
+         expiredBondGreninja->form==1U&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*expiredBondGreninja)==1U);
+  assert(AlolaForms::advanceAshBondOutsideTime(expiredBondCollection,1U)&&
+         expiredBondGreninja->form==0U&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*expiredBondGreninja)==0U&&
+         std::strcmp(findAbility(expiredBondGreninja->abilityId)->name,
+                     "BATTLE BOND")!=0);
+
+  PokemonCollection faintedBondCollection=resumedBondCollection;
+  OwnedPokemon* faintedBondGreninja=CollectionLogic::find(
+      faintedBondCollection,bondGreninjaUid);
+  assert(faintedBondGreninja);
+  faintedBondGreninja->currentHp=0U;
+  assert(AlolaForms::finishAshBondBattle(faintedBondCollection)&&
+         faintedBondGreninja->form==0U&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*faintedBondGreninja)==0U);
+
+  PokemonCollection detachedBondCollection=resumedBondCollection;
+  OwnedPokemon* detachedBondGreninja=CollectionLogic::find(
+      detachedBondCollection,bondGreninjaUid);
+  assert(detachedBondGreninja);
+  Inventory detachedInventory{};
+  SpecialHeldItemInventory detachedSpecial{};
+  Gen4UniqueItemInventory detachedGen4{};
+  Gen5UniqueItemInventory detachedGen5{};
+  Gen7UniqueItemInventory detachedGen7{};
+  ModernHeldItemInventory detachedModern{};
+  uint64_t detachedMachines=0U;
+  assert(unequipHeldItem(*detachedBondGreninja,detachedInventory.heldItems,
+      detachedSpecial,detachedGen4,detachedGen5,detachedGen7,
+      detachedModern,detachedMachines));
+  assert(detachedBondGreninja->heldItem==HeldItem::None&&
+         detachedBondGreninja->form==0U&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*detachedBondGreninja)==0U);
+
+  // A one-opponent wild encounter now activates the form on its terminal KO;
+  // the outside timer keeps it real for the result screen and next wild in a
+  // chain instead of producing the old one-frame flash.
+  PokemonCollection wildBondCollection;CollectionLogic::initialize(wildBondCollection);
+  uint32_t wildBondUid=0U;
+  assert(CollectionLogic::add(wildBondCollection,CollectionLogic::createPokemon(
+      0U,658U,75U,false,0xA55B0D11U,7U),&wildBondUid));
+  assert(CollectionLogic::setPartySlot(wildBondCollection,0U,wildBondUid));
+  OwnedPokemon* wildBondGreninja=CollectionLogic::find(wildBondCollection,wildBondUid);
+  assert(wildBondGreninja);
+  wildBondGreninja->heldItem=HeldItem::AshsBond;
+  wildBondGreninja->moves[0]=static_cast<MoveId>(594U);
+  wildBondGreninja->movePp[0]=findFullMove(wildBondGreninja->moves[0])->pp;
+  BattleState wildBondBattle;wildBondBattle.active=true;
+  wildBondBattle.kind=BattleKind::Wild;wildBondBattle.outcome=BattleOutcome::Ongoing;
+  wildBondBattle.unlockedGeneration=7U;wildBondBattle.playerUid=wildBondUid;
+  wildBondBattle.opponentCount=1U;wildBondBattle.rngState=0xA55B0D12U;
+  wildBondBattle.opponents[0]=CollectionLogic::createPokemon(
+      0U,19U,5U,false,0xA55B0D13U,7U);
+  for(uint8_t slot=0U;slot<kMoveSlots;++slot){
+    wildBondBattle.opponents[0].moves[slot]=MoveId::None;
+    wildBondBattle.opponents[0].movePp[slot]=0U;
+  }
+  wildBondBattle.opponents[0].currentHp=1U;
+  assert(BattleEngine::ensureOpponentUids(wildBondBattle));
+  const BattleActionResult wildBondVictory=BattleEngine::fight(
+      wildBondBattle,wildBondCollection,0U);
+  bool wildBondTriggered=false;
+  for(uint8_t eventIndex=0U;eventIndex<wildBondVictory.eventCount;++eventIndex){
+    const BattleEvent& event=wildBondVictory.events[eventIndex];
+    wildBondTriggered|=(event.type==BattleEventType::HeldItemActivated&&
+        event.value==static_cast<uint16_t>(HeldItem::AshsBond))||
+        (event.type==BattleEventType::MoveEffect&&
+         event.value==static_cast<uint16_t>(BattleMoveEffect::FormChanged)&&
+         event.pokemonUid==wildBondUid);
+  }
+  assert(wildBondVictory.outcome==BattleOutcome::Victory&&wildBondTriggered&&
+         wildBondGreninja->form==1U&&
+         wildBondGreninja->heldItem==HeldItem::AshsBond&&
+         AlolaForms::ashBondOutsideSecondsRemaining(*wildBondGreninja)==
+             AlolaForms::kAshBondOutsideDurationSeconds);
+
+  // The online server bot occupies the opponent side of the shared engine.
+  // Its authored Ash's Bond must therefore trigger on an opponent-side KO too,
+  // rather than being a cosmetic held item that can only work for the player.
+  PokemonCollection enemyBondCollection;
+  CollectionLogic::initialize(enemyBondCollection);
+  uint32_t enemyBondVictimUid=0U;
+  assert(CollectionLogic::add(enemyBondCollection,CollectionLogic::createPokemon(
+      0U,19U,5U,false,0xA55B0D21U,7U),&enemyBondVictimUid));
+  assert(CollectionLogic::setPartySlot(
+      enemyBondCollection,0U,enemyBondVictimUid));
+  OwnedPokemon* enemyBondVictim=CollectionLogic::find(
+      enemyBondCollection,enemyBondVictimUid);
+  assert(enemyBondVictim);
+  enemyBondVictim->currentHp=1U;
+  enemyBondVictim->moves[0]=static_cast<MoveId>(150U);  // Splash
+  enemyBondVictim->movePp[0]=findFullMove(enemyBondVictim->moves[0])->pp;
+  BattleState enemyBondBattle{};
+  enemyBondBattle.active=true;enemyBondBattle.kind=BattleKind::Pvp;
+  enemyBondBattle.outcome=BattleOutcome::Ongoing;
+  enemyBondBattle.unlockedGeneration=7U;
+  enemyBondBattle.playerUid=enemyBondVictimUid;
+  enemyBondBattle.opponentCount=1U;enemyBondBattle.rngState=0xA55B0D22U;
+  enemyBondBattle.opponents[0]=CollectionLogic::createPokemon(
+      0U,658U,75U,false,0xA55B0D23U,7U);
+  enemyBondBattle.opponents[0].heldItem=HeldItem::AshsBond;
+  enemyBondBattle.opponents[0].moves[0]=static_cast<MoveId>(594U);
+  enemyBondBattle.opponents[0].movePp[0]=
+      findFullMove(enemyBondBattle.opponents[0].moves[0])->pp;
+  for(uint8_t slot=1U;slot<kMoveSlots;++slot){
+    enemyBondBattle.opponents[0].moves[slot]=MoveId::None;
+    enemyBondBattle.opponents[0].movePp[slot]=0U;
+  }
+  assert(BattleEngine::ensureOpponentUids(enemyBondBattle));
+  const BattleActionResult enemyBondKo=BattleEngine::fightPvp(
+      enemyBondBattle,enemyBondCollection,0U,0U);
+  bool enemyBondTriggered=false;
+  for(uint8_t eventIndex=0U;eventIndex<enemyBondKo.eventCount;++eventIndex){
+    const BattleEvent& event=enemyBondKo.events[eventIndex];
+    enemyBondTriggered|=event.side==BattleSide::Opponent&&
+        ((event.type==BattleEventType::HeldItemActivated&&
+          event.value==static_cast<uint16_t>(HeldItem::AshsBond))||
+         (event.type==BattleEventType::MoveEffect&&
+          event.value==static_cast<uint16_t>(BattleMoveEffect::FormChanged)&&
+          event.pokemonUid==enemyBondBattle.opponents[0].uid));
+  }
+  assert(enemyBondKo.accepted&&enemyBondVictim->currentHp==0U&&
+         enemyBondTriggered&&enemyBondBattle.opponents[0].form==1U&&
+         enemyBondBattle.opponents[0].heldItem==HeldItem::AshsBond);
+
   // Saves produced before opponent presentation IDs existed are repaired in
   // place without changing team order or generating duplicate identities.
   BattleState legacyOpponentIds{};
@@ -2655,11 +2968,18 @@ int main() {
   static_assert(static_cast<uint8_t>(HeldItem::RemovedUltranecroziumZ)==127U);
   static_assert(static_cast<uint8_t>(HeldItem::LifeOrb)==128U);
   static_assert(static_cast<uint8_t>(HeldItem::PsychicSeed)==150U);
-  static_assert(static_cast<uint8_t>(HeldItem::Count)==151U);
+  static_assert(static_cast<uint8_t>(HeldItem::AshsBond)==151U);
+  static_assert(static_cast<uint8_t>(HeldItem::Count)==152U);
   assert(heldItemGeneration(HeldItem::LifeOrb)==4U&&
          heldItemGeneration(HeldItem::Eviolite)==5U&&
          heldItemGeneration(HeldItem::AssaultVest)==6U&&
-         heldItemGeneration(HeldItem::TerrainExtender)==7U);
+         heldItemGeneration(HeldItem::TerrainExtender)==7U&&
+         heldItemGeneration(HeldItem::AshsBond)==7U);
+  assert(gen7UniqueItemIndex(HeldItem::AshsBond)==
+         static_cast<int8_t>(kAshsBondInventoryIndex));
+  assert(heldItemIsTransferLocked(HeldItem::AshsBond));
+  assert(heldItemCanBeEquippedBy(HeldItem::AshsBond,658U));
+  assert(!heldItemCanBeEquippedBy(HeldItem::AshsBond,657U));
 
   // The high bit in modern held-item IDs must not alias the persisted TM
   // encoding. Potion is the explicit discriminator for a real high-ID item.
@@ -4230,6 +4550,83 @@ int main() {
   assert(playerANextSeed && playerANextSeed != playerASeed);
   assert(restoredPlayerANextSeed == playerANextSeed);
   assert(restoredPlayerASeedClock.rngState == playerASeedClock.rngState);
+  // The first Master Ball arms exactly one hidden countdown in [3, 30]. Old
+  // tail padding is never accepted as state, every successful standard Wild
+  // advances it once, and later Master Balls cannot rearm a consumed event.
+  WildEncounterClock masterBallSurprise;
+  assert(!EncounterLogic::reconcileFirstMasterBallSurprise(
+      masterBallSurprise, false));
+  assert(EncounterLogic::reconcileFirstMasterBallSurprise(
+      masterBallSurprise, true));
+  const uint8_t surpriseEncounter =
+      masterBallSurprise.firstMasterBallSurpriseCountdown;
+  assert(surpriseEncounter >= 3U && surpriseEncounter <= 30U);
+  for (uint8_t encounter = 1U; encounter < surpriseEncounter; ++encounter) {
+    assert(!EncounterLogic::firstMasterBallSurpriseDue(masterBallSurprise));
+    assert(EncounterLogic::recordFirstMasterBallWildEncounter(
+        masterBallSurprise, false));
+  }
+  assert(EncounterLogic::firstMasterBallSurpriseDue(masterBallSurprise));
+  assert(!EncounterLogic::recordFirstMasterBallWildEncounter(
+      masterBallSurprise, false));
+  assert(EncounterLogic::recordFirstMasterBallWildEncounter(
+      masterBallSurprise, true));
+  assert(masterBallSurprise.firstMasterBallSurpriseCountdown ==
+      WildEncounterClock::kFirstMasterBallSurpriseCompleted);
+  assert(!EncounterLogic::reconcileFirstMasterBallSurprise(
+      masterBallSurprise, true));
+  for (const uint8_t scheduled : {uint8_t{3U}, uint8_t{30U}}) {
+    WildEncounterClock boundaryCountdown;
+    boundaryCountdown.firstMasterBallSurpriseCountdown = scheduled;
+    for (uint8_t encounter = 1U; encounter <= scheduled; ++encounter) {
+      assert(EncounterLogic::firstMasterBallSurpriseDue(boundaryCountdown) ==
+             (encounter == scheduled));
+      assert(EncounterLogic::recordFirstMasterBallWildEncounter(
+          boundaryCountdown, encounter == scheduled));
+    }
+    assert(boundaryCountdown.firstMasterBallSurpriseCountdown ==
+           WildEncounterClock::kFirstMasterBallSurpriseCompleted);
+  }
+  WildEncounterClock legacyMasterBallPadding;
+  legacyMasterBallPadding.firstMasterBallSurpriseSchema = 0x7AU;
+  legacyMasterBallPadding.firstMasterBallSurpriseCountdown = 211U;
+  assert(EncounterLogic::reconcileFirstMasterBallSurprise(
+      legacyMasterBallPadding, false));
+  assert(legacyMasterBallPadding.firstMasterBallSurpriseCountdown == 0U);
+  assert(EncounterLogic::reconcileFirstMasterBallSurprise(
+      legacyMasterBallPadding, true));
+  assert(legacyMasterBallPadding.firstMasterBallSurpriseCountdown >= 3U &&
+         legacyMasterBallPadding.firstMasterBallSurpriseCountdown <= 30U);
+
+  for (uint8_t generation = 1U; generation <= 3U; ++generation) {
+    for (uint32_t roll = 0U; roll < 32U; ++roll) {
+      const uint16_t legendary =
+          chooseLegendaryEncounterSpecies(generation, roll);
+      assert(legendary != 0U);
+      assert(PokedexLogic::isLegendaryOrMythical(legendary));
+      assert((generation >= 1U && legendary <= 151U) ||
+             (generation >= 2U && legendary >= 243U && legendary <= 251U) ||
+             (generation >= 3U && legendary >= 377U && legendary <= 386U));
+    }
+  }
+  PokemonCollection forcedLegendaryCollection;
+  CollectionLogic::initialize(forcedLegendaryCollection);
+  assert(CollectionLogic::chooseStarter(forcedLegendaryCollection, 1U));
+  OwnedPokemon* forcedLegendaryLead =
+      CollectionLogic::active(forcedLegendaryCollection, 0U);
+  assert(forcedLegendaryLead);
+  forcedLegendaryLead->level = 70U;
+  CollectionLogic::refreshDerivedStats(*forcedLegendaryLead, true);
+  BattleState forcedLegendaryBattle;
+  assert(BattleEngine::startWild(
+      forcedLegendaryBattle, forcedLegendaryCollection,
+      forcedLegendaryLead->uid, 0x13572468U, 3U, false, 0xFFU, true));
+  const OwnedPokemon* forcedLegendaryOpponent =
+      BattleEngine::currentOpponent(forcedLegendaryBattle);
+  assert(forcedLegendaryOpponent);
+  assert(PokedexLogic::isLegendaryOrMythical(
+      forcedLegendaryOpponent->speciesId));
+  assert(forcedLegendaryOpponent->level == forcedLegendaryLead->level);
   // Center recovery runs whenever the stock is below five, not only after it
   // reaches zero. Two complete periods must refill a 3/5 stock to 5/5.
   wildClock.available = 3;
@@ -4775,6 +5172,185 @@ int main() {
   const BattleActionResult pvpForfeit = BattleEngine::forfeitPvp(pvpBattle, pvpCollection, false);
   assert(pvpForfeit.accepted && !pvpBattle.active && pvpForfeit.outcome == BattleOutcome::Victory);
 
+  // Volt Switch/U-turn in PvP is a mid-turn replacement, not a skipped turn.
+  // The local user chooses its recipient and the remote move already locked
+  // for that turn then lands on the incoming Pokemon.
+  const MoveId voltSwitch=static_cast<MoveId>(521U);
+  PokemonCollection localPivotCollection;
+  CollectionLogic::initialize(localPivotCollection);
+  assert(CollectionLogic::chooseStarter(localPivotCollection,1,0x5210U));
+  OwnedPokemon* localPivotUser=CollectionLogic::active(localPivotCollection,0U);
+  const uint32_t localPivotUid=localPivotUser->uid;
+  *localPivotUser=CollectionLogic::createPokemon(
+      localPivotUid,135U,50U,false,0x5211U,7U);
+  localPivotUser->moves[0]=voltSwitch;
+  localPivotUser->movePp[0]=findFullMove(voltSwitch)->pp;
+  uint32_t localPivotReplacementUid=0U;
+  assert(CollectionLogic::add(localPivotCollection,
+      CollectionLogic::createPokemon(0U,1U,50U,false,0x5212U,7U),
+      &localPivotReplacementUid));
+  assert(CollectionLogic::setPartySlot(
+      localPivotCollection,1U,localPivotReplacementUid));
+  BattleState localPivotBattle{};
+  localPivotBattle.active=true;localPivotBattle.kind=BattleKind::Pvp;
+  localPivotBattle.outcome=BattleOutcome::Ongoing;
+  localPivotBattle.playerUid=localPivotUid;
+  localPivotBattle.opponentCount=1U;localPivotBattle.rngState=0x5213U;
+  localPivotBattle.opponents[0]=CollectionLogic::createPokemon(
+      0xF1521001U,7U,50U,false,0x5214U,7U);
+  localPivotBattle.opponents[0].maximumHp=
+      localPivotBattle.opponents[0].currentHp=5000U;
+  localPivotBattle.opponents[0].moves[0]=MoveId::Tackle;
+  localPivotBattle.opponents[0].movePp[0]=findFullMove(MoveId::Tackle)->pp;
+  localPivotBattle.playerVolatile.speedStage=kMaximumBattleStatStage;
+  localPivotBattle.opponentVolatiles[0].speedStage=kMinimumBattleStatStage;
+  const uint8_t remoteTacklePp=localPivotBattle.opponents[0].movePp[0];
+  const BattleActionResult localPivotHit=BattleEngine::fightPvp(
+      localPivotBattle,localPivotCollection,0U,0U);
+  const uint16_t localPivotTurn=localPivotBattle.turn;
+  const uint8_t queuedRemoteMove=localPivotBattle.pendingOpponentMoveSlot;
+  assert(localPivotHit.accepted);
+  assert(localPivotHit.batonPassSwitchRequired);
+  assert((localPivotBattle.pendingPlayerReplacement&0x0FU)==2U);
+  assert(localPivotBattle.playerUid==localPivotUid);
+  assert(!localPivotHit.enemyActed);
+  assert(queuedRemoteMove==0U);
+  assert(localPivotBattle.opponents[0].movePp[0]==remoteTacklePp);
+  OwnedPokemon* localPivotReplacement=CollectionLogic::find(
+      localPivotCollection,localPivotReplacementUid);
+  assert(localPivotReplacement);
+  // A normal switch is still illegal under trapping/Ingrain. A move-driven
+  // pivot ignores those escape-prevention effects, matching
+  // SWITCH_IGNORE_ESCAPE_PREVENTION in pokeemerald-expansion. Also erase the
+  // transient nibble before phase two to model the online snapshot/ACK race:
+  // the latched command reason must be sufficient to complete the switch.
+  localPivotBattle.playerVolatile.trappedTurns=2U;
+  localPivotBattle.playerMoveEffects.ingrained=true;
+  assert(!BattleEngine::switchToPokemonPvp(
+      localPivotBattle,localPivotCollection,localPivotReplacementUid,
+      0xFEU).accepted);
+  localPivotBattle.pendingPlayerReplacement=static_cast<uint8_t>(
+      localPivotBattle.pendingPlayerReplacement&0xF0U);
+  const BattleActionResult localPivotCompleted=
+      BattleEngine::completeBatonPassSwitch(
+          localPivotBattle,localPivotCollection,localPivotReplacementUid,
+          queuedRemoteMove,2U);
+  bool queuedRemoteMoveUsed=false;
+  for(uint8_t eventIndex=0U;eventIndex<localPivotCompleted.eventCount;++eventIndex)
+    queuedRemoteMoveUsed|=
+        localPivotCompleted.events[eventIndex].type==BattleEventType::MoveUsed&&
+        localPivotCompleted.events[eventIndex].side==BattleSide::Opponent&&
+        localPivotCompleted.events[eventIndex].move==MoveId::Tackle;
+  assert(localPivotCompleted.accepted);
+  assert(localPivotBattle.playerUid==localPivotReplacementUid);
+  assert(localPivotBattle.turn==localPivotTurn);
+  assert(localPivotBattle.opponents[0].movePp[0]==remoteTacklePp-1U);
+  assert(queuedRemoteMoveUsed);
+  assert(localPivotBattle.pendingPlayerReplacement==0U);
+  assert(localPivotBattle.pendingOpponentMoveSlot==0xFFU);
+
+  // Mirror the same exchange when the remote peer is the faster Volt Switch
+  // user. The local Tackle remains queued, the remote peer chooses index 1,
+  // and that Tackle then hits the selected replacement in the original turn.
+  PokemonCollection remotePivotCollection;
+  CollectionLogic::initialize(remotePivotCollection);
+  assert(CollectionLogic::chooseStarter(remotePivotCollection,1,0x5220U));
+  OwnedPokemon* remotePivotTarget=CollectionLogic::active(
+      remotePivotCollection,0U);
+  remotePivotTarget->maximumHp=remotePivotTarget->currentHp=5000U;
+  remotePivotTarget->moves[0]=MoveId::Tackle;
+  remotePivotTarget->movePp[0]=findFullMove(MoveId::Tackle)->pp;
+  BattleState remotePivotBattle{};
+  remotePivotBattle.active=true;remotePivotBattle.kind=BattleKind::Pvp;
+  remotePivotBattle.outcome=BattleOutcome::Ongoing;
+  remotePivotBattle.playerUid=remotePivotTarget->uid;
+  remotePivotBattle.opponentCount=2U;remotePivotBattle.rngState=0x5221U;
+  remotePivotBattle.opponents[0]=CollectionLogic::createPokemon(
+      0xF1522001U,135U,50U,false,0x5222U,7U);
+  remotePivotBattle.opponents[0].moves[0]=voltSwitch;
+  remotePivotBattle.opponents[0].movePp[0]=findFullMove(voltSwitch)->pp;
+  remotePivotBattle.opponents[1]=CollectionLogic::createPokemon(
+      0xF1522002U,7U,50U,false,0x5223U,7U);
+  remotePivotBattle.playerVolatile.speedStage=kMinimumBattleStatStage;
+  remotePivotBattle.opponentVolatiles[0].speedStage=kMaximumBattleStatStage;
+  const uint8_t queuedTacklePp=remotePivotTarget->movePp[0];
+  const uint32_t remotePivotOutgoingUid=remotePivotBattle.opponents[0].uid;
+  const uint32_t remotePivotIncomingUid=remotePivotBattle.opponents[1].uid;
+  const BattleActionResult remotePivotHit=BattleEngine::fightPvp(
+      remotePivotBattle,remotePivotCollection,0U,0U);
+  const uint16_t remotePivotTurn=remotePivotBattle.turn;
+  const uint8_t queuedLocalMove=remotePivotBattle.pendingOpponentMoveSlot;
+  assert(remotePivotHit.accepted&&
+         ((remotePivotBattle.pendingPlayerReplacement>>4U)&0x0FU)==2U&&
+         BattleEngine::currentOpponent(remotePivotBattle)->uid==
+             remotePivotOutgoingUid&&
+         queuedLocalMove==0U&&remotePivotTarget->movePp[0]==queuedTacklePp);
+  remotePivotBattle.opponentVolatiles[0].trappedTurns=2U;
+  remotePivotBattle.opponentMoveEffects[0].ingrained=true;
+  assert(!BattleEngine::switchOpponentPvp(
+      remotePivotBattle,remotePivotCollection,1U,false).accepted);
+  const BattleActionResult remotePivotSwitch=BattleEngine::switchOpponentPvp(
+      remotePivotBattle,remotePivotCollection,1U,true);
+  assert(remotePivotSwitch.accepted&&
+         BattleEngine::currentOpponent(remotePivotBattle)->uid==
+             remotePivotIncomingUid);
+  remotePivotBattle.pendingPlayerReplacement=static_cast<uint8_t>(
+      remotePivotBattle.pendingPlayerReplacement&0x0FU);
+  const BattleActionResult remotePivotCompleted=
+      BattleEngine::completeOpponentPivotPvp(
+          remotePivotBattle,remotePivotCollection,queuedLocalMove,2U);
+  bool queuedLocalMoveUsed=false;
+  for(uint8_t eventIndex=0U;eventIndex<remotePivotCompleted.eventCount;++eventIndex)
+    queuedLocalMoveUsed|=
+        remotePivotCompleted.events[eventIndex].type==BattleEventType::MoveUsed&&
+        remotePivotCompleted.events[eventIndex].side==BattleSide::Player&&
+        remotePivotCompleted.events[eventIndex].move==MoveId::Tackle;
+  assert(remotePivotCompleted.accepted&&
+         remotePivotBattle.turn==remotePivotTurn&&
+         remotePivotTarget->movePp[0]==queuedTacklePp-1U&&
+         queuedLocalMoveUsed&&remotePivotBattle.pendingPlayerReplacement==0U&&
+         remotePivotBattle.pendingOpponentMoveSlot==0xFFU);
+
+  // All three move families share the same pivot primitive. Fairy Lock blocks
+  // creation of the transaction; ordinary trapping does not. This catches a
+  // future implementation that fixes Volt Switch by name but leaves U-turn
+  // or Parting Shot on a different path.
+  const auto moveCreatesLocalPivot = [](MoveId pivotMove,bool fairyLocked) {
+    PokemonCollection collection;CollectionLogic::initialize(collection);
+    assert(CollectionLogic::chooseStarter(collection,1U,0x5230U));
+    OwnedPokemon* user=CollectionLogic::active(collection,0U);
+    user->moves[0]=pivotMove;
+    user->movePp[0]=findFullMove(pivotMove)->pp;
+    uint32_t reserveUid=0U;
+    assert(CollectionLogic::add(collection,
+        CollectionLogic::createPokemon(0U,7U,50U,false,0x5231U,7U),
+        &reserveUid));
+    assert(CollectionLogic::setPartySlot(collection,1U,reserveUid));
+    BattleState battle{};battle.active=true;battle.kind=BattleKind::Pvp;
+    battle.outcome=BattleOutcome::Ongoing;battle.playerUid=user->uid;
+    battle.opponentCount=1U;battle.rngState=0x5232U;
+    battle.opponents[0]=CollectionLogic::createPokemon(
+        0xF1523001U,7U,50U,false,0x5233U,7U);
+    battle.opponents[0].maximumHp=battle.opponents[0].currentHp=5000U;
+    battle.opponents[0].moves[0]=MoveId::Tackle;
+    battle.opponents[0].movePp[0]=findFullMove(MoveId::Tackle)->pp;
+    battle.playerVolatile.speedStage=kMaximumBattleStatStage;
+    battle.opponentVolatiles[0].speedStage=kMinimumBattleStatStage;
+    battle.playerVolatile.trappedTurns=2U;
+    battle.playerMoveEffects.ingrained=true;
+    battle.fairyLockTurns=fairyLocked?2U:0U;
+    const BattleActionResult result=BattleEngine::fightPvp(
+        battle,collection,0U,0U);
+    return result.accepted&&
+        (battle.pendingPlayerReplacement&0x0FU)==2U;
+  };
+  assert(moveCreatesLocalPivot(static_cast<MoveId>(369U),false)); // U-turn
+  assert(moveCreatesLocalPivot(static_cast<MoveId>(521U),false)); // Volt Switch
+  assert(moveCreatesLocalPivot(static_cast<MoveId>(575U),false)); // Parting Shot
+  assert(!moveCreatesLocalPivot(static_cast<MoveId>(369U),true));
+  assert(!moveCreatesLocalPivot(static_cast<MoveId>(521U),true));
+  assert(!moveCreatesLocalPivot(static_cast<MoveId>(575U),true));
+
   // SHELL BELL recovery is a visible journal transition, not merely a final
   // HP mutation.  Both local and remote users must announce the item first
   // and then supply the exact rising-bar event for the same battler.
@@ -4897,6 +5473,20 @@ int main() {
   assert(selectedRemote.accepted && pvpFaintBattle.active &&
          BattleEngine::currentOpponent(pvpFaintBattle)->uid == 0xF1000002U &&
          pvpFaintBattle.turn == remoteFaintTurn + 1U);
+
+  // Trapping blocks a voluntary switch, never the mandatory replacement of
+  // a fainted battler. The local replacement path already had this override;
+  // the mirrored remote path must obey the same rule.
+  pvpFaintBattle.opponents[0].currentHp = 0;
+  pvpFaintBattle.opponents[1].currentHp = pvpFaintBattle.opponents[1].maximumHp;
+  pvpFaintBattle.opponentVolatiles[0].trappedTurns = 2U;
+  assert(!BattleEngine::switchOpponentPvp(
+      pvpFaintBattle, pvpFaintCollection, 1U).accepted);
+  const BattleActionResult trappedForcedReplacement =
+      BattleEngine::switchOpponentPvp(
+          pvpFaintBattle, pvpFaintCollection, 1U, true);
+  assert(trappedForcedReplacement.accepted &&
+         BattleEngine::currentOpponent(pvpFaintBattle)->currentHp > 0U);
 
   // SNORE bypasses the ordinary sleep action lock, but only while the user
   // is still asleep. Waking up before execution makes the move fail normally.
@@ -5416,7 +6006,7 @@ int main() {
   for(uint32_t seed=1U;seed<=20000U;++seed){
     Inventory rewardInventory{};EggInventory rewardEggs{};PokedexState rewardDex{};
     const BossRewardResult reward=BossSystem::awardVictoryReward(
-        rewardInventory,rewardEggs,rewardDex,3U,seed);
+        rewardInventory,rewardEggs,EggState{},rewardDex,3U,seed);
     if(reward.kind==BossRewardKind::MasterBall){
       ++bossMasterHits;
       if(!bossMasterSeed)bossMasterSeed=seed;
@@ -5439,7 +6029,8 @@ int main() {
   for(uint16_t species:bossStarters)PokedexLogic::markCaught(bossLegendaryDex,species);
   Inventory bossLegendaryInventory{};EggInventory bossLegendaryEggs{};
   const BossRewardResult bossLegendaryReward=BossSystem::awardVictoryReward(
-      bossLegendaryInventory,bossLegendaryEggs,bossLegendaryDex,3U,bossEggSeed);
+      bossLegendaryInventory,bossLegendaryEggs,EggState{},bossLegendaryDex,
+      3U,bossEggSeed);
   assert(bossLegendaryReward.kind==BossRewardKind::SpecialEgg&&
          BossSystem::isLegendaryOrMythical(bossLegendaryReward.eggSpeciesId));
 
@@ -5450,12 +6041,13 @@ int main() {
       kInventoryStackLimit;
   EggInventory fallbackBossEggs{};
   const BossRewardResult fallbackBossReward=BossSystem::awardVictoryReward(
-      fullBossInventory,fallbackBossEggs,bossLegendaryDex,3U,bossMasterSeed);
+      fullBossInventory,fallbackBossEggs,EggState{},bossLegendaryDex,3U,
+      bossMasterSeed);
   assert(fallbackBossReward.kind==BossRewardKind::SpecialEgg&&
          fallbackBossEggs.count==1U);
   EggInventory fullBossEggs{};fullBossEggs.count=EggInventory::kCapacity;
   const BossRewardResult fullBossReward=BossSystem::awardVictoryReward(
-      fullBossInventory,fullBossEggs,bossLegendaryDex,3U,bossEggSeed);
+      fullBossInventory,fullBossEggs,EggState{},bossLegendaryDex,3U,bossEggSeed);
   assert(fullBossReward.kind==BossRewardKind::StorageFull&&
          fullBossInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==
              kInventoryStackLimit&&fullBossEggs.count==EggInventory::kCapacity);
@@ -5632,7 +6224,7 @@ int main() {
   for(uint32_t seed=1;seed<=20000U;++seed){
     Inventory rewardInventory{};EggInventory rewardEggs{};PokedexState rewardDex{};
     const BattleTowerRewardResult reward=BattleTowerSystem::awardCompletionReward(
-        rewardInventory,rewardEggs,rewardDex,3U,seed);
+        rewardInventory,rewardEggs,EggState{},rewardDex,3U,seed);
     if(reward.kind==BattleTowerRewardKind::MasterBall){
       ++masterRewardHits;
       if(!masterRewardSeed)masterRewardSeed=seed;
@@ -5652,14 +6244,16 @@ int main() {
   assert(specialRewardSeed&&specialRewardHits>=70U&&specialRewardHits<=130U);
   Inventory masterRewardInventory{};EggInventory masterRewardEggs{};PokedexState masterRewardDex{};
   const BattleTowerRewardResult masterReward=BattleTowerSystem::awardCompletionReward(
-      masterRewardInventory,masterRewardEggs,masterRewardDex,3U,masterRewardSeed);
+      masterRewardInventory,masterRewardEggs,EggState{},masterRewardDex,3U,
+      masterRewardSeed);
   assert(masterReward.kind==BattleTowerRewardKind::MasterBall&&
          masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==1U);
   masterRewardInventory={};
   masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]=
       kInventoryStackLimit;
   const BattleTowerRewardResult fullMasterReward=BattleTowerSystem::awardCompletionReward(
-      masterRewardInventory,masterRewardEggs,masterRewardDex,3U,masterRewardSeed);
+      masterRewardInventory,masterRewardEggs,EggState{},masterRewardDex,3U,
+      masterRewardSeed);
   assert(fullMasterReward.kind==BattleTowerRewardKind::RareCandy&&
          masterRewardInventory.balls[static_cast<uint8_t>(PokeBallType::MasterBall)]==
              kInventoryStackLimit&&
@@ -5671,14 +6265,78 @@ int main() {
   PokedexLogic::markSeen(oneStarterMissing,258U);
   Inventory specialInventory{};EggInventory specialEggs{};
   const BattleTowerRewardResult starterReward=BattleTowerSystem::awardCompletionReward(
-      specialInventory,specialEggs,oneStarterMissing,5U,specialRewardSeed);
+      specialInventory,specialEggs,EggState{},oneStarterMissing,5U,
+      specialRewardSeed);
   assert(starterReward.kind==BattleTowerRewardKind::SpecialEgg&&
          starterReward.eggSpeciesId==258U&&specialEggs.count==1U&&
          specialEggs.slots[0].speciesId==258U);
+
+  // A Special Egg reserves its starter as soon as the reward enters the Egg
+  // Bag. Nine rewards received before any hatch must therefore contain every
+  // Gen-I--III starter exactly once; the tenth can move to the Legendary pool
+  // instead of pre-generating repeated Bulbasaurs.
+  PokedexState noStarterCaught{};
+  EggInventory reservedStarterEggs{};
+  bool reservedStarterSeen[9]{};
+  for(uint8_t rewardIndex=0;rewardIndex<9U;++rewardIndex){
+    assert(EggSystem::storeBattleTowerSpecial(
+        reservedStarterEggs,EggState{},noStarterCaught,3U,
+        0x53504543UL+rewardIndex));
+    const uint16_t species=
+        reservedStarterEggs.slots[reservedStarterEggs.count-1U].speciesId;
+    uint8_t starterIndex=9U;
+    for(uint8_t index=0;index<9U;++index)
+      if(towerStarters[index]==species){starterIndex=index;break;}
+    assert(starterIndex<9U&&!reservedStarterSeen[starterIndex]);
+    reservedStarterSeen[starterIndex]=true;
+  }
+  assert(EggSystem::storeBattleTowerSpecial(
+      reservedStarterEggs,EggState{},noStarterCaught,3U,0x4C454745UL));
+  assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(
+      reservedStarterEggs.slots[9].speciesId));
+
+  // Moving the only missing starter from the Bag into the incubator must keep
+  // the same reservation alive while it is hatching.
+  PokedexState onlyBulbasaurMissing{};
+  for(uint16_t starterSpecies:towerStarters)
+    if(starterSpecies!=1U)PokedexLogic::markCaught(
+        onlyBulbasaurMissing,starterSpecies);
+  EggState activeBulbasaurEgg{};
+  activeBulbasaurEgg.active=true;
+  activeBulbasaurEgg.rarity=EggRarity::Special;
+  activeBulbasaurEgg.speciesId=1U;
+  EggInventory eggWhileBulbasaurIncubates{};
+  assert(EggSystem::storeBattleTowerSpecial(
+      eggWhileBulbasaurIncubates,activeBulbasaurEgg,
+      onlyBulbasaurMissing,3U,0x41435449UL));
+  assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(
+      eggWhileBulbasaurIncubates.slots[0].speciesId));
+
   PokedexLogic::markCaught(oneStarterMissing,258U);
+  // Saves made by an older build may already contain a duplicate starter.
+  // Repair it only at hatch time, while preserving every non-species property
+  // of that exact Egg.
+  EggState staleBulbasaurEgg{};
+  staleBulbasaurEgg.active=true;
+  staleBulbasaurEgg.rarity=EggRarity::Special;
+  staleBulbasaurEgg.speciesId=1U;
+  staleBulbasaurEgg.region=3U;
+  staleBulbasaurEgg.shinyRoll=0x1234ABCDUL;
+  staleBulbasaurEgg.remainingSeconds=0U;
+  const uint32_t staleShinyRoll=staleBulbasaurEgg.shinyRoll;
+  assert(EggSystem::reconcileSpecialEgg(
+      staleBulbasaurEgg,EggInventory{},oneStarterMissing,3U));
+  assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(
+             staleBulbasaurEgg.speciesId)&&
+         staleBulbasaurEgg.shinyRoll==staleShinyRoll&&
+         staleBulbasaurEgg.remainingSeconds==0U&&
+         staleBulbasaurEgg.rarity==EggRarity::Special&&
+         !EggSystem::reconcileSpecialEgg(
+             staleBulbasaurEgg,EggInventory{},oneStarterMissing,3U));
   specialEggs=EggInventory{};
   const BattleTowerRewardResult legendaryReward=BattleTowerSystem::awardCompletionReward(
-      specialInventory,specialEggs,oneStarterMissing,3U,specialRewardSeed);
+      specialInventory,specialEggs,EggState{},oneStarterMissing,3U,
+      specialRewardSeed);
   const uint16_t legendarySpecies=legendaryReward.eggSpeciesId;
   assert(legendaryReward.kind==BattleTowerRewardKind::SpecialEgg&&
       (legendarySpecies==144U||legendarySpecies==145U||legendarySpecies==146U||
@@ -5697,11 +6355,11 @@ int main() {
   for(uint32_t seed=1U;seed<=4096U;++seed){
     EggInventory gen3Eggs{},gen4Eggs{},gen5Eggs{};
     assert(EggSystem::storeBattleTowerSpecial(
-        gen3Eggs,oneStarterMissing,3U,seed));
+        gen3Eggs,EggState{},oneStarterMissing,3U,seed));
     assert(EggSystem::storeBattleTowerSpecial(
-        gen4Eggs,oneStarterMissing,4U,seed));
+        gen4Eggs,EggState{},oneStarterMissing,4U,seed));
     assert(EggSystem::storeBattleTowerSpecial(
-        gen5Eggs,oneStarterMissing,5U,seed));
+        gen5Eggs,EggState{},oneStarterMissing,5U,seed));
     const uint16_t gen3Species=gen3Eggs.slots[0].speciesId;
     const uint16_t gen4Species=gen4Eggs.slots[0].speciesId;
     const uint16_t gen5Species=gen5Eggs.slots[0].speciesId;
@@ -5724,7 +6382,7 @@ int main() {
   for(uint32_t seed=1U;seed<=16384U;++seed){
     EggInventory gen7Eggs{};
     assert(EggSystem::storeBattleTowerSpecial(
-        gen7Eggs,oneStarterMissing,7U,seed));
+        gen7Eggs,EggState{},oneStarterMissing,7U,seed));
     const uint16_t species=gen7Eggs.slots[0].speciesId;
     assert(PokedexLogic::isLegendaryOrMythicalExcludingUltraBeasts(species));
     assert(!PokedexLogic::isUltraBeast(species));
@@ -5734,7 +6392,8 @@ int main() {
   EggInventory fullRewardEggs{};fullRewardEggs.count=EggInventory::kCapacity;
   Inventory fullEggRewardInventory{};
   const BattleTowerRewardResult fullEggReward=BattleTowerSystem::awardCompletionReward(
-      fullEggRewardInventory,fullRewardEggs,oneStarterMissing,3U,specialRewardSeed);
+      fullEggRewardInventory,fullRewardEggs,EggState{},oneStarterMissing,3U,
+      specialRewardSeed);
   assert(fullEggReward.kind==BattleTowerRewardKind::RareCandy&&
          fullEggRewardInventory.heldItems[kRareCandyInventorySlot]==1U&&
          fullRewardEggs.count==EggInventory::kCapacity);

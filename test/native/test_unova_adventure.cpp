@@ -242,6 +242,10 @@ int main() {
 
   SinnohExpeditionState sinnoh{};
   UnovaAdventureState unova{};
+  assert(!UnovaAdventure::white2ThemeUnlocked(unova));
+  assert(!UnovaAdventure::whiteThemeUnlocked(unova));
+  assert(!UnovaAdventure::setWhite2ThemeSelected(unova, true));
+  assert(!UnovaAdventure::setWhiteThemeSelected(unova, true));
   assert(!UnovaAdventure::available(sinnoh));
   sinnoh.unlockedSites = SinnohExpedition::kAllSitesMask;
   sinnoh.rewardFlags = SinnohExpedition::kGymSchemaBit;
@@ -249,6 +253,47 @@ int main() {
   sinnoh.gymVictoryMask = SinnohExpedition::kAllSitesMask;
   assert(UnovaAdventure::reconcile(unova, sinnoh));
   assert(UnovaAdventure::isAreaUnlocked(unova, UnovaArea::PinwheelForest));
+
+  // Leaving before entering a card must persist the exact offer, even across
+  // a save/reload or a visit to another area. Once a valid card is entered,
+  // abandoning is allowed to consume that offer and accept a fresh seed.
+  UnovaAdventureState preview = unova;
+  preview.unlockedAreas = UnovaAdventure::kAllAreasMask;
+  assert(UnovaAdventure::begin(
+      preview, UnovaArea::PinwheelForest, 0x33000001U, collection, 2U));
+  UnovaRoomChoice previewChoices[3]{};
+  const uint8_t previewCount =
+      UnovaAdventure::choices(preview, previewChoices);
+  assert(previewCount == 3U);
+  assert(UnovaAdventure::willPreserveChoicesOnAbandon(preview));
+  assert(UnovaAdventure::abandon(preview));
+  UnovaAdventureState reloadedPreview = preview;
+  assert(UnovaAdventure::begin(reloadedPreview, UnovaArea::DesertResort,
+                                0x33000002U, collection, 0U));
+  assert(reloadedPreview.run.seed == 0x33000001U &&
+         reloadedPreview.run.season == 2U);
+  assert(UnovaAdventure::willPreserveChoicesOnAbandon(reloadedPreview));
+  assert(UnovaAdventure::abandon(reloadedPreview));
+  assert(UnovaAdventure::begin(reloadedPreview, UnovaArea::PinwheelForest,
+                                0x33000003U, collection, 0U));
+  UnovaRoomChoice restoredChoices[3]{};
+  assert(UnovaAdventure::choices(reloadedPreview, restoredChoices) ==
+         previewCount);
+  for (uint8_t index = 0U; index < previewCount; ++index) {
+    assert(restoredChoices[index].kind == previewChoices[index].kind);
+    assert(restoredChoices[index].route == previewChoices[index].route);
+    assert(restoredChoices[index].recommended ==
+           previewChoices[index].recommended);
+  }
+  assert(UnovaAdventure::choose(
+      reloadedPreview, previewCount, collection).startsBattle == false);
+  assert(UnovaAdventure::willPreserveChoicesOnAbandon(reloadedPreview));
+  UnovaAdventure::choose(reloadedPreview, 0U, collection);
+  assert(!UnovaAdventure::willPreserveChoicesOnAbandon(reloadedPreview));
+  assert(UnovaAdventure::abandon(reloadedPreview));
+  assert(UnovaAdventure::begin(reloadedPreview, UnovaArea::PinwheelForest,
+                                0x33000004U, collection, 0U));
+  assert(reloadedPreview.run.seed == 0x33000004U);
 
   // A failed attempt clears only the volatile run. Permanent area progress
   // remains available for an immediate fresh attempt.
@@ -342,6 +387,7 @@ int main() {
       break;
     }
     UnovaAdventure::abandon(unova);
+    unova.run = UnovaRunState{};
   }
   assert(testedHeal);
   collection.party[1]=kEmptyPokemonUid;
@@ -408,6 +454,7 @@ int main() {
         break;
       }
       UnovaAdventure::abandon(grottoState);
+      grottoState.run = UnovaRunState{};
     }
     assert(sawGenerationEncounter);
   }
@@ -433,6 +480,7 @@ int main() {
       break;
     }
     UnovaAdventure::abandon(grottoState);
+    grottoState.run = UnovaRunState{};
   }
   assert(sawDifferentGenerationOneSpecies);
 
@@ -469,6 +517,7 @@ int main() {
       break;
     }
     UnovaAdventure::abandon(grottoState);
+    grottoState.run = UnovaRunState{};
   }
   assert(sawHiddenAbilityLegendary);
 
@@ -884,6 +933,17 @@ int main() {
   }
   assert(UnovaAdventure::championsCompleted(unova));
   assert(UnovaAdventure::white2ThemeUnlocked(unova));
+  assert(UnovaAdventure::whiteThemeUnlocked(unova));
+  assert(!UnovaAdventure::white2ThemeSelected(unova));
+  assert(!UnovaAdventure::whiteThemeSelected(unova));
+  assert(UnovaAdventure::setWhite2ThemeSelected(unova, true));
+  assert(UnovaAdventure::white2ThemeSelected(unova));
+  assert(!UnovaAdventure::whiteThemeSelected(unova));
+  assert(UnovaAdventure::setWhiteThemeSelected(unova, true));
+  assert(!UnovaAdventure::white2ThemeSelected(unova));
+  assert(UnovaAdventure::whiteThemeSelected(unova));
+  assert(UnovaAdventure::setWhiteThemeSelected(unova, false));
+  assert(!UnovaAdventure::whiteThemeSelected(unova));
   assert(!UnovaAdventure::royalUnovaCompletedAtLeastOnce(unova));
   assert(!UnovaAdventure::fullyCompleted(unova));
   Inventory unovaRewardInventory{};

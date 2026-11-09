@@ -1,6 +1,9 @@
 # Pokegochi game specification
 
-This document is the current source of truth. The in-game language is English.
+This document is the current source of truth. Settings > More exposes a
+persistent EN/PT selector shared by the firmware and Android. English is the
+default for old saves; Brazilian Portuguese localizes every rendered UI string, dynamic
+battle message, move, item, Ability, trainer dialogue and Pokedex entry.
 
 ## Collection and permanent save
 
@@ -152,10 +155,16 @@ Gym content and level gating remain separate from the generic battle engine.
 - Completing the third trainer rolls one prize. Rare Candy is the fallback;
   there is a 0.5% chance for a Special Egg when the Egg Bag has room.
 - A Special Egg chooses uniformly from the nine regional starters the player
-  has never obtained. `seen` is insufficient: only the Pokedex `caught` record
-  removes a starter from this pool. Once all nine have been obtained, the Egg
-  chooses a random Legendary or Mythical Pokemon through the highest unlocked
-  generation. Ultra Beasts are excluded; Necrozma remains eligible.
+  has never obtained and does not already have reserved in another Special Egg.
+  `seen` is insufficient: the Pokedex `caught` record permanently removes a
+  starter, while Special Eggs waiting in the Bag or active in the incubator
+  reserve it until hatching. This prevents several rewards collected before a
+  hatch from being pre-generated as the same starter. Once all nine have been
+  caught or reserved, the Egg chooses a random Legendary or Mythical Pokemon
+  through the highest unlocked generation. Ultra Beasts are excluded;
+  Necrozma remains eligible. At hatch time, old saves also re-evaluate a
+  Special Egg whose pre-generated starter has since been caught; incubation
+  progress, rarity and shiny roll remain unchanged.
 - Special Eggs enter the dedicated Egg pocket in the Bag. Their rare 96-hour
   timer begins only when the player selects one while the incubator is empty.
 
@@ -341,9 +350,9 @@ Gym content and level gating remain separate from the generic battle engine.
   Unova/Kalos special theme. Their choice is persisted in spare Alola campaign
   flag bits, so existing saves remain compatible and the save ABI does not grow.
 
-## Bluetooth multiplayer
+## BLE and Wi-Fi multiplayer
 
-Multiplayer is a sixth Bag pocket. BLE remains active during the activity-specific
+The Bag exposes separate `MULTIPLAYER BLE` and `MULTIPLAYER WIFI` pages. BLE remains active during the activity-specific
 Party/Box selectors, so a player may rearrange the three-member Party or choose a
 trade candidate without reconnecting. Actually closing the Bag is the radio lifetime
 boundary: it disconnects the peer, stops advertising/scanning, and returns BLE memory
@@ -365,17 +374,27 @@ and payload. Interrupted or mismatched transactions abort. After the durable com
 both devices play a FireRed-style transfer scene built from the original link-trade
 console, wireless-signal, glow and Poke Ball sprites before returning to Multiplayer.
 
-For a link battle, each player uses the connection-preserving Party selector before pressing
-`READY`; closing the Bag ends the BLE session. The `READY` press sends a three-Pokemon
-roster snapshot. After both players are ready,
+Wi-Fi uses the same versioned game packets inside a small TCP relay envelope. A dedicated
+home ESP32 supplies presence, invitations, four volatile battle rooms and heartbeat for up
+to eight clients; Android and the physical Pokegochi can play each other in any pairing.
+The server stores no save or battle state. Online trade is not exposed because it requires a
+durable server-side commit journal, while direct BLE trade keeps its existing two-phase flow.
+
+For a link battle, both players choose `NORMAL` or `BALANCED` before using the
+connection-preserving Party selector. Normal keeps the original level and stats; Balanced
+creates level-70 copies with recalculated stats. The `READY` press sends a three-Pokemon
+roster snapshot with full HP/PP and no status. After both players are ready,
 each independently chooses the first Pokemon. Battle commands are exchanged in lockstep,
 so neither console resolves a turn before both choices are present. The lower five-digit
 player ID is the deterministic authority: after the FireRed event sequence for a turn it
 sends HP, PP, status, battle-local held-item effects, active slots, weather and RNG state.
 The other console applies the snapshot and acknowledges it before either side may choose
 again. A dropped notification therefore causes a retransmission instead of divergence.
-Link battles reuse the normal battle UI and animations, disable Bag items, grant no XP,
-EVs or money, and restore both local Parties exactly when the battle or BLE session ends.
+Link battles reuse the normal battle UI and animations and grant no XP, EVs or money. They
+use a disposable Bag per player containing 1 Max Revive, 3 Hyper Potion, 4 Full Heal and
+1 Max Elixir. HP, PP, status, temporary level/stats and item quantities are never written to
+the base-game save, and both local Parties are restored exactly when the battle or transport
+session ends.
 
 ## Care and recovery
 
@@ -518,28 +537,6 @@ Battle Frontier scenery covers plazas, facility lobbies and battle interiors.
 The selected background is persisted in the single game save
 and restored after reboot; the backgrounds are never AI-generated, repainted,
 or resampled.
-
-## Kids Games: Poke Defense
-
-- Poke Defense is a self-contained, touch-first tower-defense campaign in the
-  Kids Games menu. It never changes Adventure HP, PP, status, money, items,
-  encounters, or Party order.
-- The current Party supplies up to three defenders. The player may arm or bench
-  each one before a run; their level, Attack, Special Attack, Speed, species
-  sprite, and primary type determine the defender's damage, cadence, range,
-  appearance, and projectile colour.
-- Six authored arenas use native FireRed/Emerald map crops already shipped by
-  the game: Viridian Forest, Mt. Moon, Cerulean City, Battle Tower Plaza,
-  Battle Pike, and Battle Factory. Each has five visible defender pads,
-  its own route, enemy group, health curve, and wave count.
-- A run has three base lives. The player positions armed Party members during
-  setup, starts the wave, and may retreat without touching the Adventure save.
-  Clears award up to three stars, a per-arena best score, a total score and
-  defeated counter, then unlock the next arena. Only campaign progress is
-  persistent; a wave in progress intentionally resets after restart.
-- The interface uses large 40 px+ hand-sized controls, real Pokemon front
-  sprites, native maps, compact GBA-style panels, dotted routes, and a capped
-  animation update rate so the ESP32 remains responsive.
 
 Each crop also carries three patrol routes generated from the original map's
 collision and metatile-behavior data. Water, currents, lava, walls, trees and

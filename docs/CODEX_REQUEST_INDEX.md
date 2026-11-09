@@ -5,7 +5,781 @@
 - A placa Pokegochi conectada por USB normalmente aparece como `USB-SERIAL CH340` na `COM6` ou `COM7`.
 - Em qualquer pedido de leitura, diagnóstico ou atualização da placa, testar `COM6` e `COM7` diretamente e consultar `Get-PnpDevice -PresentOnly -Class Ports` antes de concluir que ela não está conectada. `Win32_SerialPort` pode omitir temporariamente a CH340 e não deve ser usado sozinho.
 - Não pedir ao usuário para informar a porta nem afirmar que a placa desapareceu antes de testar as duas portas conhecidas. Confirmar a placa pelo chip/MAC retornado pelo `esptool`.
+- A ESP32 DevKit dedicada ao servidor usa CP210x e, nesta máquina, enumerou na `COM8`; não confundir essa placa sem tela com o Pokegochi físico CH340 da `COM6`/`COM7`.
 - Nunca publicar um APK Android somente porque o Gradle terminou em `BUILD SUCCESSFUL`. Antes de assinar ou subir, abrir o APK final e comparar o `pokegochi.pak` interno com o pacote canônico por versão, quantidade/tamanho e SHA-256. Essa classe de falha já ocorreu duas vezes: R20261028-239 e R20261029-253.
+
+## R20261109-410 - Publicar o release do multiplayer Wi-Fi
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-410 | 2026-11-09 | Incrementar as versoes do app e firmware, publicar o update do multiplayer Wi-Fi e subir ao Drive o APK e um PGOTA seguro para Pokegochis com saves, SDs e firmwares antigos | Concluido, validado e publicado | Release coordenado `Android 3.1` (`versionCode 117`, build `r410`) / `Firmware 4.1 WIFI`, tag [`app-v3.1-fw-v4.1`](https://github.com/Issamaysin/Pokegochi/releases/tag/app-v3.1-fw-v4.1). A suite completa terminou em `All native tests passed`, cobrindo 807 especies, 671 moves, assets/animacoes Gen V--VII, save legado, recovery, PGOTA, BLE, LAN/Internet, battle/trade, READY, faint/shift e tres batalhas completas contra o bot. O firmware usa 124.536/327.680 bytes de RAM e 2.942.632/3.211.264 bytes de flash; `Pokegochi-Firmware-v4.1.bin` mede 2.947.712 bytes e tem SHA-256 `B8BFC76EC02146784FF5A2F30EF51B5831AD6B6722813677DC9E04699A120A90`. O recovery mede 343.184 bytes (`7A9615AAF8847D126FBE11556B7DD2C672D859EBF970D9D755764A19B213AA2F`) e o servidor factory mede 1.058.064 bytes (`3A21788A048D69F5EF1FB43AEC822FA2B932F3CE71B7637A937D900F7187B9C9`). O APK final mede 13.385.823 bytes, SHA-256 `7998AC141EC1DA1315BE3A895B120FF283112F914BAD9D8B610977FEAE1DCDFB`, passou alinhamento de 16 KiB, assinatura v2/v3 e confirmou dentro dele o PAK canonico v55 de 30.219.710 bytes/SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. O PGOTA manteve o protocolo assinado v1 e a chave existente, sequencia monotona `1794243920`; foi reaberto e validado com firmware, PAK v55 e tres metadados, sem save no pacote. Mede 34.652.948 bytes e tem SHA-256 `093D840B115DC228AA6E01124B5161ED87B6653CA7FD78618C5793859600FAB2`. Em SD antigo, objetos diferentes sao transferidos integralmente; em SD atual, hashes identicos sao pulados. NVS/SPIFFS nao sao sobrescritos, o save formato 52 mantem migracoes legadas e o recovery faz commit/rollback atomico. Aparelhos que ja possuem `Wireless Update` aceitam o pacote diretamente; layouts antigos sem recovery continuam usando o bootstrap USB unico que preserva o save. Readback do Drive confirmou APK ID `1wA6P70FUgiOU_qtQs5vnNUUqpmpAKIRN`, 13.385.823 bytes, e PGOTA ID `1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi`, 34.652.948 bytes, ambos na pasta de releases. Links: [APK](https://drive.google.com/file/d/1wA6P70FUgiOU_qtQs5vnNUUqpmpAKIRN/view?usp=drivesdk) e [PGOTA](https://drive.google.com/file/d/1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi/view?usp=drivesdk). |
+
+## R20261109-409 - Fazer o bot dar READY imediatamente
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-409 | 2026-11-09 | Corrigir o atraso do bot para dar READY/lock-in e começar a batalha online | Concluído, validado duas vezes na mesma conexão e gravado nas duas placas | O bot já montava roster, READY e lead sem espera lógica, mas o servidor fragmentava a preparação em seis envelopes PGON e doze escritas TCP pequenas. Na placa sem PSRAM, a combinação com Nagle/delayed ACK fazia o pacote de lock-in aparecer muitos segundos depois. Frames LAN comuns agora entram no socket em uma única escrita atômica e a preparação completa do bot (`ActivityAccept`, três `BattlePartyMember`, `BattlePartyReady` e `BattleLead`) é serializada em um único lote sub-MSS de 403 bytes; MQTT continua com um frame por publicação. Escrita parcial fecha o stream em vez de deixá-lo dessincronizado. A placa ganhou rastreamento explícito de aceite, slots remotos, READY e lead. Na COM7, a primeira tentativa Balanced recebeu toda a preparação em aproximadamente 160 ms (`13:36:08.453` até `13:36:08.612`); depois de iniciar/encerrar a batalha, a segunda tentativa na mesma conexão repetiu o resultado em aproximadamente 145 ms (`13:37:32.623` até `13:37:32.768`). O servidor registrou `preparation batch bytes=403 frames=6` nas duas tentativas. A suíte `scripts/test.ps1` terminou em `All native tests passed`, incluindo três batalhas completas contra o bot e os contratos PvP/Internet. O Pokegochi compilou com 124.440/327.680 bytes de RAM e 2.940.484/3.211.264 bytes de flash; `firmware.bin` mede 2.945.568 bytes e tem SHA-256 `48740060D910FCAB1C775569DF8E891E602CE5FEF5561B519D7326BD57F17445`. Foi gravado e verificado somente em `0xC0000` na COM7/MAC `b4:bf:e9:21:3c:e4`, preservando NVS, save e SD; ao final ficou na Home, Wi-Fi desligado e sem sessão ativa. O servidor compilou com 53.872/327.680 bytes de RAM e 978.672/1.310.720 bytes de flash; a imagem factory de 1.055.008 bytes, SHA-256 `D03D0793C91FF67B053F1DFDA6C2F8299B182A5CF3BCE0791C8478F6C6AAE304`, foi gravada/verificada na COM8/MAC `94:b9:7e:df:2f:e4`. Evidências: `.codex-debug/r409-bot-ready-server.log` e `.codex-debug/r409-bot-ready-pokegochi-final.log`. |
+
+## R20261109-408 - Fazer o READY Wi-Fi enviar a Party inteira sem depender da Box
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-408 | 2026-11-09 | Corrigir o READY que parecia funcionar apenas depois de abrir e fechar a Box, mas ainda não era aceito pelo outro jogador | Concluído, validado em sessão Wi-Fi real e gravado nas duas placas | O log físico mostrou a causa exata: READY precisava publicar três `BattlePartyMember` e um `BattlePartyReady`, mas o transporte da placa conservava somente um frame pendente. Quando o primeiro Relay de 99 bytes encontrava backpressure, o segundo envio falhava imediatamente; `setBattleReady` desfazia o READY local e deixava o servidor com uma Party parcial. Abrir e fechar a Box apenas dava tempo para o primeiro frame drenar, sem concluir a transação. O READY Wi-Fi agora é uma transação retomável: confirma o toque na interface, conserva roster/slot, envia exatamente um membro por vez, aguarda o frame pendente ser aceito e só então publica o próximo; ao final envia `BattlePartyReady`, marca o READY local e avança para a escolha do lead. Cancelamento, desconexão e limpeza da atividade zeram explicitamente a transação. No servidor, frames LAN passaram a ser atendidos antes do relay MQTT e uma reconexão síncrona do broker é adiada enquanto existe sessão ativa, impedindo que a janela TCP local fique sem serviço por dezenas de segundos. A nova mensagem transitória recebeu também tradução PT-BR no catálogo gerado. A reprodução física encontrou backpressure real já no primeiro membro (`offset=0/99`), entregou o frame pendente e em seguida registrou membros `1/3`, `2/3`, `3/3` e `READY transaction complete` a partir de um único clique; sem reabrir a Box, o bot aceitou a Party, o lead foi escolhido e a batalha iniciou com `party=3/3`. `scripts/test.ps1` terminou em `All native tests passed`, incluindo contratos de multiplayer, Internet, três batalhas completas contra o bot, 671 golpes e sweeps Gen V--VII. O firmware final da Pokegochi usa 124.440/327.680 bytes de RAM e 2.940.184/3.211.264 bytes de flash; `firmware.bin` mede 2.945.264 bytes e possui SHA-256 `81E1F25FA0E9714D5924840452AC8AB3F797706651C37D6937D32F9AF4FFDD99`. Foi gravado somente em `0xC0000` na COM7/MAC `b4:bf:e9:21:3c:e4`, com verificação do hash pelo esptool; o boot final confirmou firmware 4.0, `microSD OK`, `Save OK`, asset pack OK e `Ready`, preservando save, NVS e SD. O servidor usa 53.872/327.680 bytes de RAM e 977.880/1.310.720 bytes de flash; a imagem factory de 1.054.224 bytes, SHA-256 `F1015DC285D3E27BD6B6A698F038BD9CBA2EAB5A629611BEEC10AB56EDC599C8`, foi gravada e verificada na COM8/MAC `94:b9:7e:df:2f:e4`. Evidências: `.codex-debug/pokegochi-ready-fix-20261109.log`, `.codex-debug/server-ready-fix-20261109.log` e `.codex-debug/pokegochi-ready-fix-final-20261109.log`. |
+
+## R20261109-407 - Corrigir a apresentação tardia de HP do Pain Split
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-407 | 2026-11-09 | Fazer a animação de HP do `Pain Split` acontecer durante o próprio golpe, antes do turno, item ou cura seguinte, para deixar claro quanto cada Pokémon perdeu ou recuperou | Concluído, validado e gravado na placa | A mecânica já calculava a média e alterava os dois Pokémon, mas o diário de apresentação registrava apenas o HP de quem usou o golpe; o alvo permanecia com o valor lógico novo sem um `HpChanged` próprio e sua barra só saltava quando outro evento redesenhava o HUD. A resolução foi centralizada em `applyPainSplit`: depois de `PainShared`, ela emite imediatamente e uma única vez as transições do usuário e do alvo, em ambos os lados da batalha, e realinha o snapshot genérico para não repetir a animação do usuário. Curas posteriores continuam como eventos independentes. A regressão reproduz usuário em 100/400 e alvo em 900/1000 com Sitrus: exige `Pain Split -> usuário 100→400 -> alvo 900→500 -> Sitrus -> alvo 500→530 -> golpe seguinte`, tanto para jogador quanto para oponente, e impede duplicatas. `test_move_effect_matrix`, `test_battle_collection` e `test_multiplayer_session` passaram. A suíte global avançou por todos os contratos de moves/assets/render até parar em uma alteração paralela já existente: `SENDING PARTY TO PLAYER...` ainda não possui tradução PT no contrato de idioma; isso não pertence nem foi mascarado por esta correção. O firmware compilou com 124.440/327.680 bytes de RAM e 2.949.004/3.211.264 bytes de flash; `firmware.bin` mede 2.954.080 bytes e possui SHA-256 `1510673CE0B1AC6AFF5B4ABB31C4A57787EF3DC8F28DEE3B16CD4981D96D108A`. A partição do aplicativo foi gravada e verificada na COM7/MAC `b4:bf:e9:21:3c:e4`; o boot confirmou firmware 4.0, `microSD OK`, `Save OK`, asset pack OK, `Ready` e retorno a `screen=7`. Save, NVS e SD foram preservados. Evidência de boot: `.codex-debug/r406-pain-split-final-boot.log`. |
+
+## R20261109-406 - Monitorar servidor e Pokegochi para capturar o próximo bug
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-406 | 2026-11-09 | Acompanhar continuamente a placa do servidor e o Pokegochi conectado até o usuário reproduzir o bug | Monitoramento ativo | As portas foram confirmadas pelo PnP sem depender de `Win32_SerialPort`: servidor ESP32 DevKit CP210x na COM8 e Pokegochi CH340 na COM7. Dois monitores duplex foram anexados a 115200 baud com DTR/RTS previamente desativados, portanto a conexão não resetou nenhuma placa e nenhum comando foi injetado. O servidor está sendo registrado continuamente em `.codex-debug/server-live-20261109.log` e o Pokegochi em `.codex-debug/pokegochi-live-20261109.log`; ambos permanecem ativos para correlação pelo timestamp quando o usuário avisar que o defeito ocorreu. |
+
+## R20261109-405 - Estabilizar batalhas multiplayer consecutivas e renderização dos golpes
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-405 | 2026-11-09 | Continuar testando a batalha multiplayer, corrigir piscadas entre ataques, permitir duas batalhas seguidas sem desconectar/reconectar, conferir a animação de Shadow Claw e manter a correção dos sprites finais da Trade Box Wi-Fi | Concluído, validado em sessão Wi-Fi real e gravado na placa | O fim de uma batalha agora encerra somente a atividade lógica: restaura a Party temporária, limpa estado/transientes da batalha e retorna ao inventário multiplayer, preservando o link físico e a sala. Duas batalhas completas foram iniciadas e encerradas consecutivamente na mesma conexão contra o simulador, com `connected=1/activity=0` após cada uma e sem novo scan ou reconnect. O presenter PvP deixou de desligar/religar o ILI9341 entre quadros de substituição e passou a enviar cada atualização como uma única janela GRAM contínua de 320 pixels, removendo a causa objetiva da tela preta/piscada entre golpes. Shadow Claw (move 421) foi perfilado nos lados local e remoto em 1x/2x/3x, isolado e após golpes pesados: os quatro cortes foram carregados/apresentados sem overflow, I/O ou asset ausente; em seguida o adversário o executou repetidamente nas duas batalhas Wi-Fi reais. A descoberta mDNS agora escolhe deterministicamente o menor IPv4 válido, e foram adicionados relay local, simulador de batalhas repetidas e comando de diagnóstico por cabo para reproduções sem depender de toques manuais. O cache compacto da Trade Box cobre os últimos slots usando ícones 4-bpp recortados, com pior caso de 16.671 bytes dentro da arena de 17.408 bytes. `scripts/test.ps1` terminou em `All native tests passed`, incluindo 671 golpes, sweeps Gen V--VII, matriz de habilidades, sessão multiplayer repetida, renderer PvP, Trade Box e três batalhas completas contra o bot. O firmware final usa 124.440/327.680 bytes de RAM e 2.948.500/3.211.264 bytes de flash; `firmware.bin` mede 2.953.584 bytes e possui SHA-256 `34F7C246E51EA888C37B546914F8A6F2E972B8242DB19D89FA513B4FABE67FAE`. Foi gravado somente em `0xC0000` na COM7/MAC `b4:bf:e9:21:3c:e4`, verificado por hash do flash e reiniciado com firmware 4.0, `microSD OK`, `Save OK`, asset pack OK, `Ready` e retorno a `screen=7`; save, NVS e SD foram preservados. Evidências: `.codex-debug/r404-shadow-claw-profile-fixed.log`, `.codex-debug/r404-shadow-claw-foe-profile.log`, `.codex-debug/r404-shadow-claw-sequence-profile.log`, `.codex-debug/r404-multiplayer-e2e-forced.log` e `.codex-debug/r404-final-boot.log`. |
+
+## R20261109-404 - Pesquisar ESP32 touch com case e bateria interna
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-404 | 2026-11-09 | Procurar no AliExpress opções de ESP32 com tela touch, case e bateria incluída dentro do case, sem bateria externa pendurada | Pesquisa concluída e compatibilidade avaliada | A melhor candidata para um novo hardware Pokegochi é a `M5Stack Core2 v1.3` (`K010-V13`): ESP32-D0WDQ6-V3, tela IPS touch capacitiva 320x240, 16 MB Flash, 8 MB PSRAM, microSD, speaker, vibração, RTC, USB-C, case de fábrica e bateria interna de 500 mAh. O anúncio AliExpress indexado sob o produto `1005012108440297` estava em US$ 42,90 antes de impostos/frete; por manter a arquitetura ESP32 clássica e a resolução lógica atual, exige troca dos drivers ILI9341/XPT2046 pelos ILI9342C/FT6336U e adaptação de PMIC/pinos, mas evita redesenho integral da interface. A alternativa premium é a `M5Stack CoreS3` completa com DinBase/bateria de 500 mAh (`1005008261908153`, cerca de US$ 87,47), com 16 MB Flash/8 MB PSRAM, microSD e touch 320x240; porém o ESP32-S3 e a revisão de display ILI9342C/ILI9342E aumentam o trabalho de port. A `Waveshare ESP32-S3-Touch-LCD-1.85C-BOX` somente satisfaz o pedido na variante SKU `30684`, explicitamente com bateria de 1000 mAh dentro do speaker box; a tela circular 360x360 exigiria forte retrabalho da UI e o anúncio `1005012962148828` apareceu caro, em US$ 88,76. A `LILYGO T-Deck Plus` também chega pronta com case, touch 2,8 polegadas 320x240, microSD e bateria interna de 2000 mAh, mas inclui teclado/trackball/GPS/LoRa, custa muito mais e é excessiva para este projeto. Listings genéricos do atual CYD/ESP32-2432S028R com case não incluem bateria nem circuito de carga e não cumprem o requisito. Nenhum código ou hardware foi alterado nesta pesquisa. |
+
+## R20261109-403 - Corrigir a desconexão remota real do multiplayer BLE
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-403 | 2026-11-09 | Corrigir o travamento que continuava exatamente igual ao sair do multiplayer na placa | Concluído, validado com peer BLE real e gravado na placa | A conclusão de R402 estava incompleta: ela exercitou a saída local, mas não o caminho em que o aplicativo/peer encerra primeiro a conexão física. O harness serial passou a abrir a CH340 com DTR/RTS já desativados, permitindo anexar ao estado congelado sem resetá-lo. Com um peer BLE real no PC, a falha foi reproduzida antes da correção: depois de `inbound physical link disconnected`, save e rádio eram restaurados, porém o maior bloco contíguo ficava em 10.740 bytes; descontados os 128 bytes de segurança, o renderer dispunha de 10.612, abaixo dos 14.358 exigidos por R402, e permanecia indefinidamente em `screen=32`/`waiting for complete UI graphics workspace`. A correção não apenas baixou o limite: todos os backgrounds obrigatórios foram recomprimidos de forma lossless em RAM. Home agora usa mapa de tiles de 16 bits com espelhamento horizontal/vertical e mede no máximo 10.380 bytes; Summary/Pokécenter usam block-LZ de oito linhas com dez candidatos recentes por hash, reutilizando temporariamente a arena vazia de sprites sem aumentar BSS, e medem no máximo 10.488 bytes. Os limites protegidos ficaram em 10.444 e 10.552 bytes, ambos dentro dos 10.612 reais. A regressão recalcula esses máximos a partir de todos os PKGs e reproduz exatamente os dois encoders. `scripts/test.ps1` terminou em `All native tests passed`; o firmware/recovery compilaram dentro dos limites. Firmware principal de 2.937.488 bytes, SHA-256 `71EBFC49085AC69449665AEBEA97883883A360865B125020B846A84A633C2D5B`, e recovery de 343.184 bytes, SHA-256 `7A9615AAF8847D126FBE11556B7DD2C672D859EBF970D9D755764A19B213AA2F`, foram gravados e verificados na COM7/MAC `b4:bf:e9:21:3c:e4`; save/NVS foram preservados em `backups/ota-layout-20261109-084357-B4BFE9213CE4`. Na validação final, o PC conectou por GATT/MTU 200, a placa aceitou a sessão lógica e o processo do peer foi encerrado à força. A placa processou a desconexão física, desligou o rádio e voltou para `screen=7`, com `connected=0` e `activity=0`. Já com o heap fragmentado e maior bloco de 10.740 bytes, Box abriu/fechou, Bag abriu em 6 ms e voltou à Home, e Pokécenter fez `screen=7 -> 8 -> 7`, todos sem reset ou congelamento. Evidências: `.codex-debug/r403-connected-ble-repro.log` e `.codex-debug/r403-connected-ble-fixed.log`. |
+
+## R20261109-402 - Corrigir travamento da placa ao sair do multiplayer
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-402 | 2026-11-09 | Corrigir a placa, que ainda travava por completo e não permitia continuar jogando depois de sair do multiplayer | Concluído, validado e gravado na placa | A falha foi reproduzida na COM7 sem depender da aparência da tela: ao fechar a Bag com BLE ativo, o rádio desligava, o save voltava corretamente e o firmware continuava recebendo toques, mas permanecia para sempre em `screen=32`. A causa exata era o contrato de capacidade do renderer: depois do teardown real o maior bloco recuperado tinha 14.836 bytes, `restoreSceneWorkspace` reservava 128 bytes e criava um banco válido de 14.708 bytes, mas `uiSceneWorkspaceReady()` ainda exigia 15.360 bytes e o destruía/recriava em loop. O limite deixou de ser um arredondamento arbitrário: uma regressão agora decodifica todos os PKGs de Summary/PokéCenter e executa o mesmo compressor block-LZ do firmware; o maior asset real é `pokecenter/scene_06.pkg` com 14.338 bytes, e o mínimo protegido ficou em 14.358 bytes. A auditoria dos fluxos confirmou que BACK, desligamento manual, fim de batalha e desconexão inesperada convergem no mesmo teardown. `scripts/test.ps1` terminou em `All native tests passed`, incluindo 671 golpes, matriz de habilidades, BLE e três batalhas completas do bot. Firmware principal de 2.936.960 bytes, SHA-256 `AA95100F2D3031FBA92E04339200F55F5541B8E5BED1DAB674A5BB1DF7A5EA51`, e recovery de 343.184 bytes foram gravados e verificados na COM7/MAC `b4:bf:e9:21:3c:e4`; save/NVS foram preservados em `backups/ota-layout-20261109-080120-B4BFE9213CE4`. No hardware, Wi-Fi conectado fez `screen=32 -> screen=7` pelo BACK; BLE ativo reproduziu o mesmo cenário que antes travava e agora também terminou em `screen=7` sem reset. Em seguida Bag e Box abriram e fecharam normalmente, confirmando que a Home permaneceu jogável. Evidência: `.codex-debug/r402-multiplayer-exit-fixed.log`. |
+
+## R20261108-401 - Publicar APK com a correção dos Special Eggs
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-401 | 2026-11-08 | Gerar e subir ao Google Drive o APK atualizado | Concluído, validado e publicado | O Android 3.0 avançou para `versionCode 116` e identificador nativo `r401`, incorporando a correção R400 que impede iniciais repetidos em Special Eggs guardados ou incubando e reavalia duplicatas legadas antes do hatch. O release ARM64/x86-64 passou no Gradle e foi reaberto: o PAK interno é o canônico v55, com 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. `zipalign -P 16` passou e `apksigner` confirmou assinatura v2/v3 com o mesmo certificado de atualização, SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O APK final mede 13.432.079 bytes e possui SHA-256 `3BE4EF3B20E9F28880143907F806A03010AF02C102DDDA0F983F216321FC7169`. A suíte nativa completa havia terminado em `All native tests passed` imediatamente antes do versionamento, e o contrato de identidade do release 116/r401 também passou. `PokegochiApp-v3.0.apk` substituiu o arquivo anterior preservando o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`; a releitura do Drive confirmou nome, MIME `application/vnd.android.package-archive`, tamanho, pasta `0AM3Hk51TGiOjUk9PVA` e modificação `2026-11-08T20:42:16.412Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261108-400 - Impedir iniciais repetidos em Special Eggs ainda não chocados
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-400 | 2026-11-08 | Corrigir o Special Egg depois de três Bulbasaur seguidos, pois iniciais já obtidos não deveriam voltar antes do pool de lendários | Concluído e validado | A Pokédex era consultada corretamente, mas a espécie do ovo é definida quando a recompensa entra na Egg Bag. Vários Special Eggs recebidos antes do primeiro hatch não consultavam os ovos já guardados ou incubando; portanto todos podiam reservar antecipadamente o mesmo inicial ainda não marcado como `caught`, e continuavam chocando repetidos mesmo depois que o primeiro atualizava a Pokédex. A seleção agora exclui tanto os nove iniciais Gen I--III já capturados quanto os que estão reservados por outro Special Egg na Bag ou na incubadora, sem marcar ovos como captura e sem alterar o formato do save. Battle Tower e Boss passam o estado da incubadora pela mesma API. Ovos duplicados já gravados por versões anteriores também são reavaliados imediatamente antes do hatch quando o inicial já está capturado, preservando integralmente tempo de incubação, raridade e shiny roll. A regressão recebe nove ovos sem chocar nenhum e confirma os nove iniciais exatamente uma vez; o décimo já pertence ao pool de lendários desbloqueados. Outros casos cobrem Bulbasaur como o único inicial ausente mas incubando e um Bulbasaur duplicado legado pronto para chocar; ambos avançam ao pool correto sem repetir. A inspeção do save físico disponível também confirmou que Bulbasaur já estava com `caught=1`; havia um Mudkip Special ativo, demonstrando que o bit da Pokédex não estava invertido. `scripts/test.ps1` terminou em `All native tests passed`. Firmware e Android com núcleo compartilhado compilaram: o firmware usa 124.376/327.680 bytes de RAM e 2.929.784/3.211.264 bytes de flash; `firmware.bin` mede 2.934.864 bytes e tem SHA-256 `47D930FEAB03723E2E728983F62D9A0763C25EFC54AEC2B89268C1CA6534720C`. O APK debug reaberto confirmou o PAK canônico v55 de 30.219.710 bytes e mede 19.660.975 bytes, SHA-256 `C4B4374E2558C07DAFA4350FA74C80D2C25E7EE731F2562B6A8CE35FA1923CDA`. Nenhum APK foi publicado e nenhuma placa foi regravada neste pedido. |
+
+## R20261108-399 - Recuperar save corrompido e impedir gravação da arena gráfica na Box
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-399 | 2026-11-08 | Recuperar o save da placa depois que quase todos os Pokémon sumiram, restando Aegislash e registros `Unknown` com sprites inválidos | Concluído, recuperado e validado diretamente na flash | A corrupção foi causada pelo diagnóstico físico de Z-Moves de R397: `ANIMPVP` emprestava os 52 KiB finais da Box ao renderer, mas a rota diagnóstica não marcava o empréstimo nem restaurava o save durável; um autosave posterior gravou pixels/tarefas gráficas como 816 registros `OwnedPokemon`. Por isso os CRCs continuavam válidos apesar de 559 dos 616 slots ocupados serem espécies inválidas. A imagem SPIFFS imediatamente anterior ao diagnóstico, `.artifacts/hardware/zmove-20261108-111711/spiffs-before.bin`, foi auditada externamente e continha os dois registros V52 com CRC válido, 36 Pokémon ocupados, 36 espécies válidas e zero inválidas. A partição corrompida foi preservada antes de qualquer escrita em `.artifacts/hardware/save-recovery-20261108-140725/spiffs-current-before-recovery-v2.bin`, SHA-256 `812D58A6CBBCBBABB0346CACB7A5A8C97E52B8546310D9D81AA63BFA4FFE0517`. `saveNow()` agora recusa incondicionalmente qualquer persistência enquanto `pvpCollectionWorkspaceBorrowed` estiver ativo; o diagnóstico confirma o save antes do empréstimo, marca os mesmos latches da produção, ganhou `ANIMPVP OFF` para liberar o renderer e recarregar a cópia durável, e o profiler executa essa restauração em `finally` mesmo depois de uma falha. O backup transitório da Party foi movido para RTC no-init no ESP32 e é zerado antes da leitura, preservando as 20 tarefas de animação sem ultrapassar a DRAM. Foi adicionado `scripts/inspect_save_record.cpp` para conferir versão, tamanho, CRC, sequência, Party e cada espécie sem depender do firmware. A suíte completa terminou em `All native tests passed`; o build usa 124.376/327.680 bytes de RAM e 2.929.524/3.211.264 bytes de flash. O firmware de 2.934.608 bytes, SHA-256 `96A7B104B5F70CAC0E638DDB8A533DF8DDA5A513328A1849E430B844C3ACC781`, e o SPIFFS íntegro foram gravados na COM7/MAC `b4:bf:e9:21:3c:e4` e ambos passaram `verify-flash`. O boot confirmou `Save OK`, asset pack OK e `Ready`. Por fim, a SPIFFS foi relida da placa, extraída e inspecionada: slots A/B nas sequências 55701/55702, ambos `shape=ok`, `crc=ok`, Party `53,52,58`, `nextUid=60`, 36/36 Pokémon válidos e zero `Unknown`. |
+
+## R20261108-398 - Publicar PGOTA com as correções gráficas da placa
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-398 | 2026-11-08 | Depois de corrigir e atualizar a placa, gerar e subir o `.pgota` correspondente | Concluído, validado e publicado | O pacote `Pokegochi-Firmware-4.0-r397.pgota` foi gerado a partir do mesmo firmware de produção gravado e verificado na placa em R20261108-397. Usa sequência anti-downgrade `1794153457`, protocolo 1, firmware de 2.934.784 bytes com SHA-256 `5DE095F1E6227443CB0DE25BB661555A42213B6E965107DCFDF91B34759CC42D` e PAK v55 canônico; o gerador reabriu o ZIP e confirmou manifesto, assinatura P-256 e hashes SHA-256 de todos os objetos. O arquivo mede 34.640.019 bytes e possui SHA-256 `FAE5F27992441DA6D20EF8D2640C584E58C0220C3ED8C9F2185175E5F133C537`. O PGOTA estável no Google Drive foi substituído preservando o ID `1sv4tIfXGmq4opidvua5MGhgSwXQkVDhU`; a releitura confirmou nome, MIME `application/zip`, tamanho, pasta e modificação `2026-11-08T15:57:58.348Z`. Link: `https://drive.google.com/file/d/1sv4tIfXGmq4opidvua5MGhgSwXQkVDhU/view?usp=drivesdk`. |
+
+## R20261108-397 - Corrigir Let’s Snuggle Forever e auditar todos os Z-Moves na placa
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-397 | 2026-11-08 | Corrigir a animação ausente de `LET'S SNUGGLE FOREVER`/Play Rough no Pokegochi físico e verificar se outros Z-Moves também estavam quebrados | Concluído, validado integralmente no hardware e gravado | O programa 876 e seus assets estavam corretos, mas o renderer do PvP Wi-Fi empresta somente 52.032 bytes da cauda volátil da Box. Fundos opacos que cabiam linearmente ocupavam quase toda essa arena e deixavam sprites do golpe sem espaço; em sequências, a restauração intermediária também podia bloquear o preload seguinte. O banco de cenas agora escolhe dinamicamente a menor representação lossless entre 4-bpp linear e tiles deduplicados — `bg_56`, usado por `LET'S SNUGGLE FOREVER`/`EXTREME_EVOBOOST`, caiu de 29.440 para 17.240 bytes — e mantém fallback linear quando tiles aumentariam `bg_68`/`bg_69`. Trocas sequenciais de fundo atualizam o latch da página realmente residente, corrigindo também o cache miss de `STOKED SPARKSURFER`; a restauração entre animações consecutivas recompõe o manifesto em RAM sem exigir um frame TFT intermediário; e o ledger de tarefas passou de 16 para 20 entradas, cobrindo o pico real de 17 do `PULVERIZING PANCAKE` sem exceder a DRAM. A regressão PvP cobre explicitamente Mimikyu local e remoto usando Play Rough + Fairium Z e preserva o golpe mecânico 583 com apresentação 876. Na COM7/MAC `b4:bf:e9:21:3c:e4`, os 35 Z-Moves 848..882 foram executados a 3x com Wi-Fi real ativo e a arena PvP emprestada, primeiro como jogador e depois como oponente: 70/70 preloads, 70/70 apresentações físicas (mínimo de 10 por golpe), zero overflow, zero erro de I/O, zero falta de capacidade e zero cache miss durante os golpes. Evidências: `.artifacts/hardware/zmove-20261108-111711/all-z-side0-final.log` e `all-z-side1-final.log`. `scripts/test.ps1` terminou em `All native tests passed`. O firmware de produção usa 124.576/327.680 bytes de RAM e 2.929.708/3.211.264 bytes de flash; `firmware.bin` mede 2.934.784 bytes e possui SHA-256 `5DE095F1E6227443CB0DE25BB661555A42213B6E965107DCFDF91B34759CC42D`. Foi gravado somente em `0xC0000`; o readback integral retornou o mesmo SHA-256. O SPIFFS não foi apagado/regravado pelo flash e o boot final confirmou firmware 4.0, `Save OK`, asset pack OK e `Ready`. |
+
+## R20261108-396 - Reduzir a Bag especial do multiplayer
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-396 | 2026-11-08 | Diminuir um pouco a Bag do multiplayer, removendo um Max Revive e uma Hyper Potion | Concluído e validado | A Bag descartável de batalhas multiplayer Normal e Balanced agora contém 1 Max Revive, 3 Hyper Potions, 4 Full Heals e 1 Max Elixir. Os valores continuam centralizados no protocolo compartilhado, portanto jogador local, adversário e bot do servidor recebem exatamente o mesmo estoque; nenhum item do save permanente é consumido. As regressões de protocolo e IA foram atualizadas e passaram dentro de `scripts/test.ps1`; o firmware final desta mesma entrega foi gravado na placa Pokegochi. |
+
+## R20261108-395 - Compilar e publicar APK somente em inglês
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-395 | 2026-11-08 | Compilar e subir ao Google Drive o APK com a remoção temporária da opção de idioma | Concluído, validado e publicado | O Android 3.0 avançou para `versionCode 115` e identificador nativo `r395`, preservando o mesmo application ID e certificado de atualização. O release ARM64/x86-64 passou no Gradle e foi reaberto: o PAK interno é o canônico v55 com 15.528 assets, 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. `zipalign -P 16` passou e `apksigner` confirmou assinatura v2/v3 com certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O APK final mede 13.429.923 bytes e possui SHA-256 `764268C2AE3C191AB78A0738FCEF012339BAC855305E839AE425459213503055`. A suíte completa pós-versionamento terminou em `All native tests passed`, incluindo o contrato que impede o retorno acidental do seletor de idioma. `PokegochiApp-v3.0.apk` substituiu o arquivo anterior preservando o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`; a releitura do Drive confirmou nome, MIME `application/vnd.android.package-archive`, tamanho, pasta `0AM3Hk51TGiOjUk9PVA` e modificação `2026-11-08T14:19:38.026Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261108-394 - Retirar temporariamente a opção de idioma e manter somente inglês
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-394 | 2026-11-08 | Remover a opção de `LANGUAGE` por enquanto e deixar a interface somente em inglês, preservando a possibilidade de retomar o recurso depois | Concluído e validado | O card `LANGUAGE`, os botões `EN`/`PT`, suas constantes de layout e toda a área de toque foram removidos da aba `MORE` no firmware e no runtime Android compartilhado. A aba foi preservada porque ainda contém Wireless Update e metadados no dispositivo físico, e versão do aplicativo no Android. `normalizeSettings()` agora força inglês e migra silenciosamente saves que estavam marcados como PT-BR, persistindo a mudança; o marcador de save, o motor de localização, o catálogo PT-BR e os hooks do renderer permaneceram intactos e sem acesso pela UI para permitir a retomada futura sem reconstrução. O contrato foi invertido para impedir a reintrodução acidental do seletor e confirmou o catálogo dormente com 8.079 entradas. `scripts/test.ps1` terminou em `All native tests passed`, o contrato de desempenho da UI passou e `git diff --check` não encontrou erro. Firmware e recovery compilaram dentro das partições; o firmware mede 2.936.288 bytes e possui SHA-256 `2B848DC7FFFB14879044CF445A010DD26C5CDF692C13F52130EF4B91B6836C58`. Nenhuma placa foi gravada e nenhum APK/PGOTA foi publicado, pois isso não foi solicitado. |
+
+## R20261108-393 - Corrigir sobreposição de SYNC/turno pronto e publicar PGOTA
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261108-393 | 2026-11-08 | Corrigir na placa os dois textos que se sobrepunham depois de um ataque multiplayer, provavelmente `SYNCING` e o prompt de turno pronto; gerar e subir um PGOTA e atualizar o Updater somente se necessário | Concluído, validado e publicado | A causa estava na transição visual do ACK: o código apagava `SYNCING/WAITING/LOCKED` no estado lógico, mas não invalidava o painel inferior inteiro. O tick seguinte do cronômetro recompunha somente `y=160..175`, deixando no TFT as linhas inferiores dos glifos antigos sob `WHAT WILL ... DO?`. A nova transação limpa qualquer prompt transitório no ACK do host, na aplicação autoritativa do guest e no retry do ACK, zera o scroll e invalida os 320x80 pixels do HUD inferior; o presenter PvP envia essa região em um único stream GRAM de largura completa. Foi adicionada regressão específica e `scripts/test.ps1` terminou em `All native tests passed`. Firmware e recovery compilaram dentro das partições; o firmware mede 2.936.608 bytes e tem SHA-256 `83CACF5C9AFF0FB80708C1957DEDD8F5D8ABC1B3FB8B8C95291F68AB7C83DEB2`. O PGOTA P-256/SHA-256, sequência `1794146181`, foi reaberto e validado com protocolo 1, manifesto de 276 bytes, firmware correto e PAK v55 canônico; mede 34.641.842 bytes e tem SHA-256 `0B8CBD75833046B22107EED0201D08AA201D7A5F63E6A8510C3630E471C6BAC4`. `Pokegochi-Firmware-4.0-r393.pgota` substituiu o OTAP anterior preservando o ID `1sv4tIfXGmq4opidvua5MGhgSwXQkVDhU`; a releitura confirmou nome, MIME `application/zip`, tamanho, pasta e modificação `2026-11-08T13:57:31.454Z`. Link: `https://drive.google.com/file/d/1sv4tIfXGmq4opidvua5MGhgSwXQkVDhU/view?usp=drivesdk`. O formato do pacote e o transporte permaneceram idênticos e o contrato do Updater atual passou, portanto nenhum APK novo foi necessário. |
+
+## R20261107-392 - Reproduzir três batalhas completas contra o bot
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-392 | 2026-11-07 | Depois da correção de Struggle/RUN, jogar três batalhas completas contra o bot e procurar outros bugs | Concluído e convertido em regressão permanente | Foram executadas três batalhas mecânicas completas com o `BattleEngine` real, a mesma IA competitiva, Bag finita, trocas, Z-Move, PP, status e encerramento usados em produção: terminaram em 13/11/10 comandos, 2/4/3 barreiras de troca e 4/5/5 itens do bot, sem estado inválido ou travamento. Em paralelo, três batalhas Balanced completas atravessaram o TCP da DevKit física `192.168.1.202:32145`: duas vitórias do cliente e uma do bot, totalizando 31 turnos, 9 trocas forçadas e 11 itens. Depois de cada final o bot `99999` fechou a sala, reapareceu na descoberta e aceitou a luta seguinte; o contador Balanced aumentou exatamente uma vez pela única vitória do bot. O novo ensaio físico está em `scripts/test_online_server_full_battles.py` e a regressão mecânica em `test/native/test_server_bot_full_battles.cpp`, agora executada por `scripts/test.ps1`. A auditoria encontrou uma inconsistência colateral no contrato de release, ainda preso ao APK `113/r387` apesar do artefato atual ser `114/r391`; o contrato foi alinhado. A suíte completa terminou novamente em `All native tests passed`, incluindo Struggle, RUN unilateral, todos os sweeps de golpes e a matriz de passivas. Nenhum novo bug de batalha apareceu nos seis percursos completos. |
+
+## R20261107-391 - Corrigir Struggle e garantir saída unilateral da batalha multiplayer
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-391 | 2026-11-07 | Corrigir o Struggle usado quando acabam os PPs e impedir que `RUN` deixe o jogador preso em `COULD NOT FORFEIT - TRY AGAIN` | Concluído, testado, compilado e servidor gravado | A causa do Struggle era dupla: o cliente o executava diretamente no motor local, fora da barreira autoritativa do multiplayer, e o bot escolhia novamente o slot 0 sem PP após esgotar o Max Elixir. Struggle agora usa o slot reservado 4 do protocolo em ambos os lados, atravessa a mesma transação de turno dos outros golpes, aplica dano e recoil para os dois participantes sem consumir PP, e a tela de golpes o apresenta como opção real com tipo Normal e PP `--/--`. O bot também seleciona explicitamente Struggle quando conhece golpes mas nenhum possui PP. O `FORFEIT` agora pode substituir qualquer comando local pendente e continua unilateral, resolvendo o turno contra `WAIT`; se nem o envio ao transporte for possível, o cliente encerra a sessão quebrada e retorna ao jogo em vez de prender o usuário. As regressões cobrem Struggle simultâneo, recoil/eventos/PP, bot sem PP, substituição de comando e fallback de desconexão. `scripts/test.ps1` terminou em `All native tests passed`, incluindo as matrizes completas de golpes, passivas e contratos PvP/UI. O APK 3.0 avançou para `versionCode 114`/`r391`, mede 13.430.035 bytes e tem SHA-256 `E6F3081E7182A2FF5436476B022AFBFD863D06A0A22E5B5341418AF2D93E6FD5`; o firmware Pokegochi mede 2.936.416 bytes e tem SHA-256 `001CAD99415B2876C461F2D9B85E8D089CBE11018EAF9D51DC234747E10AE90A`. O servidor compilou com 53.968/327.680 bytes de RAM (16,5%) e 980.864/1.310.720 bytes de flash (74,8%); seu binário mede 991.664 bytes e tem SHA-256 `F237CBD5317A218382015A8567E4F603D3495755566D0B993C94827AC9B453FE`. A DevKit COM8/MAC `94:b9:7e:df:2f:e4` recebeu os quatro segmentos, todos conferidos por `verify-flash`; o boot confirmou bot `99999`, roster 70, TCP `192.168.1.202:32145` e relay cloud online. |
+
+## R20261107-390 - Fazer o bot online usar a Bag de forma contextual
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-390 | 2026-11-07 | Lembrar da Bag e fazer o bot usar itens quando for coerente; depois gravar a placa conectada do servidor | Concluído, testado e gravado | O bot agora recebe exatamente a Bag padronizada de qualquer participante PvP: 4 Hyper Potions, 4 Full Heals, 2 Max Revives e 1 Max Elixir por batalha. Um avaliador genérico compara o melhor item ao melhor golpe na mesma escala, sem lógica por espécie: evita cura sem efeito, prioriza Hyper Potion conforme o risco de HP, Full Heal para status/confusão relevantes, Max Revive somente em aliado realmente caído e Max Elixir apenas com PP severamente esgotado. Embargo bloqueia itens no ativo, empate preserva a Bag e o estoque só é descontado depois do envio bem-sucedido do comando `ITEM`; alvo e item usam o mesmo pacote do cliente humano. As regressões cobrem estoque finito, alvo, status, confusão, Embargo, revive e PP; `scripts/test.ps1` terminou em `All native tests passed`. O teste ponta a ponta na placa forçou HP crítico e confirmou quatro Hyper Potions seguidas (`4→3→2→1→0`) no alvo correto, seguidas obrigatoriamente por um golpe quando o estoque acabou. O servidor compilou com 53.872/327.680 bytes de RAM (16,4%) e 977.700/1.310.720 bytes de flash (74,6%). O binário possui 988.496 bytes e SHA-256 `F12738E8952959B464ECC3F43C791C578FBBDBE7D267BC96095C6940A55DD224`. A DevKit CP210x da COM8 foi confirmada como ESP32-D0WDQ6/MAC `94:b9:7e:df:2f:e4`, todos os quatro segmentos foram gravados com hash verificado, e o boot confirmou bot `99999`, roster 70, TCP em `192.168.1.202:32145` e relay cloud online. Evidência: `.codex-debug/r390-server-bag-e2e.log`. |
+
+## R20261107-389 - Validar fisicamente o ciclo Wi-Fi ON/OFF e a saída da Bag
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-389 | 2026-11-07 | Não entregar a correção do desligamento do Wi-Fi sem aproveitar a placa conectada para ligar, desligar, sair da Bag e otimizar/testar o fluxo real | Concluído, validado fisicamente e gravado | A COM7 reproduziu a falha: depois de Wi-Fi ON/conexão e OFF, a pilha Arduino Network deixava a RAM fragmentada em blocos de cerca de 14–16 KiB; o save voltava, mas o renderer ainda esperava os antigos 30 KiB e a saída permanecia na tela Wi-Fi. O desligamento agora destrói o `NetworkManager`, remove o event loop padrão e restaura save/renderer na ordem determinística. Home passou a usar tiles compactos lossless e Summary/PokéCenter usam LZ lossless por blocos independentes de oito linhas, transcodificado em RAM a partir do PAK existente, reduzindo o maior cenário auditado para 14.358 bytes sem exigir troca do SD. O firmware final compilou com 124.456/327.680 bytes de RAM (38,0%) e 2.928.704/3.211.264 bytes de flash (91,2%), foi gravado somente na partição app da COM7 preservando save/NVS/SD e teve o flash verificado. No ensaio físico completo, a placa conectou ao relay em `192.168.1.202`, respondeu imediatamente ao OFF, liberou o runtime, restaurou o save com bloco máximo de 15.348 bytes e fez Wi-Fi `screen=32` → Home `screen=7` pelo BACK sem reset. Depois do ciclo também abriu PokéCenter (`screen=8`) e três páginas do Summary (`screen=30`) sem `asset read fail`. Uma repetição prolongada acionou corretamente a proteção de bateria porque a placa estava em 13% e o rádio causou queda de tensão; não houve regressão de software no ciclo completo anterior. Os contratos de shutdown/renderer, BLE/Bag e desempenho de UI passaram, assim como `git diff --check`. Evidências: `.codex-debug/r387-compact-ui-cycle.log`; firmware de 2.933.776 bytes em `.pio/build/esp32-2432S028R/firmware.bin`. |
+
+## R20261107-388 - Reestruturar a IA contextual do bot online
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-388 | 2026-11-07 | Melhorar a IA do bot, que usava Recover mesmo com a vida cheia, e evitar comportamentos hardcoded por Pokémon | Concluído e validado | O servidor deixou de sortear cegamente qualquer slot com PP e de disparar o Z-Move automaticamente. O gerador do roster agora extrai da base canônica uma tabela compacta dos 107 golpes realmente usados e os tipos dos 807 Pokémon; o avaliador é único e orientado por contexto, sem `switch` por espécie. Cada decisão considera HP, status, matchup/STAB/precisão/prioridade, EV ofensivo, recoil/drain, reservas para pivot, Disable, Encore, Choice lock, Taunt, Torment, Heal Block, último golpe/dano, Counter/Mirror Coat, Leech Seed, setup e estágios em +6, status já presente, imunidades de tipo e pré-requisitos. Recover/Slack Off/Synthesis/Roost/Wish em HP cheio ficam fora da seleção; a cura cresce em prioridade somente conforme o HP cai. O servidor passou a consumir e guardar os pacotes autoritativos completos de party/Pokémon/voláteis dos dois lados, inclusive antes do primeiro turno. Regressões cobrem 256 sementes sem Recover cheio, cura em HP crítico, Heal Block, setup esgotado, status duplicado, matchup, pivot sem reserva e Z-Move contextual. `scripts/test.ps1` terminou em `All native tests passed`; o firmware do servidor compilou com 53.856/327.680 bytes de RAM (16,4%) e 976.068/1.310.720 bytes de flash (74,5%). |
+
+## R20261107-387 - Corrigir a transação de Volt Switch/U-turn no multiplayer
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-387 | 2026-11-07 | Corrigir pela causa raiz o caso em que Volt Switch abre o seletor, mas a escolha não substitui o Zeraora; cobrir também U-turn, Parting Shot e efeitos que impedem trocas comuns | Concluído, validado e publicado | A causa era arquitetural: a segunda barreira de comandos inferia novamente o motivo da troca a partir de `BattleState::pendingPlayerReplacement`, um campo transitório que podia divergir durante snapshot/ACK. A troca então caía no fluxo voluntário ou era descartada. Agora o motivo fica latched como uma transação explícita desde a execução do golpe, atravessa seleção, sincronização e ACK, e é entregue diretamente aos completadores local/remoto. Trocas voluntárias continuam bloqueadas por trapping/Ingrain; pivots ignoram escape prevention, mas Fairy Lock impede a criação da transação, como no motor de referência. A regressão apaga deliberadamente o marcador transitório entre as duas fases e exige a troca correta para Volt Switch, U-turn e Parting Shot. A suíte completa terminou em `All native tests passed`; o APK Android 3.0 avançou para `versionCode 113`/`r387`, confirmou o PAK canônico v55 de 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, alinhamento 16 KiB e assinatura APK v2/v3. O arquivo final mede 13.424.147 bytes e tem SHA-256 `4C805075B3B1877D4129A5E4B9A0C5499B7C7A084EFA3D0629A65CEE72A465E0`. `PokegochiApp-v3.0.apk` foi substituído no mesmo arquivo do Drive; a releitura confirmou ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, MIME, tamanho, pasta e modificação `2026-11-07T19:07:38.514Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261107-386 - Publicar APK com a correção do Volt Switch online
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-386 | 2026-11-07 | Compilar e subir ao Google Drive o APK com as correções atuais | Concluído, validado e publicado | O Android avançou para `versionCode 112` e build nativo `r386`. O release ARM64/x86-64 confirmou dentro do APK o PAK canônico v55 de 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, passou alinhamento de 16 KiB e assinatura APK v2/v3. O arquivo final mede 13.421.811 bytes e possui SHA-256 `66285B345CAA8FA80AF1A2042173B2776DC31D00942730BC24D402AB36EE7F21`. `PokegochiApp-v3.0.apk` foi substituído no mesmo arquivo do Drive; a releitura confirmou ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, MIME, tamanho, pasta e modificação `2026-11-07T18:40:11.268Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261107-386 - Feedback imediato nos controles de rádio e luminosidade
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-386 | 2026-11-07 | Fazer os switches Wi-Fi/BLE mudarem visualmente no instante do toque, exibindo loading durante a inicialização, e aplicar a mesma resposta imediata ao percentual de luminosidade em Settings | Implementado, testado e gravado; aguarda reteste visual | O multiplayer agora publica a posição ON/OFF e uma tela `STARTING/STOPPING WIFI/BLUETOOTH` diretamente no TFT antes de entrar nas rotinas síncronas do rádio. A luminosidade atualiza backlight, percentual e barra e apresenta o card antes do commit persistente do save. Dois contratos verificaram explicitamente a ordem apresentação → operação lenta/save. O firmware final compilou com 31 bytes livres no segmento DRAM, foi gravado na COM7 e os binários recovery/app passaram readback com `digest matched`; save/NVS/SPIFFS foram preservados em `backups/ota-layout-20261107-153806-B4BFE9213CE4`. O boot físico posterior confirmou firmware 4.0, Save OK, asset pack OK, ID 56925 e `Ready`. |
+
+## R20261107-385 - Placa reinicia ao ligar o multiplayer Wi-Fi
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-385 | 2026-11-07 | Corrigir o Pokegochi físico, que reinicia imediatamente ao tocar para colocar o Wi-Fi em ON | Corrigido, testado e gravado; aguarda repetição do toque ON | O log da COM7 identificou a causa exata: depois de conectar ao relay, o rádio deixava bloco máximo de 49.140 bytes para restaurar um `GameSave` de 54.984 bytes e a proteção acionava deliberadamente `ESP.restart()`. Além de reduzir buffers do cliente Wi-Fi ao uso real de um socket, o modo Wi-Fi agora estaciona o save e libera sob demanda o pool BLE ocioso antes de iniciar o rádio; ao desligar, restaura save e renderer. Como `esp_bt_mem_release` é irreversível até o próximo boot, uma futura entrada em BLE faz um reinício controlado e retorna diretamente à página BLE. O contrato direcionado passou e o firmware final de R386 foi gravado/verificado na COM7 preservando o save; aguarda somente o usuário repetir fisicamente o toque para registrar no log a margem de heap pós-liberação e confirmar ausência de reset. |
+
+## R20261107-384 - Corrigir Volt Switch no multiplayer online
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-384 | 2026-11-07 | Corrigir Volt Switch online: o golpe causa dano e anuncia o retorno, mas o usuário não troca e o adversário perde o turno | Concluído e validado | A troca intermediária de Volt Switch/U-turn passou a fazer parte da barreira de comandos do PvP nos dois sentidos. O usuário do golpe escolhe quem entra e a ação já confirmada pelo adversário é retomada ainda no mesmo turno contra o substituto, sem perder PP, ação ou sincronização. O bot também detecta pelo PP sincronizado se o pivot realmente chegou a ser executado, responde à segunda barreira no mesmo turno e cobre inclusive ambos os lados usando pivot ou o golpe causando KO. Regressões nativas cobrem o jogador local e o remoto usando Volt Switch; a varredura dos 92 golpes da Gen V, a suíte nativa completa, o firmware, o servidor e o APK debug passaram. |
+
+## R20261107-383 - Aumentar capacidade do servidor e ampliar roster do bot
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-383 | 2026-11-07 | Aumentar, se possível, o limite online e incluir Aegislash, Mimikyu, Dragonite, Wobbuffet, Latios, Xerneas, Zygarde, Darkrai, Lucario, Greninja com Ash's Bond e Rayquaza no roster competitivo permanente do bot | Concluído e validado | O servidor agora aceita 12 players autenticados e seis sessões simultâneas, limite que cabe nos 16 sockets incluindo listener TCP, MQTT e mDNS. A lista no jogo ganhou paginação de quatro em quatro para expor todos os peers. A Box determinística continua com 70 membros/dez por geração e garante os 11 Pokémon pedidos com movesets, abilities, EVs, natures e itens competitivos; Greninja preserva Ash's Bond e o bot também ativa a transformação ao nocautear. Testes do gerador, composição de 2.048 times, protocolo e batalha passaram. O servidor final compilou usando 53.168 bytes de RAM (16,2%) e 968.044 bytes de flash (73,9%); firmware e APK debug também compilaram. |
+
+## R20261107-382 - Capacidade atual do servidor online
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-382 | 2026-11-07 | Informar quantos players online o servidor atual suporta | Respondido com auditoria do código | O protocolo fixa `kMaximumClients = 8` e `kMaximumSessions = 4`. Portanto o servidor mantém até oito players autenticados online e até quatro salas simultâneas. Sem o bot, isso permite quatro duplas; com o bot ocupado, a sessão dele mais três duplas usa sete players ativos e ainda pode haver um oitavo player online aguardando. Os limites abrangem em conjunto clientes TCP locais e MQTT/cloud. |
+
+## R20261107-381 - Restaurar Summary e PokéCenter depois do multiplayer na placa
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-381 | 2026-11-07 | Corrigir a placa física, que depois de tentar multiplayer deixa o Summary e o PokéCenter com gráficos quebrados; entregar junto da correção de READY sem party | Corrigido, testado e gravado; aguarda reteste visual do usuário | O log físico mostrou a causa exata: os dois cenários falhavam com `large-capacity` depois que o rádio deixava apenas um banco gráfico suficiente para Home. O desligamento agora estaciona o GameSave durável antes de encerrar Wi-Fi/BLE e o restaura antes do renderer, repetindo a ordem determinística do boot; a recuperação só é considerada concluída com 30 KiB para toda a UI, não com os antigos 14 KiB de Home. Summary e PokéCenter passaram a usar compactação residente lossless por tiles, incluindo mapa de tiles de 16 bits para os PokéCenters com mais de 256 tiles distintos, sem alterar o PAK/SD. Os contratos direcionados e `scripts/test.ps1` passaram (`All native tests passed`). Firmware principal de 2.929.472 bytes, SHA-256 `2C124D66D7277BDA4E6D787AB0ED3862A9CE00B8A14B9896B666EE9A92EFEB82`, e recovery de 343.184 bytes foram gravados na COM7 e ambos tiveram readback `digest matched`. NVS/save e SPIFFS foram preservados em `backups/ota-layout-20261107-144743-B4BFE9213CE4`. O boot completo posterior confirmou firmware 4.0, microSD OK, Save OK, archive/asset pack OK, mesmo player ID 56925 e `Ready`, registrado em `.codex-debug/r381-ready-ui-board-full.log`. |
+
+## R20261107-380 - Gravar no Pokegochi físico a correção do READY local
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-380 | 2026-11-07 | Aplicar na placa física a mesma correção já validada no app: READY remoto não pode bloquear a Box antes do READY local | Corrigido, testado e gravado; aguarda reteste da interação | A correção compartilhada de R379 foi compilada junto de R381 e gravada na placa física COM7 identificada como ESP32-D0WD-V3/MAC `b4:bf:e9:21:3c:e4`. O firmware mantém `BattlePreparing`, `OPEN BOX` e `READY` quando apenas o adversário confirmou; somente o READY local trava a party. A regressão nativa cobre as duas perspectivas e a suíte completa passou. Flash, recovery, save, SD e boot foram verificados conforme o registro de R381. |
+
+## R20261107-379 - Não bloquear a Box quando somente o adversário apertou READY
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-379 | 2026-11-07 | Manter a seleção da Box disponível quando o outro jogador apertar READY primeiro; bloquear o time local somente depois do próprio READY | Concluído, validado e publicado | A causa estava em `maybeAdvanceBattlePreparation`: qualquer READY deslocava ambos para `BattleWaitingReady`, removendo `OPEN BOX` também de quem ainda não havia confirmado. Agora somente o READY local é o limite de commit: quem ainda não confirmou permanece em `BattlePreparing`, vê que o adversário está pronto e mantém `OPEN BOX`/`READY`; quem confirmou vê a party travada e aguarda. A regressão nativa cobre as duas perspectivas e o contrato visual impede a Box no estado já travado. Os seis textos novos receberam traduções PT-BR no gerador; a suíte completa terminou em `All native tests passed`. O APK Android 3.0 avançou para `versionCode 111`/`r379`, confirmou o PAK canônico v55, alinhamento de 16 KiB e assinatura v2/v3. O arquivo possui 13.418.131 bytes e SHA-256 `8C12513AA7CC3D6AD370CD2558D080E0D52CDAB53F66B180534E1EF115914B92`; substituiu `PokegochiApp-v3.0.apk` no Drive e a releitura confirmou o mesmo ID, pasta, MIME, tamanho e modificação `2026-11-07T17:04:43.812Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261107-378 - Publicar APK atualizado do multiplayer Wi-Fi
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-378 | 2026-11-07 | Gerar e subir ao Drive o aplicativo atualizado para testar as correções atuais do multiplayer Wi-Fi | Concluído, validado e publicado | O Android 3.0 avançou para `versionCode 110` e identificador nativo `r378`. O release ARM64/x86-64 terminou em `BUILD SUCCESSFUL`, confirmou dentro do APK o PAK canônico v55 de 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, passou alinhamento de 16 KiB e assinatura APK v2/v3. O arquivo final mede 13.417.411 bytes e possui SHA-256 `1604BE4C9AE5A16F0B4A7BF56EC91189C3D5D9959F68FDAF40589EED11CF9D73`. `PokegochiApp-v3.0.apk` foi substituído no mesmo arquivo do Drive; a releitura confirmou ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, MIME, tamanho, pasta e modificação `2026-11-07T16:28:33.521Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261107-377 - Corrigir descoberta Android e bot 99999 após o primeiro faint
+
+```mermaid
+flowchart LR
+    R["R20261107-377: retomar multiplayer Wi-Fi"] --> L["Capturar COM7 e COM8"]
+    L --> B["Reproduzir bot parado após o primeiro faint"]
+    B --> F["Separar troca forçada do turno normal"]
+    F --> D["Instrumentar lista entregue ao Android"]
+    D --> V["Validar batalha física e descoberta no app"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261107-377 | 2026-11-07 | Continuar o multiplayer Wi-Fi com servidor e Pokegochi conectados; corrigir o app que autentica no servidor mas não lista jogadores e o player 99999 que para após perder o primeiro Pokémon | Em validação física | O teste de integração foi ampliado para publicar o estado pós-troca e enviar o próximo golpe no mesmo número de turno; contra o firmware antigo ele reproduziu o timeout relatado. A causa era o bot deduplicar comandos somente por `turn`: a troca forçada e o golpe seguinte pertencem ao mesmo turno. O servidor agora confirma a troca por checksum do snapshot, rearma o comando normal no mesmo turno e continua deduplicando retransmissões; o teste completo passou após a correção. O relay também registra, por consulta, protocolo, quantidade exata de jogadores enviada e estado ocupado do bot, permitindo distinguir falha do servidor de descarte no Android. Firmware recompilado e gravado na ESP32 DevKit COM8, com verificação de hash; aguarda repetição na interface real do app/COM7. |
+
+## R20261106-376 - Remover o reinício ao voltar do Wi-Fi para a Home
+
+```mermaid
+flowchart LR
+    R["R20261106-376: retorno sem reset"] --> M["Compactar cenário Home em tiles lossless"]
+    M --> B["Manter a memória BLE reservada"]
+    B --> H["Reconstruir Home no mesmo processo"]
+    H --> V["Validar Bag → Wi-Fi → Home na placa"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-376 | 2026-11-06 | Remover o reinício controlado considerado estranho/feio e implementar corretamente o retorno da Bag/Wi-Fi à Home sem reiniciar a placa | Em implementação | O cenário Home descompactado consome cerca de 30,6 KiB; a auditoria dos 47 cenários confirmou que uma representação lossless por tiles ocupa no máximo cerca de 12,8 KiB. A correção substituirá o reboot por cache compacto e recuperação da Home no mesmo processo, sem liberar irreversivelmente a memória BLE. |
+
+## R20261106-375 - Corrigir Home invisível após ligar Wi-Fi pela Bag
+
+```mermaid
+flowchart LR
+    R["R20261106-375: Bag → Wi-Fi → Home invisível"] --> D["Capturar estado da placa e reproduzir"]
+    D --> C["Corrigir transição, cache e workspace gráfico"]
+    C --> T["Regressão de ligar Wi-Fi e sair da Bag"]
+    T --> F["Compilar, gravar e validar na COM7"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-375 | 2026-11-06 | Corrigir tela Home invisível ao entrar em Bag → Wi-Fi, ligar o Wi-Fi e sair da Bag; diagnosticar e atualizar a placa conectada | Concluído, validado fisicamente e gravado | A reprodução física mostrou que a tentativa de Wi-Fi liberava 21.544 bytes do pool BLE, mas o estado otimizado não registrava essa liberação; ao fechar a Bag, a Home tentava carregar `home_background_07.pkg` com bloco máximo de apenas 10–15 KiB e entrava num loop de composição cancelada. O multiplayer agora mantém um latch próprio da liberação, corrige também o marcador do framework e exige reinício controlado antes de redesenhar a Home. As regressões direcionadas e `scripts/test.ps1` passaram (`All native tests passed`). O firmware compilou com 124.432/327.680 bytes de RAM e 2.924.832/3.211.264 bytes de flash; recovery de 343.184 bytes e app de 2.929.904 bytes foram gravados na COM7 e tiveram readback com `digest matched`, preservando NVS/save e SPIFFS em `backups/ota-layout-20261106-160312-B4BFE9213CE4`. A sequência física START → Bag → Wi-Fi → ON → fechar Bag produziu `waiting for complete Home graphics workspace`, reinício controlado `reason=1`, `Resume multiplayer Home`, `Ready` e `screen=7`, sem falha de asset nem Home invisível. |
+
+## R20261106-374 - Atualizar a placa com a correção dos held items
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-374 | 2026-11-06 | Atualizar a placa conectada com o firmware que corrige Red Card e audita os held items modernos | Concluído e verificado na placa | A ESP32-D0WD-V3 de MAC `b4:bf:e9:21:3c:e4` foi identificada na COM7. NVS e SPIFFS/save foram preservados em `backups/ota-layout-20261106-152405-B4BFE9213CE4`; recovery (343.184 bytes) e firmware principal (2.929.744 bytes) foram gravados nos offsets corretos e ambos passaram readback com `digest matched`. Os metadados OTA foram reiniciados para o recovery validar e iniciar o app principal. O cartão SD não precisou ser alterado porque R373 muda somente o motor de batalha. |
+
+## R20261106-373 - Auditar e corrigir todos os held items modernos
+
+```mermaid
+flowchart LR
+    R["R20261106-373: Red Card não funciona"] --> I["Inventariar held items Gen IV-VII"]
+    I --> E["Comparar cada efeito com as fontes dos jogos"]
+    E --> C["Corrigir motor, consumo e trocas forçadas"]
+    C --> T["Regressão individual para cada item"]
+    T --> V["Suíte completa e builds afetadas"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-373 | 2026-11-06 | Corrigir o Red Card, que não está funcionando, e conferir o funcionamento de todos os itens novos | Concluído e validado | Os 23 held items comuns pós-Emerald (Gen IV–VII) foram conferidos individualmente contra o `pokeemerald-expansion`, documentados em `docs/MODERN_HELD_ITEM_AUDIT.md` e cobertos pelo contrato de assets/save/loja. A auditoria corrigiu o Red Card em wild, Trainer e PvP, incluindo consumo diante de Suction Cups/Ingrain, supressão por Substitute/Sheer Force e encerramento correto de encontro wild; corrigiu também Eject Button quando o atacante desmaia por recoil e o seletor de troca do jogador em PvE, Terrain Seeds em usuários voadores/Levitate/Air Balloon e os falsos eventos de Protective Pads em contatos sem reação. Foram acrescentadas regressões para Life Orb + Sheer Force, Focus Sash com HP reduzido, Weakness Policy atrás de Substitute e os casos anteriores. `scripts/test.ps1` terminou em `All native tests passed`, incluindo matrizes de golpes/passivas, coleção, multiplayer e sweeps Gen V–VII. O firmware ESP32 compilou com 124.432/327.680 bytes de RAM e 2.924.668/3.211.264 bytes de flash; o app Android debug compilou para arm64-v8a/x86_64 e o APK confirmou o PAK canônico v55 (30.219.710 bytes, SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`). |
+
+## R20261106-372 - Tornar RUN unilateral e limitar turnos PvP a 30 segundos
+
+```mermaid
+flowchart LR
+    R["R20261106-372: corrigir fluxo PvP"] --> F["RUN resolve desistência imediatamente"]
+    F --> T["Relógio local de decisão: 30 segundos"]
+    T --> A["Tempo esgotado escolhe ação legal automaticamente"]
+    A --> V["Regressões BLE/Wi-Fi + suíte completa"]
+    V --> G["APK completo e publicação verificada"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-372 | 2026-11-06 | No multiplayer, fazer RUN conceder a batalha e sair imediatamente sem depender de ação do adversário; impor no máximo 30 segundos para cada jogador tomar a decisão do turno, impedindo que uma luta fique bloqueada por inatividade | Concluído, validado e publicado | `RUN` agora resolve a desistência no próprio cliente imediatamente: o comando local `Forfeit` sintetiza o `Wait` remoto necessário ao resolvedor, sem aguardar pacote ou decisão do adversário; ao receber a desistência, o outro lado continua resolvendo a vitória independentemente. Cada decisão local ganhou contador visível de 30 segundos, pausado durante animação e sincronização; ao expirar, seleciona o primeiro golpe legal (ou `Struggle`) e, numa troca obrigatória, o primeiro Pokémon saudável, usando comandos normais compatíveis com o protocolo existente. A regressão cobre os dois lados da desistência, timeout, troca forçada e texto da UI; o teste dourado Android foi atualizado para o protocolo v10 e `scripts/test.ps1` terminou em `All native tests passed.`. O firmware compilou com 124.328/327.680 bytes de RAM e 2.923.880/3.211.264 bytes de flash. O APK 3.0 avançou para `versionCode 109`/build `r372`, passou alinhamento de 16 KiB e assinatura v2/v3; mede 13.398.483 bytes e possui SHA-256 `08AB6E9FD525DC530722D8335BE74E0A8FDA19F044EA37E9A35991DDC81874C1`. O PAK interno foi reaberto e corresponde byte a byte ao canônico: v55, 15.528 assets, 30.219.710 bytes, SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. `PokegochiApp-v3.0.apk` foi substituído no mesmo arquivo do Drive; a releitura confirmou ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, MIME, tamanho, pasta e modificação `2026-11-06T17:45:00.651Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261106-371 - Atualizar o Pokegochi Updater para saves e OTAP atuais
+
+```mermaid
+flowchart LR
+    R["R20261106-371: corrigir Updater"] --> D["Diagnosticar save e OTAP atuais"]
+    D --> M["Aceitar .pgsav/.pgota sem depender de MIME"]
+    M --> S["Restaurar save de 55 KiB em blocos"]
+    S --> V["Suite + firmware + APK + OTAP assinado"]
+    V --> G["Publicar e reler Updater 2.5 no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-371 | 2026-11-06 | Enquanto o APK PT-BR era testado, atualizar o aplicativo Pokegochi Updater, corrigindo a incompatibilidade observada ao salvar/restaurar `.pgsav` e ao selecionar/instalar `.pgota`, e subir o Updater atualizado no Google Drive | Concluido, validado e publicado | Havia duas causas independentes. O seletor Android filtrava `.pgsav` e `.pgota` por MIME, mas Drive, Downloads e outros provedores classificam essas extensoes como ZIP, binario generico ou tipos proprios; o Updater 2.5 (`versionCode 7`) agora mostra qualquer documento e continua aceitando-o somente depois de validar magic, estrutura, tamanhos, CRC-32, assinatura e SHA-256. No firmware, a importacao validava o PGS1 corretamente, mas tentava copiar o `GameSave` atual de cerca de 55 KiB do SPIFFS em uma unica leitura; agora a copia para a RAM usa blocos limitados de 512 bytes antes do commit redundante. A nova mensagem de erro tambem entrou no catalogo PT-BR, agora com 8.049 entradas. A suite terminou em `All native tests passed`; firmware compilou com 124.400/327.680 bytes de RAM e 2.924.812/3.211.264 bytes de flash. O OTAP atual de sequencia `1793985010`, firmware de 2.929.888 bytes e payload SD de 31.703.512 bytes foi assinado, reaberto e publicado: 34.635.123 bytes, SHA-256 `EC1D98D4E3A350966092EEFF8C5CADC4116A77DFDA1B41AAB36F045BF942F1F6`; readback ID `1sv4tIfXGmq4opidvua5MGhgSwXQkVDhU`, modificacao `2026-11-06T17:12:29.833Z`, link `https://drive.google.com/file/d/1sv4tIfXGmq4opidvua5MGhgSwXQkVDhU/view?usp=drivesdk`. O APK 2.5 possui 876.360 bytes, SHA-256 `00EB15A1C035564AFD6C22856EC13514E07C0067962BFB36C299262160F64E8F`, alinhamento 16 KiB valido e assinatura APK v2. Como o antigo ID do Updater ja nao estava acessivel no Drive, foi criado `PokegochiUpdater-v2.5.apk`; o readback confirmou ID `1_dEiANOj7lcWKHapzXeUKMDjnY-jCG74`, MIME, tamanho, pasta e modificacao `2026-11-06T17:10:26.123Z`. Link: `https://drive.google.com/file/d/1_dEiANOj7lcWKHapzXeUKMDjnY-jCG74/view?usp=drivesdk`. |
+
+## R20261106-370 - Corrigir toda a traducao para PT-BR e republicar o APK
+
+```mermaid
+flowchart LR
+    R["R20261106-370: corrigir PT-BR"] --> M["Trocar alvo por >>pob<<"]
+    M --> G["Glossario Pokemon e termos brasileiros"]
+    G --> A["Auditar 8.048 textos e 807 nomes"]
+    A --> B["Suite + firmware + release"]
+    B --> D["Substituir e verificar APK no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-370 | 2026-11-06 | Corrigir a traducao, que havia sido gerada em portugues europeu, para portugues brasileiro e atualizar o APK publicado | Concluido, corrigido e republicado | A causa foi eliminada no gerador: o modelo regional agora recebe obrigatoriamente `>>pob<<` (portugues brasileiro), nunca `>>por<<` (portugues europeu), com EOS e caixa normalizados. O catalogo inteiro foi regenerado com 8.048 entradas, glossario contextual para `EQUIPE`, dados salvos, turnos, golpes e termos mobile; `PORTUGUES BRASIL` aparece no Settings. Regressões impedem vocabulario PT-PT, tokens quebrados, `PARTY` como festa/partido, `TACKLE` como equipamento e alteracao/omissao dos 807 nomes Pokemon; 25 descricoes com nomes proprios e 27 saidas raras foram revisadas manualmente. A suite terminou em `All native tests passed`; firmware compilou com 124.400/327.680 bytes de RAM e 2.924.692/3.211.264 bytes de flash. O release ARM64/x86-64 passou, preservou o PAK v55 canonico e assinatura v2/v3. O APK PT-BR de 13.395.183 bytes, SHA-256 `3B672B93F81FD9BE4C2CEC707914A72A43E4F4524E8BCBE346341411953A75B6`, substituiu a versao PT-PT no mesmo arquivo do Drive; o readback confirmou ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, nome, MIME, tamanho e modificacao `2026-11-06T16:54:53.112Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261106-369 - Publicar no Drive o APK com seletor EN/PT
+
+```mermaid
+flowchart LR
+    R["R20261106-369: publicar APK"] --> B["Build release ARM64 + x86-64"]
+    B --> P["Verificar PAK v55 e assinatura v2/v3"]
+    P --> D["Substituir arquivo existente no Drive"]
+    D --> V["Reler ID, nome, tamanho e data"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-369 | 2026-11-06 | Subir ao Google Drive o APK atualizado com o seletor EN/PT e a traducao completa | Concluido e verificado | O release Android ARM64/x86-64 terminou em `BUILD SUCCESSFUL`; o `pokegochi.pak` interno v55 foi comparado com o canonico (30.219.710 bytes, SHA-256 `FA47A1E2FACC...A0E`) e o APK passou na assinatura v2/v3. O arquivo final possui 13.387.103 bytes e SHA-256 `B9BDD0DB56EAC7A9D042CB4EDEE53E28C259C6B94291F3E5FEF4904B41C29B03`. `PokegochiApp-v3.0.apk` foi substituido em lugar no Drive, preservando ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, pasta e link; o readback confirmou nome, MIME, tamanho e modificacao `2026-11-06T16:12:49.280Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261106-368 - Adicionar seletor EN/PT e traduzir o jogo inteiro
+
+```mermaid
+flowchart LR
+    R["R20261106-368: idioma completo"] --> S["Settings > More"]
+    S --> L["Seletor persistente EN / PT"]
+    L --> C["Catalogo PT com 8.044 textos"]
+    C --> V["Firmware + Android + suite completa"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261106-368 | 2026-11-06 | Usar o espaco onde ficavam os Kids Games na ultima aba de Settings para escolher EN ou PT e traduzir o jogo inteiro para portugues | Concluido e validado | A aba More agora mostra um seletor EN/PT de efeito imediato no firmware e no Android. A escolha e persistida nos tres bytes de padding do bloco aposentado dos Kids Games, sem mudar o tamanho nem a versao V52 do save; saves antigos continuam em ingles. O renderer FireRed passou a localizar texto antes de medir, cortar, quebrar linha ou desenhar, cobrindo menus, mensagens dinamicas, 807 entradas da Pokedex, 671 golpes e descricoes, itens, Abilities e dialogos de treinadores. O catalogo gerado possui 8.044 traducoes e mantem nomes de Pokemon canonicos; como a fonte FireRed e ASCII, o portugues usa grafia sem acentos. A suite completa terminou em `All native tests passed`; o firmware compilou com 124.400/327.680 bytes de RAM e 2.918.212/3.211.264 bytes de flash, e o APK debug ARM64/x86-64 terminou em `BUILD SUCCESSFUL` com o PAK v55 verificado. |
+
+## R20261105-367 - Remover tela azul ao sair do multiplayer pelo BACK
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-367 | 2026-11-05 | Corrigir a tela azul temporaria exibida ao sair do multiplayer pelo BACK antes de retornar a Home | Pausado em checkpoint seguro a pedido do usuario | O serial confirmou que nao era panic: o ESP32 fazia o restart controlado necessario para recuperar a arena grafica, mas o canvas azul antigo voltava a ser apresentado e o backlight permanecia aceso durante o boot. O recovery agora trava o frame de transicao, apaga o backlight antes do restart e so o reacende depois de publicar a Home completa. A migracao imediata V51->V52 do save foi convertida para streaming para funcionar sem um segundo buffer de 55 KiB. Firmware de diagnostico compilou, foi gravado/verificado na COM7 sem apagar save e iniciou com `Save OK`; o servidor PGON v2 foi compilado e gravado/verificado na COM8. A placa foi devolvida a Home (`screen=7`) e os monitores seriais foram fechados. Falta apenas reproduzir visualmente o BACK com o radio Wi-Fi ativo e concluir a regressao de batalha/faint antes de gerar APK. |
+
+## R20261105-366 - Corrigir busca Wi-Fi do app e publicar APK completo
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-366 | 2026-11-05 | Fazer a interface Wi-Fi do Android refletir a busca real: cada toque inicia uma consulta delimitada, não mostrar “nenhum player” enquanto continua buscando, não inserir players depois do fim sem novo scan; corrigir também o app que não enxerga players após a migração PGON v2, gerar APK com todas as mudanças atuais e substituir o arquivo no Google Drive | Pausado com checkpoint seguro | Compatibilidade simultânea PGON v1/v2 implementada; busca delimitada implementada; regressões nativas/contrato focal passaram; firmware do servidor compilado e gravado com verificação na COM8 (974944 bytes, SHA-256 8CAA3C10A691618B0A4CF40A1FEECC1B6576352B9AD4E72F51511E23C38EAD45). Retomar por E2E local/cloud v1+v2, suíte completa, build/validação do APK e substituição verificada no Drive. |
+
+## R20261105-365 - Adicionar jogador-bot permanente ao servidor online
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-365 | 2026-11-05 | Hospedar na ESP32-servidor um único jogador-bot sempre disponível, com ID final `99999`: aparecer somente quando livre, aceitar batalhas, recusar trocas, ficar indisponível durante a luta e participar do contador persistente de vitórias Balanced; manter uma pool fixa sorteada uma vez de 70 Pokémon competitivos (10 finais por geração I–VII, ao menos um lendário por geração e um shiny total) e sortear três por desafio, distribuindo Mega Stone, Z-Crystal e held item compatível | Concluído, gravado e validado em hardware | O servidor passou a hospedar o peer reservado `99999`, sempre emitido depois dos jogadores reais e ocultado enquanto sua única sessão está ocupada. Ele aceita convites e batalhas NORMAL/BALANCED, rejeita trades, libera a presença após cancelamento/queda e usa o cliente humano — sempre o menor ID — como autoridade do motor. Um sorteio autoral determinístico fixou 70 Pokémon finais com 10 por geração I–VII, exatamente um lendário por geração, moves/PP/ability/nature/IV/EV/items competitivos e um único shiny (Lycanroc); cada partida sorteia três distintos, uma Mega possível, um usuário de Z-Move diferente e itens comuns nos restantes, em Lv.70 Balanced ou Lv.100 Normal. O contador de vitórias Balanced do bot é confirmado pelo snapshot final, protegido contra repetição, persistido em NVS e publicado pelo mesmo `PeerEntry` PGON v2 dos jogadores. Testes nativos varreram 2.048 seleções, a suíte completa terminou com `All native tests passed`, o E2E real na COM8 validou LAN, singleton, trade, batalha, trio, comando, forced switch e contador, e o E2E MQTT confirmou o bot pela Internet. Firmware de 974.656 bytes, SHA-256 `0ABF469D87533BD49D971E2EC9EBB64D4621A80CB48B28D69D959BFB7B6ABB15`, usa 51.888 bytes de RAM e 963.908 bytes de flash; foi gravado e verificado na DevKit CP210x COM8. |
+
+## R20261105-364 - Fechar a troca obrigatória do PvP Wi-Fi e remover linhas verticais da placa
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-364 | 2026-11-05 | Reproduzir e corrigir na placa o travamento/desconexão ao trocar de Pokémon depois de faint no multiplayer Wi-Fi, usando um Pokegochi simulado; corrigir também as linhas verticais estranhas observadas na tela durante a batalha | Concluído e validado em hardware | Foi criado um peer PGON/PGCH determinístico de três Pokémon para provocar faint local, remoto e simultâneo. A queda tardia tinha uma causa concreta: `PubSubClient::setServer()` retinha o ponteiro de um hostname local da pilha e reconexões posteriores consultavam lixo via DNS; o endpoint agora usa o buffer membro persistente. No ILI9341, as linhas eram costuras entre janelas de tiles adjacentes: durante PvP físico, cada faixa danificada de Battle/MoveSelect/BattleParty agora é composta e enviada em uma única janela coerente de 320 px, sem alterar Android nem o render normal. Na COM7/MAC `B4:BF:E9:21:3C:E4`, Mimikyu desmaiou, a troca obrigatória mostrou `Go! HEATRAN!`, o turno seguinte executou Moongeist Beam + Lava Plume e recebeu ACK; depois Explosion causou faint remoto e, por fim, faint simultâneo, resolvido com `The foe sent out DEOXYS!` + `Go! GRENINJA!`. A sessão manteve cerca de 25 KiB livres/17 KiB de maior bloco durante a luta, sem cancelamento de apresentação, falha de SD/assets, DNS corrompido ou desconexão. Firmware de 2.528.816 bytes, SHA-256 `2957EA5FE0A980CD04616A48C107269ED62AC8325E744E9D7105F296BE6BF55E`, gravado e verificado preservando save e SD. |
+
+## R20261105-363 - Atualizar a placa física com o firmware online mais recente
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-363 | 2026-11-05 | Atualizar também a placa Pokegochi conectada, se necessário | Concluído, preservado e validado em hardware | A placa física CH340 foi identificada na `COM7` pelo ESP32-D0WD-V3 rev3.1 e MAC `B4:BF:E9:21:3C:E4`; a DevKit CP210x do servidor permaneceu isolada na `COM8`. Antes da gravação foram salvos tabela de partições, NVS e SPIFFS em `backups/ota-layout-20261105-080828-B4BFE9213CE4`. Recovery e app principal foram gravados sem tocar nas partições de save e tiveram seus digests conferidos por leitura da flash. O firmware principal mede 2.530.880 bytes e tem SHA-256 `AFA7B68A0A6EEF13A90F195BDD4A100DC6AA513E91E3987B3A9BD6DC5053AB9D`. No boot real, microSD e teste sustentado passaram, o save existente abriu com `Save OK`, archive e sprite asset pack ficaram OK, e o jogo alcançou `[BOOT] Ready` sem falha. |
+
+## R20261105-362 - Reenviar APK online corrigido ao Drive
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-362 | 2026-11-05 | Subir o APK mais recente no Google Drive | Concluído e verificado | O release Android validado de 11.589.423 bytes e SHA-256 `D72951F972983A88A431FFB43C32F9F5F6F2D4FBE5748D2A6F4893012E41F49A` substituiu novamente `PokegochiApp-v3.0.apk` em lugar, preservando ID, pasta e link. O readback confirmou nome, MIME, tamanho e modificação `2026-11-05T11:08:09.176Z`. |
+
+## R20261105-361 - Corrigir faint Android no PvP e tornar o Wi-Fi realmente online
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-361 | 2026-11-05 | Preservar a autoridade correta da proposta; corrigir a batalha que trava e desconecta quando o Pokémon ativo do aplicativo desmaia sem abrir a troca obrigatória; permitir multiplayer pela internet, inclusive Android em 3G/4G/5G, sem limitar os jogadores à mesma LAN | Concluído, validado e publicado | A autoridade continua exclusiva do iniciador. O seletor de troca obrigatória agora abre imediatamente após o faint; uma escolha feita durante a barreira autoritativa fica staged e é enviada assim que o snapshot recebe ACK, enquanto o outro lado envia WAIT. A regressão executa o ciclo completo com times 3x3 e comprova o turno seguinte sem queda. LAN continua usando TCP/mDNS rápido, mas Android e placa mudam automaticamente para MQTT externo quando o servidor local não aparece; a ESP32 doméstica permanece como autoridade e conecta ao broker por saída, funcionando atrás de NAT/CGNAT e com celular em dados móveis, sem IP/porta na UI. O E2E real autenticou dois clientes, abriu sala e retransmitiu PGCH byte-exato. Suíte completa, firmware, servidor e release Android passaram; PAK v55 canônico confirmado. APK de 11.589.423 bytes, SHA-256 `D72951F972983A88A431FFB43C32F9F5F6F2D4FBE5748D2A6F4893012E41F49A`, substituído no Drive com o mesmo ID/link e readback em `2026-11-05T10:59:53.507Z`. |
+
+## R20261105-360 - Publicar APK final após correções gráficas e remoção dos Kids Games
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-360 | 2026-11-05 | Subir no Google Drive o APK mais recente | Concluído e verificado | O release Android 3.0 final, já validado pela suíte completa e pela comparação do PAK interno v55 com o pacote canônico, substituiu em lugar `PokegochiApp-v3.0.apk`. O APK mede 11.572.127 bytes e tem SHA-256 local `FB1866B0FA030872319F23D0118DB4EB339376C89DEED83B331E515F8BBC52A3`. O Drive preservou o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, pasta e link; a leitura posterior confirmou nome, MIME, tamanho 11.572.127 bytes e modificação `2026-11-05T10:15:33.999Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261105-357 - Reproduzir quatro falhas restantes na placa antes de corrigir
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-357 | 2026-11-05 | Acompanhar a placa pelo cabo e reproduzir, antes de alterar o codigo: sprites ausentes nos ultimos Pokemon da Box durante trade, sprite ausente no Pokemon recebido, nenhuma animacao de move na placa e travamento na troca obrigatoria apos faint; corrigir o SCAN do app que informa falha cedo mas continua encontrando jogadores; mostrar de forma inequivoca que ACCEPT/confirmacao de trade foi pressionado e esta esperando o outro lado | Implementado, validado e gravado na placa | Os quatro sintomas fisicos tinham uma unica causa: Wi-Fi + GameSave deixavam apenas 19,7 KiB livres, o renderer recebia cerca de 2 KiB e produzia `scene-cache-full`, `retained cache miss`, `large-capacity` e loop de `scene mismatch`. Durante PvP fisico, os 52 KiB da parte nao usada da Box agora sao emprestados ao workspace grafico; antes de devolver a memoria, os descritores sao invalidados e o GameSave duravel e recarregado. A Box/trade pre-carrega caminhos completos de forma/shiny/Mega; terreno, battlers, planos dos moves e switch apos faint cabem no mesmo ciclo. Ao terminar, a luta volta a pagina compacta de multiplayer enquanto o radio esta ativo. No Android, cada toque em FIND PLAYER dispara um unico refresh e um resultado vazio encerra o scan; ACCEPT vira `CONFIRMED` e mostra explicitamente se espera o outro jogador. Suite completa passou. APK release de 11.572.127 bytes, SHA-256 `FB1866B0FA030872319F23D0118DB4EB339376C89DEED83B331E515F8BBC52A3`, abriu com PAK v55 canonico. Firmware de 2.526.976 bytes, SHA-256 `1F42AA8EA5D884996E361086C6B4F9CE15C2C9BA9BF2D975910D50BB2F4A1DD2`, foi gravado e verificado na COM7 preservando NVS/save; boot, SD, save e asset pack ficaram OK. |
+
+## R20261105-359 - Remover Kids Games do aplicativo e da placa
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-359 | 2026-11-05 | Tirar os Kids Games de tudo, no app e na placa | Concluido e validado | Foram removidos todas as telas, entradas de Settings, handlers de toque, loop, runtime de Memory/Catch/Paint/Poke Defense, fontes dedicadas, gerador e sprites animais, testes aposentados e documentacao ativa. App e firmware compartilham o mesmo runtime e nenhum deles expoe ou compila os jogos. Para saves V43 ou posteriores nao mudarem de tamanho nem deslocarem campos, somente o antigo bloco serializado de 32 bytes permanece como reserva opaca, sem UI ou logica. Um contrato novo falha se qualquer tela, funcao ou arquivo executavel dos Kids Games voltar. Suite completa, build Android e build ESP32 passaram; o firmware sem esses modulos foi gravado na COM7 sobre o save existente. |
+
+## R20261105-358 - Auditar Aegislash e os boosts ao mudar de forma
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-358 | 2026-11-05 | Conferir, baseado nos jogos, como boosts de Attack/Defense influenciam o Aegislash ao trocar Shield/Blade e corrigir se necessario | Auditado e protegido por regressao | A implementacao ja seguia a mecanica correta: Stance Change troca apenas a forma e os stats-base; os estagios pertencem ao battler e permanecem. Assim, Swords Dance continua +2 ao entrar em Blade, Iron Defense continua +2 mas passa a multiplicar a Defense-base menor de Blade, e ambos permanecem ao voltar para Shield com King's Shield. Nao foi necessario alterar a formula. Foi adicionado teste real Shield -> Swords Dance -> Blade por ataque -> Shield por King's Shield, verificando formas, eventos, stats-base e preservacao unica dos dois estagios; a matriz completa de habilidades passou. |
+
+## R20261105-356 - Publicar APK multiplayer v9 corrigido
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-356 | 2026-11-05 | Subir no Google Drive o APK com autoridade do convite, trade Wi-Fi, troca apos faint e Z-Move do Mimikyu corrigidos | Concluido e verificado | O build Android 3.0 de 11.637.055 bytes e SHA-256 local `F30EC67BDEB9AEF94FBD04187A744BA1A55BF397CAD577F0DEE2D93522E28D96`, previamente validado com o PAK canonico v55, substituiu em lugar `PokegochiApp-v3.0.apk`. O Drive preservou o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, pasta e link; a leitura posterior confirmou tamanho 11.637.055 bytes e modificacao `2026-11-05T03:14:35.912Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261105-355 - Autoridade dos convites multiplayer, trade Wi-Fi, troca apos faint e Z-Play Rough
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-355 | 2026-11-05 | Fazer somente quem iniciou a conexao escolher BATTLE/TRADE e NORMAL/BALANCED, deixando o outro jogador apenas aceitar ou recusar antes de selecionar os Pokemon; liberar TRADE tambem no Wi-Fi; corrigir a troca quando um Pokemon desmaia; verificar e corrigir o grafico do Z-Move usado a partir de Play Rough/Mimikyu na placa e no multiplayer | Concluido e validado em hardware | O iniciador agora envia uma proposta completa de BATTLE NORMAL/BALANCED ou TRADE e somente o destinatario aceita/recusa; apos aceitar batalha, ambos escolhem seus Pokemon. TRADE usa o mesmo fluxo em BLE e Wi-Fi. A troca remota obrigatoria depois de faint ignora corretamente trapping/escape prevention, enquanto a troca voluntaria continua bloqueada. Foi confirmado que o catalogo local ja continha Twinkle Tackle e Let's Snuggle Forever; o defeito era exclusivo do PvP, cujo comando descartava o bit de Z. O protocolo PGCH v9 agora transmite a escolha Z, sincroniza seu consumo e reproduz o programa exato 865 para Play Rough generico ou 876 para Mimikyu. Suite completa, 35 animacoes Z, sessao multiplayer, faint forcado e relay real passaram. APK 3.0 ARM64/x86_64 gerado com 11.637.055 bytes e SHA-256 `F30EC67BDEB9AEF94FBD04187A744BA1A55BF397CAD577F0DEE2D93522E28D96`; PAK v55 interno confere com o canonico. Firmware principal de 2.541.600 bytes foi gravado/verificado na COM7 preservando o save, e o servidor v9 foi gravado na COM8 e validado em uma sessao real completa. |
+
+## R20261105-354 - Publicar APK do multiplayer Wi-Fi robusto
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261105-354 | 2026-11-05 | Subir no Google Drive o APK release com o multiplayer Wi-Fi robusto e as quatro redes MRU | Concluido e verificado | O release Android ARM64/x86_64, previamente validado com o PAK canonico v55 de 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, foi publicado como `PokegochiApp-v3.0.apk`. O APK mede 11.635.199 bytes e tem SHA-256 local `F42EC49719BDC6742958202F354BE70B387758A6AEE8485DC3069A0F363798D1`. O arquivo existente foi substituido em lugar, preservando o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, a pasta e o link; a leitura posterior do Drive confirmou nome, MIME, tamanho e modificacao `2026-11-05T02:20:04.511Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261104-353 - Robustez online, quatro redes Wi-Fi MRU e acabamento da interface
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-353 | 2026-11-04 | Tornar o protocolo do multiplayer Wi-Fi resiliente a desconexao de qualquer lado; salvar ate quatro redes no Pokegochi por ordem de uso recente, conectar automaticamente na melhor rede salva disponivel, substituir a menos recente ao adicionar a quinta e manter CONFIG para troca manual; polir as novas interfaces | Concluido e validado em hardware | A placa persiste somente associacoes bem-sucedidas em uma lista MRU de quatro SSID/senhas, tenta automaticamente as redes visiveis da mais recente para a menos recente e remove a ultima apenas ao confirmar uma quinta; CONFIG, scan, marcador de senha salva e contador 0/4--4/4 ficaram integrados a nova interface. O transporte usa heartbeat 10 s/timeout 30 s, retry 5 s, fechamento autenticado pela sessao e peer exatos, rollback de sala parcialmente criada e limpeza idempotente em quedas. Android usa NSD e a rede ativa; servidor e firmware fisico usam DNS-SD sem exibir endpoint. Na COM7, a rede salva conectou, descobriu o relay COM8, autenticou e permaneceu alem do timeout; apos reset real da COM8, o cliente reapareceu sozinho no servidor. Desligar Wi-Fi executou save, transicao visual e reinicio controlado; o BLE iniciou, anunciou e escaneou normalmente logo depois. Testes PGCH/PGON/sessao nativos, vetores Android, contratos de UI e E2E real do servidor passaram, incluindo relay byte-exato, stale-close, abrupt-drop, close repetido e reconexao limpa. |
+
+## R20261104-352 - Usar a conexao atual do Android no multiplayer Wi-Fi
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-352 | 2026-11-04 | Manter scan, selecao de SSID e senha somente no Pokegochi fisico; no aplicativo Android usar diretamente a rede ja conectada, sem perguntar nada de conexao, e procurar jogadores automaticamente | Concluido e validado | Android nao possui tela de SSID, senha, IP ou porta: usa a conexao atual do aparelho, descobre `_pokegochi._tcp` por NSD, autentica e alimenta diretamente o lobby. O provisionamento e as quatro redes MRU existem somente no Pokegochi fisico. Foram removidos `WifiManager`, `WifiNetworkSpecifier`, scan e permissao moderna de Wi-Fi/localizacao desse fluxo; o manifesto conserva apenas a permissao legada limitada ao Android antigo para BLE. Contrato de plataforma e vetores do protocolo Android passaram. |
+
+## R20261104-351 - Simplificar configuracao do multiplayer Wi-Fi
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-351 | 2026-11-04 | Remover IP, porta e servidor da interface do multiplayer Wi-Fi; escanear redes, mostrar os SSIDs, deixar o jogador escolher uma rede e digitar somente a senha, com descoberta automatica do servidor no aplicativo e no Pokegochi fisico | Concluido e validado; fluxo Android substituido por R352 | `MULTIPLAYER WIFI` nao mostra host, IP, porta ou codigo. A placa fisica oferece scan de ate seis SSIDs, escolha e teclado de senha; o servidor anuncia `_pokegochi._tcp` por DNS-SD/mDNS e entrega endpoint e autenticacao automaticamente. A proposta inicial de scan tambem no Android foi substituida por R352: o app agora usa diretamente a rede ativa do celular, sem provisionamento. Contratos impedem o retorno dos campos manuais e os fluxos real e simulados passaram por descoberta, autenticacao, peer list, sala e relay PGCH byte-exato. |
+
+## R20261104-350 - Instalar driver e gravar a ESP32 do servidor
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-350 | 2026-11-04 | Localizar e instalar o driver USB da ESP32 DevKit com conector micro-USB, identificar a porta serial e testar/gravar nela o firmware do servidor multiplayer | Concluido, gravado e testado | Foi instalado o Silicon Labs CP210x VCP 11.3.0.176 (`oem156.inf`), com assinatura Microsoft WHQL. Depois da troca do cabo, o DevKit enumerou na `COM8` como CP210x VID `10C4`/PID `EA60`; o `esptool` confirmou ESP32-D0WDQ6 rev1, dual-core, 4 MB. O servidor foi gravado com verificacao de hash, conectou sozinho a rede residencial fixa, abriu TCP 32145 e anunciou `pokegochi-server.local`. A versao final com mDNS usa 51.336 bytes de RAM e 953.560 bytes de flash. Resolucao de hostname, DNS-SD completo e fluxo real de dois clientes passaram. |
+
+## R20261104-349 - Publicar APK com o encontro lendario surpresa
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-349 | 2026-11-04 | Compilar e subir no Google Drive o APK com a implementacao atual | Concluido e verificado | O APK release v3.0/versionCode 108 foi recompilado com o runtime nativo atual e assinatura APK v2/v3 valida. O arquivo final mede 11.635.575 bytes e tem SHA-256 `48EC29460C5AD36B2EF97847A501E730D5A49AD7D8C4D3AEAF959753E8544ADB`. Antes do upload, o `pokegochi.pak` interno foi reaberto e comparado com o canonico: versao 55, 15.528 assets, 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, com correspondencia exata. O arquivo `PokegochiApp-v3.0.apk` foi substituido em lugar no Google Drive, preservando o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, a pasta e o link. A leitura posterior confirmou nome, MIME `application/vnd.android.package-archive`, tamanho e modificacao `2026-11-04T21:27:06.261Z`. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261104-348 - Encontro lendario surpresa apos a primeira Master Ball
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-348 | 2026-11-04 | Ao receber a primeira Master Ball do save, sortear uma unica vez um numero entre 3 e 30 e transformar exatamente esse proximo encontro wild em um lendario da pool ja desbloqueada, sem aviso especial e sem repetir para outras Master Balls | Concluido e validado | A primeira Master Ball arma um contador persistente inclusivo de 3 a 30; apenas encontros wild padrao iniciados com sucesso o reduzem. No numero sorteado, wild normal usa os lendarios liberados de Kanto--Hoenn, Sinnoh usa a pool lendaria do site atual e os wilds regionais usam a geracao V--VII ativa, mantendo Ultra Beasts fora da pool de Alola. O encontro conserva a mensagem wild comum, e o estado vira consumido antes da batalha para nunca rearmar com outras Master Balls. Saves antigos usam os dois bytes antes reservados ao alinhamento, sem mudar os 16 bytes do registro nem a versao do save; saves antigos que ja comprovam uma Master Ball pelos inventarios/ledgers recebem o sorteio uma vez retroativamente. Testes cobrem os extremos 3 e 30, falha sem consumo, evento unico, padding legado, selecao lendaria e os tres pipelines; Battle Collection, Sinnoh, Persistent Save e o contrato de integracao passaram. O firmware ESP32 compilou com 120.568 bytes de RAM e 2.494.252 bytes de flash. A suite agregada parou antes dos nativos somente porque o teste antigo de USB ainda exige `app0`, removida pela alteracao paralela do novo layout `rescue`/`app`; os testes afetados foram executados diretamente e passaram. |
+
+## R20261104-345 - Implementar multiplayer online completo via ESP32
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-345 | 2026-11-04 | Planejar e implementar servidor ESP32 dedicado, multiplayer online no Android e multiplayer Wi-Fi no Pokegochi físico; preservar o multiplayer BLE atual em uma página separada `MULTIPLAYER BLE` e criar `MULTIPLAYER WIFI` como nova página da Bag | Implementado e validado em LAN | Foi criado o relay ESP32 PGON v1 para 8 clientes/4 salas, com reconnect, heartbeat, validacao e relay byte-exato do PGCH v8. Android e firmware fisico receberam transporte TCP Wi-Fi, descoberta automatica DNS-SD e paginas separadas `MULTIPLAYER BLE`/`MULTIPLAYER WIFI`; BLE continua independente. Builds dos tres alvos passaram, o servidor real foi gravado na COM8 e uma sessao completa com dois jogadores simulados passou. Para jogadores fora da rede residencial ainda e necessario encaminhamento TCP 32145 e um endereco publico/DDNS definido uma vez no build, nunca pelo jogador. |
+
+## R20261104-346 - Reestruturar regras das batalhas multiplayer
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-346 | 2026-11-04 | Antes da seleção do time, escolher batalha `NORMAL` ou `BALANCED`; em `BALANCED`, usar cópias temporárias no nível 70 com stats recalculados; nos dois modos iniciar com HP, status e PP completos e usar uma Bag PvP isolada com 2 Max Revive, 4 Hyper Potion, 4 Full Heal e 1 Max Elixir | Concluido e validado | O protocolo PGCH v8 negocia `NORMAL`/`BALANCED` antes da Party. Balanced recalcula copias no nivel 70; ambos criam snapshots com HP/PP cheios e status limpo. A Bag temporaria contem exatamente 2 Max Revive, 4 Hyper Potion, 4 Full Heal e 1 Max Elixir, sem ler ou gastar o inventario do save. Cancelamento, desconexao e fim da batalha descartam roster e Bag temporarios. Vetores Android/firmware, protocolo online e teste nativo de sessao passaram. |
+
+## R20261104-347 - Fixar a rede do ESP32 servidor
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-347 | 2026-11-04 | O ESP32 servidor sempre usara a rede residencial informada; remover a necessidade de portal, scan ou selecao de Wi-Fi nesse DevKit sem tela | Concluido e validado na placa | O DevKit inicia diretamente na rede fixa compilada em `ServerLocalConfig.h`, arquivo local ignorado pelo Git, e o repositorio guarda apenas o modelo sem segredos. A COM8 foi reiniciada e reconectou sem portal nem scan; quedas acionam reconnect e reinicio controlado apos indisponibilidade prolongada. |
+
+## R20261104-341 - Avaliar multiplayer online e servidor em ESP
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-341 | 2026-11-04 | Avaliar multiplayer online entre Android e Pokegochi físico, configuração Wi-Fi na placa e uso de uma ESP8266 ou ESP32 ociosa como servidor de matchmaking/batalha | Concluído | É viável reaproveitar o protocolo binário multiplayer v7 e a batalha determinística atuais sobre WebSocket seguro. Arquitetura recomendada: servidor público pequeno para presença, convites e relay; Android conecta diretamente e funciona também como ponte BLE-internet para o Pokegochi físico na primeira etapa. A ESP32 ociosa serve para protótipo/LAN ou poucos jogadores, mas não como servidor público confiável; ESP8266 é ainda menos indicada. Wi-Fi nativo na placa é possível com provisionamento preferencial pelo app, porém exige protótipo de tamanho/RAM: o firmware atual deixa apenas 14.240 bytes no slot OTA e Wi-Fi/TLS concorre com BLE/renderização. Online deve começar apenas com batalhas; trocas exigem commit persistente no servidor para impedir perda/duplicação. |
+
+## R20261104-342 - Esclarecer necessidade de servidor no Android
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-342 | 2026-11-04 | Esclarecer se o multiplayer online apenas entre Androids exige uma ESP32 como servidor | Concluído | A ESP32 não é necessária. Pela internet, os aparelhos precisam de ao menos um ponto público de descoberta/sinalização; a solução mais simples e confiável é um pequeno serviço WebSocket na nuvem que faça lobby e relay. P2P reduz o tráfego no servidor, mas ainda costuma exigir sinalização e STUN/TURN por causa de NAT/CGNAT. Sem servidor ou serviço equivalente, o multiplayer fica limitado a Bluetooth, Wi-Fi Direct ou mesma rede local. |
+
+## R20261104-343 - Adotar ESP32 como servidor online doméstico
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-343 | 2026-11-04 | Priorizar uma ESP ociosa como servidor do multiplayer, sem manter PC ligado nem pagar hospedagem | Concluído | A ESP32 foi definida como alvo recomendado, em vez da ESP8266, para um servidor WebSocket leve de lobby, convites e relay. O firmware do servidor deve iniciar automaticamente, persistir apenas configuração em NVS, usar watchdog e reconexão Wi-Fi e reconstruir o lobby após reset; partidas interrompidas serão encerradas com retorno seguro dos clientes. A viabilidade externa depende de encaminhamento de porta e IP público/IPv6 acessível; CGNAT no provedor impede hospedagem IPv4 direta. |
+
+## R20261104-344 - Dimensionar servidor ESP32 para poucos jogadores
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-344 | 2026-11-04 | Considerar que o multiplayer terá poucos jogadores e aceitar as limitações do servidor doméstico | Concluído | Escopo inicial definido para até 8 clientes conectados e até 4 salas de batalha simultâneas, com a ESP32 restrita a presença, convites, heartbeat e relay dos pacotes v7. Estado ativo permanece somente em RAM; após queda/reset, o lobby reinicia limpo e os aplicativos retornam com segurança ao menu e tentam reconectar. |
+
+## R20261104-340 - Recompilar e gerar OTAP retrocompatível
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-340 | 2026-11-04 | Recompilar o código mais recente e gerar um novo OTAP seguro para placas com saves e cartões microSD antigos | Concluído e validado | A auditoria confirmou código posterior ao pacote r331 e encontrou uma lacuna real na atualização direta de saves antigos: os leitores V10/V11 existiam, mas não eram chamados, e V9-V11 ainda reutilizavam structs modernas incompatíveis com o ABI histórico. Foram congelados os layouts originais de NVS (Box de 151 slots, Pokémon pré-personality/IV, inventário, Pokédex, Gym, batalha e enum PvP antigos) com tamanhos exatos de 7.712/7.716/7.744 bytes. V9, V10 e V11 agora migram campo a campo para V51, preservando coleção, party, HP/status/moves, progressão, inventário, Mart, batalha e fila de aprendizado; campos modernos inexistentes são inicializados deterministicamente sem interpretar padding antigo como forma/held item. As migrações V21-V50 permaneceram intactas. O teste direcionado e `scripts/test.ps1` terminaram em `All native tests passed.`; protocolo, retomada/rollback OTAP e assinatura também passaram. O PAK integral v55 foi comparado byte a byte com o pacote validado anterior: 15.528 assets, catálogo `09ae3554f13275d3`, 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`; portanto cartões antigos recebem o arquivo completo, enquanto cartões v55 idênticos podem reutilizá-lo pelo hash. O firmware final ocupa 1.951.840/1.966.080 bytes, deixa 14.240 bytes livres e tem SHA-256 `AE705BBC0482529E8B4F72C19D1866CD3D291EE75FEE6130449635FF84074FC6`. O pacote assinado `dist/Pokegochi-v3.0.pgota` usa sequência `1793820125`, mede 33.657.073 bytes e tem SHA-256 `9B20E48D5A31EE8A3D11012F42B5361E6F1B57426B5931BFAE146A6AA35BADE5`; ZIP, manifesto P-256, chave embutida, firmware, quatro objetos do SD, versão e hashes foram reabertos e conferidos. Placas ainda no layout antigo de um único slot continuam exigindo uma única inicialização por USB com o script preservador de save antes de aceitar qualquer `.pgota`; o pacote não apaga o save. |
+
+## R20261104-339 - Publicar pacote OTAP v3.0 no Google Drive
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-339 | 2026-11-04 | Subir o pacote OTAP mais recente no Google Drive com um nome limpo de release | Concluído e verificado | O artefato local `dist/pokegochi-r331-greninja-pack-v55.pgota` foi publicado como `Pokegochi-v3.0.pgota`, sem o resumo da atualização no nome. O arquivo local tem 33.654.868 bytes e SHA-256 `36D6F08F8A2DE1162E4FBE4500B5B211E298187974D35DA50966647C36439FAF`. A leitura posterior do Drive confirmou o ID `1fRUsJv_Kk_skQb7GaN5i0eeDvCdiGW_k`, nome, tamanho, MIME `application/x-zip`, pasta ao lado do APK v3.0 e modificação `2026-11-04T18:57:55.133Z`. Link: `https://drive.google.com/file/d/1fRUsJv_Kk_skQb7GaN5i0eeDvCdiGW_k/view?usp=drivesdk`. |
+
+## R20261104-338 - Corrigir a animação de Lava Plume
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-338 | 2026-11-04 | Conferir na placa e corrigir a animação estranha de Lava Plume do Heatran | Concluído, validado fisicamente e gravado | A referência do pokeemerald-expansion confirmou a coreografia original: pulso vermelho 0→11→0 no atacante, três shakes simultâneos e oito `gLavaPlumeSpriteTemplate` saindo radialmente em fases 0, 32, 64, 96, 128, 160, 192 e 224. Foram corrigidas duas divergências genéricas do motor: `BlendColorCycleExact` ignorava `numBlends` e mantinha o tempo fixo de 128 ticks; `LavaPlumeDrift` cortava todas as plumas em 20 frames, embora o callback original destrua cada uma individualmente ao sair da câmera nativa 240×160. O ciclo de paleta agora segue seus segmentos e duração por argumentos, inclusive preservando corretamente a cor terminal dos 28 scripts de ciclo único; as plumas usam velocidade e limites nativos, resultando em 7–28 frames conforme fase e lado. A execução física foi comparada para jogador e inimigo em 1x/3x: passou de 19 para 12 apresentações em 1x e de 6 para 4 em 3x, sem overflow, reset, travamento ou perda da sequência lógica. O contrato direcionado foi adicionado e `scripts/test.ps1` terminou em `All native tests passed.` após a proteção adicional. Antes dos testes foi salvo um backup integral de 196.608 bytes em `backups/r338-lava-plume-20261104-140617-COM7/spiffs-before.bin`, SHA-256 `F44C962E0E6B3B167488E281B018D098B981AB0DF815F74D54C41C031CF66EA7`. O firmware final tem 1.950.176 bytes, SHA-256 `21DDA14036CB84A98EB2B39B0C8721941ACB228BFF6DD48C7851A789C6126B39`, foi gravado e verificado por digest na app0. O boot final confirmou `firmware=4.0 ALOLA`, `running=app0 selected=app0`, microSD e save OK, pacote de sprites OK, velocidade 3x, rádio OFF e `Ready`. |
+
+## R20261104-337 - Corrigir o segundo turno de Geomancy
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-337 | 2026-11-04 | Testar na placa e corrigir a animação bugada do segundo turno de Geomancy sem alterar a primeira animação | Concluído, validado fisicamente e gravado | A referência do pokeemerald-expansion confirmou `choosetwoturnanim GeomancyChargeUp GeomancyUnleash`: o segundo turno cria seis anéis com `SpriteCB_SurroundingRing`. O gerador os classificava incorretamente como `RaiseSprite`, callback com argumentos de Ancient Power que Geomancy não fornece; por isso os anéis ficavam praticamente parados e com duração errada. Foi criado o movimento dedicado `SurroundingRingRise`, reproduzindo a ABI original: nasce no X do atacante e Y+40, sobe 72 px em 13 frames e termina no frame seguinte. A correção é genérica para esse callback e também beneficia Reflect Type, Electrify e Aurora Veil. O diagnóstico por cabo passou a aceitar explicitamente o turno 0/1 e o segundo turno foi executado na ESP32 para jogador e inimigo em 1x e 3x, sem cache miss, overflow, reset ou travamento; a cadência do primeiro turno permaneceu igual. O contrato direcionado passou e `scripts/test.ps1` terminou em `All native tests passed.`. Antes dos testes foi salvo um backup integral de 196.608 bytes em `backups/r337-geomancy-20261104-132509-COM7/spiffs-before-retry.bin`, SHA-256 `374DB8A56380908AE353EAF7D2669F3FF25B3CC29F48552E4C7DED575F7D9261`. O firmware final tem 1.950.112 bytes, SHA-256 `829FFDFC05A2F8EB3825127AF3C10FF3361B980D33275B21B44CC2F9D1E043D9`, foi gravado e verificado por digest na app0. O boot final confirmou `firmware=4.0 ALOLA`, `running=app0 selected=app0`, microSD e save OK, pacote de sprites OK, velocidade 3x, rádio OFF e `Ready`. |
+
+## R20261104-336 - Publicar APK v3.0 atualizado no Google Drive
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-336 | 2026-11-04 | Subir o aplicativo atualizado no Google Drive | Concluido e verificado | O APK release v3.0/versionCode 108 foi verificado antes da publicacao: assinatura APK v2/v3 valida, bibliotecas ARM64 e x86_64 presentes e `pokegochi.pak` interno com 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, identico ao pacote canonico. O arquivo final tem 11.570.987 bytes e SHA-256 `CA1AA7E0A30A2CE5ACC4A345D16EE769FAE21EAABC5C89070D7192EE436A6306`. O arquivo `PokegochiApp-v3.0.apk` foi substituido em lugar no Google Drive, preservando o ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp` e o link existente. A leitura posterior do Drive confirmou nome, MIME, tamanho e horario de modificacao `2026-11-04T16:17:05.037Z`. |
+
+## R20261104-335 - Ash-Greninja por cinco minutos fora da batalha
+
+```mermaid
+graph LR
+    K["Greninja com ASH'S BOND derrota um foe"] --> A["Ash-Greninja"]
+    A --> B["Batalha pausa o relogio"]
+    B --> E["Sai vivo: 300 s fora da batalha"]
+    E --> W["Mantem forma em wild chain"]
+    E --> X["Expira, desmaia ou perde item"]
+    X --> N["Greninja normal"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-335 | 2026-11-04 | Manter Ash-Greninja transformado por cinco minutos fora da batalha depois da ativacao, inclusive entre os encontros de uma sequencia wild | Concluido e validado em firmware e Android | O KO final de um encontro wild agora ativa o Bond normalmente. Ash-Greninja conserva forma, stats e Battle Bond ao trocar dentro da mesma batalha; ao sair ou fugir vivo, recebe 300 segundos de forma externa. O contador pausa durante batalhas, continua com tempo offline e renova somente se esse Greninja realmente entrou na batalha, sem premio gratuito para outro transformado guardado na Box. Wild chains herdam a forma entre encontros. Desmaio, expiracao ou remocao do held item restauram imediatamente forma, Ability e stats normais preservando a proporcao de HP. Os segundos usam os bits 16-31 ja reservados de `legacyCareCounterReserved`, sem alterar a ABI nem migrar o save. Home, Box, Summary, Party e Choose Battler invalidam o cache no instante da expiracao. Foram testados trainer com troca, checkpoint, fuga, 299+1 segundos, wild terminal, proximo wild, nao participante, desmaio e retirada do item; `scripts/test.ps1` terminou em `All native tests passed.`. O firmware ESP32 de producao compilou com 111.984 bytes de RAM e 1.945.752/1.966.080 bytes de flash; `firmware.bin` tem 1.950.656 bytes e SHA-256 `27051A5F8D34D54E98D597473633980F0A55A8F4EBCE1F98CC4F619FD83A4B0E`. O APK release v3.0/versionCode 108 compilou para ARM64 e x86_64, mede 11.570.987 bytes e tem SHA-256 `CA1AA7E0A30A2CE5ACC4A345D16EE769FAE21EAABC5C89070D7192EE436A6306`. Nenhum artefato foi publicado e nenhuma placa foi gravada neste pedido. |
+
+## R20261104-334 - Ash's Bond retroativo no APK
+
+```mermaid
+graph LR
+    G["Greninja ja existente na Box"] --> R["Reconciliar no boot e Home"]
+    T["Captura, evolucao ou trade"] --> R
+    R --> B["ASH'S BOND na Bag"]
+    B --> A["APK versionCode 108"]
+    A --> D["Mesmo arquivo no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-334 | 2026-11-04 | Corrigir o APK novo porque um save que ja tinha Greninja na Box nao recebeu `ASH'S BOND`, recompilar e atualizar o Drive | Concluido, testado e publicado | O APK anterior continha tanto a string `ASH'S BOND` quanto o runtime de Ash-Greninja nas duas ABIs; portanto nao era um APK velho. A falha estava no fluxo de save: `AlolaForms::reconcileUniqueItems()` so era alcançado ao abrir a regiao de Alola ou em capturas posteriores, logo um Greninja preexistente podia nunca disparar a concessao. Foi criado um caminho unico de reconciliacao para boot, retorno a Home, captura, evolucao e trade, sem exigir que a tela de Alola seja aberta. Saves com o bit de claim registrado mas sem copia na Bag tambem sao reparados, desde que nenhum Greninja ja esteja segurando o item, impedindo duplicacao. O rollback de trade agora restaura tambem os inventarios unicos Gen 5/7 se o commit falhar. O contrato direcionado passou e `scripts/test.ps1` terminou em `All native tests passed.`. O novo release mantem `versionName 3.0`, sobe para `versionCode 108`, inclui ARM64/x86_64, assinatura v2/v3 valida, PAK v55 de 30.219.710 bytes com SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E` e catalogo `09ae3554f13275d3`. O APK mede 11.569.179 bytes e tem SHA-256 `739F55F750B7A0176CA6D2DE0E5D0BF780C4D20CE3F161C37D70708B107BD3D8`. O arquivo existente `PokegochiApp-v3.0.apk`, ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`, foi substituido no Drive preservando o mesmo link; a metadata posterior confirmou MIME, nome, novo tamanho e modificacao `2026-11-04T15:31:08.147Z`. |
+
+## R20261104-333 - compilar e publicar APK atual no Drive
+
+```mermaid
+graph LR
+    S["Codigo atual"] --> B["APK release v3.0"]
+    B --> V["Assinatura, ABIs e PAK v55"]
+    V --> D["Google Drive"]
+    D --> R["Metadata conferida"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-333 | 2026-11-04 | Compilar o aplicativo atual e subir o APK no Google Drive | Concluido e publicado | O release Android v3.0 (`versionCode 107`) compilou em ARM64 e x86_64 com o runtime nativo completo. O Gradle e uma segunda leitura independente do ZIP confirmaram o `pokegochi.pak` v55 com 30.219.710 bytes e SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, identico ao pacote canonico, e catalogo de animacoes `09ae3554f13275d3`. O APK esta assinado e verificou nos esquemas v2/v3 com certificado SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`; mede 11.568.475 bytes e tem SHA-256 `4C92331BFD3E0D9EDA6AB1519C99C9BFE3A0C436BD46EB085B579B295DC8497B`. Foi enviado diretamente ao Google Drive como `PokegochiApp-v3.0.apk`, ID `1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp`; a leitura posterior de metadata confirmou nome, MIME `application/vnd.android.package-archive` e os mesmos 11.568.475 bytes. Link: `https://drive.google.com/file/d/1mgCd7uof_gtVcS2Qbp7LETYuFTyTwvMp/view?usp=drivesdk`. |
+
+## R20261104-332 - Rayquaza Mega ao encerrar batalha
+
+```mermaid
+graph LR
+    R["Reproducao real na COM7"] --> S["Snapshot Mega antes da resolucao"]
+    S --> P["Presenter e arena usam o mesmo estado"]
+    P --> V["KO e Run sem perda de frame"]
+    V --> F["Firmware combinado e verificado"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-332 | 2026-11-04 | Observar pela placa e corrigir o Rayquaza perdendo frames ao voltar de Mega para normal no fim da batalha | Concluido, validado fisicamente e gravado | A reproducao real foi capturada na COM7 e mostrou `scene mismatch` e `retained cache miss` para os sprites base #384 justamente durante a saida. A correcao anterior registrava o evento de Mega, mas o inicio do diario visual ainda consultava o estado vivo depois da resolucao; em Run/fim de batalha, o motor ja havia limpado a Mega transitoria. Todas as entradas de `beginBattleEventFlow()` agora recebem tambem as variantes Mega fotografadas antes da acao, e presenter, preload, compositor e chave da arena seguem essa mesma copia ate o diario terminar. O fixture por cabo validou tanto KO quanto o caminho exato Dragon Ascent -> Run: `live=1 shown=1` antes da saida e `live=0 shown=0` depois, com zero `GFX scene mismatch`, zero `cache miss`, zero watchdog e um unico boot. A imagem final tambem conserva a correcao posterior BLE/Bag de R326, evitando regressao ao fechar a Bag com ou sem radio. O save foi respaldado em `backups/rayquaza-frame-20261104-103331/spiffs-before.bin` (196.608 bytes, SHA-256 `0AE2B560C0E80B0EAFB063B167180397554B2895934E8E41F7FD0A046AC08356`); a comparacao logica confirmou que apenas sequencia de journal, `bootCount` e CRC mudaram pelos boots de teste, sem alteracao do gameplay. O contrato `test_rayquaza_presentation_contract.py` passou. O firmware combinado mede 1.947.488 bytes, deixa 18.592 bytes no slot e tem SHA-256 `0C85978AD35739B8AFD4DA5786DFA1F56A16A753D797912681568F6924EE4E13`; app0 foi gravada e verificada por digest. O boot final confirmou ESP32-D0WD-V3 revision 3.1, MAC `b4:bf:e9:21:3c:e4`, `firmware=4.0 ALOLA`, `running=app0 selected=app0`, `Save OK`, pacote de sprites OK, velocidade 3x, radio OFF e `Ready`. |
+
+## R20261104-331 - atualizar placa e adicionar Greninja shiny nivel 100
+
+```mermaid
+graph LR
+    P["CH340 COM7"] --> B["Backup do save"]
+    B --> G["Greninja shiny Lv.100 na Box"]
+    G --> F["Firmware atualizado"]
+    F --> V["Boot e save verificados"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-331 | 2026-11-04 | Atualizar a placa conectada e colocar um Greninja shiny nivel 100 na Box para teste | Concluido, validado fisicamente e gravado | A CH340 foi confirmada na COM7 como ESP32-D0WD-V3 revision 3.1, MAC `b4:bf:e9:21:3c:e4`. Antes de qualquer gravacao foram preservados tabela, NVS, otadata e os 196.608 bytes de SPIFFS em `backups/r331-20261104-113157-COM7`; o save inicial tem SHA-256 `B98BBFECC1FB36B4616A5596C5F770CC94EC80E2A96E9A550CFF9024BE3B1DB4`. Um fixture minimo, idempotente e exclusivo do cabo criou exatamente um Greninja #658 shiny nivel 100, UID 49, e elevou a Box para 32 Pokemon; depois de reiniciar, o proprio fixture respondeu `EXISTS` para o mesmo UID, comprovando persistencia sem duplicacao. O firmware de producao nao contem `ADDGRENINJA`; ele mede 1.949.632 bytes, deixa 16.448 bytes em cada slot e tem SHA-256 `40192F4A6C11B81F6BD9BF6631C18A9264C5F650AB91B91ADAD1D089FD7B0168`. O sender BLE foi tornado robusto no Windows ao reutilizar o objeto `BLEDevice` recem-descoberto, evitando a falha do cache WinRT ao conectar somente pelo endereco. O pacote assinado, sequencia `1793804093`, enviou em 100% o PAK v55 de 30.219.710 bytes/SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`, metadados e o firmware para app1; a placa respondeu `OTA candidate accepted`. Em seguida, o mesmo firmware normal substituiu o fixture em app0. Os dois slots passaram em `verify-flash`; o save final foi relido com 196.608 bytes e SHA-256 `85F537CB347F6AA175FC2D7C7E45A23ED828E2EACF52B322C3F66FD9C68CEE44`. Builds do fixture e de producao passaram, o sender passou em `py_compile`, `git diff --check` nao encontrou erro e a inspecao binaria confirmou o comando somente no fixture. O boot final ficou em `firmware=4.0 ALOLA`, `running=app1 selected=app1`, `Save OK`, `archive probe OK`, pacote de sprites OK, player 56925, radio OFF e `Ready`. |
+
+## R20261104-330 - impedir reroll gratuito das opcoes dos sites
+
+```mermaid
+graph LR
+    E["Entrar no site"] --> O["Opcoes sorteadas"]
+    O -->|"Abandonar sem escolher"| P["Mesmas opcoes na volta"]
+    O -->|"Entrar em uma opcao"| R["Proximo abandon libera novo sorteio"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-330 | 2026-11-04 | Manter as opcoes de item, trainer, enfermeira e demais eventos ao abandonar um site sem entrar em nenhuma; permitir novo sorteio somente depois de escolher ao menos uma opcao | Concluido e validado no firmware e Android | Unova, Kalos e Alola agora guardam no proprio estado persistente o seed das opcoes quando o jogador abandona antes de entrar em qualquer card. Reabrir o mesmo site, fechar/reabrir o jogo ou visitar outro site conserva a oferta; somente um clique valido em trainer, item, enfermeira ou outro evento marca a tentativa como consumida e permite que um abandono posterior gere nova oferta. Saves antigos no meio de uma expedicao sao reconhecidos por profundidade, batalha e flags existentes, sem migracao nem aumento da ABI. A UI informa quando as opcoes foram mantidas. As regressões direcionadas das tres regioes e `scripts/test.ps1` terminaram com `All native tests passed`. O firmware ESP32 compilou com 111.976 bytes de RAM e 1.944.724/1.966.080 bytes de flash. O APK release ARM64/x86_64 compilou e verificou o PAK v55 de 30.219.710 bytes, SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. Nenhum artefato foi publicado nem nenhuma placa foi gravada. |
+
+## R20261104-329 - Black realmente preto e lock screen White clara
+
+```mermaid
+graph LR
+    B["Tema Black cinza"] --> N["Preto e charcoal"]
+    W["Tema White"] --> L["Lock screen majoritariamente branca"]
+    N --> C["Contraste preservado"]
+    L --> C
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-329 | 2026-11-04 | Deixar o tema Black mais preto, como o White foi tornado branco, e clarear a tela de bloqueio quando o tema White estiver selecionado | Concluido e validado no firmware e Android | O Black deixou de usar cinzas medios: superficie principal e fundo escuro agora sao preto literal, com apenas dois tons charcoal muito escuros para separar bordas e paineis. Textos sobre o `themePale()` passaram a usar `themePaleInk()`, escolhendo branco no Black e preto no White; isso tambem preserva o indicador `1/2` do Regions. A lock screen detecta o White explicitamente e usa fundo branco, faixas cinza-claro, tinta preta e trilho contrastante, sem promover o `themeDark()` semantico a fundo preto. O contrato de temas e o contrato do Region Hub passaram, assim como `scripts/test.ps1` (`All native tests passed`). Firmware ESP32 de producao e APK release ARM64/x86_64 compilaram; o APK verificou o PAK v55 de 30.219.710 bytes, SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. |
+
+## R20261104-328 - Ash's Bond e Water Shuriken
+
+```mermaid
+graph LR
+    I["Ash's Bond equipado"] --> K["Greninja derrota um adversario"]
+    K --> A["Ash-Greninja durante a batalha"]
+    A --> R["Retorno ao normal no fim"]
+    W["Water Shuriken"] --> S["Sprite de shuriken de agua"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-328 | 2026-11-04 | Criar o held item `ASH'S BOND` para transformar Greninja apos um nocaute, como alternativa a Mega, e conferir/corrigir o visual de Water Shuriken | Concluido e validado no firmware e Android | `ASH'S BOND` foi adicionado como item unico de Alola, concedido uma unica vez assim que o save possuir Greninja; somente Greninja pode equipa-lo. Em uma batalha com equipe adversaria, o item ativa depois de `MoveUsed -> HP zero -> Fainted`, transforma a forma real em Ash-Greninja antes da entrada do proximo adversario, preserva a forma em checkpoint/retomada e restaura Greninja normal ao terminar. Ele nao ativa contra o unico Pokemon de um encontro wild, evitando uma transformacao terminal inutil/piscante. Ash-Greninja usa Water Shuriken com 3 acertos de 20 de poder; os aneis ovais que pareciam um furacao foram substituidos pelo shuriken azul autentico em todos os projeteis repetidos. O presenter foi travado por `event.before/event.after`, e os sprites normal/Ash de frente, costas, shiny e icones foram validados para impedir a regressao visual de Mega Rayquaza. Pacote de assets elevado para v55: 15.528 assets, 30.219.710 bytes, SHA-256 `FA47A1E2FACFCC174C47E9C00FDCA22BD8CCBAAE86445C72A70CD36C729EEA0E`. `scripts/test.ps1` terminou com `All native tests passed`; APK release ARM64/x86_64 compilou e verificou o mesmo PAK v55. |
+
+## R20261104-327 - disponibilidade do Ash-Greninja
+
+```mermaid
+graph LR
+    G["Greninja normal"] --> B["Battle Bond"]
+    B --> K["Nocaute em batalha"]
+    K --> A["Ash-Greninja"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-327 | 2026-11-04 | Verificar se o Ash-Greninja existe no jogo | Auditado; conteudo existe, obtencao esta inacessivel | O jogo possui forma `ASH`, sprites normal/shiny, stats proprios, habilidade `BATTLE BOND`, transformacao apos KO, Water Shuriken de tres acertos e retorno para a forma normal ao encerrar a batalha. Entretanto, nenhum encontro/recompensa concede o Greninja-base com Battle Bond, a Hidden Ability cadastrada da especie e Protean e a selecao manual de forma exclui Greninja. Como a transformacao exige Battle Bond ainda na forma normal, o Ash-Greninja esta implementado no motor mas nao pode ser obtido legitimamente no gameplay atual. O Mega Greninja do romhack e uma forma separada e continua acessivel pela Mega Stone. |
+
+## R20261104-326 - retorno visual Bag para Home apos trade BLE
+
+```mermaid
+graph LR
+    T["Trade BLE real"] --> B["Fechar Bag"]
+    B --> G["Recuperar memoria grafica"]
+    G --> H["Home completa e visualmente limpa"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-326 | 2026-11-04 | Corrigir a aparencia bugada ao voltar da Bag para a Home na placa, incluindo o caso real posterior a um trade Bluetooth | Concluido, validado fisicamente e gravado | A placa foi confirmada na COM7 como ESP32-D0WD-V3 revision 3.1, MAC `b4:bf:e9:21:3c:e4`. A causa principal era objetiva: `closeInventoryToHome()` desmontava a arena grafica de 57 KiB mesmo quando o Bluetooth nunca havia sido ligado; como o heap normal do jogo ja estava fragmentado, a realocacao falhava e um simples CANCEL da Bag reiniciava a placa. O fechamento agora consulta se o radio ou uma recuperacao BLE realmente existem. Sem BLE, Home -> Bag -> Home foi validado fisicamente como telas `7 -> 35 -> 7`, sem desligamento de radio nem reset. Depois de BLE real, a recuperacao continua segura: antes de desmontar a arena, a placa apresenta um quadro completo `POKEGOCHI LINK / RETURNING HOME...`, preservado no TFT enquanto NimBLE libera memoria e o reinicio controlado recompõe a Home completa. O PC atuou como um segundo Pokegochi e concluiu convite, pedido de trade, selecao na Box, confirmacao bilateral e commit `768A59D3`; o fechamento da Bag ainda com o GATT ativo encerrou o link, observou o maior bloco de apenas 15.860 bytes e voltou com `[BOOT] Resume multiplayer Home reason=1`, sem panic. O save usado nesse ensaio foi restaurado e verificado de `backups/r326-20261104-092306-COM7/spiffs-save.bin`, 196.608 bytes, SHA-256 `04C5AE3A04795CFA29FE4049D3C858E02749A22A3198EEFAC58B7EC4934E5BD4`. `scripts/test.ps1` terminou em `All native tests passed.`. A imagem final de producao mede 1.948.176 bytes, deixa 17.904 bytes no slot e tem SHA-256 `AA4AF43B02B6F165982F560DAFA204D86B7C3665B57E6AD1A176BE450A91FC8F`; app0 e o save original foram gravados com verificacao do esptool. O boot final confirmou `firmware=4.0 ALOLA`, `running=app0 selected=app0`, `Save OK`, pacote de sprites OK e radio OFF; a placa foi deixada na Home. |
+
+## R20261104-325 - transformacao do Rayquaza por Dragon Ascent na placa
+
+```mermaid
+graph LR
+    D["Dragon Ascent"] --> F["Mega Rayquaza em batalha"]
+    F --> S["Resolver e manter sprites corretos"]
+    S --> H["Regressao na placa COM7"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-325 | 2026-11-04 | Testar na placa e corrigir a transformacao do Rayquaza com Dragon Ascent que perde sprites | Concluido, validado fisicamente e gravado | A placa foi confirmada na COM7 como ESP32-D0WD-V3 revision 3.1, MAC `b4:bf:e9:21:3c:e4`. A causa era a divergencia entre resolucao e apresentacao: Dragon Ascent altera um bit Mega transitorio, nao `OwnedPokemon::form`, mas o diario visual guardava somente especie/forma e consultava o bit vivo. Assim, uma luta que continuava podia mostrar Mega cedo demais; quando o golpe encerrava a luta, o motor ja havia limpo o bit e a apresentacao perdia o sprite Mega. O `BattleFlow` agora registra a variante Mega visivel de cada lado; preload, chave da arena, cache, compositor, affine/metallic/clones, faint e restauracoes usam a mesma copia apresentada. Rayquaza permanece com `form=0`, e o evento 620 troca apenas a variante visivel. Um fixture temporario por cabo reproduziu luta continua e KO final sem escrever o save. No KO, o log confirmou `live=0 shown=1` durante a transformacao e apresentou na ordem Dragon Ascent, transformacao, Delta Stream, dano, quedas de Defense/Sp.Def, faint, EXP e vitoria, sem panic/reset; o asset Mega traseiro ficou residente em `/pokegochi/assets/pokemon/forms/mega/384/mega/back.pkg`. O save original foi preservado e restaurado integralmente de `backups/r325-20261104-083542-COM7/spiffs-save.bin`, 196.608 bytes, SHA-256 `A44DCF38D83931353111BD69F10D87595A4ABA7279B778C902A5C4CD29918ED9`. `scripts/test.ps1` terminou em `All native tests passed.`. A imagem final de producao nao contem comandos do fixture, mede 1.947.088 bytes, deixa 18.992 bytes livres no slot e tem SHA-256 `00E7C531FF819BBE71F2240B0853B2513AF5F2A23B3C4DF684799BA84E62BB7B`; app0 foi gravada e verificada. O boot final confirmou `firmware=4.0 ALOLA`, `running=app0 selected=app0`, `Save OK` e pacote de sprites OK. |
+
+## R20261104-324 - Home ausente apos trade multiplayer na placa
+
+```mermaid
+graph LR
+    T["Trade BLE concluido"] --> D["Link encerrado"]
+    D --> R["RAM grafica recuperada"]
+    R --> H["Home recomposta por inteiro"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261104-324 | 2026-11-04 | Corrigir a placa que deixa de mostrar a tela inicial depois de trocar um Pokemon no multiplayer | Concluido, validado fisicamente e gravado | A placa foi confirmada na COM7 como ESP32-D0WD-V3, MAC `b4:bf:e9:21:3c:e4`; ela ainda executava o firmware 3.0 UNOVA e nunca havia recebido a correcao anterior. O teste por cabo reproduziu a causa real: depois de ligar e desligar o NimBLE havia 39.900 bytes livres, mas o maior bloco contiguo era somente 15.860 bytes, insuficiente para o cenario da Home e muito abaixo da arena normal de 57 KiB. O renderer agora distingue uma arena parcial da arena normal, adia qualquer composicao da Home e tenta a liberacao tardia por 250 ms. Como o ESP32 fisico continua fragmentado, ele faz um reinicio controlado; um marcador `RTC_NOINIT_ATTR` sobrevive ao `SW_CPU_RESET`, preserva o save e pula Diagnostic/START para abrir diretamente a Home. Trade continua sendo confirmado em SPIFFS antes da animacao; mudancas pendentes tambem sao salvas antes do reinicio. `scripts/test.ps1` terminou em `All native tests passed.` e os contratos direcionados do Trade/Bag e da capacidade do renderer passaram. A imagem final possui 1.946.256 bytes, 19.824 bytes livres no slot e SHA-256 `82DFD1F7F4A02E9F7E183B946E9F3DFFAD1C2E513C5BC97F5F126E02EA725BE2`. Antes da gravacao foram preservados e verificados tabela, NVS, otadata e os 196.608 bytes do save em `backups/r324-20261104-075240-COM7` (save SHA-256 `C01F07035828578FF0B0FB49F5B025B8439C00408C7CCA543AE3C1B2D3BBF19C`). A app0 foi gravada e verificada byte a byte. O boot fisico final confirmou `firmware=4.0 ALOLA`, `Save OK`, microSD a 20 MHz e pacote de sprites OK. A regressao por cabo percorreu Home -> Bag -> Multiplayer -> BLE ON -> fechar Bag, observou o reinicio esperado, recebeu `[BOOT] Resume multiplayer Home reason=1` e o toque seguinte confirmou `screen=7` (Home), sem reset de save nem panic. |
+
+## R20261103-323 - Zeraora nivel 100 na Box pelo APK
+
+```mermaid
+graph LR
+    S["Save Android existente"] --> F["Fixture unico Gen 7"]
+    F --> Z["Zeraora #807 Lv.100"]
+    Z --> V["Validar APK e PAK"]
+    V --> D["Publicar no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-323 | 2026-11-03 | Gerar APK instalavel sobre o app atual que adicione um Zeraora nivel 100 na Box e subir no Drive | Concluido, validado e publicado | O fixture Android de Box ganhou um sexto recibo persistente (`0x20`) e cria Zeraora #807 no nivel 100 com conteudo Gen 7; saves que ja receberam os cinco fixtures anteriores ganham somente o Zeraora, e o recibo `0x3F` impede duplicacao nos boots seguintes. A Box cheia deixa a concessao pendente para tentar novamente depois de liberar um slot. `scripts/test.ps1` terminou em `All native tests passed.`. O release 3.0 avancou para `versionCode 107`, foi compilado para arm64-v8a+x86_64, alinhado para paginas de 16 KiB e assinado em v2/v3 pelo certificado historico SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. A instalacao incremental no emulador preservou o save; o log confirmou `added species=807 level=100 uid=9`, `legendary fixture added=1 receipts=0x3F`, processo ativo e zero fatal/ANR. O PAK interno coincide com o canonico v54: 30.219.114 bytes e SHA-256 `3B19D7D06BA84060B53116758FD593C381997F7C6E1DC9212C9FCF64D7CB9950`. O APK `Pokegochi-Android-3.0-Zeraora-Lv100-r323.apk` possui 11.562.623 bytes e SHA-256 `7439EA49165BD0078221BA9C5A486AD6F829599D56C0DFE48943C38F0B98490C`; nome, MIME e tamanho foram relidos no Drive: https://drive.google.com/file/d/1-uSrbwUIiGZUnShCFKdQuyFPvru_VFau/view?usp=drivesdk |
+
+## R20261103-322 - tema White realmente branco e APK no Drive
+
+```mermaid
+graph LR
+    G["White cinza"] --> W["Superficies #FFFFFF"]
+    W --> C["Contraste preto automatico"]
+    C --> T["Suite completa + instalacao"]
+    T --> D["APK r322 relido no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-322 | 2026-11-03 | Fazer o tema White branco de verdade, inclusive no fundo, sem deixar conteudo invisivel, e atualizar o APK no Drive | Concluido, validado e publicado | A paleta White deixou de usar perola/cinza e agora usa branco puro `0xFFFF` nas superficies principal, secundaria e de fundo, preto `0x0000` nos contornos. O contraste foi centralizado: a fonte transparente corrige colisoes branco-sobre-branco/preto-sobre-preto e botoes, setas, cursores de dialogo, Summary, Pokedex, Mart, batalhas e premio de insignia escolhem tinta preta sobre o fundo White. Os demais pares de cores permanecem inalterados. `scripts/test.ps1` terminou em `All native tests passed.`. Android 3.0 avancou para `versionCode 106`/build `r322`; a instalacao incremental no emulador preservou o save, abriu o jogo e permaneceu viva sem fatal/ANR. O release arm64-v8a+x86_64 passou no alinhamento de 16 KiB e na assinatura v2/v3 pelo certificado historico SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno coincide com o canonico v54: 30.219.114 bytes e SHA-256 `3B19D7D06BA84060B53116758FD593C381997F7C6E1DC9212C9FCF64D7CB9950`. O APK `Pokegochi-Android-3.0-white-background-r322.apk` possui 11.544.511 bytes e SHA-256 `D374CDD79162A05A037FC0E397F38E011888817B5A1C082035DF86607FEF60CB`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1xGGQrEdzvYcs_10ccHMR7YdCOsvoRk3a/view?usp=drivesdk |
+
+## R20261103-321 - tema White e APK no Drive
+
+```mermaid
+graph LR
+    U["Marco de tema em Unova"] --> B["Black desbloqueado"]
+    U --> W["White desbloqueado"]
+    B --> M["Seleção exclusiva e persistente"]
+    W --> M
+    M --> A["APK 3.0 r321 validado"]
+    A --> D["Publicado e relido no Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-321 | 2026-11-03 | Adicionar o tema White, desbloqueado junto com o Black, gerar o APK e subir no Drive | Concluído, validado e publicado | White foi adicionado como opção separada no navegador paginado de temas, com paleta pérola/prata, cinza frio e contorno carvão. Ele consulta exatamente o mesmo marco persistente de Unova usado pelo Black. Um bit previamente reservado em `UnovaAdventureState::flags` persiste a seleção de White sem aumentar a estrutura nem alterar o save V51; Black mantém seu bit e comportamento anteriores, portanto saves que já o usavam continuam em Black. Os setters tornam Black/White mutuamente exclusivos e a normalização resolve defensivamente bits conflitantes, além de limpar ambos quando X/Y, Sun ou Moon é selecionado. A regressão cobre bloqueio anterior ao marco, desbloqueio conjunto, alternância Black→White e persistência exclusiva; `scripts/test.ps1` terminou em `All native tests passed.`. Android 3.0 avançou para `versionCode 105`/build `r321`; o release arm64-v8a+x86_64 foi alinhado para páginas de 16 KiB e assinado em v2/v3 com o certificado histórico SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDF8BEBA08B620FC1EDCE7D`. O PAK interno coincide com o canônico v54: 30.219.114 bytes e SHA-256 `3B19D7D06BA84060B53116758FD593C381997F7C6E1DC9212C9FCF64D7CB9950`. O APK `Pokegochi-Android-3.0-white-theme-r321.apk` possui 11.543.919 bytes e SHA-256 `D3193E4BEC4301D84710E5441AA71DA9FD7D547D45167725AB0DCA59DE076639`; nome, MIME, tamanho e pasta foram relidos no Drive: https://drive.google.com/file/d/1JyPdmcB4B9dsVeV5ZkMbFmbOr5w1cGf_/view?usp=drivesdk |
+
+## R20261103-320 - OTAP seguro para uma placa antiga
+
+```mermaid
+graph LR
+    V["Versão antiga desconhecida"] --> O["Layout v2.2: slot 0x1A0000"]
+    V --> N["Layout v2.3.2+: slot 0x1E0000"]
+    O --> X["FW 4.0 excede 240.256 bytes"]
+    N --> C["FW 4.0 cabe com 21.888 bytes livres"]
+    C --> S["Pacote assinado reaberto e verificado"]
+    S --> D["Publicado e relido no Google Drive"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-320 | 2026-11-03 | Produzir um OTAP que atualize com segurança uma placa em versão bem antiga até o firmware 4.0 atual | Publicado no Drive; compatibilidade condicionada ao layout novo | A auditoria impediu a entrega cega do pacote atual. O layout confirmado da v2.2 possui slots OTA de 1.703.936 bytes, mas o firmware 4.0 mede 1.944.192 bytes e seria rejeitado por exceder o slot em 240.256 bytes. A v2.3.2 Sinnoh já mede 1.827.440 bytes e, portanto, identifica com segurança uma placa que recebeu o layout novo de 1.966.080 bytes; nele o firmware 4.0 cabe com 21.888 bytes livres. O pacote final existente foi reaberto, teve assinatura P-256, manifestos e payloads validados (`SIGNED_PACKAGE_REOPEN_OK`) e possui SHA-256 `AD73482A91DA1EBB85EDBD3C9C082CC683CC058B12E8F87F35C1A6605270E065`. O mesmo arquivo, sem recompilação, foi publicado no Google Drive com ID `1vnqS9K1aQnHtjkWAExzun9sHTcDLFr2o`; a releitura confirmou o nome `Pokegochi-Firmware-4.0-ALOLA.pgota` e 33.648.753 bytes. Uso direto somente em v2.3.2 ou posterior; v2.2 ou anterior exige migração única de partições por USB e não pode receber o 4.0 por OTAP comum. |
+
+## R20261103-319 - auditoria direcionada do Magma Storm
+
+```mermaid
+graph LR
+    D["Move 463: 120 / 70 / 5 PP"] --> H["Hit e miss dos dois lados"]
+    H --> T["Trap 2-5 turnos e troca bloqueada"]
+    T --> R["Residual Gen IV: 1/16"]
+    D --> A["Programa visual original de 29 comandos"]
+```
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261103-319 | 2026-11-03 | Conferir se Magma Storm está funcionando corretamente | Concluído; nenhum bug encontrado | A auditoria confirmou no cadastro a identidade Gen IV usada pelo projeto: golpe Fire especial, poder 120, precisão 70, 5 PP e efeito TRAP. A nova regressão nominal do move 463 passou para ambos os lados da batalha, cobrindo acerto, miss sem efeito, contador efetivo de 2–5 turnos, residual de 1/16 do HP máximo e bloqueio de troca. O programa visual original também passou: 29 comandos com vortex, ciclo de cor, fundo Magma Storm, aceleração final do fundo, shake exato e as duas transições de background extraídas do pokeemerald-expansion. Os executáveis direcionados encerraram com `MAGMA_MOVE_EFFECT_MATRIX_OK` e `MAGMA_ANIMATION_PROGRAM_OK`; nenhuma alteração de gameplay ou firmware foi necessária. |
 
 ## R20261103-318 - APK 3.0 no Drive e GitHub atualizado
 

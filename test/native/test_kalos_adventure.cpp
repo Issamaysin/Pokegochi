@@ -55,6 +55,38 @@ int main() {
   assert(CollectionLogic::add(collection, starter, &starterUid));
   assert(CollectionLogic::setPartySlot(collection, 0U, starterUid));
 
+  KalosAdventureState preview = kalos;
+  preview.unlockedAreas = KalosAdventure::kAllAreasMask;
+  assert(KalosAdventure::begin(
+      preview, KalosArea::SantaluneForest, 0x33006001U, collection));
+  KalosRoomChoice previewChoices[2]{};
+  const uint8_t previewCount = KalosAdventure::choices(preview, previewChoices);
+  assert(previewCount == 2U);
+  assert(KalosAdventure::willPreserveChoicesOnAbandon(preview));
+  assert(KalosAdventure::abandon(preview));
+  KalosAdventureState reloadedPreview = preview;
+  assert(KalosAdventure::begin(
+      reloadedPreview, KalosArea::CyllageCliffs, 0x33006002U, collection));
+  assert(reloadedPreview.run.seed == 0x33006001U);
+  assert(KalosAdventure::abandon(reloadedPreview));
+  assert(KalosAdventure::begin(
+      reloadedPreview, KalosArea::SantaluneForest, 0x33006003U, collection));
+  KalosRoomChoice restoredChoices[2]{};
+  assert(KalosAdventure::choices(reloadedPreview, restoredChoices) ==
+         previewCount);
+  for (uint8_t index = 0U; index < previewCount; ++index) {
+    assert(restoredChoices[index].kind == previewChoices[index].kind);
+    assert(restoredChoices[index].route == previewChoices[index].route);
+    assert(restoredChoices[index].recommended ==
+           previewChoices[index].recommended);
+  }
+  KalosAdventure::choose(reloadedPreview, 0U, collection);
+  assert(!KalosAdventure::willPreserveChoicesOnAbandon(reloadedPreview));
+  assert(KalosAdventure::abandon(reloadedPreview));
+  assert(KalosAdventure::begin(
+      reloadedPreview, KalosArea::SantaluneForest, 0x33006004U, collection));
+  assert(reloadedPreview.run.seed == 0x33006004U);
+
   // Friend Safari is capturable and guarantees a Gen-VI Hidden Ability.
   bool foundSafari = false;
   for (uint32_t seed = 1U; seed < 5000U && !foundSafari; ++seed) {

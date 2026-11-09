@@ -2656,6 +2656,10 @@ def build_alola_assets(manifest: dict[str, dict]) -> list[str]:
             f"graphics/items/icons/{icon_name}.png",
             expansion_jasc_palette(
                 f"graphics/items/icon_palettes/{palette_name}.pal")))
+    emit("firered/items/held_151.pkg", expansion_indexed_png(
+        "graphics/items/icons/mega_bracelet.png",
+        expansion_jasc_palette(
+            "graphics/items/icon_palettes/mega_bracelet.pal")))
     return relatives
 
 
@@ -3211,6 +3215,13 @@ def main() -> None:
             f"graphics/items/icons/{icon_name}.png",
             expansion_jasc_palette(
                 f"graphics/items/icon_palettes/{palette_name}.pal")), manifest)
+    # Ash's Bond is a custom Greninja-only held item. The expansion's exact
+    # blue Mega Bracelet art communicates a trainer/Pokemon bond without
+    # inventing a placeholder silhouette and occupies the appended id 151.
+    write_asset("firered/items/held_151.pkg", expansion_indexed_png(
+        "graphics/items/icons/mega_bracelet.png",
+        expansion_jasc_palette(
+            "graphics/items/icon_palettes/mega_bracelet.pal")), manifest)
     write_asset("unova/key_items/dna_splicers.pkg",
                 expansion_source_png(
                     "graphics/items/icons/dna_splicers.png"), manifest)
@@ -3811,6 +3822,7 @@ def main() -> None:
       *(f"firered/items/held_{index:02}.pkg" for index in range(68,92)),
       *(f"firered/items/held_{index:02}.pkg" for index in range(92,127)),
       *(f"firered/items/held_{index:02}.pkg" for index in range(128,151)),
+      "firered/items/held_151.pkg",
       "firered/items/lucky_egg.pkg",
       "emerald/berry_garden/background.pkg",
       *(f"emerald/berry_garden/sprout_{frame}.pkg" for frame in range(2)),

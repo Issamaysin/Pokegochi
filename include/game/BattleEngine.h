@@ -103,7 +103,18 @@ struct WildEncounterClock {
   uint8_t available = kMaximum;
   // Retained only to migrate an old one-shot pending encounter safely.
   bool pending = false;
+  // These two bytes occupy the record's former tail padding, so the save ABI
+  // remains unchanged.  The schema byte distinguishes old padding from the
+  // one-time surprise armed by the first Master Ball.  Values 1..30 are the
+  // number of successful standard Wild encounters still to count; 0 waits
+  // for the first Master Ball and 0xFF means the surprise was consumed.
+  static constexpr uint8_t kFirstMasterBallSurpriseSchema = 0xD3U;
+  static constexpr uint8_t kFirstMasterBallSurpriseCompleted = 0xFFU;
+  uint8_t firstMasterBallSurpriseCountdown = 0U;
+  uint8_t firstMasterBallSurpriseSchema = kFirstMasterBallSurpriseSchema;
 };
+static_assert(sizeof(WildEncounterClock) == 16U,
+              "WildEncounterClock save layout must remain unchanged");
 
 enum class BattleOutcome : uint8_t { None, Ongoing, Victory, Defeat, Escaped, Captured };
 // Append new kinds so existing serialized numeric values remain compatible.
@@ -692,6 +703,16 @@ class EncounterLogic {
   static uint32_t nextWildBattleSeed(WildEncounterClock& clock,
                                      uint32_t playerId,
                                      uint32_t transientEntropy);
+  // Initializes/migrates the one-time first-Master-Ball surprise.  Existing
+  // qualified saves are armed retroactively because older firmware had no
+  // opportunity to schedule the event.
+  static bool reconcileFirstMasterBallSurprise(WildEncounterClock& clock,
+                                                bool masterBallReceived);
+  static bool firstMasterBallSurpriseDue(const WildEncounterClock& clock);
+  // Records one successfully started standard Wild encounter.  Pass true
+  // only after that encounter was actually replaced by an eligible Legendary.
+  static bool recordFirstMasterBallWildEncounter(WildEncounterClock& clock,
+                                                  bool legendaryForced);
   // Names used by current gameplay; the Wild-named methods remain as binary
   // and migration-compatible aliases for older tests/saves.
   static void advanceCenter(WildEncounterClock& charges, uint32_t elapsedSeconds) { advanceWild(charges, elapsedSeconds); }
@@ -711,7 +732,8 @@ class BattleEngine {
   static uint8_t highestPartyLevel(const PokemonCollection& collection);
   static bool startWild(BattleState& battle, PokemonCollection& collection,
                         uint32_t playerUid, uint32_t seed, uint8_t unlockedGeneration = 1,
-                        bool beginnerProtection = false, uint8_t worldTimePeriod = 0xFF);
+                        bool beginnerProtection = false, uint8_t worldTimePeriod = 0xFF,
+                        bool forceLegendary = false);
   // Repeatable post-region wilds draw from exactly one National-Dex
   // generation. Rarity and species rolls are kept separate so adding more
   // Legendary species never inflates the configured regional chance.
@@ -772,7 +794,8 @@ class BattleEngine {
   // from the peer instead of the trainer AI. 0xFE means that the opponent
   // spent the turn switching and therefore must not receive a second action.
   static BattleActionResult fightPvp(BattleState& battle, PokemonCollection& collection,
-                                     uint8_t moveSlot, uint8_t opponentMoveSlot);
+                                     uint8_t moveSlot, uint8_t opponentMoveSlot,
+                                     bool opponentUsesZMove = false);
   static BattleActionResult run(BattleState& battle, PokemonCollection& collection);
   // Stack-safe firmware form. The complete event journal is written into
   // caller-owned storage instead of materialising a ~1 KiB return object on
@@ -785,12 +808,22 @@ class BattleEngine {
   static BattleActionResult completeBatonPassSwitch(BattleState& battle,
                                                      PokemonCollection& collection,
                                                      uint32_t uid,
-                                                     uint8_t opponentMoveSlot);
+                                                     uint8_t opponentMoveSlot,
+                                                     uint8_t replacementReasonOverride = 0U);
   static BattleActionResult switchToPokemonPvp(BattleState& battle, PokemonCollection& collection,
                                                 uint32_t uid, uint8_t opponentMoveSlot,
-                                                bool forcedAfterFaint = false);
+                                                bool forcedAfterFaint = false,
+                                                bool opponentUsesZMove = false);
   static BattleActionResult switchOpponentPvp(BattleState& battle, PokemonCollection& collection,
-                                               uint8_t opponentIndex);
+                                               uint8_t opponentIndex,
+                                               bool forcedAfterFaint = false);
+  // Completes the second half of a remote U-turn/Volt Switch after the peer
+  // selected its incoming Pokemon. The queued local move, if any, still acts
+  // in the original command turn against that recipient.
+  static BattleActionResult completeOpponentPivotPvp(
+      BattleState& battle,PokemonCollection& collection,
+      uint8_t playerMoveSlot,
+      uint8_t replacementReasonOverride = 0U);
   static BattleActionResult forfeitPvp(BattleState& battle, PokemonCollection& collection,
                                        bool localPlayerForfeits);
   static BattleActionResult throwBall(BattleState& battle, PokemonCollection& collection,
@@ -803,6 +836,19 @@ class BattleEngine {
   static BattleActionResult useItem(BattleState& battle, PokemonCollection& collection,
                                     Inventory& inventory, BattleItem item, uint32_t targetUid = 0,
                                     PpItemInventory* ppItems = nullptr, uint8_t moveSlot = 0xFF);
+  // Link-battle variants operate on the disposable PvP Bag. The local item
+  // consumes the turn while using the peer-selected move; the opponent helper
+  // applies the mirrored item before the local command resolver runs.
+  static BattleActionResult useItemPvp(BattleState& battle, PokemonCollection& collection,
+                                       Inventory& inventory, BattleItem item,
+                                       uint32_t targetUid, PpItemInventory* ppItems,
+                                       uint8_t opponentMoveSlot,
+                                       bool opponentUsesZMove = false);
+  static BattleActionResult useOpponentItemPvp(BattleState& battle,
+                                                Inventory& inventory,
+                                                PpItemInventory& ppItems,
+                                                BattleItem item,
+                                                uint8_t opponentIndex);
   // Stack-safe firmware path. BattleActionResult embeds the complete
   // presentation journal, so the caller supplies persistent scratch instead
   // of materialising it inside the small Arduino loop-task stack.

@@ -278,12 +278,17 @@ class DirectUpdater:
         await self.client.stop_notify(STATUS_UUID)
 
 
-async def update(address: str, package_path: Path, pairing_code: int,
+async def update(endpoint: object, package_path: Path, pairing_code: int,
                  advertised_maximum: int | None) -> None:
     package = load_package(package_path)
     print(f"Package verified locally: {package.path.name}, "
           f"{package.total_bytes:,} payload bytes")
-    async with BleakClient(address, timeout=30.0) as client:
+    # Bleak accepts either a cached address or the BLEDevice returned by the
+    # scanner.  On Windows, reconnecting by address can fail immediately
+    # after a long update/disconnect even though the same scan just observed
+    # the device.  Preserve the discovered object so WinRT reuses that exact
+    # advertisement/session instead of consulting its stale address cache.
+    async with BleakClient(endpoint, timeout=30.0) as client:
         if not client.is_connected:
             raise RuntimeError("could not connect to the Pokegochi")
         negotiated = getattr(client, "mtu_size", 23)
@@ -333,14 +338,13 @@ async def main() -> int:
                    if not args.address or item[0].address.lower() == args.address.lower()), None)
     if device is None:
         raise SystemExit("Requested BLE address was not found")
-    address = device[0].address
     advertised_maximum = device[2][1]
     code = args.code
     if code is None:
         code = int(input("Enter the six-digit pairing code shown on the Pokegochi: ").strip())
     if not 100000 <= code <= 999999:
         raise SystemExit("Pairing code must be six digits")
-    await update(address, args.package, code, advertised_maximum)
+    await update(device[0], args.package, code, advertised_maximum)
     return 0
 
 

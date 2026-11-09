@@ -75,7 +75,8 @@ class BossSystem {
   // Battle Tower's 0.5% prize. A blocked destination falls back to the other
   // prize instead of destroying an existing Egg or overflowing an item stack.
   static BossRewardResult awardVictoryReward(
-      Inventory& inventory, EggInventory& eggs, const PokedexState& pokedex,
+      Inventory& inventory, EggInventory& eggs, const EggState& activeEgg,
+      const PokedexState& pokedex,
       uint8_t unlockedGeneration, uint32_t seed);
   static bool start(BattleState& battle, PokemonCollection& collection,
                     uint32_t playerUid, const GymProgress& progress,

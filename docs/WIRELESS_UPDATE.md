@@ -10,38 +10,40 @@ Android tools dashboard.
 
 - Every `.pgota` manifest is signed with ECDSA P-256 and verified by the ESP32.
 - Firmware and every SD object have an individual SHA-256 digest.
-- The new firmware is written to the inactive OTA slot.
+- The new firmware is staged and hashed on microSD. A 339 KiB immutable
+  factory recovery image backs up the current main partition and installs the
+  candidate without loading the game or either radio stack.
 - SD objects are staged under `/pokegochi/update` and become active only after
   all objects pass verification.
 - The previous SD files remain as backups until the new firmware boots and the
   normal save and asset diagnostics pass.
-- A journal plus an internal-flash boot marker recovers interrupted commits,
-  Bluetooth disconnects, power loss, and a failed first boot.
+- A journal plus an internal-flash recovery marker resumes interrupted
+  commits, Bluetooth disconnects and power loss. If the candidate fails before
+  the normal save/asset self-test accepts it, recovery restores the previous
+  main image and the matching SD backups.
 - Package sequence numbers prevent installing an older signed bundle by
   accident.
 
-Closing the update screen preserves partial SD downloads. Select the same
-package later to resume. A partially written firmware image restarts from byte
-zero; the previously running application remains untouched.
+Closing the update screen preserves partial SD downloads, including the staged
+firmware file. Select the same package later to resume; the running application
+partition remains untouched until recovery has validated the complete hash.
 
 ## One-time USB bootstrap
 
-Older boards have only one application slot. Install this OTA-capable layout
-once over USB before wireless updates can work:
+Boards using either older one-slot layouts or the former symmetric two-slot
+layout need one cable migration to the recovery layout:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\gravar_firmware.ps1 -Port COM6
 ```
 
-The script identifies the physical ESP32, backs up the old SPIFFS partition,
-migrates it to the new location, flashes the two-slot partition table, writes
-the migrated save back, and verifies it byte-for-byte. Finally it resets only
-the 8 KiB OTA-selection metadata, so the ESP32 boots the freshly flashed
-`app0` rather than a stale `app1`; it never erases NVS or the saved game. If
-USB flashing is interrupted, the next run resumes the pending migration for
-that same ESP32. Rather than trusting the generic ESP32 uploader, the script
-writes `app0` explicitly at `0x20000` and reads that exact location back
-before it reports success. Backups remain under `backups/`.
+The script identifies the physical ESP32, backs up NVS and SPIFFS, preserves or
+migrates the save, then writes recovery at `0x10000` and the main game at
+`0xC0000`. Both images are read back with `verify-flash` before success is
+reported. SPIFFS remains at `0x3D0000`, so boards already on the latest layout
+do not move or rewrite their save. If an older save layout needs migration and
+USB flashing is interrupted, the next run resumes that migration for the same
+chip. Backups remain under `backups/`.
 
 For a genuinely blank board with no save worth preserving, explicitly use:
 
@@ -88,9 +90,9 @@ app: it needs Bluetooth permissions but no Internet or filesystem-wide access.
 6. The candidate firmware runs the ordinary microSD, asset, and save checks.
    Only then are the old firmware/assets retired.
 
-The current bundle is roughly 17 MiB, but the console hashes installed SD
+The current bundle is roughly 34 MiB, but the console hashes installed SD
 objects against the signed manifest and skips every byte-identical object.
-Consequently a normal firmware-only release transfers only about 1.6 MiB.
+Consequently a normal firmware-only release transfers only the main image.
 When assets really changed, the complete changed objects are transferred.
 
 Current consoles advertise their supported data block size. The updater stays
@@ -185,10 +187,11 @@ are rejected before the current durable save is replaced.
 
 | Partition | Offset | Size |
 |---|---:|---:|
-| NVS | `0x9000` | `0x10000` |
-| OTA metadata | `0x19000` | `0x2000` |
-| Application A | `0x20000` | `0x1C0000` |
-| Application B | `0x1E0000` | `0x1C0000` |
-| SPIFFS save | `0x3A0000` | `0x60000` |
+| NVS | `0x9000` | `0x5000` |
+| OTA metadata | `0xE000` | `0x2000` |
+| Factory recovery | `0x10000` | `0xB0000` |
+| Main application | `0xC0000` | `0x310000` |
+| SPIFFS save | `0x3D0000` | `0x30000` |
 
-The package builder refuses firmware larger than an OTA slot.
+The package builder refuses firmware larger than the main partition. The
+recovery build is separately limited to its 704 KiB factory partition.

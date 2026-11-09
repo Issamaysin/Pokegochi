@@ -62,7 +62,8 @@ class BattleTowerSystem {
   // instead of scattering their rolls through the UI.
   static bool awardCompletionReward(Inventory& inventory);
   static BattleTowerRewardResult awardCompletionReward(
-      Inventory& inventory,EggInventory& eggs,const PokedexState& pokedex,
+      Inventory& inventory,EggInventory& eggs,const EggState& activeEgg,
+      const PokedexState& pokedex,
       uint8_t unlockedGeneration,uint32_t seed);
   static bool start(BattleState& battle, PokemonCollection& collection, uint32_t playerUid,
                     const GymProgress& progress, uint32_t seed);

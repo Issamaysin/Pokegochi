@@ -5,6 +5,19 @@
 
 namespace {
 constexpr uint32_t kUltraBurstDawnBit = uint32_t{1} << 15U;
+constexpr uint8_t kAshBondTimerShift = 16U;
+constexpr uint32_t kAshBondTimerMask = 0xFFFFUL << kAshBondTimerShift;
+
+uint16_t packedAshBondSeconds(const OwnedPokemon& pokemon){
+  return static_cast<uint16_t>((pokemon.legacyCareCounterReserved&
+      kAshBondTimerMask)>>kAshBondTimerShift);
+}
+
+void setPackedAshBondSeconds(OwnedPokemon& pokemon,uint16_t seconds){
+  pokemon.legacyCareCounterReserved=
+      (pokemon.legacyCareCounterReserved&~kAshBondTimerMask)|
+      (static_cast<uint32_t>(seconds)<<kAshBondTimerShift);
+}
 
 constexpr bool regionalSpecies(uint16_t id) {
   switch(id){
@@ -51,6 +64,12 @@ PokemonType oricorioType(uint8_t form){
 bool containsSpecies(const PokemonCollection& collection,uint16_t species){
   for(const OwnedPokemon& pokemon:collection.box)
     if(pokemon.uid!=kEmptyPokemonUid&&pokemon.speciesId==species)return true;
+  return false;
+}
+
+bool containsHeldItem(const PokemonCollection& collection,HeldItem item){
+  for(const OwnedPokemon& pokemon:collection.box)
+    if(pokemon.uid!=kEmptyPokemonUid&&pokemon.heldItem==item)return true;
   return false;
 }
 
@@ -259,6 +278,19 @@ bool reconcileUniqueItems(PokemonCollection& collection,
       inventory.claimedMask|=bit;inventory.bagMask|=bit;changed=true;
     }
   }
+  if(containsSpecies(collection,658U)){
+    if(!(inventory.claimedMask&kAshsBondOwnershipBit)){
+      inventory.claimedMask|=kAshsBondOwnershipBit;
+      changed=true;
+    }
+    // Repair saves that recorded the one-time claim but lost the bag bit.
+    // Do not duplicate the item while a Greninja is already holding it.
+    if(!(inventory.bagMask&kAshsBondOwnershipBit)&&
+       !containsHeldItem(collection,HeldItem::AshsBond)){
+      inventory.bagMask|=kAshsBondOwnershipBit;
+      changed=true;
+    }
+  }
   if(containsSpecies(collection,800U)){
     if(!(inventory.claimedMask&kNecrozmaFusersBit)){
       inventory.claimedMask|=kNecrozmaFusersBit;
@@ -389,6 +421,84 @@ bool reconcileFusionState(PokemonCollection& collection,AlolaFormState& state,
     changed=true;
   }
   return changed;
+}
+
+uint16_t ashBondOutsideSecondsRemaining(const OwnedPokemon& pokemon){
+  return pokemon.speciesId==658U&&pokemon.form==1U?
+      packedAshBondSeconds(pokemon):0U;
+}
+
+bool resetAshBondForm(OwnedPokemon& pokemon){
+  if(pokemon.speciesId!=658U)return false;
+  const bool formChanged=pokemon.form!=0U;
+  const bool timerChanged=packedAshBondSeconds(pokemon)!=0U;
+  if(!formChanged&&!timerChanged)return false;
+  pokemon.form=0U;
+  setPackedAshBondSeconds(pokemon,0U);
+  if(formChanged){
+    CollectionLogic::refreshAbility(pokemon,7U);
+    CollectionLogic::refreshDerivedStatsPreservingHpRatio(pokemon);
+  }
+  return formChanged;
+}
+
+bool beginAshBondBattle(OwnedPokemon& pokemon){
+  if(pokemon.speciesId!=658U||pokemon.form!=1U||!pokemon.currentHp||
+     pokemon.heldItem!=HeldItem::AshsBond)return false;
+  const bool changed=packedAshBondSeconds(pokemon)!=0U;
+  // Zero is the in-battle marker. It survives a battle checkpoint and lets
+  // finishAshBondBattle distinguish a participating Greninja from another
+  // transformed Greninja that merely remained in storage while time paused.
+  setPackedAshBondSeconds(pokemon,0U);
+  return changed;
+}
+
+bool finishAshBondBattle(PokemonCollection& collection){
+  bool changed=false;
+  for(OwnedPokemon& pokemon:collection.box){
+    if(pokemon.uid==kEmptyPokemonUid||pokemon.speciesId!=658U)continue;
+    if(pokemon.form!=1U){
+      if(packedAshBondSeconds(pokemon)){
+        setPackedAshBondSeconds(pokemon,0U);changed=true;
+      }
+      continue;
+    }
+    if(!pokemon.currentHp||pokemon.heldItem!=HeldItem::AshsBond){
+      changed=resetAshBondForm(pokemon)||changed;
+      continue;
+    }
+    // A nonzero value belongs to a transformed Greninja that never entered
+    // this battle. Its clock was paused and must resume from the same value,
+    // not be refreshed merely because another party member fought.
+    if(!packedAshBondSeconds(pokemon)){
+      setPackedAshBondSeconds(pokemon,kAshBondOutsideDurationSeconds);
+      changed=true;
+      CollectionLogic::refreshAbility(pokemon,7U);
+    }
+  }
+  return changed;
+}
+
+bool advanceAshBondOutsideTime(PokemonCollection& collection,
+                               uint32_t elapsedSeconds){
+  bool visibleFormChanged=false;
+  for(OwnedPokemon& pokemon:collection.box){
+    if(pokemon.uid==kEmptyPokemonUid||pokemon.speciesId!=658U)continue;
+    const uint16_t remaining=packedAshBondSeconds(pokemon);
+    if(pokemon.form!=1U){
+      if(remaining)setPackedAshBondSeconds(pokemon,0U);
+      continue;
+    }
+    if(!pokemon.currentHp||pokemon.heldItem!=HeldItem::AshsBond||!remaining||
+       elapsedSeconds>=remaining){
+      visibleFormChanged=resetAshBondForm(pokemon)||visibleFormChanged;
+      continue;
+    }
+    if(elapsedSeconds)
+      setPackedAshBondSeconds(pokemon,static_cast<uint16_t>(
+          remaining-elapsedSeconds));
+  }
+  return visibleFormChanged;
 }
 
 bool activateUltraBurst(OwnedPokemon& pokemon){

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import threading
+import time
 
 import serial
 
@@ -27,15 +28,31 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    connection = serial.Serial(args.port, 115200, timeout=0.2, dsrdtr=False, rtscts=False)
+    # Configure modem-control lines before opening the CH340. Constructing a
+    # Serial object with the port already set lets pyserial briefly assert DTR
+    # on Windows, which resets the ESP32 and destroys the frozen state we are
+    # trying to inspect.
+    connection = serial.Serial(port=None, baudrate=115200, timeout=0.2,
+                               dsrdtr=False, rtscts=False)
     connection.dtr = False
     connection.rts = False
+    connection.port = args.port
+    connection.open()
     output_lock = threading.Lock()
     write_lock = threading.Lock()
     stop_event = threading.Event()
 
     def send_command(command: str) -> None:
         with write_lock:
+            if command.strip().upper() == "RESET":
+                # EN is wired to RTS through the CYD auto-reset transistor.
+                # Keep IO0 high and pulse EN only, so this always boots the
+                # installed application instead of entering the ROM loader.
+                connection.dtr = False
+                connection.rts = True
+                time.sleep(0.1)
+                connection.rts = False
+                return
             connection.write((command.rstrip("\r\n") + "\n").encode("ascii"))
             connection.flush()
 

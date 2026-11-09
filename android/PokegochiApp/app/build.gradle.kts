@@ -101,8 +101,8 @@ android {
         applicationId = "com.pokegochi.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 104
-        versionName = "3.0"
+        versionCode = 117
+        versionName = "3.1"
         externalNativeBuild {
             cmake {
                 arguments += "-DPOKEGOCHI_XY_SHINY_FIXTURE=${if (xyShinyFixture) 1 else 0}"
@@ -147,8 +147,19 @@ android {
         }
     }
 
+    signingConfigs {
+        getByName("debug") {
+            enableV2Signing = true
+            enableV3Signing = true
+        }
+    }
+
     buildTypes {
         release {
+            // This workspace's historical update certificate is the Android
+            // debug keystore. Reuse it for install-compatible signed releases;
+            // verification below still pins the public certificate digest.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

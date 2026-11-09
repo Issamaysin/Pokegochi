@@ -137,7 +137,8 @@ final class BleMultiplayer implements AutoCloseable {
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             if (!running) return;
-            boolean enabled = firmware.multiplayerEnabled();
+            boolean enabled = firmware.multiplayerEnabled() &&
+                    firmware.multiplayerTransportKind() == 0;
             int firmwareState = firmware.multiplayerState();
             if (enabled != lastFirmwareEnabled || firmwareState != lastFirmwareState) {
                 status("firmware multiplayer enabled=" + enabled + " state=" + firmwareState);
@@ -904,7 +905,7 @@ final class BleMultiplayer implements AutoCloseable {
         if (advertisement == null || advertisement.playerId == firmware.multiplayerPlayerId()) return;
         peers.put(advertisement.playerId, result.getDevice());
         firmware.multiplayerDiscovered(advertisement.playerId, result.getRssi(),
-                result.getDevice().getAddress(), 0);
+                result.getDevice().getAddress(), 0, 0);
         status("BLE discovered player " + advertisement.playerId + " rssi=" +
                 result.getRssi() + " manufacturer=0x" + Integer.toHexString(manufacturerId));
     }

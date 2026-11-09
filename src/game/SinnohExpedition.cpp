@@ -477,7 +477,8 @@ uint16_t SinnohExpedition::recordBattle(SinnohExpeditionState& state,
 
 uint16_t SinnohExpedition::chooseEncounterSpecies(const SinnohExpeditionState& state,
                                                   SinnohSite site, uint8_t teamLevel,
-                                                  uint32_t seed) {
+                                                  uint32_t seed,
+                                                  bool forceLegendary) {
   const SiteData& data = kSites[siteIndex(site)];
   const uint8_t ceiling = std::max<uint8_t>(5U, teamLevel);
   uint32_t commonTotal = 0;
@@ -506,7 +507,8 @@ uint16_t SinnohExpedition::chooseEncounterSpecies(const SinnohExpeditionState& s
   // deliberately retained inside each group to preserve common/legendary
   // variety without letting the Rift's roster size inflate rarity.
   const bool chooseLegendary = legendaryTotal &&
-      (!commonTotal || random % kLegendaryChanceDenominator == 0U);
+      (forceLegendary || !commonTotal ||
+       random % kLegendaryChanceDenominator == 0U);
   random = nextRandom(random);
   const uint32_t selectedTotal = chooseLegendary ? legendaryTotal : commonTotal;
   if (!selectedTotal) return data.encounters[0].species;
@@ -525,7 +527,8 @@ uint16_t SinnohExpedition::chooseEncounterSpecies(const SinnohExpeditionState& s
 
 bool SinnohExpedition::startEncounter(SinnohExpeditionState& state, BattleState& battle,
                                       PokemonCollection& collection, uint32_t playerUid,
-                                      SinnohSite site, uint32_t seed) {
+                                      SinnohSite site, uint32_t seed,
+                                      bool forceLegendary) {
   if (!isUnlocked(state, site) || battle.active) return false;
   // Sinnoh is the first point at which Platinum learnsets and ability pairs
   // are legal. Existing party members keep their moves, but receive the
@@ -533,7 +536,8 @@ bool SinnohExpedition::startEncounter(SinnohExpeditionState& state, BattleState&
   CollectionLogic::applyGenerationContent(collection, 4U);
   if (!BattleEngine::startWild(battle, collection, playerUid, seed, 4U, false)) return false;
   const uint8_t teamLevel = BattleEngine::highestPartyLevel(collection);
-  const uint16_t species = chooseEncounterSpecies(state, site, teamLevel, nextRandom(state.rngState));
+  const uint16_t species = chooseEncounterSpecies(
+      state, site, teamLevel, nextRandom(state.rngState), forceLegendary);
   // Sinnoh remains a postgame challenge, but its wild encounters never reach
   // the level-100 ceiling used by other late-game systems.
   const uint8_t baseline = std::min<uint8_t>(SinnohExpedition::kMaxEncounterLevel,

@@ -69,6 +69,8 @@ class AlolaAdventure {
 
   static bool begin(AlolaAdventureState& state,AlolaArea area,uint32_t seed,
                     const PokemonCollection& collection);
+  static bool willPreserveChoicesOnAbandon(
+      const AlolaAdventureState& state);
   static bool abandon(AlolaAdventureState& state);
   static bool active(const AlolaAdventureState& state);
   static uint8_t choices(const AlolaAdventureState& state,AlolaRoomChoice output[2]);

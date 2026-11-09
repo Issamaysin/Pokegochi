@@ -70,6 +70,24 @@ class AssetRenderer {
   // arena for that synchronous transaction and recreate it immediately after.
   static void releaseSceneWorkspaceForStorage();
   static bool restoreSceneWorkspace(bool radioActive);
+  // A link battle may lend a caller-owned, volatile memory range to the
+  // renderer. The caller must keep it alive until releaseBorrowedSceneWorkspace
+  // returns; the renderer never deletes or resizes borrowed storage.
+  static bool borrowSceneWorkspace(void* memory, size_t capacity);
+  static void releaseBorrowedSceneWorkspace();
+  static bool usingBorrowedSceneWorkspace();
+  // A post-BLE allocation can succeed with a deliberately reduced arena.
+  // Battles still use this stricter readiness check where the complete normal
+  // bank matters.
+  static bool normalSceneWorkspaceReady();
+  // Summary, Pokemon Center and the other full-width menu scenes use a
+  // lossless resident representation smaller than the complete battle bank.
+  // This readiness level is the post-radio contract: Home alone fitting is
+  // not enough to declare graphics recovery complete.
+  static bool uiSceneWorkspaceReady();
+  // Opaque Home scenes are losslessly deduplicated into a compact tile cache,
+  // allowing an in-process return after Wi-Fi/BLE without a board restart.
+  static bool homeSceneWorkspaceReady();
   // Shared short-lived workspace for synchronous UI algorithms. The renderer
   // and text layout never run concurrently on the Arduino loop task, allowing
   // prose wrapping to reuse the existing render scratch instead of consuming

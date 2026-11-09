@@ -167,6 +167,82 @@ int main(){
                        BattleSide::Opponent) == 1U);
   }
 
+  // Pain Split owns two immediate HP transitions. The target's event used to
+  // be absent, so its meter showed the post-split value only after its own
+  // move (or after a Potion/berry redraw). Verify both execution sides and a
+  // subsequent heal: split damage, Sitrus recovery and the following move
+  // must remain three distinct, correctly ordered presentation boundaries.
+  for (bool enemy : {false, true}) {
+    const MoveId painSplit = static_cast<MoveId>(220);
+    const MoveId splash = static_cast<MoveId>(150);
+    Fixture split(enemy ? splash : painSplit,
+                  enemy ? painSplit : splash);
+    OwnedPokemon& user = enemy ? split.opponent() : split.player();
+    OwnedPokemon& target = enemy ? split.player() : split.opponent();
+    const BattleSide userSide = enemy ? BattleSide::Opponent : BattleSide::Player;
+    const BattleSide targetSide = enemy ? BattleSide::Player : BattleSide::Opponent;
+    CombatVolatile& userState = enemy ? split.battle.opponentVolatiles[0]
+                                      : split.battle.playerVolatile;
+    CombatVolatile& targetState = enemy ? split.battle.playerVolatile
+                                        : split.battle.opponentVolatiles[0];
+    user.abilityId = target.abilityId = 0U;
+    user.maximumHp = 400U;
+    user.currentHp = 100U;
+    target.maximumHp = 1000U;
+    target.currentHp = 900U;
+    target.heldItem = HeldItem::SitrusBerry;
+    userState.speedStage = kMaximumBattleStatStage;
+    targetState.speedStage = kMinimumBattleStatStage;
+
+    const BattleActionResult result = BattleEngine::fightPvp(
+        split.battle, split.collection, 0U, 0U);
+    assert(result.accepted && user.currentHp == 400U &&
+           target.currentHp == 530U);
+    assert(countEvents(result, BattleEventType::HpChanged, userSide) == 1U);
+    assert(countEvents(result, BattleEventType::HpChanged, targetSide) == 2U);
+
+    int16_t moveIndex = -1;
+    int16_t sharedIndex = -1;
+    int16_t userHpIndex = -1;
+    int16_t targetSplitIndex = -1;
+    int16_t berryIndex = -1;
+    int16_t targetHealIndex = -1;
+    int16_t replyIndex = -1;
+    for (uint8_t index = 0U; index < result.eventCount; ++index) {
+      const BattleEvent& event = result.events[index];
+      if (event.type == BattleEventType::MoveUsed &&
+          event.side == userSide && event.move == painSplit)
+        moveIndex = index;
+      else if (event.type == BattleEventType::MoveEffect &&
+               event.side == userSide && event.move == painSplit &&
+               event.value == static_cast<uint16_t>(BattleMoveEffect::PainShared))
+        sharedIndex = index;
+      else if (event.type == BattleEventType::HpChanged &&
+               event.side == userSide && event.before == 100U &&
+               event.after == 400U)
+        userHpIndex = index;
+      else if (event.type == BattleEventType::HpChanged &&
+               event.side == targetSide && event.before == 900U &&
+               event.after == 500U)
+        targetSplitIndex = index;
+      else if (event.type == BattleEventType::HeldItemActivated &&
+               event.side == targetSide &&
+               event.value == static_cast<uint16_t>(HeldItem::SitrusBerry))
+        berryIndex = index;
+      else if (event.type == BattleEventType::HpChanged &&
+               event.side == targetSide && event.before == 500U &&
+               event.after == 530U)
+        targetHealIndex = index;
+      else if (event.type == BattleEventType::MoveUsed &&
+               event.side == targetSide && event.move == splash)
+        replyIndex = index;
+    }
+    assert(moveIndex >= 0 && sharedIndex > moveIndex);
+    assert(userHpIndex > sharedIndex && targetSplitIndex > userHpIndex);
+    assert(berryIndex > targetSplitIndex && targetHealIndex > berryIndex);
+    assert(replyIndex > targetHealIndex);
+  }
+
   // RESTORE_HP contains the substring REST. The opponent resolver must use
   // an exact effect match: Recover heals half max HP without causing Sleep,
   // while the real Rest still fully heals and sleeps on both battle sides.
@@ -520,6 +596,34 @@ int main(){
              exhausted.opponent().currentHp<opponentHpBefore);
       for(uint8_t slot=0;slot<kMoveSlots;++slot)
         assert(exhausted.opponent().movePp[slot]==0);
+    }
+
+    // Link battles encode Struggle as move slot 4 on both peers. Two
+    // exhausted battlers must both complete the turn, damage one another and
+    // receive their own recoil/HP journal entries without consuming PP.
+    Fixture linkExhausted(tackle,tackle,BattleKind::Pvp);
+    linkExhausted.player().abilityId=0U;
+    linkExhausted.opponent().abilityId=0U;
+    linkExhausted.player().maximumHp=linkExhausted.player().currentHp=1000U;
+    linkExhausted.opponent().maximumHp=linkExhausted.opponent().currentHp=1000U;
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      linkExhausted.player().movePp[slot]=0U;
+      linkExhausted.opponent().movePp[slot]=0U;
+    }
+    const BattleActionResult linkStruggle=BattleEngine::fightPvp(
+        linkExhausted.battle,linkExhausted.collection,kMoveSlots,kMoveSlots);
+    assert(linkStruggle.accepted&&linkStruggle.enemyActed&&
+           sawMove(linkStruggle,MoveId::Struggle,BattleSide::Player)&&
+           sawMove(linkStruggle,MoveId::Struggle,BattleSide::Opponent)&&
+           saw(linkStruggle,BattleMoveEffect::Recoil,BattleSide::Player)&&
+           saw(linkStruggle,BattleMoveEffect::Recoil,BattleSide::Opponent)&&
+           countEvents(linkStruggle,BattleEventType::HpChanged,
+                       BattleSide::Player)>=2U&&
+           countEvents(linkStruggle,BattleEventType::HpChanged,
+                       BattleSide::Opponent)>=2U);
+    for(uint8_t slot=0;slot<kMoveSlots;++slot){
+      assert(linkExhausted.player().movePp[slot]==0U);
+      assert(linkExhausted.opponent().movePp[slot]==0U);
     }
   }
 
@@ -2639,6 +2743,85 @@ int main(){
     assert(noEffect.accepted&&ghostState.trappedTurns==0U);
   }
 
+  // Magma Storm keeps its Generation-IV identity in Pokegochi: 120 power,
+  // 70 accuracy and the ordinary 2..5-turn binding residual.  Exercise the
+  // named move from both sides instead of relying only on Bind to certify the
+  // shared TRAP handler.  A connected hit must trap, deal exactly 1/16 max HP
+  // on a later residual tick and prevent an ordinary switch; a real miss must
+  // do none of those things.
+  {
+    const MoveId magmaStorm=static_cast<MoveId>(463);
+    const MoveId splash=static_cast<MoveId>(150);
+    const FullMoveData* data=findFullMove(magmaStorm);
+    assert(data&&std::strcmp(data->name,"MAGMA STORM")==0&&
+           data->type==PokemonType::Fire&&data->power==120U&&
+           data->accuracy==70U&&data->category==MoveCategory::Special&&
+           data->pp==5U&&std::strcmp(data->effect,"TRAP")==0);
+
+    for(bool enemy:{false,true}){
+      Fixture hit(enemy?splash:magmaStorm,enemy?magmaStorm:splash);
+      OwnedPokemon& attacker=enemy?hit.opponent():hit.player();
+      OwnedPokemon& target=enemy?hit.player():hit.opponent();
+      CombatVolatile& targetState=enemy?hit.battle.playerVolatile:
+          hit.battle.opponentVolatiles[0];
+      attacker.abilityId=0;target.abilityId=0;
+      attacker.maximumHp=attacker.currentHp=5000U;
+      target.maximumHp=target.currentHp=5000U;
+      targetState.sureHitTurns=enemy?2U:1U;
+      const BattleActionResult connected=enemy?hit.opponentUses():hit.playerUses();
+      const BattleSide attackerSide=enemy?BattleSide::Opponent:BattleSide::Player;
+      const BattleSide targetSide=enemy?BattleSide::Player:BattleSide::Opponent;
+      assert(connected.accepted&&sawMove(connected,magmaStorm,attackerSide)&&
+             target.currentHp<target.maximumHp&&targetState.trappedTurns>=2U&&
+             targetState.trappedTurns<=5U&&
+             saw(connected,BattleMoveEffect::Trapped,targetSide));
+
+      if(enemy){
+        uint32_t replacementUid=0;
+        assert(CollectionLogic::add(hit.collection,
+            CollectionLogic::createPokemon(0,1,50,false,0x46300001U),
+            &replacementUid));
+        assert(CollectionLogic::setPartySlot(hit.collection,1,replacementUid));
+        assert(!BattleEngine::switchToPokemonPvp(
+            hit.battle,hit.collection,replacementUid,0xFEU,false).accepted);
+      }else{
+        hit.battle.opponentCount=2;
+        hit.battle.opponents[1]=CollectionLogic::createPokemon(
+            0x46300002U,1,50,false,0x46300003U);
+        assert(!BattleEngine::switchOpponentPvp(
+            hit.battle,hit.collection,1).accepted);
+      }
+
+      hit.player().moves[0]=splash;hit.player().movePp[0]=40U;
+      hit.opponent().moves[0]=splash;hit.opponent().movePp[0]=40U;
+      target.maximumHp=target.currentHp=1600U;
+      targetState.trappedTurns=2U;
+      const BattleActionResult residual=enemy?hit.opponentUses():hit.playerUses();
+      assert(residual.accepted&&targetState.trappedTurns==1U&&
+             target.currentHp==1500U);
+
+      bool observedMiss=false;
+      for(uint32_t seed=1U;seed<=512U&&!observedMiss;++seed){
+        Fixture miss(enemy?splash:magmaStorm,enemy?magmaStorm:splash);
+        OwnedPokemon& missAttacker=enemy?miss.opponent():miss.player();
+        OwnedPokemon& missTarget=enemy?miss.player():miss.opponent();
+        CombatVolatile& missTargetState=enemy?miss.battle.playerVolatile:
+            miss.battle.opponentVolatiles[0];
+        missAttacker.abilityId=0;missTarget.abilityId=0;
+        missAttacker.maximumHp=missAttacker.currentHp=5000U;
+        missTarget.maximumHp=missTarget.currentHp=5000U;
+        miss.battle.rngState=seed;
+        const BattleActionResult result=enemy?miss.opponentUses():miss.playerUses();
+        observedMiss=result.accepted&&
+            countEvents(result,BattleEventType::MoveMissed,attackerSide)==1U;
+        if(observedMiss)
+          assert(missTarget.currentHp==missTarget.maximumHp&&
+                 missTargetState.trappedTurns==0U);
+      }
+      assert(observedMiss);
+    }
+  }
+
   // Cmd_rapidspinfree is an ordered callback chain in FireRed/Emerald.  It
   // returns to the same command after each message, therefore one successful
   // Rapid Spin clears Wrap, Leech Seed and the user's Spikes in the same move.
@@ -3249,6 +3432,18 @@ int main(){
            orb.player().heldItem==HeldItem::LifeOrb&&
            sawHeldItem(boosted,HeldItem::LifeOrb,BattleSide::Player));
 
+    // Sheer Force keeps Life Orb's damage multiplier but suppresses its
+    // recoil when it boosts a move with a secondary effect.
+    Fixture sheer(static_cast<MoveId>(52),splash); // EMBER
+    sheer.player().abilityId=126U; // SHEER FORCE
+    sheer.player().heldItem=HeldItem::LifeOrb;
+    sheer.player().maximumHp=sheer.player().currentHp=1000U;
+    sheer.opponent().maximumHp=sheer.opponent().currentHp=4000U;
+    const BattleActionResult sheerTurn=sheer.playerUses();
+    assert(sheerTurn.accepted&&sheerTurn.damageDealt&&
+           sheer.player().currentHp==1000U&&
+           !sawHeldItem(sheerTurn,HeldItem::LifeOrb,BattleSide::Player));
+
     Fixture sash(MoveId::Tackle,splash);
     sash.player().level=100U;sash.opponent().maximumHp=sash.opponent().currentHp=10U;
     sash.opponent().heldItem=HeldItem::FocusSash;
@@ -3256,6 +3451,15 @@ int main(){
     assert(survived.accepted&&sash.opponent().currentHp==1U&&
            sash.opponent().heldItem==HeldItem::None&&
            sawHeldItem(survived,HeldItem::FocusSash,BattleSide::Opponent));
+
+    Fixture chipped(MoveId::Tackle,splash);
+    chipped.player().level=100U;
+    chipped.opponent().maximumHp=10U;chipped.opponent().currentHp=9U;
+    chipped.opponent().heldItem=HeldItem::FocusSash;
+    const BattleActionResult knockedOut=chipped.playerUses();
+    assert(knockedOut.accepted&&chipped.opponent().currentHp==0U&&
+           chipped.opponent().heldItem==HeldItem::FocusSash&&
+           !sawHeldItem(knockedOut,HeldItem::FocusSash,BattleSide::Opponent));
   }
   {
     const MoveId splash=static_cast<MoveId>(150),psychic=static_cast<MoveId>(94);
@@ -3348,9 +3552,17 @@ int main(){
     helmet.opponent().heldItem=pads.opponent().heldItem=HeldItem::RockyHelmet;
     pads.player().heldItem=HeldItem::ProtectivePads;
     const BattleActionResult helmetTurn=helmet.playerUses();
-    pads.playerUses();
+    const BattleActionResult padsTurn=pads.playerUses();
     assert(helmet.player().currentHp<1000U&&pads.player().currentHp==1000U&&
-           sawHeldItem(helmetTurn,HeldItem::RockyHelmet,BattleSide::Opponent));
+           sawHeldItem(helmetTurn,HeldItem::RockyHelmet,BattleSide::Opponent)&&
+           sawHeldItem(padsTurn,HeldItem::ProtectivePads,BattleSide::Player));
+
+    Fixture idlePads(MoveId::Tackle,splash);
+    idlePads.player().heldItem=HeldItem::ProtectivePads;
+    const BattleActionResult idlePadsTurn=idlePads.playerUses();
+    assert(idlePadsTurn.accepted&&
+           !sawHeldItem(idlePadsTurn,HeldItem::ProtectivePads,
+                        BattleSide::Player));
 
     Fixture ground(static_cast<MoveId>(89),splash);
     ground.opponent().heldItem=HeldItem::AirBalloon;
@@ -3384,6 +3596,20 @@ int main(){
            policy.opponent().heldItem==HeldItem::None&&
            sawHeldItem(policyTurn,HeldItem::WeaknessPolicy,BattleSide::Opponent));
 
+    Fixture policySubstitute(thunderbolt,splash);
+    policySubstitute.opponent().speciesId=7U;
+    policySubstitute.opponent().maximumHp=
+        policySubstitute.opponent().currentHp=5000U;
+    policySubstitute.opponent().heldItem=HeldItem::WeaknessPolicy;
+    policySubstitute.battle.opponentVolatiles[0].substituteHp=1000U;
+    const BattleActionResult policySubstituteTurn=policySubstitute.playerUses();
+    assert(policySubstituteTurn.accepted&&
+           policySubstitute.opponent().heldItem==HeldItem::WeaknessPolicy&&
+           policySubstitute.battle.opponentVolatiles[0].attackStage==0&&
+           policySubstitute.battle.opponentVolatiles[0].spAttackStage==0&&
+           !sawHeldItem(policySubstituteTurn,HeldItem::WeaknessPolicy,
+                        BattleSide::Opponent));
+
     Fixture goggles(static_cast<MoveId>(79),splash);
     goggles.opponent().heldItem=HeldItem::SafetyGoggles;
     assert(goggles.playerUses().accepted&&
@@ -3406,6 +3632,7 @@ int main(){
         HeldItem::MistySeed,HeldItem::PsychicSeed};
     for(uint8_t i=0;i<4U;++i){
       Fixture seed(terrainMoves[i],splash);
+      seed.opponent().speciesId=16U; // Flying holders still react to terrain.
       seed.opponent().heldItem=seeds[i];
       const BattleActionResult seeded=seed.playerUses();
       assert(seed.opponent().heldItem==HeldItem::None&&
@@ -3413,6 +3640,16 @@ int main(){
       if(i<2U)assert(seed.battle.opponentVolatiles[0].defenseStage==1);
       else assert(seed.battle.opponentVolatiles[0].spDefenseStage==1);
     }
+
+    Fixture cappedSeed(terrainMoves[0],splash);
+    cappedSeed.opponent().heldItem=HeldItem::ElectricSeed;
+    cappedSeed.battle.opponentVolatiles[0].defenseStage=
+        kMaximumBattleStatStage;
+    const BattleActionResult cappedSeedTurn=cappedSeed.playerUses();
+    assert(cappedSeedTurn.accepted&&
+           cappedSeed.opponent().heldItem==HeldItem::ElectricSeed&&
+           !sawHeldItem(cappedSeedTurn,HeldItem::ElectricSeed,
+                        BattleSide::Opponent));
 
     Fixture adrenaline(splash,splash);
     adrenaline.player().heldItem=HeldItem::AdrenalineOrb;
@@ -3441,6 +3678,56 @@ int main(){
            redCard.opponent().heldItem==HeldItem::None&&
            sawHeldItem(cardTurn,HeldItem::RedCard,BattleSide::Opponent));
 
+    // A wild holder expels the player's attacker from the encounter instead
+    // of selecting another party member. No reserve is required.
+    Fixture wildCard(MoveId::Tackle,splash,BattleKind::Wild);
+    wildCard.opponent().maximumHp=wildCard.opponent().currentHp=3000U;
+    wildCard.opponent().heldItem=HeldItem::RedCard;
+    const BattleActionResult wildCardTurn=wildCard.playerUses();
+    assert(!wildCard.battle.active&&
+           wildCard.battle.outcome==BattleOutcome::Escaped&&
+           wildCard.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(wildCardTurn,HeldItem::RedCard,
+                       BattleSide::Opponent));
+
+    // Suction Cups/Ingrain block the forced switch, but not activation or
+    // consumption of the card.
+    Fixture anchored(MoveId::Tackle,splash);
+    uint32_t anchoredReserve=0U;
+    assert(CollectionLogic::add(anchored.collection,
+        CollectionLogic::createPokemon(0U,4U,50U,false,0xEDCA0002U),
+        &anchoredReserve));
+    assert(CollectionLogic::setPartySlot(
+        anchored.collection,1U,anchoredReserve));
+    const uint32_t anchoredUid=anchored.player().uid;
+    anchored.player().abilityId=21U; // SUCTION CUPS
+    anchored.opponent().maximumHp=anchored.opponent().currentHp=3000U;
+    anchored.opponent().heldItem=HeldItem::RedCard;
+    const BattleActionResult anchoredTurn=anchored.playerUses();
+    assert(anchored.battle.playerUid==anchoredUid&&
+           anchored.opponent().heldItem==HeldItem::None&&
+           sawHeldItem(anchoredTurn,HeldItem::RedCard,
+                       BattleSide::Opponent));
+
+    // Sheer Force jumps over Red Card/Eject Button in the original move-end
+    // pipeline. The items remain held and neither side is switched.
+    Fixture sheerCard(static_cast<MoveId>(52),splash); // EMBER
+    uint32_t sheerReserve=0U;
+    assert(CollectionLogic::add(sheerCard.collection,
+        CollectionLogic::createPokemon(0U,4U,50U,false,0xEDCA0003U),
+        &sheerReserve));
+    assert(CollectionLogic::setPartySlot(sheerCard.collection,1U,
+                                          sheerReserve));
+    sheerCard.player().abilityId=126U; // SHEER FORCE
+    const uint32_t sheerOriginalUid=sheerCard.player().uid;
+    sheerCard.opponent().maximumHp=sheerCard.opponent().currentHp=3000U;
+    sheerCard.opponent().heldItem=HeldItem::RedCard;
+    const BattleActionResult sheerCardTurn=sheerCard.playerUses();
+    assert(sheerCard.battle.playerUid==sheerOriginalUid&&
+           sheerCard.opponent().heldItem==HeldItem::RedCard&&
+           !sawHeldItem(sheerCardTurn,HeldItem::RedCard,
+                        BattleSide::Opponent));
+
     Fixture eject(MoveId::Tackle,splash);
     eject.battle.opponentCount=2U;
     eject.battle.opponents[1]=CollectionLogic::createPokemon(
@@ -3451,6 +3738,44 @@ int main(){
     const BattleActionResult ejectTurn=eject.playerUses();
     assert(eject.opponent().uid!=outgoingUid&&
            sawHeldItem(ejectTurn,HeldItem::EjectButton,BattleSide::Opponent));
+
+    // A player's Eject Button queues an explicit replacement choice in PvE.
+    Fixture playerEject(splash,MoveId::Tackle,BattleKind::Trainer);
+    uint32_t ejectReserve=0U;
+    assert(CollectionLogic::add(playerEject.collection,
+        CollectionLogic::createPokemon(0U,4U,50U,false,0xE1EC7004U),
+        &ejectReserve));
+    assert(CollectionLogic::setPartySlot(playerEject.collection,1U,
+                                          ejectReserve));
+    const uint32_t ejectOutgoing=playerEject.player().uid;
+    playerEject.player().maximumHp=playerEject.player().currentHp=3000U;
+    playerEject.player().heldItem=HeldItem::EjectButton;
+    const BattleActionResult playerEjectTurn=playerEject.opponentUses();
+    assert(playerEjectTurn.batonPassSwitchRequired&&
+           playerEject.battle.playerUid==ejectOutgoing&&
+           playerEject.player().heldItem==HeldItem::None&&
+           sawHeldItem(playerEjectTurn,HeldItem::EjectButton,
+                       BattleSide::Player));
+    const BattleActionResult ejectCompleted=BattleEngine::completeBatonPassSwitch(
+        playerEject.battle,playerEject.collection,ejectReserve,0xFEU);
+    assert(ejectCompleted.accepted&&
+           playerEject.battle.playerUid==ejectReserve);
+
+    // Unlike Red Card, Eject Button still resolves if its attacker faints to
+    // recoil after dealing the triggering damage.
+    Fixture recoilEject(static_cast<MoveId>(38),splash); // DOUBLE-EDGE
+    recoilEject.battle.opponentCount=2U;
+    recoilEject.battle.opponents[1]=CollectionLogic::createPokemon(
+        0xE1EC7005U,4U,50U,false,0xE1EC7006U);
+    const uint32_t recoilOutgoing=recoilEject.opponent().uid;
+    recoilEject.player().maximumHp=100U;recoilEject.player().currentHp=1U;
+    recoilEject.opponent().maximumHp=recoilEject.opponent().currentHp=3000U;
+    recoilEject.opponent().heldItem=HeldItem::EjectButton;
+    const BattleActionResult recoilEjectTurn=recoilEject.playerUses();
+    assert(recoilEject.player().currentHp==0U&&
+           recoilEject.opponent().uid!=recoilOutgoing&&
+           sawHeldItem(recoilEjectTurn,HeldItem::EjectButton,
+                       BattleSide::Opponent));
   }
 
   static Fixture sleepTalk(static_cast<MoveId>(214),MoveId::Tackle);

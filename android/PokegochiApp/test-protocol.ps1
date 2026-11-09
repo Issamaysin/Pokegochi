@@ -11,7 +11,7 @@ if (-not (Test-Path -LiteralPath $javac)) { throw 'JDK 17+ nao encontrado.' }
 $header = Get-Content -Raw (Join-Path (Split-Path (Split-Path $appRoot -Parent) -Parent) 'include\services\MultiplayerProtocol.h')
 $javaProtocol = Get-Content -Raw (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\MultiplayerProtocol.java')
 $pairs = @(
-    @('VERSION', 'kVersion', '7'),
+    @('VERSION', 'kVersion', '10'),
     @('PACKET_MAGIC', 'kPacketMagic', '0x4750'),
     @('MAX_PAYLOAD', 'kMaximumPayload', '160'),
     @('SERVICE_UUID', 'kServiceUuid', '70564743-4849-4d50-8000-504f4b45474f'),
@@ -30,6 +30,7 @@ $temporary = Join-Path $appRoot 'build\protocol-test-classes'
 New-Item -ItemType Directory -Path $temporary -Force | Out-Null
 & $javac '-d' $temporary `
     (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\MultiplayerProtocol.java') `
+    (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\OnlineMultiplayerProtocol.java') `
     (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\BleTransportPolicy.java') `
     (Join-Path $appRoot 'app\src\test\java\com\pokegochi\app\ProtocolSelfTest.java')
 if ($LASTEXITCODE -ne 0) { throw 'javac falhou.' }

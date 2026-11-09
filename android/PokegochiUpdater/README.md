@@ -14,6 +14,12 @@ the console validates it again and commits through the normal redundant save
 store only after the entire transfer succeeds. Interrupted or invalid imports
 leave the previous durable save active.
 
+The Android document picker intentionally accepts files from every MIME type.
+Document providers classify the project-specific `.pgota` and `.pgsav`
+extensions inconsistently; compatibility and safety therefore come from the
+strict format, size, checksum, signature, and payload-hash validation rather
+than from a provider-supplied MIME label.
+
 Build from the repository root with:
 
 ```powershell

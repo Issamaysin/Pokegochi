@@ -1,4 +1,5 @@
 #include "game/HeldItems.h"
+#include "game/AlolaForms.h"
 #include "game/Collection.h"
 #include "game/MegaEvolution.h"
 
@@ -159,6 +160,7 @@ constexpr HeldItemData kItems[] = {
   {HeldItem::GrassySeed,"GRASSY SEED",4000,0,2,true,false,PokemonType::Normal},
   {HeldItem::MistySeed,"MISTY SEED",4000,0,2,true,false,PokemonType::Normal},
   {HeldItem::PsychicSeed,"PSYCHIC SEED",4000,0,2,true,false,PokemonType::Normal},
+  {HeldItem::AshsBond,"ASH'S BOND",0,255,0,false,false,PokemonType::Water},
 };
 static_assert(sizeof(kItems)/sizeof(kItems[0]) == static_cast<uint8_t>(HeldItem::Count)-1U,
               "Held item catalog must cover every item");
@@ -297,6 +299,8 @@ const char* heldItemDescription(HeldItem item) {
     case HeldItem::GrassySeed: return "GRASSY TERRAIN: DEFENSE +1 ONCE.";
     case HeldItem::MistySeed: return "MISTY TERRAIN: SP. DEF +1 ONCE.";
     case HeldItem::PsychicSeed: return "PSYCHIC TERRAIN: SP. DEF +1 ONCE.";
+    case HeldItem::AshsBond:
+      return "GRENINJA BECOMES ASH-GRENINJA AFTER DEFEATING A FOE.";
     default: return "NO BATTLE EFFECT.";
   }
 }
@@ -372,7 +376,7 @@ bool heldItemIsTransferLocked(HeldItem item) {
   return uniqueHeldItemOwnershipBit(item)!=0U ||
       (item>=kFirstGen4UniqueItem && item<=kLastGen4UniqueItem) ||
       (item>=kFirstGen5Drive && item<=kLastGen5Drive) ||
-      (item>=kFirstGen7UniqueItem && item<=kLastGen7UniqueItem) ||
+      gen7UniqueItemIndex(item)>=0 ||
       item==HeldItem::RemovedUltranecroziumZ;
 }
 uint8_t heldItemGeneration(HeldItem item) {
@@ -380,7 +384,13 @@ uint8_t heldItemGeneration(HeldItem item) {
   if(item>=HeldItem::Eviolite&&item<=HeldItem::EjectButton)return 5U;
   if(item>=HeldItem::AssaultVest&&item<=HeldItem::SafetyGoggles)return 6U;
   if(item>=HeldItem::TerrainExtender&&item<=HeldItem::PsychicSeed)return 7U;
+  if(item==HeldItem::AshsBond)return 7U;
   return 0U;
+}
+bool heldItemCanBeEquippedBy(HeldItem item,uint16_t speciesId) {
+  if(item==HeldItem::MegaStone)return MegaEvolution::canHoldMegaStone(speciesId);
+  if(item==HeldItem::AshsBond)return speciesId==658U;
+  return item>HeldItem::None&&item<HeldItem::Count&&!heldItemIsRetired(item);
 }
 uint8_t heldItemCount(){
   return static_cast<uint8_t>(HeldItem::Count)-2U; // None + retired tombstone.
@@ -457,6 +467,8 @@ uint16_t gen5DriveQuantity(const Gen5UniqueItemInventory& inventory,HeldItem ite
 }
 
 int8_t gen7UniqueItemIndex(HeldItem item) {
+  if(item==HeldItem::AshsBond)
+    return static_cast<int8_t>(kAshsBondInventoryIndex);
   if(item<kFirstGen7UniqueItem||item>kLastGen7UniqueItem)return -1;
   return static_cast<int8_t>(static_cast<uint8_t>(item)-
       static_cast<uint8_t>(kFirstGen7UniqueItem));
@@ -480,8 +492,8 @@ uint16_t modernHeldItemQuantity(const ModernHeldItemInventory& inventory,
 bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
                    SpecialHeldItemInventory& special,uint64_t& ownedMachines){
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
-  if(selected==HeldItem::MegaStone&&
-     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  if(selected!=HeldItem::None&&
+     !heldItemCanBeEquippedBy(selected,pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
   if(selected==equipped){
@@ -531,8 +543,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
                    SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
                    uint64_t& ownedMachines){
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
-  if(selected==HeldItem::MegaStone&&
-     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  if(selected!=HeldItem::None&&
+     !heldItemCanBeEquippedBy(selected,pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
   uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:
@@ -572,8 +584,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
                    SpecialHeldItemInventory& special,Gen4UniqueItemInventory& gen4,
                    Gen5UniqueItemInventory& gen5,uint64_t& ownedMachines){
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
-  if(selected==HeldItem::MegaStone&&
-     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  if(selected!=HeldItem::None&&
+     !heldItemCanBeEquippedBy(selected,pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   const uint8_t equippedQuantity=CollectionLogic::heldItemQuantity(pokemon);
   uint16_t* selectedQuantity=selected==HeldItem::None?nullptr:
@@ -643,8 +655,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
   const bool discardedRetired=discardRetiredHeldItem(pokemon);
   if(discardedRetired&&selected==HeldItem::None)return true;
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg)return false;
-  if(selected==HeldItem::MegaStone&&
-     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  if(selected!=HeldItem::None&&
+     !heldItemCanBeEquippedBy(selected,pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   if(selected==equipped)return false;
   const int8_t selectedGen7=gen7UniqueItemIndex(selected);
@@ -674,6 +686,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
   const bool changed=CollectionLogic::setHeldItemQuantity(
       pokemon,selected,selected==HeldItem::None?0U:1U);
   if(changed){
+    if(equipped==HeldItem::AshsBond&&selected!=HeldItem::AshsBond)
+      AlolaForms::resetAshBondForm(pokemon);
     if(pokemon.speciesId==487U)
       pokemon.form=selected==HeldItem::GriseousOrb?1U:0U;
     if(pokemon.speciesId==649U||pokemon.speciesId==773U)
@@ -703,6 +717,8 @@ bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
   }
   const bool changed=CollectionLogic::setHeldItemQuantity(pokemon,HeldItem::None,0U);
   if(changed){
+    if(equipped==HeldItem::AshsBond)
+      AlolaForms::resetAshBondForm(pokemon);
     if(pokemon.speciesId==487U&&equipped==HeldItem::GriseousOrb)pokemon.form=0U;
     if(pokemon.speciesId==649U||pokemon.speciesId==773U)pokemon.form=0U;
     CollectionLogic::refreshAbility(pokemon,7U);
@@ -719,8 +735,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
   if(discardedRetired&&selected==HeldItem::None)return true;
   if(!inventory||selected>=HeldItem::Count||selected==HeldItem::LuckyEgg||
      heldItemIsRetired(selected))return false;
-  if(selected==HeldItem::MegaStone&&
-     !MegaEvolution::canHoldMegaStone(pokemon.speciesId))return false;
+  if(selected!=HeldItem::None&&
+     !heldItemCanBeEquippedBy(selected,pokemon.speciesId))return false;
   const HeldItem equipped=pokemon.heldItem;
   if(selected==equipped)return false;
   const int8_t selectedGen7=gen7UniqueItemIndex(selected);
@@ -750,6 +766,8 @@ bool equipHeldItem(OwnedPokemon& pokemon,HeldItem selected,uint16_t inventory[],
   const bool changed=CollectionLogic::setHeldItemQuantity(
       pokemon,selected,selected==HeldItem::None?0U:1U);
   if(changed){
+    if(equipped==HeldItem::AshsBond&&selected!=HeldItem::AshsBond)
+      AlolaForms::resetAshBondForm(pokemon);
     if(pokemon.speciesId==487U)
       pokemon.form=selected==HeldItem::GriseousOrb?1U:0U;
     if(pokemon.speciesId==649U||pokemon.speciesId==773U)
@@ -781,6 +799,8 @@ bool unequipHeldItem(OwnedPokemon& pokemon,uint16_t inventory[],
   const bool changed=CollectionLogic::setHeldItemQuantity(
       pokemon,HeldItem::None,0U);
   if(changed){
+    if(equipped==HeldItem::AshsBond)
+      AlolaForms::resetAshBondForm(pokemon);
     if(pokemon.speciesId==487U&&equipped==HeldItem::GriseousOrb)pokemon.form=0U;
     if(pokemon.speciesId==649U||pokemon.speciesId==773U)pokemon.form=0U;
     CollectionLogic::refreshAbility(pokemon,7U);

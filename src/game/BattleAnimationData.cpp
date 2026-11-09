@@ -365,4 +365,4 @@ BattleAnimationPlaybackKind battleAnimationPlaybackKind(uint16_t moveId) {
   return BattleAnimationPlaybackKind::Generated;
 }
 
-// Battle animation data: aede0a3755b264bc
+// Battle animation data: 3681dc64797d3c5c

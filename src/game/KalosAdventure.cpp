@@ -9,6 +9,8 @@
 namespace {
 constexpr uint8_t kRunActive = 1U << 0U;
 constexpr uint8_t kHealUsed = 1U << 1U;
+constexpr uint8_t kChoiceEntered = 1U << 2U;
+constexpr uint8_t kChoicesCached = 1U << 3U;
 constexpr uint8_t kHiddenAbility = 1U << 0U;
 constexpr uint8_t kChampionComplete = 1U << 0U;
 constexpr uint8_t kXThemeSelected = 1U << 1U;
@@ -123,6 +125,14 @@ bool healthyPlayer(const KalosRunState& run,
       pokemon->currentHp && !pokemon->recoverySecondsRemaining;
 }
 
+bool enteredAnyChoice(const KalosRunState& run) {
+  // The structural checks also classify active attempts loaded from an older
+  // save that predates the explicit interaction bit.
+  return (run.flags & static_cast<uint8_t>(kChoiceEntered | kHealUsed)) != 0U ||
+      run.step != 0U || run.pendingBattle != KalosBattleRole::None ||
+      run.pendingFlags != 0U || run.pendingSpecies != 0U;
+}
+
 void initializeBattle(BattleState& battle, uint32_t playerUid,
                       uint32_t seed, BattleKind kind) {
   BattleEngine::clear(battle);
@@ -221,8 +231,13 @@ bool KalosAdventure::begin(KalosAdventureState& state, KalosArea area,
                       !pokemon->recoverySecondsRemaining);
   }
   if (!ready) return false;
+  const bool restoreChoices =
+      (state.run.flags & kChoicesCached) != 0U &&
+      (state.run.flags & kRunActive) == 0U;
+  const uint32_t cachedSeed = state.run.seed;
   state.run = KalosRunState{};
-  state.run.seed = seed ? seed : mixed(advance(state.rngState));
+  state.run.seed = restoreChoices ? cachedSeed :
+      (seed ? seed : mixed(advance(state.rngState)));
   state.run.area = normalizedArea(area);
   state.run.flags = kRunActive;
   std::copy(std::begin(collection.party), std::end(collection.party),
@@ -230,9 +245,20 @@ bool KalosAdventure::begin(KalosAdventureState& state, KalosArea area,
   return true;
 }
 
+bool KalosAdventure::willPreserveChoicesOnAbandon(
+    const KalosAdventureState& state) {
+  return active(state) && !enteredAnyChoice(state.run);
+}
+
 bool KalosAdventure::abandon(KalosAdventureState& state) {
   if (!active(state)) return false;
+  const bool preserveChoices = willPreserveChoicesOnAbandon(state);
+  const uint32_t cachedSeed = state.run.seed;
   state.run = KalosRunState{};
+  if (preserveChoices) {
+    state.run.seed = cachedSeed;
+    state.run.flags = kChoicesCached;
+  }
   return true;
 }
 
@@ -275,6 +301,7 @@ KalosRoomResult KalosAdventure::choose(KalosAdventureState& state,
   KalosRoomChoice options[2]{};
   const uint8_t count = choices(state, options);
   if (choice >= count) return result;
+  state.run.flags |= kChoiceEntered;
   result.kind = options[choice].kind;
   const uint32_t roll = mixed(state.run.seed ^
       (static_cast<uint32_t>(state.run.step + 1U) << 16U) ^ choice);

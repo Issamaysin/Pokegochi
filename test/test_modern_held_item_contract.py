@@ -38,6 +38,7 @@ def main() -> None:
     held_header = (ROOT / "include/game/HeldItems.h").read_text(encoding="utf-8")
     held_source = (ROOT / "src/game/HeldItems.cpp").read_text(encoding="utf-8")
     battle = (ROOT / "src/game/BattleEngine.cpp").read_text(encoding="utf-8")
+    audit = (ROOT / "docs/MODERN_HELD_ITEM_AUDIT.md").read_text(encoding="utf-8")
     builder = (ROOT / "scripts/build_sd_asset_pack.py").read_text(encoding="utf-8")
     save_header = (ROOT / "include/services/PersistentSave.h").read_text(encoding="utf-8")
     save_source = (ROOT / "src/services/PersistentSave.cpp").read_text(encoding="utf-8")
@@ -49,6 +50,8 @@ def main() -> None:
         assert re.search(rf"\b{enum_name}\b", held_header), enum_name
         assert f"HeldItem::{enum_name}" in held_source, enum_name
         assert f"HeldItem::{enum_name}" in battle, enum_name
+        display_name = re.sub(r"(?<!^)(?=[A-Z])", " ", enum_name)
+        assert display_name in audit, display_name
         assert (EXPANSION / f"graphics/items/icons/{icon}.png").is_file(), icon
         assert (EXPANSION / f"graphics/items/icon_palettes/{palette}.pal").is_file(), palette
         assert f'("{icon}", "{palette}")' in builder
@@ -68,11 +71,15 @@ def main() -> None:
         "popAirBalloon",
         'abilityIs(affected,"CORROSION")',
         "HeldItem::ProtectivePads",
+        "wildHolderEndsBattle",
+        "playerContactShield",
+        "opponentContactShield",
     ):
         assert snippet in battle, snippet
 
     assert "ModernHeldItemInventory modernHeldItems{};" in save_header
-    assert "kFormatVersion = 51" in save_header
+    format_match = re.search(r"kFormatVersion\s*=\s*(\d+)", save_header)
+    assert format_match and int(format_match.group(1)) >= 51
     assert "GameSaveV50" in save_source
     assert "save.modernHeldItems = ModernHeldItemInventory{};" in save_source
     assert "MartItem::Potion" in economy

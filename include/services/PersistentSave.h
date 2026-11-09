@@ -24,9 +24,10 @@ enum class UiColorTheme : uint8_t {
   Emerald = 2,
   Platinum = 3,
   White2 = 4,
-  X = 5,
-  Sun = 6,
-  Moon = 7,
+  White = 5,
+  X = 6,
+  Sun = 7,
+  Moon = 8,
 };
 
 struct UserSettings {
@@ -182,9 +183,8 @@ struct GameSave {
   // V42's new Sinnoh containers are intentionally parallel to the completed
   // Gen-III game. They never alter Gym/Tower/Boss progression.
   SinnohExpeditionState sinnoh{};
-  // V43 adds Poke Defense as a self-contained minigame campaign. Its scores
-  // and stars are permanent, while an in-progress wave remains volatile so a
-  // forced reboot can never alter the main Adventure save.
+  // V43 appended this 32-byte block. The feature was later retired, but the
+  // reservation remains frozen so every V43+ save keeps identical offsets.
   TowerDefense::CampaignState towerDefense{};
   // V44 adds the Gen 4 signature-item sidecar without changing any Pokemon
   // record or the frozen V38--V43 species-item layout.
@@ -207,6 +207,9 @@ struct GameSave {
   // V51 adds stackable ordinary held items from Generations IV--VII.  The
   // complete V50 payload remains a byte-exact prefix for safe field upgrades.
   ModernHeldItemInventory modernHeldItems{};
+  // V52 records only victories earned in Internet Balanced battles. The
+  // relay receives this value for discovery display but never owns it.
+  uint32_t wifiBalancedWins = 0;
 };
 // V43 added only the compact Poke Defense campaign record. The V42 and V43
 // ABIs are retained below as explicit frozen records and migrated field by
@@ -236,44 +239,111 @@ class PersistentSave {
  private:
   struct Record;
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 51;
+  static constexpr uint16_t kFormatVersion = 52;
   struct MartStateLegacy7 { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy10 { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy15 { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
+  // Exact NVS layouts shipped before the SPIFFS save transition. These must
+  // not reuse current gameplay structs: the Box had only 151 slots, Pokemon
+  // had no personality/IV tail, and Inventory/Gym/Battle all grew later.
+  // Keeping the byte ABI frozen lets a board jump directly from V9/V10/V11
+  // to the current firmware instead of requiring every intermediate release.
+  static constexpr uint16_t kBoxCapacityV11 = 151;
+  static constexpr uint8_t kPokedexBytesV11 = 19;
+  struct OwnedPokemonV11 {
+    uint32_t uid = kEmptyPokemonUid;
+    uint16_t speciesId = 0;
+    uint32_t experience = 0;
+    uint16_t currentHp = 0;
+    uint16_t maximumHp = 0;
+    uint8_t level = 1;
+    StatusCondition status = StatusCondition::None;
+    uint8_t fullness = 80;
+    uint8_t happiness = 80;
+    uint32_t careRemainderSeconds = 0;
+    uint32_t careTickCounter = 0;
+    uint32_t recoverySecondsRemaining = 0;
+    MoveId moves[kMoveSlots] = {MoveId::None, MoveId::None, MoveId::None, MoveId::None};
+    uint8_t movePp[kMoveSlots]{};
+    uint8_t abilityId = 0;
+  };
+  struct PokemonCollectionV11 {
+    OwnedPokemonV11 box[kBoxCapacityV11]{};
+    uint32_t party[kPartyCapacity]{};
+    uint32_t nextUid = 1;
+  };
+  struct InventoryV11 {
+    uint16_t balls[4] = {10, 3, 1, 0};
+    uint16_t medicine[16]{};
+  };
+  struct EncounterChargesV11 {
+    uint8_t available = 3;
+    uint32_t rechargeProgressSeconds = 0;
+  };
+  struct WildEncounterClockV11 {
+    uint32_t elapsedSeconds = 0;
+    uint32_t targetSeconds = 60U * 60U;
+    uint32_t rngState = 0x91E10DA5U;
+    bool pending = false;
+  };
+  enum class BattleKindV11 : uint8_t { None, Wild, Trainer, Gym, Pvp };
+  struct CombatVolatileV11 {
+    int8_t attackStage = 0, defenseStage = 0, spAttackStage = 0, spDefenseStage = 0;
+    int8_t speedStage = 0, accuracyStage = 0, evasionStage = 0;
+    uint8_t confusionTurns = 0, trappedTurns = 0, criticalStage = 0;
+    bool flinched = false, protectedThisTurn = false, recharging = false;
+    uint16_t substituteHp = 0;
+    MoveId disabledMove = MoveId::None, encoreMove = MoveId::None, chargingMove = MoveId::None;
+  };
+  struct PokedexStateV11 {
+    uint8_t seen[kPokedexBytesV11]{};
+    uint8_t caught[kPokedexBytesV11]{};
+  };
+  struct GymProgressV11 { uint8_t badgeBits = 0; };
+  struct MoveLearningQueueV11 {
+    PendingMoveLearning entries[kPartyCapacity]{};
+    uint8_t count = 0;
+    uint8_t index = 0;
+  };
   struct BattleStateV9 {
-    bool active; BattleKind kind; BattleOutcome outcome; uint32_t playerUid;
-    OwnedPokemon opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
-    uint8_t trainerProfileId; uint8_t gymId; CombatVolatile playerVolatile;
-    CombatVolatile opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn; uint32_t rewardMoney;
+    bool active; BattleKindV11 kind; BattleOutcome outcome; uint32_t playerUid;
+    OwnedPokemonV11 opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
+    uint8_t trainerProfileId; uint8_t gymId; CombatVolatileV11 playerVolatile;
+    CombatVolatileV11 opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn; uint32_t rewardMoney;
   };
   struct GameSaveV9 {
     uint32_t playTimeSeconds; uint32_t bootCount; uint8_t flags; uint8_t activePetSlot;
-    PokemonCollectionV41 collection; Inventory inventory; EncounterCharges encounterCharges;
-    WildEncounterClock wildEncounterClock; BattleStateV9 battle; PokedexStateV41 pokedex;
-    GymProgress gymProgress; uint32_t money; MartStateLegacy7 mart;
+    PokemonCollectionV11 collection; InventoryV11 inventory; EncounterChargesV11 encounterCharges;
+    WildEncounterClockV11 wildEncounterClock; BattleStateV9 battle; PokedexStateV11 pokedex;
+    GymProgressV11 gymProgress; uint32_t money; MartStateLegacy7 mart;
   };
   struct RecordV9 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV9 payload; uint32_t crc; };
   struct BattleStateV10 {
-    bool active; BattleKind kind; BattleOutcome outcome; uint32_t playerUid;
-    OwnedPokemon opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
-    uint8_t trainerProfileId; uint8_t gymId; CombatVolatile playerVolatile;
-    CombatVolatile opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn;
+    bool active; BattleKindV11 kind; BattleOutcome outcome; uint32_t playerUid;
+    OwnedPokemonV11 opponents[kOpponentTeamCapacity]; uint8_t opponentCount; uint8_t opponentIndex;
+    uint8_t trainerProfileId; uint8_t gymId; CombatVolatileV11 playerVolatile;
+    CombatVolatileV11 opponentVolatiles[kOpponentTeamCapacity]; uint32_t rngState; uint16_t turn;
     uint32_t rewardMoney; uint8_t opponentItemUses;
   };
   struct GameSaveV10 {
     uint32_t playTimeSeconds; uint32_t bootCount; uint8_t flags; uint8_t activePetSlot;
-    PokemonCollectionV41 collection; Inventory inventory; EncounterCharges encounterCharges;
-    WildEncounterClock wildEncounterClock; BattleStateV10 battle; PokedexStateV41 pokedex;
-    GymProgress gymProgress; uint32_t money; MartStateLegacy7 mart;
+    PokemonCollectionV11 collection; InventoryV11 inventory; EncounterChargesV11 encounterCharges;
+    WildEncounterClockV11 wildEncounterClock; BattleStateV10 battle; PokedexStateV11 pokedex;
+    GymProgressV11 gymProgress; uint32_t money; MartStateLegacy7 mart;
   };
   struct RecordV10 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV10 payload; uint32_t crc; };
   struct GameSaveV11 {
     uint32_t playTimeSeconds; uint32_t bootCount; uint8_t flags; uint8_t activePetSlot;
-    PokemonCollectionV41 collection; Inventory inventory; EncounterCharges encounterCharges;
-    WildEncounterClock wildEncounterClock; BattleStateV10 battle; PokedexStateV41 pokedex;
-    GymProgress gymProgress; uint32_t money; MartStateLegacy7 mart; MoveLearningQueue moveLearning;
+    PokemonCollectionV11 collection; InventoryV11 inventory; EncounterChargesV11 encounterCharges;
+    WildEncounterClockV11 wildEncounterClock; BattleStateV10 battle; PokedexStateV11 pokedex;
+    GymProgressV11 gymProgress; uint32_t money; MartStateLegacy7 mart; MoveLearningQueueV11 moveLearning;
   };
   struct RecordV11 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV11 payload; uint32_t crc; };
+  static_assert(sizeof(OwnedPokemonV11) == 48U && sizeof(PokemonCollectionV11) == 7264U,
+                "V9-V11 Pokemon save ABI changed");
+  static_assert(sizeof(RecordV9) == 7712U && sizeof(RecordV10) == 7716U &&
+                    sizeof(RecordV11) == 7744U,
+                "Shipped V9-V11 record ABI changed");
   struct CombatVolatileLegacy {
     int8_t attackStage = 0, defenseStage = 0, spAttackStage = 0, spDefenseStage = 0;
     int8_t speedStage = 0, accuracyStage = 0, evasionStage = 0;
@@ -1110,6 +1180,13 @@ class PersistentSave {
   struct RecordV50 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV50 payload; uint32_t crc; };
   static_assert(kGameSaveV50Size == 54936U && sizeof(RecordV50) == 54960U,
                 "Shipped V50 record size changed");
+  // V51 is the complete shipped held-item record. Keep its exact payload
+  // including alignment padding so old app and board saves upgrade in place.
+  static constexpr size_t kGameSaveV51Size = 54984U;
+  struct alignas(GameSave) GameSaveV51 { uint8_t bytes[kGameSaveV51Size]{}; };
+  struct RecordV51 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV51 payload; uint32_t crc; };
+  static_assert(sizeof(GameSaveV51) == 54984U && sizeof(RecordV51) == 55008U,
+                "Shipped V51 record size changed");
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   uint64_t sinnohMachineOwnership_ = 0;
@@ -1155,13 +1232,16 @@ class PersistentSave {
   bool readRecordV48(const char* key, RecordV48& record);
   bool readRecordV49(const char* key, RecordV49& record);
   bool readRecordV50(const char* key, RecordV50& record);
+  bool readRecordV51(const char* key, RecordV51& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   uint32_t crc32Update(uint32_t state, const uint8_t* data, size_t length) const;
 #if defined(ARDUINO_ARCH_ESP32)
   bool inspectCurrentRecord(const char* key, uint32_t& sequence) const;
+  bool inspectV51Record(const char* key, uint32_t& sequence) const;
   bool inspectAnyFileRecord(const char* key, uint32_t& sequence) const;
   bool loadCurrentRecord(const char* key, GameSave& save, uint32_t& sequence) const;
+  bool loadV51Record(const char* key, GameSave& save, uint32_t& sequence) const;
 #endif
   bool isNewer(uint32_t a, uint32_t b) const;
 };

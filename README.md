@@ -1,16 +1,19 @@
-# Pokegochi Firmware 4.0 / Android App 3.0
+# Pokegochi Firmware 4.1 / Android App 3.1
 
 Pokegochi is a persistent Pokemon-inspired virtual pet and battle game for the
 ESP32-2432S028R (CYD). It adapts the FireRed visual language and Generation III
 battle rules to a 320x240 landscape touchscreen.
 
-The current signed [Android 3.0 APK is available on Google Drive](https://drive.google.com/file/d/1M_hkG8O9xLKvS7U8-_BQoxVkvDBWDVDJ/view?usp=drivesdk),
-and the coordinated App 3.0 / Firmware 4.0 source is preserved by the
-[`app-v3.0-fw-v4.0` GitHub tag](https://github.com/Issamaysin/Pokegochi/tree/app-v3.0-fw-v4.0).
+Download the signed [Android 3.1 APK](https://drive.google.com/file/d/1wA6P70FUgiOU_qtQs5vnNUUqpmpAKIRN/view?usp=drivesdk)
+or the save-preserving [Firmware 4.1 PGOTA](https://drive.google.com/file/d/1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi/view?usp=drivesdk).
+The complete release is also published in
+[GitHub releases](https://github.com/Issamaysin/Pokegochi/releases), and the
+coordinated source is preserved by the
+[`app-v3.1-fw-v4.1` GitHub tag](https://github.com/Issamaysin/Pokegochi/tree/app-v3.1-fw-v4.1).
 The legacy ready-to-install v2.2 hardware distribution remains in
 [`POKEGOCHI_V2/`](POKEGOCHI_V2/README.md).
 
-See the [4.0 / 3.0 release notes](docs/RELEASE_NOTES_V4.0.md) for the current
+See the [4.1 / 3.1 release notes](docs/RELEASE_NOTES_V4.1.md) for the current
 gameplay, compatibility, build and installation notes.
 
 ## Current game
@@ -72,7 +75,7 @@ gameplay, compatibility, build and installation notes.
 - Reward Eggs wait in a dedicated 32-slot Bag pocket and can be placed in the
   incubator when its single active slot is empty.
 - The Bag supports battle and field use, Party or Box targets, held items,
-  TMs/HMs, Trainer Card, Badge Case, and Bluetooth multiplayer.
+  TMs/HMs, Trainer Card, Badge Case, and separate BLE/Wi-Fi multiplayer pages.
 - The Mart has twenty stocked offers across four pages, guaranteed essentials,
   unique TMs/HMs, quantity purchasing, Badge-gated items, and a six-hour
   rotation.
@@ -89,6 +92,9 @@ gameplay, compatibility, build and installation notes.
 - Bluetooth multiplayer supports discovery between Pokegochi devices, confirmed
   PvP battles, and confirmed Pokemon trades. Closing the Bag switches the radio
   off and releases its RAM.
+- Wi-Fi multiplayer connects Android and physical Pokegochi clients through the
+  dedicated home ESP32 relay. PvP offers Normal or temporary level-70 Balanced
+  rules, full disposable combat state, and a fixed battle-only medicine Bag.
 - Settings also provides signed Bluetooth updates for both firmware and the
   microSD asset pack through the Android updater.
 

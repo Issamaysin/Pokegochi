@@ -26,9 +26,9 @@ PRIVATE_KEY = ROOT / ".keys/pokegochi-update-private.key"
 LAST_SEQUENCE = ROOT / ".keys/pokegochi-update-sequence.txt"
 PUBLIC_HEADER = ROOT / "include/config/UpdateSigningKey.h"
 OUTPUT = ROOT / "dist/pokegochi-wireless-update.pgota"
-# Keep this guard aligned with partitions.csv and the firmware's actual OTA
-# slots. Gen I--VII uses the symmetric 0x1E0000 pair in partitions.csv.
-OTA_SLOT_SIZE = 0x1E0000
+# Keep this guard aligned with the large `app` partition in partitions.csv.
+# The immutable factory recovery installs this image from microSD.
+OTA_SLOT_SIZE = 0x310000
 
 PROTOCOL_VERSION = 1
 DEVICE_MODEL = 1

@@ -48,6 +48,21 @@ bool unfuse(PokemonCollection& collection, AlolaFormState& state);
 bool reconcileFusionState(PokemonCollection& collection, AlolaFormState& state,
                           uint32_t activeBattleUid = 0U);
 
+// Ash-Greninja remains transformed for five real-world minutes spent outside
+// battle.  The remaining seconds are packed into bits 16..31 of the existing
+// per-Pokemon reserved field, preserving the save ABI.  Battles pause the
+// countdown; every battle it actually enters and then exits while alive and
+// still holding Ash's Bond refreshes the complete five-minute window.
+constexpr uint16_t kAshBondOutsideDurationSeconds = 5U * 60U;
+uint16_t ashBondOutsideSecondsRemaining(const OwnedPokemon& pokemon);
+bool beginAshBondBattle(OwnedPokemon& pokemon);
+bool finishAshBondBattle(PokemonCollection& collection);
+// Returns true only when the visible form changed. Timer-only updates are
+// still written to the collection but do not require a screen repaint.
+bool advanceAshBondOutsideTime(PokemonCollection& collection,
+                               uint32_t elapsedSeconds);
+bool resetAshBondForm(OwnedPokemon& pokemon);
+
 // Ultra Necrozma is battle-only. Bit 15 in legacyCareCounterReserved records
 // whether the persistent fused form was Dawn Wings (otherwise Dusk Mane), so
 // switching or ending a battle can restore the exact form without save growth.

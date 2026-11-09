@@ -63,6 +63,9 @@ enum class HeldItem : uint8_t {
   AssaultVest, WeaknessPolicy, SafetyGoggles,
   TerrainExtender, ProtectivePads, AdrenalineOrb,
   ElectricSeed, GrassySeed, MistySeed, PsychicSeed,
+  // Project-specific Battle Bond catalyst. Appended after every shipped
+  // value so old serialized Pokemon and item inventories keep their ids.
+  AshsBond,
   Count,
 };
 
@@ -76,9 +79,14 @@ constexpr HeldItem kLastGen4UniqueItem = HeldItem::GriseousOrb;
 constexpr uint8_t kGen5DriveCount = 4;
 constexpr HeldItem kFirstGen5Drive = HeldItem::DouseDrive;
 constexpr HeldItem kLastGen5Drive = HeldItem::ChillDrive;
-constexpr uint8_t kGen7UniqueItemCount = 35;
+constexpr uint8_t kGen7UniqueItemCount = 36;
 constexpr HeldItem kFirstGen7UniqueItem = HeldItem::FightingMemory;
 constexpr HeldItem kLastGen7UniqueItem = HeldItem::FairiumZ;
+// Bit 35 remains the retired Ultranecrozium Z tombstone. Ash's Bond uses the
+// next free bit without changing Gen7UniqueItemInventory's serialized size.
+constexpr uint8_t kAshsBondInventoryIndex = 36;
+constexpr uint64_t kAshsBondOwnershipBit =
+    uint64_t{1} << kAshsBondInventoryIndex;
 constexpr uint8_t kModernHeldItemCount = 23;
 constexpr HeldItem kFirstModernHeldItem = HeldItem::LifeOrb;
 constexpr HeldItem kLastModernHeldItem = HeldItem::PsychicSeed;
@@ -174,6 +182,7 @@ bool heldItemIsZCrystal(HeldItem item);
 PokemonType zCrystalType(HeldItem item);
 bool heldItemIsTransferLocked(HeldItem item);
 uint8_t heldItemGeneration(HeldItem item);
+bool heldItemCanBeEquippedBy(HeldItem item, uint16_t speciesId);
 uint8_t heldItemCount();
 int8_t specialHeldItemIndex(HeldItem item);
 uint16_t specialHeldItemQuantity(const SpecialHeldItemInventory& inventory,

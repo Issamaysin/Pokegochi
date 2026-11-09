@@ -117,9 +117,13 @@ class UnovaAdventure {
   static bool reconcileCompletionReward(UnovaAdventureState& state,
                                         Inventory& inventory);
   static bool white2ThemeUnlocked(const UnovaAdventureState& state);
+  // Black and White are a paired reward from the same Unova milestone.
+  static bool whiteThemeUnlocked(const UnovaAdventureState& state);
   static bool royalUnovaUnlocked(const UnovaAdventureState& state);
   static bool setWhite2ThemeSelected(UnovaAdventureState& state, bool selected);
   static bool white2ThemeSelected(const UnovaAdventureState& state);
+  static bool setWhiteThemeSelected(UnovaAdventureState& state, bool selected);
+  static bool whiteThemeSelected(const UnovaAdventureState& state);
 
   static const char* areaName(UnovaArea area);
   static const char* areaSubtitle(UnovaArea area);
@@ -132,6 +136,8 @@ class UnovaAdventure {
   static bool begin(UnovaAdventureState& state, UnovaArea area, uint32_t seed,
                     const PokemonCollection& collection,
                     uint8_t season = 0U);
+  static bool willPreserveChoicesOnAbandon(
+      const UnovaAdventureState& state);
   static bool abandon(UnovaAdventureState& state);
   static bool active(const UnovaAdventureState& state);
   static uint8_t choices(const UnovaAdventureState& state,

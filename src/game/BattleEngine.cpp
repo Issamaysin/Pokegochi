@@ -82,6 +82,7 @@ constexpr uint8_t kEarlyExperienceMultiplier = 2U;
 // without duplicating hundreds of move/ability branches. -1 selects trainer
 // AI; 0xFE represents a peer switch and suppresses the opponent action.
 int16_t gPvpOpponentMoveOverride = -1;
+bool gPvpOpponentZMoveOverride = false;
 uint16_t gLastCalculatedMovePower = 0;
 // These values exist only while the single-threaded resolver owns an action.
 // Keep every boolean in one byte: the ESP32 target has no spare internal DRAM,
@@ -352,6 +353,29 @@ void appendMoveEffect(BattleActionResult& result, BattleSide side, uint32_t uid,
   BattleEvent& event = appendEvent(result, BattleEventType::MoveEffect, side, uid);
   event.move = move;
   event.value = static_cast<uint16_t>(effect);
+}
+
+void applyPainSplit(BattleActionResult& result,
+                    OwnedPokemon& user, BattleSide userSide,
+                    OwnedPokemon& target, BattleSide targetSide,
+                    MoveId move) {
+  const uint16_t userBefore = user.currentHp;
+  const uint16_t targetBefore = target.currentHp;
+  const uint16_t average = static_cast<uint16_t>(
+      (static_cast<uint32_t>(userBefore) + targetBefore) / 2U);
+  user.currentHp = std::min(user.maximumHp, average);
+  target.currentHp = std::min(target.maximumHp, average);
+
+  // Pain Split changes both battlers during this move. Recording only the
+  // user's half left the target's live HP ahead of the presentation journal;
+  // its meter then jumped on a later move/item redraw. Keep both transitions
+  // adjacent to PainShared so each final frame is committed before any held
+  // item, healing action or following attack can be presented.
+  appendMoveEffect(result, userSide, user.uid, move,
+                   BattleMoveEffect::PainShared);
+  appendHpChange(result, userSide, user.uid, userBefore, user.currentHp);
+  appendHpChange(result, targetSide, target.uid, targetBefore,
+                 target.currentHp);
 }
 
 void appendWeatherEnded(BattleActionResult& result, uint32_t uid,
@@ -1473,10 +1497,10 @@ bool resetBattleTriggeredForms(OwnedPokemon& pokemon,uint8_t unlockedGeneration)
     CollectionLogic::refreshDerivedStatsPreservingHpRatio(pokemon);
     return true;
   }
-  if(pokemon.speciesId==658U||pokemon.speciesId==746U||
-     pokemon.speciesId==774U||pokemon.speciesId==778U){
+  if(pokemon.speciesId==746U||pokemon.speciesId==774U||
+     pokemon.speciesId==778U){
     uint8_t wanted=pokemon.form;
-    if(pokemon.speciesId==658U||pokemon.speciesId==746U||pokemon.speciesId==778U)
+    if(pokemon.speciesId==746U||pokemon.speciesId==778U)
       wanted=0U;
     else if(pokemon.speciesId==774U&&wanted>=7U)
       wanted=static_cast<uint8_t>(wanted-7U);
@@ -1527,6 +1551,11 @@ void restorePlayerBattleForm(BattleState& battle,PokemonCollection& collection){
        player->speciesId==681U||player->speciesId==716U)player->form=0;
   if(OwnedPokemon* player=CollectionLogic::find(collection,battle.playerUid))
     resetBattleTriggeredForms(*player,battleContentGeneration(battle));
+  // Battle Bond is the one battle-triggered form that deliberately survives
+  // leaving the field. Ordinary switches retain it for the same battle; a
+  // terminal exit starts (or refreshes) its five-minute outside-battle clock
+  // for every living transformed Greninja in the party/Box.
+  if(!battle.active)AlolaForms::finishAshBondBattle(collection);
 }
 
 void restoreOpponentTemporaryAbility(OwnedPokemon& pokemon,
@@ -2387,7 +2416,10 @@ uint8_t terrainDurationFor(const OwnedPokemon& setter,
 bool triggerTerrainSeed(BattleState& battle,OwnedPokemon& pokemon,
                         CombatVolatile& volatileState,BattleSide side,
                         BattleActionResult* result){
-  if(!pokemon.currentHp||!battlerIsGrounded(battle,pokemon,side))return false;
+  // Terrain Seeds react to the field itself, not to the holder being
+  // affected by the terrain. Flying/Levitate/Air Balloon holders therefore
+  // still consume the matching Seed, exactly like the Gen-VII item script.
+  if(!pokemon.currentHp)return false;
   const HeldItem item=heldItemFor(pokemon,volatileState);
   const bool defense=(battle.gen6Terrain==Gen6Terrain::Electric&&
                       item==HeldItem::ElectricSeed)||
@@ -2958,9 +2990,25 @@ void applyContactAbility(BattleState& battle,const FullMoveData* move,
   if(!move->makesContact||abilityIs(attacker,"LONG REACH"))return;
   if(heldIs(attacker,attackerVolatile,HeldItem::ProtectivePads)){
     // Pads suppress effects received because contact was made. Poison Touch
-    // belongs to the attacking Pokemon and therefore still applies.
-    recordHeldItemActivation(result,attacker,HeldItem::ProtectivePads,
-                             sideOf(battle,attacker));
+    // belongs to the attacking Pokemon and therefore still applies. Do not
+    // announce the item on an ordinary contact hit when the defender has no
+    // contact reaction for the Pads to suppress.
+    const bool contactReaction=defenderGen7.beakBlastPrimed||
+        heldIs(defender,defenderVolatile,HeldItem::RockyHelmet)||
+        defenderAbilityApplies(attacker,defender,"GOOEY")||
+        defenderAbilityApplies(attacker,defender,"TANGLING HAIR")||
+        defenderAbilityApplies(attacker,defender,"ROUGH SKIN")||
+        defenderAbilityApplies(attacker,defender,"IRON BARBS")||
+        defenderAbilityApplies(attacker,defender,"MUMMY")||
+        defenderAbilityApplies(attacker,defender,"PICKPOCKET")||
+        defenderAbilityApplies(attacker,defender,"CUTE CHARM")||
+        defenderAbilityApplies(attacker,defender,"EFFECT SPORE")||
+        defenderAbilityApplies(attacker,defender,"STATIC")||
+        defenderAbilityApplies(attacker,defender,"POISON POINT")||
+        defenderAbilityApplies(attacker,defender,"FLAME BODY");
+    if(contactReaction)
+      recordHeldItemActivation(result,attacker,HeldItem::ProtectivePads,
+                               sideOf(battle,attacker));
     applyPoisonTouch();
     return;
   }
@@ -4767,30 +4815,70 @@ bool forcePlayerSwitch(BattleState& battle,PokemonCollection& collection,
   return true;
 }
 
-enum class ReactiveItemSwitch : uint8_t { None, Player, Opponent };
+enum class ReactiveItemSwitch : uint8_t {
+  None,
+  Player,
+  Opponent,
+  BattleEnded,
+};
 ReactiveItemSwitch triggerReactiveSwitchItem(
     BattleState& battle,PokemonCollection& collection,OwnedPokemon& attacker,
     BattleSide attackerSide,OwnedPokemon& defender,BattleSide defenderSide,
-    uint16_t hpDamage,BattleActionResult& result){
-  if(!hpDamage||!attacker.currentHp||!defender.currentHp)return ReactiveItemSwitch::None;
+    const FullMoveData* move,uint16_t hpDamage,BattleActionResult& result){
+  if(!hpDamage||!defender.currentHp)return ReactiveItemSwitch::None;
   CombatVolatile& defenderVolatile=defenderSide==BattleSide::Player?
       battle.playerVolatile:battle.opponentVolatiles[battle.opponentIndex];
   const HeldItem item=heldItemFor(defender,defenderVolatile);
+  if((item!=HeldItem::RedCard&&item!=HeldItem::EjectButton)||
+     (move&&abilityIs(attacker,"SHEER FORCE")&&sheerForceApplies(move)))
+    return ReactiveItemSwitch::None;
   BattleSide switchedSide=defenderSide;
   if(item==HeldItem::RedCard){
+    // Red Card needs a living attacker to send away. Eject Button does not:
+    // its holder still leaves after the attacker faints to recoil/contact.
+    if(!attacker.currentHp)return ReactiveItemSwitch::None;
+    const bool wildHolderEndsBattle=battle.kind==BattleKind::Wild&&
+        attackerSide==BattleSide::Player&&
+        defenderSide==BattleSide::Opponent;
+    const bool canSwitchAttacker=wildHolderEndsBattle||
+        (attackerSide==BattleSide::Player?
+          firstHealthyPartyMember(collection,attacker.uid)!=nullptr:
+          (battle.kind!=BattleKind::Wild&&hasHealthyOpponentReplacement(battle)));
+    if(!canSwitchAttacker)return ReactiveItemSwitch::None;
+    consumeHeld(defender,defenderVolatile,&moveEffectsFor(battle,defenderSide));
+    recordHeldItemActivation(result,defender,item,defenderSide);
     const DedicatedMoveEffectState& attackerEffects=moveEffectsFor(
         battle,attackerSide);
-    if(abilityIs(attacker,"SUCTION CUPS")||attackerEffects.ingrained)return
-        ReactiveItemSwitch::None;
+    // The card is revealed and consumed even when the target anchors itself.
+    if(abilityIs(attacker,"SUCTION CUPS")||attackerEffects.ingrained)
+      return ReactiveItemSwitch::None;
+    if(wildHolderEndsBattle){
+      battle.active=false;
+      battle.outcome=BattleOutcome::Escaped;
+      result.outcome=battle.outcome;
+      return ReactiveItemSwitch::BattleEnded;
+    }
     switchedSide=attackerSide;
-  }else if(item!=HeldItem::EjectButton)return ReactiveItemSwitch::None;
-  const bool canSwitch=switchedSide==BattleSide::Player?
-      firstHealthyPartyMember(collection,
-          switchedSide==attackerSide?attacker.uid:defender.uid)!=nullptr:
-      hasHealthyOpponentReplacement(battle);
-  if(!canSwitch)return ReactiveItemSwitch::None;
-  consumeHeld(defender,defenderVolatile,&moveEffectsFor(battle,defenderSide));
-  recordHeldItemActivation(result,defender,item,defenderSide);
+  }else{
+    // A wild Pokemon cannot use Eject Button to jump to another encounter in
+    // a chain. Player and Trainer holders need a healthy replacement.
+    const bool canSwitch=defenderSide==BattleSide::Player?
+        firstHealthyPartyMember(collection,defender.uid)!=nullptr:
+        (battle.kind!=BattleKind::Wild&&hasHealthyOpponentReplacement(battle));
+    if(!canSwitch)return ReactiveItemSwitch::None;
+    consumeHeld(defender,defenderVolatile,&moveEffectsFor(battle,defenderSide));
+    recordHeldItemActivation(result,defender,item,defenderSide);
+    // In ordinary battles Eject Button opens the party picker instead of
+    // silently choosing a random replacement for the player. PvP retains the
+    // deterministic automatic switch until its command protocol can carry a
+    // mid-turn replacement choice symmetrically on both peers.
+    if(defenderSide==BattleSide::Player&&battle.kind!=BattleKind::Pvp){
+      setPendingReplacement(battle,BattleSide::Player,2U);
+      result.batonPassSwitchRequired=true;
+      result.batonPassOpponentMoveSlot=0xFEU;
+      return ReactiveItemSwitch::Player;
+    }
+  }
   const bool switched=switchedSide==BattleSide::Player?
       forcePlayerSwitch(battle,collection,result):
       forceOpponentSwitch(battle,collection,result);
@@ -6367,20 +6455,6 @@ void resolveFaintVows(BattleState& battle,BattleActionResult& result,BattleSide 
   const uint16_t retaliateTurn=static_cast<uint16_t>(battle.turn+1U);
   if(faintedSide==BattleSide::Player)battle.playerRetaliateDueTurn=retaliateTurn;
   else battle.opponentRetaliateDueTurn=retaliateTurn;
-  if(attacker.currentHp&&attacker.speciesId==658U&&attacker.form==0U&&
-     abilityIs(attacker,"BATTLE BOND")){
-    const uint16_t hpBefore=attacker.currentHp;
-    attacker.form=1U;
-    CollectionLogic::refreshAbility(attacker,battleContentGeneration(battle));
-    CollectionLogic::refreshDerivedStatsPreservingHpRatio(attacker);
-    appendAbilityActivation(result,sideOf(battle,attacker),attacker);
-    BattleEvent& changed=appendEvent(result,BattleEventType::MoveEffect,
-                                      sideOf(battle,attacker),attacker.uid);
-    changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
-    changed.before=0U;changed.after=1U;
-    appendHpChange(result,sideOf(battle,attacker),attacker.uid,
-                   hpBefore,attacker.currentHp);
-  }
   if(attacker.currentHp&&
      (abilityIs(attacker,"MOXIE")||abilityIs(attacker,"EELEVATE")||
       abilityIs(attacker,"BEAST BOOST")||abilityIs(attacker,"SOUL-HEART"))){
@@ -6465,6 +6539,33 @@ void resolveFaintVows(BattleState& battle,BattleActionResult& result,BattleSide 
   const uint16_t before=attacker.currentHp;attacker.currentHp=0;
   appendHpChange(result,attackerSide,attacker.uid,before,0);
   appendFaintedOnce(result,attackerSide,attacker);
+}
+
+// Battle Bond's presentation belongs after the defeated battler has actually
+// fainted. Keeping this outside resolveFaintVows prevents the transformed
+// sprite from appearing before the KO journal entry (the same live-state vs
+// presented-state class of bug that previously affected Mega Rayquaza).
+// The transformed form now persists outside battle, so a terminal wild KO is
+// a real activation too: it carries into a wild chain instead of flashing for
+// one frame and being discarded on the result screen.
+void resolveAshBondAfterFaint(BattleState& battle,BattleActionResult& result,
+                              OwnedPokemon& attacker,BattleSide attackerSide){
+  if(!attacker.currentHp||attacker.speciesId!=658U||attacker.form!=0U)return;
+  CombatVolatile& attackerHeldState=attackerSide==BattleSide::Player?
+      battle.playerVolatile:battle.opponentVolatiles[battle.opponentIndex];
+  if(!heldIs(attacker,attackerHeldState,HeldItem::AshsBond))return;
+  const uint16_t hpBefore=attacker.currentHp;
+  recordHeldItemActivation(result,attacker,HeldItem::AshsBond,
+                           attackerSide);
+  attacker.form=1U;
+  CollectionLogic::refreshAbility(attacker,battleContentGeneration(battle));
+  CollectionLogic::refreshDerivedStatsPreservingHpRatio(attacker);
+  BattleEvent& changed=appendEvent(result,BattleEventType::MoveEffect,
+                                    attackerSide,attacker.uid);
+  changed.value=static_cast<uint16_t>(BattleMoveEffect::FormChanged);
+  changed.before=0U;changed.after=1U;
+  appendHpChange(result,attackerSide,attacker.uid,hpBefore,
+                 attacker.currentHp);
 }
 }
 
@@ -6734,6 +6835,64 @@ uint32_t EncounterLogic::nextWildBattleSeed(WildEncounterClock& clock,
   return seed ? seed : (stream ^ 0xA341316CU);
 }
 
+bool EncounterLogic::reconcileFirstMasterBallSurprise(
+    WildEncounterClock& clock, bool masterBallReceived) {
+  bool changed = false;
+  const uint8_t countdown = clock.firstMasterBallSurpriseCountdown;
+  const bool validCountdown = countdown == 0U || countdown <= 30U ||
+      countdown == WildEncounterClock::kFirstMasterBallSurpriseCompleted;
+  if (clock.firstMasterBallSurpriseSchema !=
+          WildEncounterClock::kFirstMasterBallSurpriseSchema ||
+      !validCountdown) {
+    // These bytes were padding in every previous format. Never interpret
+    // their old contents as a live countdown.
+    clock.firstMasterBallSurpriseSchema =
+        WildEncounterClock::kFirstMasterBallSurpriseSchema;
+    clock.firstMasterBallSurpriseCountdown = 0U;
+    changed = true;
+  }
+  if (!masterBallReceived || clock.firstMasterBallSurpriseCountdown != 0U)
+    return changed;
+
+  uint32_t random = clock.rngState ? clock.rngState : 0x91E10DA5U;
+  random ^= random << 13U;
+  random ^= random >> 17U;
+  random ^= random << 5U;
+  if (!random) random = 0x4D415354U;  // "MAST"
+  clock.rngState = random;
+  // Inclusive range: 3 + [0, 27] => [3, 30].
+  clock.firstMasterBallSurpriseCountdown =
+      static_cast<uint8_t>(3U + random % 28U);
+  return true;
+}
+
+bool EncounterLogic::firstMasterBallSurpriseDue(
+    const WildEncounterClock& clock) {
+  return clock.firstMasterBallSurpriseSchema ==
+             WildEncounterClock::kFirstMasterBallSurpriseSchema &&
+      clock.firstMasterBallSurpriseCountdown == 1U;
+}
+
+bool EncounterLogic::recordFirstMasterBallWildEncounter(
+    WildEncounterClock& clock, bool legendaryForced) {
+  if (clock.firstMasterBallSurpriseSchema !=
+      WildEncounterClock::kFirstMasterBallSurpriseSchema)
+    return false;
+  uint8_t& countdown = clock.firstMasterBallSurpriseCountdown;
+  if (countdown == 0U ||
+      countdown == WildEncounterClock::kFirstMasterBallSurpriseCompleted)
+    return false;
+  if (countdown == 1U) {
+    // If an encounter mode ever has no eligible Legendary, retain the due
+    // state and retry on the next standard Wild instead of consuming it.
+    if (!legendaryForced) return false;
+    countdown = WildEncounterClock::kFirstMasterBallSurpriseCompleted;
+    return true;
+  }
+  --countdown;
+  return true;
+}
+
 uint32_t BattleEngine::random(BattleState& battle) {
   uint32_t x = battle.rngState ? battle.rngState : 0xA341316CU;
   x ^= x << 13U; x ^= x >> 17U; x ^= x << 5U;
@@ -6962,7 +7121,8 @@ bool BattleEngine::armPlayerZMove(BattleState& battle,
 
 bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
                              uint32_t playerUid, uint32_t seed, uint8_t unlockedGeneration,
-                             bool beginnerProtection, uint8_t worldTimePeriod) {
+                             bool beginnerProtection, uint8_t worldTimePeriod,
+                             bool forceLegendary) {
   if (battle.active || !CollectionLogic::validate(collection) || !selectablePartyMember(collection, playerUid)) return false;
   clear(battle);
   battle.active = true; battle.kind = BattleKind::Wild; battle.outcome = BattleOutcome::Ongoing;
@@ -7008,8 +7168,15 @@ bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
   // The production table begins at Lv.5. During the opening Lv.2-Lv.4 range,
   // use that first unevolved species pool while instantiating the lower level.
   const uint8_t speciesSelectionLevel = std::max<uint8_t>(5U, level);
-  uint16_t speciesId = chooseEncounterSpecies(speciesSelectionLevel,
-                                               unlockedGeneration,random(battle));
+  uint16_t speciesId = forceLegendary
+      ? chooseLegendaryEncounterSpecies(unlockedGeneration, random(battle))
+      : chooseEncounterSpecies(speciesSelectionLevel,
+                               unlockedGeneration, random(battle));
+  if (!speciesId) { clear(battle); return false; }
+  // The mandatory encounter should feel like the late-game surprise that
+  // awarded the Master Ball, never like an arbitrary Lv.5 Legendary caused
+  // by the ordinary low-level tail of the Wild level distribution.
+  if (forceLegendary) level = maximumWildLevel;
   // Emerald gives STATIC/MAGNET PULL a 50% chance to select an Electric/Steel
   // species from the current table.  Rejection sampling preserves the table's
   // configured relative weights and all level/generation legality rules.
@@ -7020,7 +7187,7 @@ bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
   }else if(fieldLead&&abilityIs(*fieldLead,"MAGNET PULL")){
     preferredType=PokemonType::Steel;prefersType=true;
   }
-  if(prefersType&&(random(battle)&1U)==0U){
+  if(!forceLegendary&&prefersType&&(random(battle)&1U)==0U){
     for(uint8_t attempt=0;attempt<96U;++attempt){
       const uint16_t candidate=chooseEncounterSpecies(
           speciesSelectionLevel,unlockedGeneration,random(battle));
@@ -7033,7 +7200,8 @@ bool BattleEngine::startWild(BattleState& battle, PokemonCollection& collection,
   // Time changes encounter flavour, never evolution.  Rejection-sampling the
   // existing legal table retains its level/generation rules while making the
   // morning, evening and nocturnal groups noticeably different.
-  if(worldTimePeriod<=static_cast<uint8_t>(WorldTimePeriod::Night)&&
+  if(!forceLegendary&&
+     worldTimePeriod<=static_cast<uint8_t>(WorldTimePeriod::Night)&&
      random(battle)%4U!=0U){
     const WorldTimePeriod period=static_cast<WorldTimePeriod>(worldTimePeriod);
     for(uint8_t attempt=0;attempt<64U;++attempt){
@@ -7191,6 +7359,7 @@ void BattleEngine::applyEntryAbilities(BattleState& battle,PokemonCollection& co
   // Stone is legal here, but variantFor() stays non-Mega until Complete.
   if(playerEntered)resetBattleTriggeredForms(*player,battle.unlockedGeneration);
   if(opponentEntered)resetBattleTriggeredForms(*opponent,battle.unlockedGeneration);
+  if(playerEntered)AlolaForms::beginAshBondBattle(*player);
   // Xerneas' antlers illuminate whenever it is battle-active. Keep the
   // cartridge's Neutral form in storage and journal the Active transition so
   // both the firmware and Android renderer swap sprites at the same moment.
@@ -7922,6 +8091,9 @@ uint16_t BattleEngine::calculateDamage(BattleState& battle, const OwnedPokemon& 
   if(physical&&effectIs(move,"EXPLOSION"))
     defense=std::max<uint32_t>(1U,defense/2U);
   uint32_t power = powerOverride ? powerOverride : move->power;
+  // Ash-Greninja's Water Shuriken uses the Gen-VII Battle Bond override:
+  // three fixed strikes are selected by multiHitCountFor(), each at 20 power.
+  if(attacker.speciesId==658U&&attacker.form==1U&&move->id==594U)power=20U;
   if(effectIs(move,"COUNTER")){
     const uint16_t effectiveness=resolvedEffectiveness();
     if(effectivenessOut)*effectivenessOut=effectiveness;
@@ -9128,6 +9300,7 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
                        *opponent,static_cast<MoveId>(117),moveSlot,result.damageTaken);
       player.recoverySecondsRemaining=1;
       appendFaintedOnce(result,BattleSide::Player,player);
+      resolveAshBondAfterFaint(battle,result,*opponent,BattleSide::Opponent);
       if(!opponent->currentHp){
         result.opponentDefeated=true;
         awardExperience(battle,collection,result);
@@ -9182,6 +9355,31 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
     calledEvent.move=called;
     resolvedMoveEvent=&calledEvent;
   }
+  // PvP commands carry the peer's Z selection together with the move slot.
+  // Resolve it on the opponent path too; otherwise the remote console showed
+  // and calculated ordinary Play Rough while its owner used the authored
+  // Mimikyu Z-Move locally.
+  const bool opponentUsesZMove=gPvpOpponentZMoveOverride&&
+      enemyCommandMove==enemyMove&&enemyMoveData&&
+      zMoveCompatible(battle,*opponent,enemyMove,BattleSide::Opponent);
+  const SignatureZMove opponentSignatureZ=opponentUsesZMove?
+      signatureZMoveFor(*opponent,enemyMoveData):SignatureZMove::None;
+  const uint16_t opponentZPower=opponentUsesZMove?
+      zMovePower(enemyMoveData,*opponent):0U;
+  if(opponentUsesZMove){
+    battle.opponentZMoveUsed=true;
+    BattleEvent& zEvent=appendEvent(result,BattleEventType::MoveEffect,
+                                    BattleSide::Opponent,opponent->uid);
+    zEvent.move=enemyCommandMove;
+    zEvent.value=static_cast<uint16_t>(BattleMoveEffect::ZMoveUsed);
+    zEvent.after=opponentSignatureZ!=SignatureZMove::None?
+        static_cast<uint16_t>(opponentSignatureZ):
+        (enemyMoveData->power?genericZMoveAnimationId(
+            effectiveMoveType(battle,*enemyMoveData,*opponent)):0U);
+    if(enemyMoveData->category==MoveCategory::Status)
+      applyZStatusBonus(battle,*opponent,enemyCommandMove,
+                        BattleSide::Opponent,result);
+  }
   recordGlobalMove(battle,enemyMove);
   prepareEchoedVoice(gen5EffectsFor(battle,BattleSide::Opponent),enemyMoveData);
   if(powderStopsMove(battle,enemyMoveData,*opponent,BattleSide::Opponent,result)){
@@ -9228,7 +9426,7 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   }
   const bool releasingCharge=enemyVolatile.chargingMove==enemyMove;
   const bool needsCharge=isChargingMove(
-      battle,enemyMoveData,*opponent,player);
+      battle,enemyMoveData,*opponent,player)&&!opponentUsesZMove;
   const bool instantSolarBeam=effectIs(enemyMoveData,"SOLAR_BEAM")&&
       !needsCharge&&!releasingCharge;
   // FireRed's animation VM receives gAnimMoveTurn independently from move
@@ -9335,7 +9533,8 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
       (!delayedAttack || delayedSlotFree);
   const bool bypassesProtect=effectIs(enemyMoveData,"REMOVE_PROTECT")||
       effectIs(enemyMoveData,"SHADOW_FORCE")||
-      contactBypassesProtection(enemyMoveData,*opponent);
+      contactBypassesProtection(enemyMoveData,*opponent)||
+      (opponentUsesZMove&&enemyMoveData&&enemyMoveData->power);
   const bool blockedByGen5Guard=enemyMoveData&&!bypassesProtect&&
       ((battle.playerGen5Effects.quickGuard&&enemyMoveData->priority>0)||
        (battle.playerGen5Effects.wideGuard&&
@@ -9429,8 +9628,12 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
         strike=beatUpDamage[hit];
         hitEffectiveness=beatUpEffectiveness[hit];
         hitCritical=beatUpCritical[hit];
+      }else if(opponentSignatureZ==SignatureZMove::GuardianOfAlola){
+        strike=player.currentHp>1U?static_cast<uint16_t>(std::max<uint32_t>(
+            1U,static_cast<uint32_t>(player.currentHp)*3U/4U)):0U;
       }else{
-        const uint16_t kickPower=effectIs(enemyMoveData,"TRIPLE_KICK")?
+        const uint16_t kickPower=opponentZPower?opponentZPower:
+            effectIs(enemyMoveData,"TRIPLE_KICK")?
             static_cast<uint16_t>(10U*(hit+1U)):0U;
         strike=calculateDamage(battle,*opponent,player,enemyMove,
             enemyVolatile,battle.playerVolatile,&hitEffectiveness,
@@ -9439,6 +9642,8 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
             lostHpEarlierThisTurn(result,BattleSide::Player,player.uid),
             enemyUsingStruggle||moveSlot>=kMoveSlots?0xFFU:
                 opponent->movePp[moveSlot]);
+        if(opponentUsesZMove&&battle.playerVolatile.protectedThisTurn)
+          strike=std::max<uint16_t>(1U,static_cast<uint16_t>(strike/4U));
         if(parentalBondMove&&hit)strike=std::max<uint16_t>(1U,strike/4U);
       }
       if(gBattleTransient.presentHealRoll){
@@ -9642,7 +9847,9 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
     }else if(blockedByProtect){
       appendMoveEffect(result,BattleSide::Player,player.uid,enemyMove,
                        BattleMoveEffect::Protected);
-      if(enemyMoveData&&enemyMoveData->makesContact&&
+      const bool playerContactShield=playerGen6.kingsShield||
+          playerGen6.spikyShield||battle.playerGen7Effects.banefulBunker;
+      if(enemyMoveData&&enemyMoveData->makesContact&&playerContactShield&&
          heldIs(*opponent,enemyVolatile,HeldItem::ProtectivePads))
         recordHeldItemActivation(result,*opponent,HeldItem::ProtectivePads,
                                  BattleSide::Opponent);
@@ -9993,9 +10200,11 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
       enemyVolatile.attackStage=kMaximumBattleStatStage;
     }
     if(std::strstr(effect,"PAIN_SPLIT")){
-      const uint16_t average=static_cast<uint16_t>((opponent->currentHp+player.currentHp)/2U);opponent->currentHp=std::min(opponent->maximumHp,average);player.currentHp=std::min(player.maximumHp,average);
-      appendMoveEffect(result,BattleSide::Opponent,opponent->uid,enemyMove,
-                       BattleMoveEffect::PainShared);
+      applyPainSplit(result,*opponent,BattleSide::Opponent,
+                     player,BattleSide::Player,enemyMove);
+      // The helper has already journaled Pain Split's self-HP transition.
+      // Preserve the generic snapshot for any later recoil/heal in this move.
+      opponentHpBeforeMove=opponent->currentHp;
     }
     if(std::strstr(effect,"SMELLINGSALT")&&moveAffected&&!playerHadSubstitute&&
        player.status==StatusCondition::Paralysis)player.status=StatusCondition::None;
@@ -10156,12 +10365,22 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   const ReactiveItemSwitch reactiveSwitch=emergencyExit?
       ReactiveItemSwitch::None:triggerReactiveSwitchItem(
           battle,collection,*opponent,BattleSide::Opponent,player,
-          BattleSide::Player,appliedDamage,result);
+          BattleSide::Player,enemyMoveData,appliedDamage,result);
+  if(reactiveSwitch==ReactiveItemSwitch::BattleEnded){
+    result.outcome=battle.outcome;
+    appendBattleEnd(result,battle);
+    return;
+  }
   if(reactiveSwitch==ReactiveItemSwitch::Opponent)
     opponent=currentOpponent(battle);
-  if(player.currentHp==0)
+  if(player.currentHp==0){
     resolveFaintVows(battle,result,BattleSide::Player,player,playerEffects,*opponent,
                      enemyMove,moveSlot,finishingHpDamage);
+    if(!player.currentHp){
+      appendFaintedOnce(result,BattleSide::Player,player);
+      resolveAshBondAfterFaint(battle,result,*opponent,BattleSide::Opponent);
+    }
+  }
   if(opponent->currentHp==0){
     appendFaintedOnce(result,BattleSide::Opponent,*opponent);
     result.opponentDefeated=true;awardExperience(battle,collection,result);
@@ -10179,8 +10398,23 @@ void BattleEngine::enemyTurn(BattleState& battle, PokemonCollection& collection,
   if(enemyUTurnCanPivot){
     appendMoveEffect(result,BattleSide::Opponent,opponent->uid,enemyMove,
                      BattleMoveEffect::UTurnSwitch);
-    forceOpponentSwitch(battle,collection,result);
-    opponent=currentOpponent(battle);
+    if(battle.kind==BattleKind::Pvp){
+      // A link opponent is a real player, so it must choose its recipient.
+      // Keep the already-selected local command for the continuation after
+      // that choice; 0xFE means the local side had already spent its action.
+      setPendingReplacement(battle,BattleSide::Opponent,2U);
+      if(sideAlreadyActed(result,BattleSide::Player))
+        battle.pendingOpponentMoveSlot=0xFEU;
+      else if(playerPlannedMove==MoveId::Struggle)
+        battle.pendingOpponentMoveSlot=kMoveSlots;
+      else{
+        const uint8_t queued=moveSlotFor(player,playerPlannedMove,false);
+        battle.pendingOpponentMoveSlot=queued<kMoveSlots?queued:0xFEU;
+      }
+    }else{
+      forceOpponentSwitch(battle,collection,result);
+      opponent=currentOpponent(battle);
+    }
   }
   if (player.currentHp == 0) {
     appendFaintedOnce(result, BattleSide::Player, player);
@@ -11374,7 +11608,11 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     // A faster foe may knock itself out in confusion.  Its replacement must
     // not receive the move that was selected against the fainted battler.
     if (!battle.active || battle.playerUid != actingUid || player->currentHp == 0 ||
-        pendingReplacementFor(battle,BattleSide::Player)||result.opponentDefeated) {
+        pendingReplacementFor(battle,BattleSide::Player)||
+        pendingReplacementFor(battle,BattleSide::Opponent)||result.opponentDefeated) {
+      if(pendingReplacementFor(battle,BattleSide::Opponent)){
+        result.outcome=battle.outcome;return;
+      }
       if (battle.active) resolveNightmareTurn(battle, collection, result);
       resolveDelayedAttacks(battle, collection, result); result.outcome = battle.outcome;
       if(!battle.active)restorePlayerBattleForm(battle,collection);appendBattleEnd(result,battle);return;
@@ -11394,6 +11632,9 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   };
   auto finishInterruptedTurn = [&]() {
     battle.playerZMoveExecuting=false;
+    if(pendingReplacementFor(battle,BattleSide::Opponent)){
+      result.outcome=battle.outcome;return;
+    }
     resolveNightmareTurn(battle, collection, result);
     resolveDelayedAttacks(battle, collection, result); result.outcome = battle.outcome;
     if(battle.active)advanceEndTurnEffects(battle,collection,result);
@@ -11518,6 +11759,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
         resolveFaintVows(battle,result,BattleSide::Opponent,*opponent,targetEffects,*player,
                          static_cast<MoveId>(117),moveSlot,result.damageDealt);
         appendFaintedOnce(result,BattleSide::Opponent,*opponent);
+        resolveAshBondAfterFaint(battle,result,*player,BattleSide::Player);
         result.opponentDefeated=true;awardExperience(battle,collection,result);
         finishOpponentFaint(battle,collection,result);
         if(!player->currentHp){
@@ -11615,6 +11857,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     setPendingReplacement(battle,BattleSide::Player,1U);
     result.batonPassSwitchRequired = true;
     result.batonPassOpponentMoveSlot = result.enemyActed ? 0xFEU : enemyMoveSlot;
+    battle.pendingOpponentMoveSlot=result.batonPassOpponentMoveSlot;
     result.outcome = battle.outcome;
     return;
   }
@@ -12083,7 +12326,10 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     }else if(blockedByProtect){
       appendMoveEffect(result,BattleSide::Opponent,opponent->uid,selectedMove,
                        BattleMoveEffect::Protected);
-      if(usedMove&&usedMove->makesContact&&
+      const bool opponentContactShield=targetGen6.kingsShield||
+          targetGen6.spikyShield||
+          battle.opponentGen7Effects[battle.opponentIndex].banefulBunker;
+      if(usedMove&&usedMove->makesContact&&opponentContactShield&&
          heldIs(*player,selfVolatile,HeldItem::ProtectivePads))
         recordHeldItemActivation(result,*player,HeldItem::ProtectivePads,
                                  BattleSide::Player);
@@ -12440,10 +12686,11 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
       selfVolatile.attackStage=kMaximumBattleStatStage;
     }
     if(std::strstr(usedMove->effect,"PAIN_SPLIT")){
-      const uint16_t average=static_cast<uint16_t>((player->currentHp+opponent->currentHp)/2U);
-      player->currentHp=std::min(player->maximumHp,average);opponent->currentHp=std::min(opponent->maximumHp,average);
-      appendMoveEffect(result,BattleSide::Player,player->uid,selectedMove,
-                       BattleMoveEffect::PainShared);
+      applyPainSplit(result,*player,BattleSide::Player,
+                     *opponent,BattleSide::Opponent,selectedMove);
+      // Avoid duplicating the user's completed Pain Split meter at the
+      // generic end-of-move snapshot while retaining later HP mutations.
+      playerHpBeforeMove=player->currentHp;
     }
     if(std::strstr(usedMove->effect,"SMELLINGSALT")&&moveAffected&&!opponentHadSubstitute&&
        opponent->status==StatusCondition::Paralysis)
@@ -12593,7 +12840,13 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
   const ReactiveItemSwitch reactiveSwitch=emergencyExit?
       ReactiveItemSwitch::None:triggerReactiveSwitchItem(
           battle,collection,*player,BattleSide::Player,*opponent,
-          BattleSide::Opponent,appliedDamage,result);
+          BattleSide::Opponent,usedMove,appliedDamage,result);
+  if(reactiveSwitch==ReactiveItemSwitch::BattleEnded){
+    result.outcome=battle.outcome;
+    restorePlayerBattleForm(battle,collection);
+    appendBattleEnd(result,battle);
+    return;
+  }
   if(reactiveSwitch==ReactiveItemSwitch::Player)
     player=CollectionLogic::find(collection,battle.playerUid);
   if(reactiveSwitch==ReactiveItemSwitch::Opponent){
@@ -12629,6 +12882,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     resolveFaintVows(battle,result,BattleSide::Opponent,*opponent,targetEffects,*player,
                      selectedMove,moveSlot,finishingHpDamage);
     appendFaintedOnce(result,BattleSide::Opponent,*opponent);
+    resolveAshBondAfterFaint(battle,result,*player,BattleSide::Player);
     result.opponentDefeated=true;awardExperience(battle,collection,result);
     finishOpponentFaint(battle,collection,result);
     opponentFaintResolvedForUTurn=true;
@@ -12643,6 +12897,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
       // The defeated target cannot take its queued action with the newly
       // sent-out trainer Pokemon.
       result.batonPassOpponentMoveSlot=0xFEU;
+      battle.pendingOpponentMoveSlot=result.batonPassOpponentMoveSlot;
       result.outcome=battle.outcome;
       return;
     }
@@ -12657,6 +12912,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
                      BattleMoveEffect::UTurnSwitch);
     result.batonPassSwitchRequired=true;
     result.batonPassOpponentMoveSlot=result.enemyActed?0xFEU:enemyMoveSlot;
+    battle.pendingOpponentMoveSlot=result.batonPassOpponentMoveSlot;
     result.outcome=battle.outcome;
     return;
   }
@@ -12666,6 +12922,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     resolveFaintVows(battle,result,BattleSide::Opponent,*opponent,targetEffects,*player,
                      selectedMove,moveSlot,finishingHpDamage);
     appendFaintedOnce(result,BattleSide::Opponent,*opponent);
+    resolveAshBondAfterFaint(battle,result,*player,BattleSide::Player);
     result.opponentDefeated = true; awardExperience(battle, collection, result);
     finishOpponentFaint(battle, collection, result);
     if(!player->currentHp){player->recoverySecondsRemaining=1;
@@ -12679,6 +12936,9 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     if (!firstHealthyPartyMember(collection, player->uid)) { battle.active = false; battle.outcome = BattleOutcome::Defeat; }
   } else if (!result.enemyActed && !opponentSpentTurnSwitching)
     enemyTurn(battle, collection, *player, result, enemyMoveSlot, commandMove);
+  if(pendingReplacementFor(battle,BattleSide::Opponent)){
+    result.outcome=battle.outcome;return;
+  }
   resolveDelayedAttacks(battle, collection, result);
   if(battle.active){applyHeldEndTurnWithResult(result,*player,battle.playerVolatile,BattleSide::Player,&battle.playerMoveEffects);if(OwnedPokemon* activeOpponent=currentOpponent(battle))applyHeldEndTurnWithResult(result,*activeOpponent,battle.opponentVolatiles[battle.opponentIndex],BattleSide::Opponent,&battle.opponentMoveEffects[battle.opponentIndex]);advanceEndTurnEffects(battle,collection,result);}
   result.outcome = battle.outcome;
@@ -12694,11 +12954,15 @@ BattleActionResult BattleEngine::fight(BattleState& battle, PokemonCollection& c
 }
 
 BattleActionResult BattleEngine::fightPvp(BattleState& battle, PokemonCollection& collection,
-                                           uint8_t moveSlot, uint8_t opponentMoveSlot) {
+                                           uint8_t moveSlot, uint8_t opponentMoveSlot,
+                                           bool opponentUsesZMove) {
   const int16_t previous = gPvpOpponentMoveOverride;
+  const bool previousZMove = gPvpOpponentZMoveOverride;
   gPvpOpponentMoveOverride = opponentMoveSlot;
+  gPvpOpponentZMoveOverride = opponentUsesZMove;
   BattleActionResult result = fight(battle, collection, moveSlot);
   gPvpOpponentMoveOverride = previous;
+  gPvpOpponentZMoveOverride = previousZMove;
   return result;
 }
 
@@ -12796,7 +13060,8 @@ BattleActionResult BattleEngine::switchPokemon(BattleState& battle, PokemonColle
 BattleActionResult BattleEngine::completeBatonPassSwitch(BattleState& battle,
                                                           PokemonCollection& collection,
                                                           uint32_t uid,
-                                                          uint8_t opponentMoveSlot) {
+                                                          uint8_t opponentMoveSlot,
+                                                          uint8_t replacementReasonOverride) {
   BattleActionResult result;
   BossHpLayerScope bossHpLayer(battle);
   OwnedPokemon* current = CollectionLogic::find(collection, battle.playerUid);
@@ -12805,8 +13070,15 @@ BattleActionResult BattleEngine::completeBatonPassSwitch(BattleState& battle,
       !CollectionLogic::isInParty(collection, uid) || replacement->currentHp == 0 ||
       replacement->recoverySecondsRemaining) return result;
 
-  const uint8_t replacementReason=pendingReplacementFor(
+  const uint8_t pendingReason=pendingReplacementFor(
       battle,BattleSide::Player);
+  // The multiplayer replacement picker is a second command barrier. Keep the
+  // cause selected by that barrier authoritative even if a same-turn state
+  // retry arrived between the move and the touch. In particular, a pivot must
+  // never fall through to voluntary-switch trapping rules, and Baton Pass
+  // must retain its stat/effect transfer semantics.
+  const uint8_t replacementReason=replacementReasonOverride?
+      replacementReasonOverride:pendingReason;
   const bool passesState=replacementReason==1U;
   const CombatVolatile passed = battle.playerVolatile;
   const DedicatedMoveEffectState passedMoveEffects=battle.playerMoveEffects;
@@ -12846,7 +13118,18 @@ BattleActionResult BattleEngine::completeBatonPassSwitch(BattleState& battle,
     clearGen7EffectsOnSwitch(battle.playerGen7Effects);
   }
   applySpikesOnEntry(battle,*replacement,BattleSide::Player,result);
+  if(replacement->currentHp&&(replacementReason==3U||replacementReason==4U||
+                              replacementReason==5U)){
+    const uint16_t hpBefore=replacement->currentHp;
+    const StatusCondition statusBefore=replacement->status;
+    applyWishReplacement(*replacement,replacementReason);
+    appendHpChange(result,BattleSide::Player,replacement->uid,
+                   hpBefore,replacement->currentHp);
+    appendStatusChange(result,BattleSide::Player,replacement->uid,
+                       statusBefore,replacement->status);
+  }
   setPendingReplacement(battle,BattleSide::Player,0U);
+  battle.pendingOpponentMoveSlot=0xFFU;
   battle.playerNightmare = false;
   battle.playerBide = BideState{};
   clearEncore(battle.playerVolatile, battle.playerEncoreTurns);
@@ -12857,6 +13140,9 @@ BattleActionResult BattleEngine::completeBatonPassSwitch(BattleState& battle,
   applyEntryAbilities(battle, collection,BattleEntryScope::Player,&result);
   if (opponentMoveSlot != 0xFEU)
     enemyTurn(battle, collection, *replacement, result, opponentMoveSlot);
+  if(pendingReplacementFor(battle,BattleSide::Opponent)){
+    result.outcome=battle.outcome;return result;
+  }
   resolveNightmareTurn(battle, collection, result);
   resolveDelayedAttacks(battle, collection, result);
   if (battle.active) {
@@ -12955,6 +13241,9 @@ BattleActionResult BattleEngine::switchToPokemon(BattleState& battle, PokemonCol
   if (!forcedAfterFaint) {
     if (!pursuitBeforeSwitch&&opponentMoveSlot != 0xFEU)
       enemyTurn(battle, collection, *replacement, result, opponentMoveSlot);
+    if(pendingReplacementFor(battle,BattleSide::Opponent)){
+      result.outcome=battle.outcome;return result;
+    }
     resolveNightmareTurn(battle, collection, result);
     resolveDelayedAttacks(battle, collection, result);
     if(battle.active){applyHeldEndTurnWithResult(result,*replacement,battle.playerVolatile,BattleSide::Player,&battle.playerMoveEffects);if(OwnedPokemon* opponent=currentOpponent(battle))applyHeldEndTurnWithResult(result,*opponent,battle.opponentVolatiles[battle.opponentIndex],BattleSide::Opponent,&battle.opponentMoveEffects[battle.opponentIndex]);advanceEndTurnEffects(battle,collection,result);}
@@ -12964,25 +13253,31 @@ BattleActionResult BattleEngine::switchToPokemon(BattleState& battle, PokemonCol
 
 BattleActionResult BattleEngine::switchToPokemonPvp(BattleState& battle, PokemonCollection& collection,
                                                       uint32_t uid, uint8_t opponentMoveSlot,
-                                                      bool forcedAfterFaint) {
+                                                      bool forcedAfterFaint,
+                                                      bool opponentUsesZMove) {
   const int16_t previous = gPvpOpponentMoveOverride;
+  const bool previousZMove = gPvpOpponentZMoveOverride;
   gPvpOpponentMoveOverride = opponentMoveSlot;
+  gPvpOpponentZMoveOverride = opponentUsesZMove;
   BattleActionResult result = switchToPokemon(battle, collection, uid, forcedAfterFaint);
   gPvpOpponentMoveOverride = previous;
+  gPvpOpponentZMoveOverride = previousZMove;
   return result;
 }
 
 BattleActionResult BattleEngine::switchOpponentPvp(BattleState& battle, PokemonCollection& collection,
-                                                    uint8_t opponentIndex) {
+                                                    uint8_t opponentIndex,
+                                                    bool forcedAfterFaint) {
   BattleActionResult result;
   if (!battle.active || battle.kind != BattleKind::Pvp || opponentIndex >= battle.opponentCount ||
       opponentIndex == battle.opponentIndex || !battle.opponents[opponentIndex].currentHp ||
-      battle.opponentMoveEffects[battle.opponentIndex].ingrained||
-      battle.opponentVolatiles[battle.opponentIndex].trappedTurns||
-      escapePrevented(battle.opponentVolatiles[battle.opponentIndex])) return result;
+      (!forcedAfterFaint&&(
+       battle.opponentMoveEffects[battle.opponentIndex].ingrained||
+       battle.opponentVolatiles[battle.opponentIndex].trappedTurns||
+       escapePrevented(battle.opponentVolatiles[battle.opponentIndex])))) return result;
   OwnedPokemon& outgoing = battle.opponents[battle.opponentIndex];
   const OwnedPokemon* trapper=CollectionLogic::find(collection,battle.playerUid);
-  if(trapper&&trappedByAbility(battle,outgoing,
+  if(!forcedAfterFaint&&trapper&&trappedByAbility(battle,outgoing,
       battle.opponentMoveEffects[battle.opponentIndex],*trapper))return result;
   applyRegeneratorOnSwitch(outgoing,BattleSide::Opponent,&result);
   if (abilityIs(outgoing, "NATURAL CURE")) outgoing.status = StatusCondition::None;
@@ -13034,6 +13329,43 @@ BattleActionResult BattleEngine::switchOpponentPvp(BattleState& battle, PokemonC
                      BattleSide::Opponent,result);
   applyEntryAbilities(battle, collection,BattleEntryScope::Opponent,&result);
   result.outcome = battle.outcome;
+  return result;
+}
+
+BattleActionResult BattleEngine::completeOpponentPivotPvp(
+    BattleState& battle,PokemonCollection& collection,uint8_t playerMoveSlot,
+    uint8_t replacementReasonOverride){
+  BattleActionResult result{};
+  if(!battle.active||battle.kind!=BattleKind::Pvp||
+     (pendingReplacementFor(battle,BattleSide::Opponent)==0U&&
+      replacementReasonOverride==0U))return result;
+  setPendingReplacement(battle,BattleSide::Opponent,0U);
+  battle.pendingOpponentMoveSlot=0xFFU;
+
+  if(playerMoveSlot!=0xFEU){
+    // The first phase already advanced the command turn when the faster
+    // Volt Switch/U-turn was executed. Re-enter only the queued local action
+    // against the chosen recipient while retaining that same turn number.
+    if(battle.turn)--battle.turn;
+    return fightPvp(battle,collection,playerMoveSlot,0xFEU,false);
+  }
+
+  result.accepted=true;
+  OwnedPokemon* player=CollectionLogic::find(collection,battle.playerUid);
+  resolveNightmareTurn(battle,collection,result);
+  resolveDelayedAttacks(battle,collection,result);
+  if(battle.active&&player){
+    applyHeldEndTurnWithResult(result,*player,battle.playerVolatile,
+                               BattleSide::Player,&battle.playerMoveEffects);
+    if(OwnedPokemon* opponent=currentOpponent(battle))
+      applyHeldEndTurnWithResult(result,*opponent,
+          battle.opponentVolatiles[battle.opponentIndex],BattleSide::Opponent,
+          &battle.opponentMoveEffects[battle.opponentIndex]);
+    advanceEndTurnEffects(battle,collection,result);
+  }
+  result.outcome=battle.outcome;
+  if(!battle.active)restorePlayerBattleForm(battle,collection);
+  appendBattleEnd(result,battle);
   return result;
 }
 
@@ -13123,6 +13455,115 @@ BattleActionResult BattleEngine::useItem(BattleState& battle, PokemonCollection&
                                           PpItemInventory* ppItems, uint8_t moveSlot) {
   BattleActionResult result{};
   useItemInto(battle, collection, inventory, item, result, targetUid, ppItems, moveSlot);
+  return result;
+}
+
+BattleActionResult BattleEngine::useItemPvp(BattleState& battle,
+                                             PokemonCollection& collection,
+                                             Inventory& inventory,
+                                             BattleItem item,
+                                             uint32_t targetUid,
+                                             PpItemInventory* ppItems,
+                                             uint8_t opponentMoveSlot,
+                                             bool opponentUsesZMove) {
+  const int16_t previous = gPvpOpponentMoveOverride;
+  const bool previousZMove = gPvpOpponentZMoveOverride;
+  gPvpOpponentMoveOverride = opponentMoveSlot;
+  gPvpOpponentZMoveOverride = opponentUsesZMove;
+  BattleActionResult result = useItem(battle, collection, inventory, item,
+                                      targetUid, ppItems);
+  gPvpOpponentMoveOverride = previous;
+  gPvpOpponentZMoveOverride = previousZMove;
+  return result;
+}
+
+BattleActionResult BattleEngine::useOpponentItemPvp(BattleState& battle,
+                                                     Inventory& inventory,
+                                                     PpItemInventory& ppItems,
+                                                     BattleItem item,
+                                                     uint8_t opponentIndex) {
+  BattleActionResult result{};
+  if (!battle.active || battle.kind != BattleKind::Pvp ||
+      opponentIndex >= battle.opponentCount ||
+      static_cast<uint8_t>(item) >= static_cast<uint8_t>(BattleItem::Count)) return result;
+  OwnedPokemon& target = battle.opponents[opponentIndex];
+  const bool active = opponentIndex == battle.opponentIndex;
+  if (active && embargoTurns(battle.opponentVolatiles[opponentIndex])) return result;
+
+  uint16_t* quantity = nullptr;
+  if (isPpInventoryItem(item)) {
+    const uint8_t index = ppInventoryIndex(item);
+    if (index >= kPpItemCount) return result;
+    quantity = &ppItems.quantities[index];
+  } else {
+    const uint8_t index = static_cast<uint8_t>(item);
+    if (index >= kStandardMedicineCount) return result;
+    quantity = &inventory.medicine[index];
+  }
+  if (!quantity || !*quantity) return result;
+
+  const uint16_t hpBefore = target.currentHp;
+  const StatusCondition statusBefore = target.status;
+  bool useful = false;
+  switch (item) {
+    case BattleItem::HyperPotion:
+      if (target.currentHp && target.currentHp < target.maximumHp) {
+        target.currentHp = std::min<uint16_t>(target.maximumHp,
+            static_cast<uint16_t>(target.currentHp + 200U));
+        useful = true;
+      }
+      break;
+    case BattleItem::FullHeal:
+      if (target.status != StatusCondition::None) {
+        target.status = StatusCondition::None;
+        useful = true;
+      }
+      if (active && battle.opponentVolatiles[opponentIndex].confusionTurns) {
+        battle.opponentVolatiles[opponentIndex].confusionTurns = 0;
+        useful = true;
+      }
+      break;
+    case BattleItem::MaxRevive:
+      if (!target.currentHp || target.recoverySecondsRemaining) {
+        target.currentHp = target.maximumHp;
+        target.status = StatusCondition::None;
+        target.recoverySecondsRemaining = 0;
+        useful = true;
+      }
+      break;
+    case BattleItem::MaxElixir:
+      for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
+        const uint8_t maximum = CollectionLogic::maximumMovePp(target, slot);
+        if (!maximum || target.movePp[slot] >= maximum) continue;
+        target.movePp[slot] = maximum;
+        useful = true;
+      }
+      break;
+    default:
+      return result;
+  }
+  if (!useful) return result;
+
+  --*quantity;
+  result.accepted = true;
+  if (active) {
+    CombatVolatile& volatileState = battle.opponentVolatiles[opponentIndex];
+    if (statusBefore == StatusCondition::Sleep) volatileState.sleepTurns = 0;
+    if (statusBefore == StatusCondition::Poison ||
+        statusBefore == StatusCondition::BadlyPoisoned) volatileState.toxicCounter = 0;
+    DedicatedMoveEffectState& effects = battle.opponentMoveEffects[opponentIndex];
+    effects.furyCutterCount = 0;
+    effects.destinyBond = false;
+    effects.grudge = false;
+  }
+  BattleEvent& itemEvent = appendEvent(result, BattleEventType::ItemUsed,
+                                        BattleSide::Opponent, target.uid);
+  itemEvent.value = static_cast<uint8_t>(item);
+  if (target.currentHp != hpBefore)
+    appendHpChange(result, BattleSide::Opponent, target.uid, hpBefore, target.currentHp);
+  appendStatusChange(result, BattleSide::Opponent, target.uid,
+                     statusBefore, target.status);
+  result.outcome = battle.outcome;
   return result;
 }
 
@@ -13263,7 +13704,12 @@ void BattleEngine::useItemInto(BattleState& battle, PokemonCollection& collectio
   }
   appendStatusChange(result,BattleSide::Player,target->uid,statusBefore,target->status);
   appendStageChanges(result, BattleSide::Player, player->uid, stagesBefore, battle.playerVolatile);
-  enemyTurn(battle, collection, *player, result);
+  const uint8_t opponentMoveSlot = gPvpOpponentMoveOverride >= 0
+      ? static_cast<uint8_t>(gPvpOpponentMoveOverride) : 0xFFU;
+  enemyTurn(battle, collection, *player, result, opponentMoveSlot);
+  if(pendingReplacementFor(battle,BattleSide::Opponent)){
+    result.outcome=battle.outcome;return;
+  }
   resolveNightmareTurn(battle, collection, result);
   resolveDelayedAttacks(battle, collection, result);
   if(battle.active){applyHeldEndTurnWithResult(result,*player,battle.playerVolatile,BattleSide::Player,&battle.playerMoveEffects);if(OwnedPokemon* opponent=currentOpponent(battle))applyHeldEndTurnWithResult(result,*opponent,battle.opponentVolatiles[battle.opponentIndex],BattleSide::Opponent,&battle.opponentMoveEffects[battle.opponentIndex]);advanceEndTurnEffects(battle,collection,result);}

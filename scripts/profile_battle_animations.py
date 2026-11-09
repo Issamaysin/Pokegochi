@@ -21,6 +21,19 @@ def main() -> None:
     parser.add_argument("--moves", default="1,59,76,396,650")
     parser.add_argument("--speeds", default="1,2,3")
     parser.add_argument("--side", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--turn", type=int, choices=(0, 1), default=0)
+    parser.add_argument(
+        "--workspace", choices=("normal", "pvp"), default="normal",
+        help="use the normal renderer arena or the exact borrowed PvP Box arena",
+    )
+    parser.add_argument(
+        "--radio", choices=("off", "ble", "wifi"), default="off",
+        help="keep the selected production radio runtime alive during playback",
+    )
+    parser.add_argument(
+        "--setup-between", action="store_true",
+        help="rebuild the battle fixture between moves to isolate stale-scene failures",
+    )
     parser.add_argument("--timeout", type=float, default=90.0)
     parser.add_argument(
         "--log", default=".codex-debug/animation-optimization-20261030/profile.log"
@@ -90,13 +103,33 @@ def main() -> None:
             if now >= setup_retry_at:
                 send("ANIMSETUP")
                 setup_retry_at = now + 4.0
-        for speed in speeds:
-            send(f"ANIMSPEED {speed}")
-            wait_for((f"[ANIM_DIAG] SPEED {speed}x",), 5.0)
-            for move in moves:
-                send(f"ANIMPLAY {move} {args.side}")
-                wait_for(("[ANIM_DIAG] DONE", "[ANIM_DIAG] PLAY REJECTED"),
-                         args.timeout)
+        if args.radio != "off":
+            radio = args.radio.upper()
+            send(f"ANIMRADIO {radio}")
+            wait_for((f"[ANIM_DIAG] RADIO {radio} started=1 workspace=1",), 45.0)
+            # Wi-Fi parks and reloads GameSave while its driver allocates, so
+            # build the transient battle only after the real radio lifetime
+            # is established. Repeating setup is harmless for BLE as well.
+            send("ANIMSETUP")
+            wait_for(("[ANIM_DIAG] READY",), 15.0)
+        if args.workspace == "pvp":
+            send("ANIMPVP")
+            wait_for(("[ANIM_DIAG] PVP READY",), 15.0)
+        try:
+            for speed in speeds:
+                send(f"ANIMSPEED {speed}")
+                wait_for((f"[ANIM_DIAG] SPEED {speed}x",), 5.0)
+                for move_index, move in enumerate(moves):
+                    if args.setup_between and move_index:
+                        send("ANIMSETUP")
+                        wait_for(("[ANIM_DIAG] READY",), 15.0)
+                    send(f"ANIMPLAY {move} {args.side} {args.turn}")
+                    wait_for(("[ANIM_DIAG] DONE", "[ANIM_DIAG] PLAY REJECTED"),
+                             args.timeout)
+        finally:
+            if args.workspace == "pvp":
+                send("ANIMPVP OFF")
+                wait_for(("[ANIM_DIAG] PVP RELEASED",), 30.0)
         record("[HOST] animation profile complete")
 
     connection.close()

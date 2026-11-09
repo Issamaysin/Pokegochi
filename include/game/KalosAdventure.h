@@ -102,6 +102,8 @@ class KalosAdventure {
 
   static bool begin(KalosAdventureState& state, KalosArea area, uint32_t seed,
                     const PokemonCollection& collection);
+  static bool willPreserveChoicesOnAbandon(
+      const KalosAdventureState& state);
   static bool abandon(KalosAdventureState& state);
   static bool active(const KalosAdventureState& state);
   static uint8_t choices(const KalosAdventureState& state,

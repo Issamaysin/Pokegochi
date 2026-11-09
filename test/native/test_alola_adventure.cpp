@@ -19,6 +19,45 @@ uint64_t itemBit(HeldItem item){
 }
 
 int main(){
+  // Owning Greninja in Alola grants one persistent Ash's Bond. The retired
+  // bit 35 remains untouched, the item cannot duplicate, and only Greninja
+  // can equip/take it through the ordinary held-item inventory path.
+  PokemonCollection bondCollection;CollectionLogic::initialize(bondCollection);
+  uint32_t greninjaUid=0U;
+  assert(CollectionLogic::add(bondCollection,CollectionLogic::createPokemon(
+      0U,658U,50U,false,0xA55B0D01U,7U),&greninjaUid));
+  Gen7UniqueItemInventory bondItems{};
+  assert(AlolaForms::reconcileUniqueItems(bondCollection,bondItems));
+  assert((bondItems.bagMask&kAshsBondOwnershipBit)&&
+         (bondItems.claimedMask&kAshsBondOwnershipBit)&&
+         !(bondItems.bagMask&kRemovedUltranecroziumZBit));
+  assert(!AlolaForms::reconcileUniqueItems(bondCollection,bondItems));
+  uint16_t baseHeldItems[kHeldItemInventorySlots]{};
+  SpecialHeldItemInventory bondSpecial{};Gen4UniqueItemInventory bondGen4{};
+  Gen5UniqueItemInventory bondGen5{};ModernHeldItemInventory bondModern{};
+  uint64_t bondMachines=0U;
+  OwnedPokemon wrongSpecies=CollectionLogic::createPokemon(
+      0U,657U,50U,false,0xA55B0D02U,7U);
+  assert(!equipHeldItem(wrongSpecies,HeldItem::AshsBond,baseHeldItems,
+      bondSpecial,bondGen4,bondGen5,bondItems,bondModern,bondMachines));
+  assert(bondItems.bagMask&kAshsBondOwnershipBit);
+  OwnedPokemon* greninja=CollectionLogic::find(bondCollection,greninjaUid);
+  assert(greninja&&equipHeldItem(*greninja,HeldItem::AshsBond,baseHeldItems,
+      bondSpecial,bondGen4,bondGen5,bondItems,bondModern,bondMachines));
+  assert(greninja->heldItem==HeldItem::AshsBond&&
+         !(bondItems.bagMask&kAshsBondOwnershipBit));
+  assert(!AlolaForms::reconcileUniqueItems(bondCollection,bondItems));
+  assert(unequipHeldItem(*greninja,baseHeldItems,bondSpecial,bondGen4,
+      bondGen5,bondItems,bondModern,bondMachines));
+  assert(greninja->heldItem==HeldItem::None&&
+         (bondItems.bagMask&kAshsBondOwnershipBit));
+  // A legacy save may contain the claim tombstone without either a bag copy
+  // or a holder. Reconciliation restores exactly one usable copy.
+  bondItems.bagMask&=~kAshsBondOwnershipBit;
+  assert(AlolaForms::reconcileUniqueItems(bondCollection,bondItems));
+  assert((bondItems.claimedMask&kAshsBondOwnershipBit)&&
+         (bondItems.bagMask&kAshsBondOwnershipBit));
+
   // Alolan regional variants are permanent identities, never selectable
   // transformations. Kanto and Alolan individuals may share a National Dex
   // number, but neither one can be toggled into the other from the Box.
@@ -76,6 +115,36 @@ int main(){
   assert(!AlolaAdventure::sunThemeUnlocked(alola));
   assert(!AlolaAdventure::moonThemeUnlocked(alola));
   assert(!AlolaAdventure::setMoonThemeSelected(alola,true));
+
+  AlolaAdventureState preview=alola;
+  preview.unlockedAreas=AlolaAdventure::kAllAreasMask;
+  assert(AlolaAdventure::begin(
+      preview,AlolaArea::VerdantCavern,0x33007001U,collection));
+  AlolaRoomChoice previewChoices[2]{};
+  const uint8_t previewCount=AlolaAdventure::choices(preview,previewChoices);
+  assert(previewCount==2U);
+  assert(AlolaAdventure::willPreserveChoicesOnAbandon(preview));
+  assert(AlolaAdventure::abandon(preview));
+  AlolaAdventureState reloadedPreview=preview;
+  assert(AlolaAdventure::begin(
+      reloadedPreview,AlolaArea::BrookletHill,0x33007002U,collection));
+  assert(reloadedPreview.run.seed==0x33007001U);
+  assert(AlolaAdventure::abandon(reloadedPreview));
+  assert(AlolaAdventure::begin(
+      reloadedPreview,AlolaArea::VerdantCavern,0x33007003U,collection));
+  AlolaRoomChoice restoredChoices[2]{};
+  assert(AlolaAdventure::choices(reloadedPreview,restoredChoices)==previewCount);
+  for(uint8_t index=0U;index<previewCount;++index){
+    assert(restoredChoices[index].kind==previewChoices[index].kind);
+    assert(restoredChoices[index].route==previewChoices[index].route);
+    assert(restoredChoices[index].recommended==previewChoices[index].recommended);
+  }
+  AlolaAdventure::choose(reloadedPreview,0U,collection);
+  assert(!AlolaAdventure::willPreserveChoicesOnAbandon(reloadedPreview));
+  assert(AlolaAdventure::abandon(reloadedPreview));
+  assert(AlolaAdventure::begin(
+      reloadedPreview,AlolaArea::VerdantCavern,0x33007004U,collection));
+  assert(reloadedPreview.run.seed==0x33007004U);
 
   // Every authored island/postgame route unlocks in sequence, has a Totem
   // encounter, and permanently awards its primary and optional bonus crystal.
@@ -171,6 +240,7 @@ int main(){
       foundSos=true;
     }
     AlolaAdventure::abandon(alola);
+    alola.run=AlolaRunState{};
   }
   assert(foundSos);
 

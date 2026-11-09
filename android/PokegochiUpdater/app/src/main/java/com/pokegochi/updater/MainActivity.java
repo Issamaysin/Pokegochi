@@ -302,9 +302,12 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
     private void selectPackage() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
+        // Providers do not agree on a MIME type for the project-specific
+        // .pgota extension. Google Drive has returned it as application/zip,
+        // application/octet-stream and provider-specific binary types across
+        // Android releases. Let the user select the file and rely on
+        // UpdatePackage's strict magic/manifest/length/SHA-256 validation.
         intent.setType("*/*");
-        intent.putExtra(Intent.EXTRA_MIME_TYPES,
-                new String[]{"application/zip", "application/octet-stream"});
         startActivityForResult(intent, PICK_PACKAGE);
     }
 
@@ -321,7 +324,11 @@ public final class MainActivity extends Activity implements BleUpdateClient.List
     private void chooseSaveToRestore() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType("application/octet-stream");
+        // A .pgsav created above is not guaranteed to retain
+        // application/octet-stream when it is later opened from Drive,
+        // Downloads or another document provider. SaveBackup validates the
+        // complete PGS1 container before any BLE write starts.
+        intent.setType("*/*");
         startActivityForResult(intent, PICK_SAVE_FILE);
     }
 

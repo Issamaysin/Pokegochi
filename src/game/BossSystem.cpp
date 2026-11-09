@@ -356,7 +356,8 @@ void BossSystem::recordAttempt(BossEncounterState& encounter,
 }
 
 BossRewardResult BossSystem::awardVictoryReward(
-    Inventory& inventory, EggInventory& eggs, const PokedexState& pokedex,
+    Inventory& inventory, EggInventory& eggs, const EggState& activeEgg,
+    const PokedexState& pokedex,
     uint8_t unlockedGeneration, uint32_t seed) {
   BossRewardResult reward;
   uint32_t roll = seed ? seed : 0xB055A11U;
@@ -381,7 +382,7 @@ BossRewardResult BossSystem::awardVictoryReward(
   };
   auto grantSpecialEgg = [&]() {
     if (!EggSystem::storeBattleTowerSpecial(
-            eggs,pokedex,unlockedGeneration,roll^0x424F5353UL,
+            eggs,activeEgg,pokedex,unlockedGeneration,roll^0x424F5353UL,
             &reward.eggSpeciesId))return false;
     reward.kind = BossRewardKind::SpecialEgg;
     return true;

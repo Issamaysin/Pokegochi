@@ -143,8 +143,10 @@ class SinnohExpedition {
                                bool successful);
   static uint16_t chooseEncounterSpecies(const SinnohExpeditionState& state,
                                          SinnohSite site, uint8_t teamLevel,
-                                         uint32_t seed);
+                                         uint32_t seed,
+                                         bool forceLegendary = false);
   static bool startEncounter(SinnohExpeditionState& state, BattleState& battle,
                              PokemonCollection& collection, uint32_t playerUid,
-                             SinnohSite site, uint32_t seed);
+                             SinnohSite site, uint32_t seed,
+                             bool forceLegendary = false);
 };

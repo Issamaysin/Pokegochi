@@ -67,7 +67,7 @@ assert card_layout.index("fireRedText.setTextDatum(MC_DATUM);") < card_layout.in
 assert "definition->descriptionLine1,\n                                 cardCenterX" in card_layout
 assert "definition->descriptionLine2,\n                                 cardCenterX" in card_layout
 assert "display.fillRoundRect(263,16,40,23,7,themePale());" in region_hub
-assert "fireRedText.setTextDatum(MC_DATUM);\n    fireRedText.setTextColor(themeDark(),themePale());\n    fireRedText.drawStringFitted(pageLabel,283,28,34,1);" in region_hub
+assert "fireRedText.setTextDatum(MC_DATUM);\n    fireRedText.setTextColor(themePaleInk(),themePale());\n    fireRedText.drawStringFitted(pageLabel,283,28,34,1);" in region_hub
 assert "fireRedText.drawStringFitted(pageLabel,283,28,34,1);" in region_hub
 assert "fireRedText.drawStringFitted(pageLabel,160,191,90,1);" not in region_hub
 
