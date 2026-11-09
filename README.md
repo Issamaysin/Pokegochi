@@ -6,6 +6,8 @@ battle rules to a 320x240 landscape touchscreen.
 
 Download the signed [Android 3.1 APK](https://drive.google.com/file/d/1wA6P70FUgiOU_qtQs5vnNUUqpmpAKIRN/view?usp=drivesdk)
 or the save-preserving [Firmware 4.1 PGOTA](https://drive.google.com/file/d/1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi/view?usp=drivesdk).
+The standalone [Pokegochi Updater 2.5 APK](https://drive.google.com/file/d/1dNQ5woQwcwu1yLnsyEQXe8Dk4vn2bl7B/view?usp=drivesdk)
+is available under a stable, version-independent filename.
 The complete release is also published in
 [GitHub releases](https://github.com/Issamaysin/Pokegochi/releases), and the
 coordinated source is preserved by the

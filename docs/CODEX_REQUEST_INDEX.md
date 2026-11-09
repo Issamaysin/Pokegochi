@@ -8,6 +8,12 @@
 - A ESP32 DevKit dedicada ao servidor usa CP210x e, nesta máquina, enumerou na `COM8`; não confundir essa placa sem tela com o Pokegochi físico CH340 da `COM6`/`COM7`.
 - Nunca publicar um APK Android somente porque o Gradle terminou em `BUILD SUCCESSFUL`. Antes de assinar ou subir, abrir o APK final e comparar o `pokegochi.pak` interno com o pacote canônico por versão, quantidade/tamanho e SHA-256. Essa classe de falha já ocorreu duas vezes: R20261028-239 e R20261029-253.
 
+## R20261109-412 - Publicar um link simples para o APK do Updater
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-412 | 2026-11-09 | Subir também o APK do updater e fornecer um link fácil | Concluído, validado e publicado | O Updater 2.5 (`com.pokegochi.updater`, `versionCode 7`) foi recompilado com sucesso, passou o contrato do formato atual, confirmou assinatura APK v2 e manteve o certificado histórico SHA-256 `B292392661941B1BE5C26013634CB28BEFBD51259DDf8BEBA08B620FC1EDCE7D`. O APK mede 876.360 bytes e possui SHA-256 `00EB15A1C035564AFD6C22856EC13514E07C0067962BFB36C299262160F64E8F`. Foi publicado na pasta de releases com o nome estável `Pokegochi-Updater.apk`; o readback do Drive confirmou ID `1dNQ5woQwcwu1yLnsyEQXe8Dk4vn2bl7B`, MIME Android correto, tamanho, pasta e modificação. Link: [baixar Pokegochi Updater](https://drive.google.com/file/d/1dNQ5woQwcwu1yLnsyEQXe8Dk4vn2bl7B/view?usp=drivesdk). |
+
 ## R20261109-411 - Impedir o Drive de acrescentar `.zip` ao PGOTA
 
 | ID | Data | Pedido | Status | Resultado |

@@ -71,6 +71,9 @@ unpacked asset tree.
 
 ## Build and install the Android updater
 
+The current ready-to-install APK is available as
+[Pokegochi-Updater.apk](https://drive.google.com/file/d/1dNQ5woQwcwu1yLnsyEQXe8Dk4vn2bl7B/view?usp=drivesdk).
+
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build_android_updater.ps1
 adb install -r .\dist\PokegochiUpdater.apk
