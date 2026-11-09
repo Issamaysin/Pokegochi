@@ -8,6 +8,12 @@
 - A ESP32 DevKit dedicada ao servidor usa CP210x e, nesta máquina, enumerou na `COM8`; não confundir essa placa sem tela com o Pokegochi físico CH340 da `COM6`/`COM7`.
 - Nunca publicar um APK Android somente porque o Gradle terminou em `BUILD SUCCESSFUL`. Antes de assinar ou subir, abrir o APK final e comparar o `pokegochi.pak` interno com o pacote canônico por versão, quantidade/tamanho e SHA-256. Essa classe de falha já ocorreu duas vezes: R20261028-239 e R20261029-253.
 
+## R20261109-411 - Impedir o Drive de acrescentar `.zip` ao PGOTA
+
+| ID | Data | Pedido | Status | Resultado |
+|---|---|---|---|---|
+| R20261109-411 | 2026-11-09 | Corrigir o pacote da release 4.1 no Drive porque o download acrescentava `.zip`, impedindo a seleção pelo updater, e publicar um APK novo do updater somente se necessário | Concluído e verificado; novo APK do updater desnecessário | O arquivo e o nome lógico já eram `Pokegochi-Firmware-v4.1.pgota`, mas o upload tinha sido classificado como `application/zip`; o provedor podia então materializá-lo como `.pgota.zip`. Os mesmos 34.652.948 bytes foram reenviados preservando o ID e o link, agora com MIME próprio `application/x-pokegochi-pgota`. O readback autenticado confirmou nome `Pokegochi-Firmware-v4.1.pgota`, extensão `pgota`, MIME correto e tamanho original. O Updater 2.5 já abre qualquer MIME com `ACTION_OPEN_DOCUMENT`/`*/*` e valida magic, manifesto, comprimentos, assinatura e SHA-256 pelo conteúdo, portanto nenhuma alteração ou publicação de APK do updater foi necessária. Link corrigido: [PGOTA 4.1](https://drive.google.com/file/d/1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi/view?usp=drivesdk). |
+
 ## R20261109-410 - Publicar o release do multiplayer Wi-Fi
 
 | ID | Data | Pedido | Status | Resultado |

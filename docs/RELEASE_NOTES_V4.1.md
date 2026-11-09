@@ -60,5 +60,7 @@ multiplayer remains available on its own Bag page.
 - `Pokegochi-Online-Server-v1.0.bin`
 - `SHA256SUMS.txt`
 
-The APK and PGOTA links above point to the verified Google Drive mirror.
+The APK and PGOTA links above point to the verified Google Drive mirror. The
+PGOTA is stored as `application/x-pokegochi-pgota` so Android downloads keep the
+`.pgota` suffix instead of appending `.zip`.
 SHA-256 values are published with the GitHub release.
