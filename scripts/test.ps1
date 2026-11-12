@@ -29,6 +29,10 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_lava_plume_animation_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_giga_impact_animation_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_battle_animation_flash_safety_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_gen5_animation_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_gen6_animation_contract.py')
@@ -85,6 +89,8 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_release_identity_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_wild_auto_battle_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_theme_selector_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_language_selector_contract.py')
@@ -102,6 +108,10 @@ try {
     & $python (Join-Path $projectRoot 'test\test_complete_mega_catalog_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_form_lifecycle_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_spinda_spots_contract.py')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $python (Join-Path $projectRoot 'test\test_spinda_box_fixture_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $python (Join-Path $projectRoot 'test\test_unova_form_contract.py')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -179,6 +189,10 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/battle_presentation_timing.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/AlolaForms.cpp src/game/Collection.cpp src/game/PartyPresets.cpp test/native/test_party_presets.cpp -o "$out/party_presets.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/party_presets.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & $zig c++ -std=c++17 -w -Iinclude test/native/test_touch_filter.cpp -o "$out/touch_filter.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/touch_filter.exe"
@@ -211,7 +225,11 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/ability_matrix.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $zig c++ -std=c++17 -w -Itest/native/stubs -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/AlolaForms.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/services/PersistentSave.cpp test/native/test_persistent_save.cpp -o "$out/persistent_save.exe"
+    & $zig c++ -std=c++17 -w -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/AlolaForms.cpp src/game/Collection.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp test/native/audit_specialized_abilities.cpp -o "$out/specialized_ability_audit.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$out/specialized_ability_audit.exe"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & $zig c++ -std=c++17 -w -Itest/native/stubs -Iinclude src/game/PetState.cpp src/game/PokemonData.cpp src/game/HeldItems.cpp src/game/MegaEvolution.cpp src/game/AlolaForms.cpp src/game/Collection.cpp src/game/PartyPresets.cpp src/game/WorldFeatures.cpp src/game/TrainerData.cpp src/game/BattleEngine.cpp src/game/Pokedex.cpp src/services/PersistentSave.cpp test/native/test_persistent_save.cpp -o "$out/persistent_save.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & "$out/persistent_save.exe"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -2,6 +2,7 @@
 
 #include "game/BattlePresentationOrder.h"
 #include "game/BattlePresentationTiming.h"
+#include "game/wild_auto_policy.h"
 
 int main() {
   using namespace BattlePresentationTiming;
@@ -186,6 +187,41 @@ int main() {
       false, false, false, false, true));
   assert(BattlePresentationOrder::journalAdvanceBlocked(
       false, true, true, true, true));
+
+  // A fast physical tap may be retained only for a text/page that has reached
+  // its presentation boundary. It must never cross an HP, animation, level-up
+  // preparation or finish barrier, and one idle command tap cannot become a
+  // future dialogue acknowledgement.
+  assert(BattlePresentationOrder::manualAdvanceCaptureCanArm(
+      true, true, false));
+  assert(!BattlePresentationOrder::manualAdvanceCaptureCanArm(
+      false, true, false));
+  assert(!BattlePresentationOrder::manualAdvanceCaptureCanArm(
+      true, false, false));
+  assert(!BattlePresentationOrder::manualAdvanceCaptureCanArm(
+      true, true, true));
+
+  // The final result/reward/CONTINUE sequence uses a standalone battle
+  // surface after the journal becomes idle. It retains one quick hardware tap
+  // only while text is visible, never on the exposed command grid or across a
+  // deferred presentation barrier.
+  assert(BattlePresentationOrder::standaloneAdvanceCaptureCanArm(
+      true, true, false));
+  assert(!BattlePresentationOrder::standaloneAdvanceCaptureCanArm(
+      false, true, false));
+  assert(!BattlePresentationOrder::standaloneAdvanceCaptureCanArm(
+      true, false, false));
+  assert(!BattlePresentationOrder::standaloneAdvanceCaptureCanArm(
+      true, true, true));
+
+  // Wild auto-battle is opt-in only for ordinary encounters. Every safety
+  // stop is evaluated before either a text acknowledgement or a move.
+  assert(WildAutoBattlePolicy::mayRun(true, false, false, true, true));
+  assert(!WildAutoBattlePolicy::mayRun(false, false, false, true, true));
+  assert(!WildAutoBattlePolicy::mayRun(true, true, false, true, true));
+  assert(!WildAutoBattlePolicy::mayRun(true, false, true, true, true));
+  assert(!WildAutoBattlePolicy::mayRun(true, false, false, false, true));
+  assert(!WildAutoBattlePolicy::mayRun(true, false, false, true, false));
 
   // A presentation retry resumes from the last physically committed sample.
   // Values outside this event's interval belong to another event and must not

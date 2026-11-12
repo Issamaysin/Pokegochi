@@ -16,6 +16,7 @@
 #include "game/AlolaAdventure.h"
 #include "game/AlolaForms.h"
 #include "game/UnovaForms.h"
+#include "game/PartyPresets.h"
 #include "game/TowerDefenseSystem.h"
 
 enum class UiColorTheme : uint8_t {
@@ -210,6 +211,9 @@ struct GameSave {
   // V52 records only victories earned in Internet Balanced battles. The
   // relay receives this value for discovery display but never owns it.
   uint32_t wifiBalancedWins = 0;
+  // V53 adds five numbered Party presets. Only the selected primary preset is
+  // mirrored into collection.party, preserving every existing battle path.
+  PartyPresetState partyPresets{};
 };
 // V43 added only the compact Poke Defense campaign record. The V42 and V43
 // ABIs are retained below as explicit frozen records and migrated field by
@@ -239,7 +243,7 @@ class PersistentSave {
  private:
   struct Record;
   static constexpr uint32_t kMagic = 0x504F4B45;
-  static constexpr uint16_t kFormatVersion = 52;
+  static constexpr uint16_t kFormatVersion = 53;
   struct MartStateLegacy7 { MartOffer offers[7]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy10 { MartOffer offers[10]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
   struct MartStateLegacy15 { MartOffer offers[15]{}; uint32_t elapsedSeconds=86400; uint32_t day=0; uint32_t rng=0x4D415254U; };
@@ -1187,6 +1191,14 @@ class PersistentSave {
   struct RecordV51 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV51 payload; uint32_t crc; };
   static_assert(sizeof(GameSaveV51) == 54984U && sizeof(RecordV51) == 55008U,
                 "Shipped V51 record size changed");
+  // V52 reused V51's final alignment bytes for wifiBalancedWins and therefore
+  // retained the exact same 54,984-byte payload. Freeze that complete record
+  // before PartyPresetState extends the tail in V53.
+  static constexpr size_t kGameSaveV52Size = 54984U;
+  struct alignas(GameSave) GameSaveV52 { uint8_t bytes[kGameSaveV52Size]{}; };
+  struct RecordV52 { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSaveV52 payload; uint32_t crc; };
+  static_assert(sizeof(GameSaveV52) == 54984U && sizeof(RecordV52) == 55008U,
+                "Shipped V52 record size changed");
   struct Record { uint32_t magic; uint16_t version; uint16_t payloadSize; uint32_t sequence; GameSave payload; uint32_t crc; };
   Preferences preferences_;
   uint64_t sinnohMachineOwnership_ = 0;
@@ -1233,15 +1245,18 @@ class PersistentSave {
   bool readRecordV49(const char* key, RecordV49& record);
   bool readRecordV50(const char* key, RecordV50& record);
   bool readRecordV51(const char* key, RecordV51& record);
+  bool readRecordV52(const char* key, RecordV52& record);
   bool valid(const Record& record) const;
   uint32_t crc32(const uint8_t* data, size_t length) const;
   uint32_t crc32Update(uint32_t state, const uint8_t* data, size_t length) const;
 #if defined(ARDUINO_ARCH_ESP32)
   bool inspectCurrentRecord(const char* key, uint32_t& sequence) const;
   bool inspectV51Record(const char* key, uint32_t& sequence) const;
+  bool inspectV52Record(const char* key, uint32_t& sequence) const;
   bool inspectAnyFileRecord(const char* key, uint32_t& sequence) const;
   bool loadCurrentRecord(const char* key, GameSave& save, uint32_t& sequence) const;
   bool loadV51Record(const char* key, GameSave& save, uint32_t& sequence) const;
+  bool loadV52Record(const char* key, GameSave& save, uint32_t& sequence) const;
 #endif
   bool isNewer(uint32_t a, uint32_t b) const;
 };

@@ -18,8 +18,9 @@ ANDROID_PROTOCOL = (
 
 def test_wins_are_local_save_state_and_relayed_only_for_presence():
     assert "uint32_t wifiBalancedWins = 0;" in SAVE_H
-    assert "kFormatVersion = 52" in SAVE_H
+    assert "kFormatVersion = 53" in SAVE_H
     assert "struct RecordV51" in SAVE_H
+    assert "struct RecordV52" in SAVE_H
     assert "save.wifiBalancedWins = 0;" in (
         ROOT / "src/services/PersistentSave.cpp"
     ).read_text(encoding="utf-8")

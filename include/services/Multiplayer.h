@@ -103,6 +103,8 @@ class Multiplayer {
     uint8_t guestCount = 0;
     uint8_t hostActiveRosterSlot = 0;
     uint8_t guestActiveRosterSlot = 0;
+    uint8_t hostReplacementReason = 0;
+    uint8_t guestReplacementReason = 0;
     OwnedPokemon hostParty[kPartyCapacity]{};
     OwnedPokemon guestParty[kPartyCapacity]{};
     // Indexed by the READY roster slot, not by the transient battle-array

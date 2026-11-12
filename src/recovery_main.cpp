@@ -13,6 +13,12 @@ namespace {
 using namespace PokegochiRecovery;
 
 SPIClass gSdSpi(VSPI);
+// Recovery runs in Arduino's loopTask. Keeping a 4 KiB buffer in each helper
+// frame left too little stack for SD/VFS and SHA-256 calls and tripped the
+// physical ESP32 stack canary before the staged image could be installed.
+// All recovery operations are sequential, so one BSS-backed buffer is both
+// safe and keeps the original SD/flash throughput.
+uint8_t gIoBuffer[4096];
 
 [[noreturn]] void haltWithLed(bool success) {
   pinMode(board::kRgbLedRedPin, OUTPUT);
@@ -74,12 +80,12 @@ bool hashFile(const char* path, uint8_t output[32], uint32_t expectedBytes) {
     file.close();
     return false;
   }
-  uint8_t buffer[4096];
   uint32_t done = 0U;
   bool okay = true;
   while (done < expectedBytes) {
-    const size_t count = file.read(buffer, min<size_t>(sizeof(buffer), expectedBytes - done));
-    if (!count || mbedtls_sha256_update(&context, buffer, count) != 0) {
+    const size_t count = file.read(
+        gIoBuffer, min<size_t>(sizeof(gIoBuffer), expectedBytes - done));
+    if (!count || mbedtls_sha256_update(&context, gIoBuffer, count) != 0) {
       okay = false;
       break;
     }
@@ -100,12 +106,11 @@ bool hashPartition(const esp_partition_t* partition, uint32_t bytes,
     mbedtls_sha256_free(&context);
     return false;
   }
-  uint8_t buffer[4096];
   bool okay = true;
-  for (uint32_t offset = 0; offset < bytes; offset += sizeof(buffer)) {
-    const size_t count = min<size_t>(sizeof(buffer), bytes - offset);
-    if (esp_partition_read(partition, offset, buffer, count) != ESP_OK ||
-        mbedtls_sha256_update(&context, buffer, count) != 0) {
+  for (uint32_t offset = 0; offset < bytes; offset += sizeof(gIoBuffer)) {
+    const size_t count = min<size_t>(sizeof(gIoBuffer), bytes - offset);
+    if (esp_partition_read(partition, offset, gIoBuffer, count) != ESP_OK ||
+        mbedtls_sha256_update(&context, gIoBuffer, count) != 0) {
       okay = false;
       break;
     }
@@ -122,13 +127,12 @@ bool backupMain(const esp_partition_t* mainPartition, Marker& marker) {
   mbedtls_sha256_context context;
   mbedtls_sha256_init(&context);
   bool okay = mbedtls_sha256_starts(&context, 0) == 0;
-  uint8_t buffer[4096];
   for (uint32_t offset = 0; okay && offset < mainPartition->size;
-       offset += sizeof(buffer)) {
-    const size_t count = min<size_t>(sizeof(buffer), mainPartition->size - offset);
-    okay = esp_partition_read(mainPartition, offset, buffer, count) == ESP_OK &&
-        output.write(buffer, count) == count &&
-        mbedtls_sha256_update(&context, buffer, count) == 0;
+       offset += sizeof(gIoBuffer)) {
+    const size_t count = min<size_t>(sizeof(gIoBuffer), mainPartition->size - offset);
+    okay = esp_partition_read(mainPartition, offset, gIoBuffer, count) == ESP_OK &&
+        output.write(gIoBuffer, count) == count &&
+        mbedtls_sha256_update(&context, gIoBuffer, count) == 0;
   }
   if (okay) okay = mbedtls_sha256_finish(&context, marker.previousSha256) == 0;
   mbedtls_sha256_free(&context);
@@ -149,12 +153,12 @@ bool installCandidate(const esp_partition_t* mainPartition, Marker& marker) {
     input.close();
     return false;
   }
-  uint8_t buffer[4096];
   uint32_t done = 0U;
   bool okay = true;
   while (done < marker.firmwareSize) {
-    const size_t count = input.read(buffer, min<size_t>(sizeof(buffer), marker.firmwareSize - done));
-    if (!count || esp_ota_write(handle, buffer, count) != ESP_OK) {
+    const size_t count = input.read(
+        gIoBuffer, min<size_t>(sizeof(gIoBuffer), marker.firmwareSize - done));
+    if (!count || esp_ota_write(handle, gIoBuffer, count) != ESP_OK) {
       okay = false;
       break;
     }
@@ -185,12 +189,12 @@ bool restorePrevious(const esp_partition_t* mainPartition, Marker& marker) {
     input.close();
     return false;
   }
-  uint8_t buffer[4096];
   uint32_t done = 0U;
   bool okay = true;
   while (done < mainPartition->size) {
-    const size_t count = input.read(buffer, sizeof(buffer));
-    if (!count || esp_partition_write(mainPartition, done, buffer, count) != ESP_OK) {
+    const size_t count = input.read(gIoBuffer, sizeof(gIoBuffer));
+    if (!count ||
+        esp_partition_write(mainPartition, done, gIoBuffer, count) != ESP_OK) {
       okay = false;
       break;
     }

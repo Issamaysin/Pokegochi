@@ -32,6 +32,7 @@ New-Item -ItemType Directory -Path $temporary -Force | Out-Null
     (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\MultiplayerProtocol.java') `
     (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\OnlineMultiplayerProtocol.java') `
     (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\BleTransportPolicy.java') `
+    (Join-Path $appRoot 'app\src\main\java\com\pokegochi\app\OnlineTransportPolicy.java') `
     (Join-Path $appRoot 'app\src\test\java\com\pokegochi\app\ProtocolSelfTest.java')
 if ($LASTEXITCODE -ne 0) { throw 'javac falhou.' }
 & $java '-cp' $temporary 'com.pokegochi.app.ProtocolSelfTest'

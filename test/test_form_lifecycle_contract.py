@@ -52,7 +52,8 @@ for species, count in ((412, 3), (413, 3), (422, 2), (423, 2)):
 
 assert "drawIndexedSpinda" in RENDERER
 assert "spindaSpotPixel" in RENDERER
-assert "paletteIndex + 4U" in RENDERER
+assert "resolveSpindaPalette" in RENDERER
+assert "build_spinda_front_assets" in PACKER
 assert "AssetRenderer::drawSpinda" in MAIN
 assert "pokemon.personality" in MAIN
 

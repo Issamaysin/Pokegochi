@@ -56,6 +56,10 @@ enum PacketType : uint8_t {
   BattleSyncCore,
   BattleSyncAck,
   BattleRulesChoice,
+  // Optional, backwards-compatible metadata sent immediately before the core
+  // snapshot. Older peers ignore the unknown type; the server bot uses it to
+  // distinguish a successful pivot from a PP-consuming miss.
+  BattleSyncReplacement,
 };
 
 #pragma pack(push, 1)

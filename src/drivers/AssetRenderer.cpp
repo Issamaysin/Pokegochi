@@ -375,6 +375,7 @@ size_t sceneWorkspaceCapacity = 0;
 bool sceneWorkspaceBorrowed = false;
 enum class SceneWorkspaceOwner : uint8_t { None, Home, Large };
 SceneWorkspaceOwner sceneWorkspaceOwner = SceneWorkspaceOwner::None;
+bool largeAssetUsesCacheArena = false;
 
 struct LargeAssetCache {
   char path[112]{};
@@ -802,6 +803,13 @@ bool compactTileMatches(const uint8_t* source, const uint8_t* resident,
   return true;
 }
 
+uint16_t compactTileHash(const uint8_t* tile) {
+  uint32_t value = 2166136261UL;
+  for (uint8_t index = 0U; index < 64U; ++index)
+    value = (value ^ tile[index]) * 16777619UL;
+  return static_cast<uint16_t>(value ^ (value >> 16U));
+}
+
 struct Cropped4BppPlan {
   bool valid = false;
   uint8_t left = 0U;
@@ -812,10 +820,22 @@ struct Cropped4BppPlan {
   size_t indexBytes = 0U;
 };
 
+struct CompactSmallTiled4BppPlan {
+  bool valid = false;
+  uint16_t mapEntries = 0U;
+  uint8_t uniqueTiles = 0U;
+  size_t indexBytes = 0U;
+};
+
 bool isPokemonIconAsset(const char* path) {
   return path &&
       std::strstr(path, "/pokegochi/assets/pokemon/") == path &&
       std::strstr(path, "/icons/");
+}
+
+bool isTransparentSmallAsset(const char* path) {
+  return isPokemonIconAsset(path) ||
+      (path && std::strstr(path, "/battle_anims/sprites/") != nullptr);
 }
 
 // Read one tiny icon into the renderer's existing stream scratch and decide
@@ -826,14 +846,15 @@ bool prepareCropped4BppPlan(AssetFile& file, const char* path,
   plan = Cropped4BppPlan{};
   const size_t paletteBytes =
       static_cast<size_t>(info.paletteCount) * sizeof(uint16_t);
-  if (!isPokemonIconAsset(path) || info.bitsPerPixel != 4U ||
+  const size_t sourceRowBytes = packedRowBytes(info);
+  if (!isTransparentSmallAsset(path) || info.bitsPerPixel != 4U ||
       info.header.width > 255U || info.header.height > 255U ||
+      (info.header.width & 1U) != 0U ||
       paletteBytes > sizeof(scratch.stream.pixels) ||
-      info.pixelBytes > sizeof(scratch.stream.indices) ||
+      sourceRowBytes > sizeof(scratch.stream.indices) ||
       !file.seek(info.paletteOffset) ||
       !readFully(file, reinterpret_cast<uint8_t*>(scratch.stream.pixels),
-                 paletteBytes) ||
-      !readFully(file, scratch.stream.indices, info.pixelBytes))
+                 paletteBytes))
     return false;
 
   bool foundTransparent = false;
@@ -852,10 +873,13 @@ bool prepareCropped4BppPlan(AssetFile& file, const char* path,
   uint16_t bottom = 0U;
   bool foundVisible = false;
   for (uint16_t y = 0U; y < info.header.height; ++y) {
+    if (!file.seek(info.pixelOffset + static_cast<uint32_t>(y) *
+                                      sourceRowBytes) ||
+        !readFully(file, scratch.stream.indices, sourceRowBytes))
+      return false;
     for (uint16_t x = 0U; x < info.header.width; ++x) {
       const uint8_t color = packed4BppValue(
-          scratch.stream.indices,
-          static_cast<size_t>(y) * info.header.width + x);
+          scratch.stream.indices, x);
       if (color >= info.paletteCount ||
           scratch.stream.pixels[color] == info.header.transparent)
         continue;
@@ -882,7 +906,65 @@ bool prepareCropped4BppPlan(AssetFile& file, const char* path,
   return true;
 }
 
-bool installCropped4Bpp(const AssetInfo& info,
+void copyPacked4BppTile(const uint8_t* source, uint16_t sourceWidth,
+                        uint16_t tileX, uint16_t tileY,
+                        uint8_t* destination) {
+  for (uint8_t row = 0U; row < 8U; ++row) {
+    const size_t sourcePixel =
+        static_cast<size_t>(tileY * 8U + row) * sourceWidth + tileX * 8U;
+    std::memcpy(destination + static_cast<size_t>(row) * 4U,
+                source + sourcePixel / 2U, 4U);
+  }
+}
+
+bool prepareCompactSmallTiled4BppPlan(
+    AssetFile& file, const char* path, const AssetInfo& info,
+    CompactSmallTiled4BppPlan& plan) {
+  plan = CompactSmallTiled4BppPlan{};
+  if (!isTransparentSmallAsset(path) || info.bitsPerPixel != 4U ||
+      !info.header.width || !info.header.height ||
+      (info.header.width & 7U) != 0U ||
+      (info.header.height & 7U) != 0U ||
+      info.pixelBytes >= sizeof(scratch) || !file.seek(info.pixelOffset))
+    return false;
+
+  uint8_t* const source = reinterpret_cast<uint8_t*>(&scratch);
+  if (!readFully(file, source, info.pixelBytes)) return false;
+  const uint16_t mapWidth = info.header.width / 8U;
+  const uint16_t mapHeight = info.header.height / 8U;
+  const uint16_t mapEntries = static_cast<uint16_t>(mapWidth * mapHeight);
+  uint8_t* const uniqueTiles = source + info.pixelBytes;
+  const size_t uniqueCapacity =
+      (sizeof(scratch) - info.pixelBytes) / 32U;
+  uint8_t uniqueCount = 0U;
+  uint8_t tile[32]{};
+  for (uint16_t tileY = 0U; tileY < mapHeight; ++tileY) {
+    for (uint16_t tileX = 0U; tileX < mapWidth; ++tileX) {
+      copyPacked4BppTile(source, info.header.width, tileX, tileY, tile);
+      uint8_t tileIndex = 0U;
+      for (; tileIndex < uniqueCount; ++tileIndex)
+        if (std::memcmp(tile, uniqueTiles + static_cast<size_t>(tileIndex) * 32U,
+                        32U) == 0)
+          break;
+      if (tileIndex != uniqueCount) continue;
+      if (uniqueCount >= uniqueCapacity || uniqueCount == UINT8_MAX)
+        return false;
+      std::memcpy(uniqueTiles + static_cast<size_t>(uniqueCount) * 32U,
+                  tile, 32U);
+      ++uniqueCount;
+    }
+  }
+  const size_t compactBytes =
+      static_cast<size_t>(mapEntries) + static_cast<size_t>(uniqueCount) * 32U;
+  if (compactBytes >= info.pixelBytes) return false;
+  plan.valid = true;
+  plan.mapEntries = mapEntries;
+  plan.uniqueTiles = uniqueCount;
+  plan.indexBytes = compactBytes;
+  return true;
+}
+
+bool installCropped4Bpp(AssetFile& file, const AssetInfo& info,
                         const Cropped4BppPlan& plan, uint8_t* destination,
                         size_t capacity, uint16_t* palette,
                         IndexedImage& result) {
@@ -890,7 +972,9 @@ bool installCropped4Bpp(const AssetInfo& info,
     return false;
   const size_t paletteBytes =
       static_cast<size_t>(info.paletteCount) * sizeof(uint16_t);
-  std::memcpy(palette, scratch.stream.pixels, paletteBytes);
+  if (!file.seek(info.paletteOffset) ||
+      !readFully(file, reinterpret_cast<uint8_t*>(palette), paletteBytes))
+    return false;
   std::memset(destination, 0, plan.indexBytes);
   destination[0] = plan.left;
   destination[1] = plan.top;
@@ -898,13 +982,16 @@ bool installCropped4Bpp(const AssetInfo& info,
   destination[3] = plan.height;
   destination[4] = plan.transparentIndex;
   size_t outputPixel = 0U;
+  const size_t sourceRowBytes = packedRowBytes(info);
   for (uint16_t y = 0U; y < plan.height; ++y) {
+    const uint16_t sourceY = static_cast<uint16_t>(plan.top + y);
+    if (!file.seek(info.pixelOffset + static_cast<uint32_t>(sourceY) *
+                                      sourceRowBytes) ||
+        !readFully(file, scratch.stream.indices, sourceRowBytes))
+      return false;
     for (uint16_t x = 0U; x < plan.width; ++x, ++outputPixel) {
-      const size_t sourcePixel =
-          static_cast<size_t>(plan.top + y) * info.header.width +
-          plan.left + x;
       const uint8_t color =
-          packed4BppValue(scratch.stream.indices, sourcePixel);
+          packed4BppValue(scratch.stream.indices, plan.left + x);
       uint8_t& packed = destination[kCropped4BppMetadataBytes +
                                     (outputPixel >> 1U)];
       if (outputPixel & 1U) packed = static_cast<uint8_t>(packed | color);
@@ -922,11 +1009,65 @@ bool installCropped4Bpp(const AssetInfo& info,
   return true;
 }
 
+bool installCompactSmallTiled4Bpp(
+    AssetFile& file, const AssetInfo& info,
+    const CompactSmallTiled4BppPlan& plan, uint8_t* destination,
+    size_t capacity, uint16_t* palette, IndexedImage& result) {
+  if (!plan.valid || !destination || !palette || capacity < plan.indexBytes ||
+      info.pixelBytes > sizeof(scratch))
+    return false;
+  const size_t paletteBytes =
+      static_cast<size_t>(info.paletteCount) * sizeof(uint16_t);
+  if (!file.seek(info.paletteOffset) ||
+      !readFully(file, reinterpret_cast<uint8_t*>(palette), paletteBytes) ||
+      !file.seek(info.pixelOffset))
+    return false;
+  uint8_t* const source = reinterpret_cast<uint8_t*>(&scratch);
+  if (!readFully(file, source, info.pixelBytes)) return false;
+
+  const uint16_t mapWidth = info.header.width / 8U;
+  const uint16_t mapHeight = info.header.height / 8U;
+  uint8_t uniqueCount = 0U;
+  uint8_t tile[32]{};
+  for (uint16_t tileY = 0U; tileY < mapHeight; ++tileY) {
+    for (uint16_t tileX = 0U; tileX < mapWidth; ++tileX) {
+      copyPacked4BppTile(source, info.header.width, tileX, tileY, tile);
+      uint8_t tileIndex = 0U;
+      for (; tileIndex < uniqueCount; ++tileIndex)
+        if (std::memcmp(
+                tile,
+                destination + plan.mapEntries +
+                    static_cast<size_t>(tileIndex) * 32U,
+                32U) == 0)
+          break;
+      if (tileIndex == uniqueCount) {
+        if (uniqueCount >= plan.uniqueTiles) return false;
+        std::memcpy(destination + plan.mapEntries +
+                        static_cast<size_t>(uniqueCount) * 32U,
+                    tile, 32U);
+        ++uniqueCount;
+      }
+      destination[static_cast<size_t>(tileY) * mapWidth + tileX] = tileIndex;
+    }
+  }
+  if (uniqueCount != plan.uniqueTiles) return false;
+  result = IndexedImage{};
+  result.valid = true;
+  result.header = info.header;
+  result.bitsPerPixel = kResidentTiled4Bpp;
+  result.paletteCount = info.paletteCount;
+  result.palette = palette;
+  result.indices = destination;
+  result.indexBytes = plan.indexBytes;
+  return true;
+}
+
 bool loadCompactTiledIndexed(AssetFile& file, const AssetInfo& info,
                              uint8_t* destination, size_t capacity,
                              uint16_t* palette, IndexedImage& result,
                              size_t& residentBytes, bool wideTileMap,
-                             bool allowFlips = false) {
+                             bool allowFlips = false,
+                             uint16_t retainedHeight = 0U) {
   residentBytes = 0U;
   if (!destination || !palette || !info.header.width || !info.header.height ||
       (info.bitsPerPixel != 4U && info.bitsPerPixel != 6U &&
@@ -935,14 +1076,28 @@ bool loadCompactTiledIndexed(AssetFile& file, const AssetInfo& info,
 
   const uint16_t mapWidth = static_cast<uint16_t>(
       (info.header.width + 7U) >> 3U);
+  const uint16_t imageHeight = retainedHeight
+      ? std::min<uint16_t>(retainedHeight, info.header.height)
+      : info.header.height;
   const uint16_t mapHeight = static_cast<uint16_t>(
-      (info.header.height + 7U) >> 3U);
+      (imageHeight + 7U) >> 3U);
   const size_t mapEntries = static_cast<size_t>(mapWidth) * mapHeight;
   const bool sixteenBitMap = wideTileMap || allowFlips;
   const size_t mapBytes = mapEntries * (sixteenBitMap ? 2U : 1U);
   const size_t tileRowBytes = static_cast<size_t>(mapWidth) * 64U;
   const size_t sourceRowBytes = packedRowBytes(info);
-  if (mapBytes > capacity || tileRowBytes + sourceRowBytes > sizeof(scratch) ||
+  // A compact representation stops saving memory before 560 unique tiles for
+  // every supported scene size. Keep one 16-bit fingerprint per candidate in
+  // the tail of the existing decode scratch. This changes the common lookup
+  // from hundreds of 64-byte memcmp calls per source tile to cheap hash
+  // comparisons followed by an exact check only on collisions. High-detail
+  // Z-Move backgrounds now reject compaction promptly instead of stalling the
+  // loop for minutes while still falling back to their smaller linear form.
+  constexpr uint16_t kCompactTileHashCapacity = 560U;
+  const size_t tileHashBytes = allowFlips
+      ? 0U : static_cast<size_t>(kCompactTileHashCapacity) * sizeof(uint16_t);
+  if (mapBytes > capacity ||
+      tileRowBytes + sourceRowBytes + tileHashBytes > sizeof(scratch) ||
       !file.seek(info.paletteOffset) ||
       !readFully(file, reinterpret_cast<uint8_t*>(palette),
                  static_cast<size_t>(info.paletteCount) * sizeof(uint16_t)))
@@ -950,14 +1105,17 @@ bool loadCompactTiledIndexed(AssetFile& file, const AssetInfo& info,
 
   uint8_t* tileRow = reinterpret_cast<uint8_t*>(&scratch);
   uint8_t* packedRow = tileRow + tileRowBytes;
+  uint16_t* tileHashes = allowFlips ? nullptr : reinterpret_cast<uint16_t*>(
+      packedRow + sourceRowBytes);
   uint16_t uniqueCount = 0U;
   std::memset(destination, 0, mapBytes);
+  if (tileHashes) std::memset(tileHashes, 0, tileHashBytes);
 
   for (uint16_t tileY = 0; tileY < mapHeight; ++tileY) {
     std::memset(tileRow, 0, tileRowBytes);
     for (uint8_t localY = 0; localY < 8U; ++localY) {
       const uint16_t sourceY = static_cast<uint16_t>(tileY * 8U + localY);
-      if (sourceY >= info.header.height) break;
+      if (sourceY >= imageHeight) break;
       const uint32_t sourceOffset = info.pixelOffset +
           static_cast<uint32_t>(sourceY) * sourceRowBytes;
       if (!file.seek(sourceOffset) ||
@@ -990,9 +1148,11 @@ bool loadCompactTiledIndexed(AssetFile& file, const AssetInfo& info,
       const uint8_t* sourceTile = tileRow + static_cast<size_t>(tileX) * 64U;
       uint16_t tileIndex = 0U;
       uint16_t mapFlags = 0U;
+      const uint16_t sourceHash = tileHashes ? compactTileHash(sourceTile) : 0U;
       for (; tileIndex < uniqueCount; ++tileIndex) {
         const uint8_t* residentTile = destination + mapBytes +
             static_cast<size_t>(tileIndex) * 64U;
+        if (tileHashes && tileHashes[tileIndex] != sourceHash) continue;
         if (std::memcmp(sourceTile, residentTile, 64U) == 0) break;
         if (!allowFlips) continue;
         if (compactTileMatches(sourceTile, residentTile, true, false)) {
@@ -1010,12 +1170,14 @@ bool loadCompactTiledIndexed(AssetFile& file, const AssetInfo& info,
       }
       if (tileIndex == uniqueCount) {
         if ((!sixteenBitMap && uniqueCount >= 256U) ||
+            (tileHashes && uniqueCount >= kCompactTileHashCapacity) ||
             (allowFlips && uniqueCount >= 0x4000U) ||
             mapBytes + static_cast<size_t>(uniqueCount + 1U) * 64U > capacity)
           return false;
         std::memcpy(destination + mapBytes +
                         static_cast<size_t>(uniqueCount) * 64U,
                     sourceTile, 64U);
+        if (tileHashes) tileHashes[uniqueCount] = sourceHash;
         ++uniqueCount;
       }
       const size_t mapIndex =
@@ -1033,6 +1195,7 @@ bool loadCompactTiledIndexed(AssetFile& file, const AssetInfo& info,
 
   result = IndexedImage{};
   result.header = info.header;
+  result.header.height = imageHeight;
   result.bitsPerPixel = allowFlips ? kResidentFlippedTiled8Bpp
       : wideTileMap ? kResidentWideTiled8Bpp : kResidentTiled8Bpp;
   result.paletteCount = info.paletteCount;
@@ -1054,9 +1217,19 @@ constexpr uint8_t kCompactBlockRows = 8U;
 constexpr size_t kCompactBlockPixelCapacity = 320U * kCompactBlockRows;
 constexpr uint16_t kCompactLzHashEntries = 512U;
 constexpr uint8_t kCompactLzMatchDepth = 10U;
+// Wi-Fi plus the durable collection leaves a measured 4 KiB scene bank.
+// Summary/Pokecenter can reverse the two existing arenas: their compressed
+// background lives in the 13 KiB sprite arena while this four-candidate
+// history lives in the otherwise-idle scene bank. The complete generated UI
+// set remains below the sprite arena at this depth (audited by the renderer
+// capacity contract) without adding any RAM.
+constexpr uint8_t kCompactLzLowMemoryMatchDepth = 4U;
 constexpr size_t kCompactLzHashBytes =
     static_cast<size_t>(kCompactLzHashEntries) * kCompactLzMatchDepth *
     sizeof(uint16_t);
+constexpr size_t kCompactLzLowMemoryHashBytes =
+    static_cast<size_t>(kCompactLzHashEntries) *
+    kCompactLzLowMemoryMatchDepth * sizeof(uint16_t);
 
 uint16_t compactLzHash(const uint8_t* source) {
   const uint32_t mixed =
@@ -1085,10 +1258,10 @@ bool appendCompactLzLength(uint8_t* destination, size_t capacity,
 }
 
 void rememberCompactLzPosition(uint16_t* hashTable, uint16_t hash,
-                               uint16_t position) {
+                               uint16_t position, uint8_t matchDepth) {
   uint16_t* const candidates = hashTable +
-      static_cast<size_t>(hash) * kCompactLzMatchDepth;
-  for (uint8_t candidate = kCompactLzMatchDepth - 1U;
+      static_cast<size_t>(hash) * matchDepth;
+  for (uint8_t candidate = matchDepth - 1U;
        candidate > 0U; --candidate)
     candidates[candidate] = candidates[candidate - 1U];
   candidates[0] = position;
@@ -1096,21 +1269,23 @@ void rememberCompactLzPosition(uint16_t* hashTable, uint16_t hash,
 
 bool compressCompactLzBlock(const uint8_t* source, size_t length,
                             uint16_t* hashTable, uint8_t* destination,
-                            size_t capacity, size_t& used) {
-  if (!source || !hashTable || !destination || !length) return false;
+                            size_t capacity, size_t& used,
+                            uint8_t matchDepth) {
+  if (!source || !hashTable || !destination || !length || !matchDepth)
+    return false;
   std::fill(hashTable,
             hashTable + static_cast<size_t>(kCompactLzHashEntries) *
-                            kCompactLzMatchDepth,
+                            matchDepth,
             UINT16_MAX);
   size_t position = 0U;
   size_t literalStart = 0U;
   while (position + 4U <= length) {
     const uint16_t hash = compactLzHash(source + position);
     const uint16_t* const candidates = hashTable +
-        static_cast<size_t>(hash) * kCompactLzMatchDepth;
+        static_cast<size_t>(hash) * matchDepth;
     uint16_t reference = UINT16_MAX;
     size_t matchLength = 3U;
-    for (uint8_t candidate = 0U; candidate < kCompactLzMatchDepth;
+    for (uint8_t candidate = 0U; candidate < matchDepth;
          ++candidate) {
       const uint16_t possible = candidates[candidate];
       if (possible == UINT16_MAX || possible >= position ||
@@ -1127,7 +1302,7 @@ bool compressCompactLzBlock(const uint8_t* source, size_t length,
       }
     }
     rememberCompactLzPosition(hashTable, hash,
-                              static_cast<uint16_t>(position));
+                              static_cast<uint16_t>(position), matchDepth);
     if (reference == UINT16_MAX) {
       ++position;
       continue;
@@ -1155,7 +1330,7 @@ bool compressCompactLzBlock(const uint8_t* source, size_t length,
     for (size_t cursor = position + 1U; cursor + 4U <= matchEnd; ++cursor)
       rememberCompactLzPosition(
           hashTable, compactLzHash(source + cursor),
-          static_cast<uint16_t>(cursor));
+          static_cast<uint16_t>(cursor), matchDepth);
     position = matchEnd;
     literalStart = position;
   }
@@ -1193,7 +1368,8 @@ uint16_t readCompactLzOffset(const uint8_t* source, uint16_t block) {
 bool loadCompactBlockLzIndexed(AssetFile& file, const AssetInfo& info,
                                uint8_t* destination, size_t capacity,
                                uint16_t* palette, IndexedImage& result,
-                               size_t& residentBytes) {
+                               size_t& residentBytes, uint16_t* hashTable,
+                               uint8_t matchDepth) {
   residentBytes = 0U;
   if (!destination || !palette || !info.header.width ||
       info.header.width > 320U || !info.header.height ||
@@ -1204,6 +1380,8 @@ bool loadCompactBlockLzIndexed(AssetFile& file, const AssetInfo& info,
                 "compact UI decode scratch is too small");
   static_assert(kCompactLzHashBytes <= kCacheArenaBytes,
                 "compact UI match history exceeds the sprite arena");
+  static_assert(kCompactLzLowMemoryHashBytes <= 4096U,
+                "low-memory UI history exceeds the Wi-Fi scene bank");
   const uint16_t blockCount = static_cast<uint16_t>(
       (info.header.height + kCompactBlockRows - 1U) / kCompactBlockRows);
   const size_t tableBytes = static_cast<size_t>(blockCount + 1U) * 2U;
@@ -1217,12 +1395,7 @@ bool loadCompactBlockLzIndexed(AssetFile& file, const AssetInfo& info,
 
   uint8_t* const decoded = reinterpret_cast<uint8_t*>(&scratch);
   uint8_t* const packedRow = decoded + kCompactBlockPixelCapacity;
-  // prepareUiScene() clears the sprite cache before loading its mandatory
-  // background. Reuse that empty long-lived arena as compressor history; the
-  // following icon preloads overwrite it normally after compression ends.
-  // This improves the retained representation without adding a byte of BSS.
-  if (!cacheArena || cacheArenaUsed != 0U) return false;
-  uint16_t* const hashTable = reinterpret_cast<uint16_t*>(cacheArena);
+  if (!hashTable || !matchDepth) return false;
   size_t used = tableBytes;
   for (uint16_t block = 0U; block < blockCount; ++block) {
     writeCompactLzOffset(destination, block, used);
@@ -1261,7 +1434,7 @@ bool loadCompactBlockLzIndexed(AssetFile& file, const AssetInfo& info,
       }
     }
     if (!compressCompactLzBlock(decoded, decodedBytes, hashTable,
-                                destination, capacity, used))
+                                destination, capacity, used, matchDepth))
       return false;
   }
   writeCompactLzOffset(destination, blockCount, used);
@@ -1514,8 +1687,10 @@ bool drawIndexed(PixelCanvas& display, const IndexedImage& image, int16_t x, int
 
 bool spindaSpotPixel(uint16_t sourceX, uint16_t sourceY,
                      uint32_t personality) {
-  // These are the four canonical 16x16 masks used by the GBA engine. Rows
-  // are LSB-first, exactly like DrawPokemonSpots' `(row >> column) & 1`.
+  // Exact pokeemerald DrawSpindaSpots data. The least-significant personality
+  // byte moves spot 0, then the source shifts right eight bits for each next
+  // spot. Rows are LSB-first, exactly like `(spotPixelRow & 1)` followed by
+  // `spotPixelRow >>= 1` in the GBA routine.
   static constexpr uint16_t kMasks[4][16] = {
     {0x0E00,0x3F80,0x7FC0,0x7FE0,0xFFE0,0xFFF0,0xFFF0,0xFFF0,
      0x7FE0,0x7FE0,0x3FC0,0x0780,0x0000,0x0000,0x0000,0x0000},
@@ -1526,12 +1701,11 @@ bool spindaSpotPixel(uint16_t sourceX, uint16_t sourceY,
     {0x3C00,0x7E00,0xFF00,0xFF00,0xFF00,0xFF00,0xFF00,0x7E00,
      0x3C00,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000},
   };
-  static constexpr uint8_t kBaseX[4] = {34U,22U,40U,16U};
-  static constexpr uint8_t kBaseY[4] = {26U,27U, 8U, 7U};
-  static constexpr uint8_t kMaskForSpot[4] = {3U,2U,1U,0U};
+  static constexpr uint8_t kBaseX[4] = {16U,40U,22U,34U};
+  static constexpr uint8_t kBaseY[4] = { 7U, 8U,25U,26U};
   for (uint8_t spot = 0; spot < 4U; ++spot) {
     const uint8_t pidByte = static_cast<uint8_t>(
-        personality >> (8U * (3U - spot)));
+        personality >> (8U * spot));
     const int16_t left = static_cast<int16_t>(kBaseX[spot]) +
         static_cast<int16_t>(pidByte & 0x0FU) - 8;
     const int16_t top = static_cast<int16_t>(kBaseY[spot]) +
@@ -1539,15 +1713,56 @@ bool spindaSpotPixel(uint16_t sourceX, uint16_t sourceY,
     const int16_t localX = static_cast<int16_t>(sourceX) - left;
     const int16_t localY = static_cast<int16_t>(sourceY) - top;
     if (localX >= 0 && localX < 16 && localY >= 0 && localY < 16 &&
-        ((kMasks[kMaskForSpot[spot]][localY] >> localX) & 1U))
+        ((kMasks[spot][localY] >> localX) & 1U))
       return true;
   }
   return false;
 }
 
+int16_t spindaPaletteIndex(const IndexedImage& image, uint16_t color) {
+  for (uint8_t index = 0U; index < image.paletteCount; ++index)
+    if (image.palette[index] == color) return index;
+  return -1;
+}
+
+bool resolveSpindaPalette(const IndexedImage& image,
+                          uint8_t (&body)[3], uint8_t (&spots)[3]) {
+  // FireRed/Emerald only recolour body entries 1..3 and replace them with
+  // entries 5..7. Older Pokegochi PAKs compacted that palette by first pixel
+  // occurrence, so those numeric positions no longer describe the same
+  // colours. Resolve the six authored colours instead; a newly generated PAK
+  // still resolves to the canonical 1,2,3 -> 5,6,7 mapping, while deployed
+  // compact PAKs resolve to their actual positions without an SD rewrite.
+  static constexpr uint16_t kBodyColors[3] = {
+      0xF735U, 0xE6B4U, 0xC5B0U};
+  static constexpr uint16_t kNormalSpotColors[3] = {
+      0xDC49U, 0xDB47U, 0xB2C5U};
+  static constexpr uint16_t kShinySpotColors[3] = {
+      0xB62BU, 0x9527U, 0x7403U};
+  for (uint8_t shade = 0U; shade < 3U; ++shade) {
+    const int16_t index = spindaPaletteIndex(image, kBodyColors[shade]);
+    if (index < 0) return false;
+    body[shade] = static_cast<uint8_t>(index);
+  }
+  const bool shiny = spindaPaletteIndex(image, kShinySpotColors[0]) >= 0;
+  const uint16_t* spotColors = shiny
+      ? kShinySpotColors : kNormalSpotColors;
+  for (uint8_t shade = 0U; shade < 3U; ++shade) {
+    const int16_t index = spindaPaletteIndex(image, spotColors[shade]);
+    if (index < 0) return false;
+    spots[shade] = static_cast<uint8_t>(index);
+  }
+  return true;
+}
+
 bool drawIndexedSpinda(PixelCanvas& display, const IndexedImage& image,
                        int16_t x, int16_t y, uint32_t personality) {
   if (!image.valid || !image.indices) return false;
+  uint8_t bodyPaletteIndices[3]{};
+  uint8_t spotPaletteIndices[3]{};
+  if (!resolveSpindaPalette(
+          image, bodyPaletteIndices, spotPaletteIndices))
+    return drawIndexed(display, image, x, y);
   display.damage(x, y, image.header.width, image.header.height);
   int32_t firstVisibleRow = 0;
   int32_t lastVisibleRow = 0;
@@ -1573,10 +1788,13 @@ bool drawIndexedSpinda(PixelCanvas& display, const IndexedImage& image,
       uint8_t paletteIndex = indexedValue(image, sourceRow + column);
       const uint16_t sourceX = static_cast<uint16_t>(
           firstVisibleColumn + column);
-      if (paletteIndex >= 1U && paletteIndex <= 3U &&
-          paletteIndex + 4U < image.paletteCount &&
-          spindaSpotPixel(sourceX, row, personality))
-        paletteIndex = static_cast<uint8_t>(paletteIndex + 4U);
+      if (spindaSpotPixel(sourceX, row, personality)) {
+        for (uint8_t shade = 0U; shade < 3U; ++shade) {
+          if (paletteIndex != bodyPaletteIndices[shade]) continue;
+          paletteIndex = spotPaletteIndices[shade];
+          break;
+        }
+      }
       const uint16_t pixel = paletteIndex < image.paletteCount
           ? image.palette[paletteIndex] : image.header.transparent;
       if (!transparent || pixel != image.header.transparent)
@@ -1601,9 +1819,20 @@ uint16_t indexedPaletteIndexPixel(const IndexedImage& image, uint8_t index,
       index < static_cast<uint16_t>(paletteFirst + paletteCount)) {
     const uint8_t count = static_cast<uint8_t>(std::min<uint16_t>(
         paletteCount, image.paletteCount - paletteFirst));
-    if (count)
+    if (count) {
+      // The renderer only understands an immutable-package lookup offset:
+      // positive shift means that index N samples the original N+shift
+      // colour. The callback executor must translate the source operation
+      // (left or right palette-RAM rotation) into this neutral representation.
+      // Keeping direction out of this shared primitive is essential: Aurora
+      // Beam rotates left, while Psychic, Nasty Plot, Gust, Surf and the
+      // defensive walls rotate right.
+      const uint8_t normalizedShift = static_cast<uint8_t>(
+          paletteShift % count);
+      const uint8_t relative = static_cast<uint8_t>(index - paletteFirst);
       index = static_cast<uint8_t>(paletteFirst +
-          (index - paletteFirst + paletteShift % count) % count);
+          (relative + normalizedShift) % count);
+    }
   }
   return index < image.paletteCount ? image.palette[index]
                                     : image.header.transparent;
@@ -1731,7 +1960,7 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
   // invariant out of the 58,880-pixel arena loop.
   const bool directLinearIndexed =
       (image.bitsPerPixel == 8U || image.bitsPerPixel == 4U) &&
-      opacity16 == 16U && !paletteCount &&
+      opacity16 == 16U &&
       sourceWidth == image.header.width &&
       sourceHeight == image.header.height;
   if (directLinearIndexed) {
@@ -1743,8 +1972,12 @@ bool drawIndexedScrolled(PixelCanvas& display, const IndexedImage& image,
         scratch.stream.pixels + 256U);
     const uint16_t formatColors = image.bitsPerPixel == 4U ? 16U : 256U;
     for (uint16_t index = 0U; index < formatColors; ++index) {
-      const uint16_t pixel = index < image.paletteCount
-          ? image.palette[index] : image.header.transparent;
+      // Palette animation is invariant for the complete stripe. Resolve its
+      // source direction and RGB565 conversion once per colour instead of
+      // repeating range checks and modulo for all 58,880 arena pixels.
+      const uint16_t pixel = indexedPaletteIndexPixel(
+          image, static_cast<uint8_t>(index), paletteFirst, paletteCount,
+          paletteShift);
       encodedPalette[index] = PixelCanvas::encoded565(pixel);
       paletteVisible[index] = !transparent || pixel != image.header.transparent;
     }
@@ -2568,24 +2801,27 @@ void invalidateSceneWorkspaceSprites() {
   }
 }
 
+void clearSpriteCache();
+
 void clearLargeAsset() {
   // Compact sprites live in their own static arena and can survive a terrain
   // or ChangeBackground replacement. Only invalidate descriptors that point
   // into the scene workspace which is about to be overwritten. This lets the
   // two battlers stay resident across the end-of-move terrain restore.
+  const bool releasedCacheArena = largeAssetUsesCacheArena;
   invalidateSceneWorkspaceSprites();
   battlePlaneAsset = BattlePlaneCache{};
   battlePlaneWorkspaceEnd = 0;
   largeAsset = LargeAssetCache{};
+  largeAssetUsesCacheArena = false;
   largeWorkspaceUsed = 0;
   // Summary/evolution scenes share this workspace with Box icon overflow.
   // Leaving the old offset made the next Box scene spill after a
   // non-existent large asset, which rendered purple placeholders.
   sceneCacheSpillUsed = 0;
   if (sceneWorkspaceOwner == SceneWorkspaceOwner::Large) sceneWorkspaceOwner = SceneWorkspaceOwner::None;
+  if (releasedCacheArena) clearSpriteCache();
 }
-
-void clearSpriteCache();
 
 bool reserveSceneWorkspace(SceneWorkspaceOwner owner) {
   if (!sceneWorkspace) return false;
@@ -2603,7 +2839,11 @@ bool reserveSceneWorkspace(SceneWorkspaceOwner owner) {
 
 void clearSpriteCache() {
   for (auto& entry : cache) entry = CacheEntry{};
-  cacheArenaUsed = 0;
+  // A compact UI page may deliberately live at the front of the sprite bank
+  // while Wi-Fi owns most of DRAM. Preserve that page when only the optional
+  // sprite manifest is reset.
+  cacheArenaUsed = largeAssetUsesCacheArena && largeAsset.image.valid
+      ? largeAsset.image.indexBytes : 0U;
   sceneCacheSpillUsed = sceneWorkspaceOwner == SceneWorkspaceOwner::Large
       ? std::max(largeWorkspaceUsed, battlePlaneWorkspaceEnd) : 0;
 }
@@ -2711,19 +2951,54 @@ bool preloadLargeAsset(const char* path) {
   const bool compactUiScene =
       std::strstr(path, "/summary_screen/") != nullptr ||
       std::strstr(path, "/pokecenter/") != nullptr;
+  // Keep the ordinary battle terrain in its native 8x8-tiled shape on the
+  // ESP32.  The generated 320x184 PKG is a lossless flattened copy of the GBA
+  // tilemap and costs 29,440 bytes when retained linearly, while every audited
+  // terrain occupies at most 9,112 bytes after exact tile deduplication.  A
+  // post-save no-PSRAM runtime commonly recovers a 34 KiB scene bank; retaining
+  // the flat terrain there left less than 6 KiB for a visual-task plane and
+  // made Haze, Scary Face, Attract and similar moves fail their preload.  This
+  // is a resident representation change only: source pixels, palette indices
+  // and the canonical package on the SD card remain unchanged.
+  const bool compactBattleTerrain =
+      std::strstr(path, "/battle_terrain/") != nullptr;
   // During linked battles the renderer borrows the unused Box tail instead
   // of owning the normal 58 KiB arena. An opaque ChangeBackground image may
   // fit there linearly while leaving too little space for the move's sprite
   // manifest (notably the signature Z-Moves). Losslessly tile-deduplicate the
   // replacement first; backgrounds that do not compact still fall back to
   // their original linear representation below.
-  const bool compactBorrowedBattle =
+  // The no-PSRAM board also benefits outside linked battles: Z-Move scene
+  // planes such as Precipice Blades contain only 97 unique tiles but occupy
+  // 32 KiB when flattened, leaving no room for their final sprite cels in the
+  // post-save 34 KiB bank. Try the exact tiled resident form for every opaque
+  // move replacement on ESP32 and keep the existing size comparison/fallback
+  // below, so high-detail backgrounds remain linear when that is smaller.
+#if defined(POKEGOCHI_ANDROID)
+  const bool compactBattleReplacement =
       sceneWorkspaceBorrowed && isOpaqueBattleReplacement(path);
+#else
+  const bool compactBattleReplacement = isOpaqueBattleReplacement(path);
+#endif
   const size_t reserve = info.bitsPerPixel == 16U
       ? static_cast<size_t>(info.header.width) * info.header.height : info.pixelBytes;
   const bool needsCompactResident =
-      compactHome || compactUiScene || compactBorrowedBattle ||
+      compactHome || compactUiScene || compactBattleTerrain ||
+      compactBattleReplacement ||
       reserve > sceneWorkspaceCapacity;
+  // Active Wi-Fi leaves a deterministic 4 KiB scene bank after GameSave is
+  // restored. Reverse the two already-owned arenas for static UI pages: put
+  // the compressed page in the 13 KiB sprite bank and use the scene bank only
+  // as four-candidate compressor history. Summary's optional front sprite can
+  // then occupy the remaining sprite bytes or spill into the scene bank.
+  const bool compactUiInCacheArena = compactUiScene && cacheArena &&
+      cacheArenaUsed == 0U &&
+      sceneWorkspaceCapacity < kCompactUiSceneWorkspaceBytes &&
+      sceneWorkspaceCapacity >= kCompactLzLowMemoryHashBytes;
+  uint8_t* const compactDestination = compactUiInCacheArena
+      ? cacheArena : sceneWorkspace;
+  const size_t compactCapacity = compactUiInCacheArena
+      ? kCacheArenaBytes : sceneWorkspaceCapacity;
   LargeAssetCache& candidate = largeAsset;
   candidate = LargeAssetCache{};
   size_t residentBytes = reserve;
@@ -2741,32 +3016,37 @@ bool preloadLargeAsset(const char* path) {
     // tile deduplication cannot capture. Independent eight-row blocks keep
     // every retained stripe decodable without SD access and fit the complete
     // Pokecenter/Summary set in the 10,612-byte post-disconnect arena.
-    if (!loaded && compactUiScene)
+    if (!loaded && compactUiScene && cacheArenaUsed == 0U)
       loaded = loadCompactBlockLzIndexed(
-          file, info, sceneWorkspace, sceneWorkspaceCapacity,
-          candidate.palette, candidate.image, residentBytes);
+          file, info, compactDestination, compactCapacity,
+          candidate.palette, candidate.image, residentBytes,
+          compactUiInCacheArena
+              ? reinterpret_cast<uint16_t*>(sceneWorkspace)
+              : reinterpret_cast<uint16_t*>(cacheArena),
+          compactUiInCacheArena
+              ? kCompactLzLowMemoryMatchDepth : kCompactLzMatchDepth);
     if (!loaded)
       loaded = loadCompactTiledIndexed(
-          file, info, sceneWorkspace, sceneWorkspaceCapacity,
+          file, info, compactDestination, compactCapacity,
           candidate.palette, candidate.image, residentBytes, false);
     // Pokemon Center maps deliberately retain all source detail and can have
     // over 400 distinct 8x8 tiles. Retry with a 16-bit resident map instead
     // of dropping the scene or requiring a larger contiguous heap block.
     if (!loaded)
       loaded = loadCompactTiledIndexed(
-          file, info, sceneWorkspace, sceneWorkspaceCapacity,
+          file, info, compactDestination, compactCapacity,
           candidate.palette, candidate.image, residentBytes, true);
     // A high-detail plane may technically fit in the tiled representation
     // while using more bytes than its canonical packed 4-bpp payload. Keep
     // whichever lossless representation is actually smaller; otherwise the
     // attempted optimization steals space from the Z-Move sprite manifest.
-    if (loaded && compactBorrowedBattle && residentBytes >= reserve)
+    if (loaded && compactBattleReplacement && residentBytes >= reserve)
       loaded = false;
     // Some authored battle planes contain more unique tiles than their raw
     // 4-bpp payload. They are still valid whenever the linear image fits the
     // borrowed arena, so compaction must remain an optimization rather than
     // a new failure condition.
-    if (!loaded && compactBorrowedBattle &&
+    if (!loaded && compactBattleReplacement &&
         reserve <= sceneWorkspaceCapacity) {
       if (!file.seek(0U) || !readAssetInfo(file, info)) loaded = false;
       else {
@@ -2789,13 +3069,37 @@ bool preloadLargeAsset(const char* path) {
   file.close();
   std::strncpy(candidate.path, path, sizeof(candidate.path) - 1);
   largeAsset.image.palette = largeAsset.palette;
-  largeWorkspaceUsed = residentBytes;
-  sceneCacheSpillUsed = residentBytes;
+  largeAssetUsesCacheArena = compactUiInCacheArena;
+  if (largeAssetUsesCacheArena) {
+    cacheArenaUsed = residentBytes;
+    largeWorkspaceUsed = 0U;
+    sceneCacheSpillUsed = 0U;
+  } else {
+    largeWorkspaceUsed = residentBytes;
+    sceneCacheSpillUsed = residentBytes;
+  }
   return true;
 }
 
+bool preloadLargeAssetCanonical(const char* path) {
+  // Promotion can be requested after preloadMoveAnimation() has unwound its
+  // archive transaction.  Calling preloadLargeAsset() directly in that retry
+  // searched only development-time loose PKGs; current OTAP cards intentionally
+  // install the canonical pokegochi.pak instead.  Re-enter the same archive
+  // transaction used by the public preload path so promotion/rollback cannot
+  // turn a valid retained terrain into a false "large-header" miss.
+  const bool ownsBatch = archiveAvailable && archiveBatchDepth == 0U;
+  if (ownsBatch && !AssetRenderer::beginPreloadBatch()) {
+    AssetRenderer::endPreloadBatch();
+    return false;
+  }
+  const bool ready = preloadLargeAsset(path);
+  if (ownsBatch) AssetRenderer::endPreloadBatch();
+  return ready;
+}
+
 bool restoreBattleSceneAfterPromotionFailure(size_t previousCapacity,
-                                             const char* retainedLargePath) {
+                                              const char* retainedLargePath) {
   // Promotion is an optimization for an authored secondary plane. Losing the
   // canonical terrain when that optional plane is a few bytes too large turns
   // a skipped animation into an unrecoverable PRESENT_CANCEL/HP_DEFER loop.
@@ -2817,7 +3121,7 @@ bool restoreBattleSceneAfterPromotionFailure(size_t previousCapacity,
   if (!sceneWorkspace) return false;
   bool terrainRestored = true;
   if (retainedLargePath && retainedLargePath[0])
-    terrainRestored = preloadLargeAsset(retainedLargePath);
+    terrainRestored = preloadLargeAssetCanonical(retainedLargePath);
   return terrainRestored;
 }
 
@@ -2869,7 +3173,7 @@ bool promoteBattleSceneWorkspace(size_t required) {
     return false;
   }
 
-  if (retainedLargePath[0] && !preloadLargeAsset(retainedLargePath))
+  if (retainedLargePath[0] && !preloadLargeAssetCanonical(retainedLargePath))
     return false;
   return true;
 }
@@ -2949,6 +3253,42 @@ bool preloadBattlePlane(const char* path) {
   const size_t offset = (largeWorkspaceUsed + 1U) & ~size_t(1U);
   size_t end = offset + paletteBytes + residentPixelBytes;
   if (end > sceneWorkspaceCapacity) {
+    // Some source programs combine an opaque 320x184 ChangeBackground with a
+    // transparent 256x256 BG1 task (Trick-or-Treat is the canonical case).
+    // The primary plane is intentionally kept linear when it has hundreds of
+    // unique tiles, but the task plane is highly repetitive.  Before asking
+    // the heap for an impossible larger contiguous block, retain the visible
+    // 138 task rows as an exact tile map in the remaining arena.  Ordinary
+    // terrain + task moves keep their faster linear task plane whenever it
+    // already fits.
+    if (cropToViewport && info.bitsPerPixel != 16U &&
+        sceneWorkspaceCapacity > offset + paletteBytes) {
+      uint16_t* compactPalette =
+          reinterpret_cast<uint16_t*>(sceneWorkspace + offset);
+      size_t compactBytes = 0U;
+      const size_t compactCapacity =
+          sceneWorkspaceCapacity - offset - paletteBytes;
+      bool compacted = loadCompactTiledIndexed(
+          file, info, sceneWorkspace + offset + paletteBytes,
+          compactCapacity, compactPalette, battlePlaneAsset.image,
+          compactBytes, false, false, residentHeight);
+      if (!compacted) {
+        battlePlaneAsset.image = IndexedImage{};
+        compacted = loadCompactTiledIndexed(
+            file, info, sceneWorkspace + offset + paletteBytes,
+            compactCapacity, compactPalette, battlePlaneAsset.image,
+            compactBytes, true, false, residentHeight);
+      }
+      if (compacted) {
+        file.close();
+        std::strncpy(battlePlaneAsset.path, path,
+                     sizeof(battlePlaneAsset.path) - 1U);
+        battlePlaneWorkspaceEnd = offset + paletteBytes + compactBytes;
+        sceneCacheSpillUsed = battlePlaneWorkspaceEnd;
+        return true;
+      }
+      battlePlaneAsset = BattlePlaneCache{};
+    }
     if (!promoteBattleSceneWorkspace(end)) {
       // Keep the exact pending requirement in the existing plane-end field;
       // the high bit is outside every valid arena offset and avoids another
@@ -2999,10 +3339,15 @@ bool cacheSmallAsset(const char* path) {
   if (!file || !readAssetInfo(file, info)) { file.close(); preloadFailure(path, "header"); return false; }
   Cropped4BppPlan croppedPlan{};
   prepareCropped4BppPlan(file, path, info, croppedPlan);
+  CompactSmallTiled4BppPlan tiledPlan{};
+  prepareCompactSmallTiled4BppPlan(file, path, info, tiledPlan);
+  const bool useTiledPlan = tiledPlan.valid &&
+      (!croppedPlan.valid || tiledPlan.indexBytes < croppedPlan.indexBytes);
   const size_t paletteBytes = info.bitsPerPixel == 16U ? sizeof(uint16_t) * 256U
       : static_cast<size_t>(info.paletteCount) * sizeof(uint16_t);
   const size_t indexBytes = info.bitsPerPixel == 16U
       ? static_cast<size_t>(info.header.width) * info.header.height
+      : useTiledPlan ? tiledPlan.indexBytes
       : croppedPlan.valid ? croppedPlan.indexBytes : info.pixelBytes;
   const size_t reserve = paletteBytes + indexBytes;
   uint8_t* destinationArena = nullptr;
@@ -3021,8 +3366,13 @@ bool cacheSmallAsset(const char* path) {
   }
   uint16_t* palette = reinterpret_cast<uint16_t*>(destinationArena + destinationOffset);
   IndexedImage image{};
-  const bool loaded = croppedPlan.valid
-      ? installCropped4Bpp(info, croppedPlan,
+  const bool loaded = useTiledPlan
+      ? installCompactSmallTiled4Bpp(
+            file, info, tiledPlan,
+            destinationArena + destinationOffset + paletteBytes,
+            indexBytes, palette, image)
+      : croppedPlan.valid
+      ? installCropped4Bpp(file, info, croppedPlan,
                           destinationArena + destinationOffset + paletteBytes,
                           indexBytes, palette, image)
       : loadIndexed(file, info,

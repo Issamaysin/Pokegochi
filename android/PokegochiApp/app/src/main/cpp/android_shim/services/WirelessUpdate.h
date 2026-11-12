@@ -10,12 +10,14 @@ class WirelessUpdate {
   using ErrorCode = PokegochiUpdateProtocol::ErrorCode;
   using SaveCommitCallback = bool (*)(void*);
   using SaveResetCallback = bool (*)(void*);
+  using VerificationMemoryCallback = void* (*)(void*, bool);
   using DiagnosticReadCallback = size_t (*)(void*, uint8_t, uint16_t, char*, size_t);
 
   bool recoverAtBoot(bool) { return true; }
   void confirmBoot(bool) {}
   bool begin(uint32_t, const char*, uint16_t, bool) { changed_ = true; return true; }
   void configureSaveManagement(void*, uint32_t, uint16_t, SaveCommitCallback, SaveResetCallback, void*) {}
+  void configureVerificationMemory(VerificationMemoryCallback, void*) {}
   void configureDiagnostics(DiagnosticReadCallback, void*) {}
   void update() {}
   void shutdown(bool = false) { active_ = false; }

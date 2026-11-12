@@ -6,8 +6,8 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 
 | Proof | SpriteTemplates |
 |---|---:|
-| ExactCallbackProfile | 851 |
-| ExplicitReviewedCallback | 57 |
+| ExactCallbackProfile | 867 |
+| ExplicitReviewedCallback | 60 |
 
 | SpriteTemplate | Callback | Frame seq. / selector | Affine seq. / selector | Lifetime | Installed states | Motion | Travel | Origin | Proof |
 |---|---|---|---|---|---|---|---|---|---|
@@ -378,6 +378,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gHyperspaceFuryRingTemplate | AnimFireSpiralOutward | 1 / SingleSequence | 1 / SingleSequence | 30 (MotionProfile) | AnimFireSpiralOutward_Step1, AnimFireSpiralOutward_Step2 | ExpandingSpiral | Local | Attacker | ExactCallbackProfile |
 | gHyperspaceHoleImpactTemplate | AnimIceEffectParticle | 1 / SingleSequence | 1 / SingleSequence | 20 (affine=17) | AnimFlickerIceEffectParticle | IceImpact | Local | Target | ExactCallbackProfile |
 | gIceBallChunkSpriteTemplate | InitIceBallAnim | 2 / DefaultInitialSequence | 5 / DefaultInitialSequence | 31 (frame=16) | AnimThrowIceBall | StandardArcProjectile | AttackerToTarget | Target | ExactCallbackProfile |
+| gIceBallImpactShardSpriteTemplate | InitIceBallParticle | 1 / SingleSequence | 0 / NoAffine | 21 (MotionProfile) | AnimIceBallParticle | DriftingBubble | Local | Target | ExactCallbackProfile |
 | gIceBeamInnerCrystalSpriteTemplate | AnimIceBeamParticle | 1 / SingleSequence | 1 / SingleSequence | 20 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | IceBeamParticle | AttackerToTarget | Target | ExactCallbackProfile |
 | gIceBeamOuterCrystalSpriteTemplate | AnimIceBeamParticle | 1 / SingleSequence | 0 / NoAffine | 20 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | IceBeamParticle | AttackerToTarget | Target | ExactCallbackProfile |
 | gIceBurnSmokeTemplate | AnimBlackSmoke | 1 / SingleSequence | 0 / NoAffine | 28 (MotionProfile) | AnimBlackSmoke_Step | SmokeDrift | Local | Target | ExactCallbackProfile |
@@ -549,6 +550,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gPoisonGasCloudSpriteTemplate | InitPoisonGasCloudAnim | 1 / SingleSequence | 0 / NoAffine | 160 (MotionProfile) | MovePoisonGasCloud | PoisonGasCloud | AttackerToTarget | Target | ExactCallbackProfile |
 | gPoisonJabProjectileSpriteTemplate | AnimPoisonJabProjectile | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | PoisonJabProjectile | Local | Target | ExactCallbackProfile |
 | gPoisonPowderParticleSpriteTemplate | AnimMovePowderParticle | 1 / SingleSequence | 0 / NoAffine | 96 (MotionProfile) | AnimMovePowderParticle_Step | PowderParticle | Local | Target | ExactCallbackProfile |
+| gPollenPuffHealTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 21 (frame=21) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gPollenPuffImpactTemplates | AnimNeedleArmSpike | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimNeedleArmSpike_Step | NeedleArmSpike | Local | Argument4 | ExactCallbackProfile |
 | gPollenPuffPinkSparkleTemplate | AnimZapCannonSpark | 1 / SingleSequence | 1 / SingleSequence | 31 (MotionProfile) | AnimZapCannonSpark_Step | ZapCannonSpark | AttackerToTarget | Target | ExactCallbackProfile |
 | gPollenPuffPinkStarTemplate | AnimSmallBubblePair | 1 / SingleSequence | 0 / NoAffine | 30 (MotionProfile) | AnimSmallBubblePair_Step | BubbleRise | Local | Argument3 | ExactCallbackProfile |
@@ -821,11 +823,28 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | gTauntFingerSpriteTemplate | AnimTauntFinger | 4 / DefaultInitialSequence | 0 / NoAffine | 47 (frame=28) | AnimTauntFinger_Step1, AnimTauntFinger_Step2 | TauntFinger | Local | Argument0 | ExactCallbackProfile |
 | gTealAlertSpriteTemplate | AnimTealAlert | 1 / SingleSequence | 0 / NoAffine | 7 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetConverge | Local | Target | ExactCallbackProfile |
 | gTearDropSpriteTemplate | AnimTearDrop | 1 / SingleSequence | 2 / Constant1 | 33 (MotionProfile) | AnimTearDrop_Step | TearDropArc | Local | Target | ExactCallbackProfile |
+| gTechnoBlastBlueBlastTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastBlueBubbleTemplate | AnimSmallBubblePair | 1 / SingleSequence | 0 / NoAffine | 30 (MotionProfile) | AnimSmallBubblePair_Step | BubbleRise | Local | Argument3 | ExactCallbackProfile |
+| gTechnoBlastBlueChargeTemplate | AnimGrowingChargeOrb | 1 / SingleSequence | 3 / DefaultInitialSequence | 172 (affine=172) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gTechnoBlastBlueSmokeTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=15) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gTechnoBlastBlueSparkTemplate | AnimZapCannonSpark | 3 / OamTileArgument6 | 1 / SingleSequence | 31 (MotionProfile) | AnimZapCannonSpark_Step | ZapCannonSpark | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastIceBlastTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastIceChargeTemplate | AnimGrowingChargeOrb | 1 / SingleSequence | 3 / DefaultInitialSequence | 172 (affine=172) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gTechnoBlastIceCrystalsTemplate | AnimHitSplatBasic | 1 / SingleSequence | 4 / Argument3 | 9 (affine=9) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gTechnoBlastIceSmokeTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=15) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gTechnoBlastIceSparkTemplate | AnimZapCannonSpark | 3 / OamTileArgument6 | 1 / SingleSequence | 31 (MotionProfile) | AnimZapCannonSpark_Step | ZapCannonSpark | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastRedBlastTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastRedChargeTemplate | AnimGrowingChargeOrb | 1 / SingleSequence | 3 / DefaultInitialSequence | 172 (affine=172) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
+| gTechnoBlastRedSmokeTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=15) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gTechnoBlastRedSparkTemplate | AnimZapCannonSpark | 3 / OamTileArgument6 | 1 / SingleSequence | 31 (MotionProfile) | AnimZapCannonSpark_Step | ZapCannonSpark | AttackerToTarget | Target | ExactCallbackProfile |
 | gTechnoBlastWhiteBlastTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
 | gTechnoBlastWhiteChargeTemplate | AnimGrowingChargeOrb | 1 / SingleSequence | 3 / DefaultInitialSequence | 172 (affine=172) | - | Static | Local | Argument0 | ExplicitReviewedCallback |
 | gTechnoBlastWhiteCircleTemplate | AnimPowerAbsorptionOrb | 1 / SingleSequence | 1 / SingleSequence | 64 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | AbsorptionLinear | TargetToAttacker | Target | ExactCallbackProfile |
 | gTechnoBlastWhiteSmokeTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=15) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gTechnoBlastWhiteSparkTemplate | AnimZapCannonSpark | 3 / OamTileArgument6 | 1 / SingleSequence | 31 (MotionProfile) | AnimZapCannonSpark_Step | ZapCannonSpark | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastYellowBlastTemplate | TranslateAnimSpriteToTargetMonLocation | 1 / SingleSequence | 0 / NoAffine | 31 (MotionProfile) | StartAnimLinearTranslation, AnimTranslateLinear_WithFollowup | TargetLocationProjectile | AttackerToTarget | Target | ExactCallbackProfile |
+| gTechnoBlastYellowSmokeTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=15) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
+| gTechnoBlastYellowSparkTemplate | AnimZapCannonSpark | 3 / OamTileArgument6 | 1 / SingleSequence | 31 (MotionProfile) | AnimZapCannonSpark_Step | ZapCannonSpark | AttackerToTarget | Target | ExactCallbackProfile |
 | gTectonicRageBlastBurnSpriteTemplate | AnimBlastBurnTargetPlume | 1 / SingleSequence | 0 / NoAffine | 64 (MotionProfile) | AnimBlastBurnTargetPlume_Step1 | BlastBurnTargetPlume | Local | Target | ExactCallbackProfile |
 | gTectonicRageExplosionSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 0 / NoAffine | 20 (frame=20) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
 | gThinRingExpandingSpriteTemplate | AnimSpriteOnMonPos | 1 / SingleSequence | 2 / DefaultInitialSequence | 31 (frame=1+affine=31) | - | OrientedStatic | Local | Argument2 | ExactCallbackProfile |
@@ -928,7 +947,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 2 | KARATE_CHOP | 0 | 2 | 1 | Sprite:DiagonalStrike, Sprite:OrientedStatic, Task:ShakeMonExact |
 | 3 | DOUBLE_SLAP | 1 | 1 | 1 | Sprite:OrientedStatic, Task:ShakeMonExact |
 | 4 | COMET_PUNCH | 1 | 2 | 1 | Sprite:BasicFistOrFootExact, Sprite:OrientedStatic, Task:ShakeMonExact |
-| 5 | MEGA_PUNCH | 0 | 4 | 4 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 5 | MEGA_PUNCH | 3 | 4 | 4 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 6 | PAY_DAY | 0 | 3 | 1 | Sprite:CoinThrow, Sprite:FallingCoinBounce, Sprite:OrientedStatic, Task:ShakeMon2Exact |
 | 7 | FIRE_PUNCH | 0 | 4 | 2 | Sprite:BasicFistOrFootExact, Sprite:GrowingCircle, Sprite:LocalFixedVelocity, Sprite:OrientedStatic, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
 | 8 | ICE_PUNCH | 0 | 7 | 2 | Sprite:BasicFistOrFootExact, Sprite:GrowingCircle, Sprite:IceImpact, Sprite:OrientedStatic, Sprite:PalettePulse, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
@@ -948,7 +967,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 22 | VINE_WHIP | 0 | 2 | 1 | Sprite:BattlerLunge, Sprite:WhipHitExact, Task:ShakeMon2Exact |
 | 23 | STOMP | 0 | 2 | 1 | Sprite:OrientedStatic, Sprite:StompDrop, Task:ShakeMonExact |
 | 24 | DOUBLE_KICK | 0 | 1 | 1 | Sprite:RandomBattlerHit, Task:ShakeMonExact |
-| 25 | MEGA_KICK | 0 | 4 | 4 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 25 | MEGA_KICK | 3 | 4 | 4 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 26 | JUMP_KICK | 0 | 3 | 1 | Sprite:BattlerLunge, Sprite:DiagonalStrike, Sprite:OrientedStatic, Task:ShakeMonExact |
 | 27 | ROLLING_KICK | 0 | 4 | 2 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Sprite:SlidingKickWave, Task:ShakeMonExact, Task:TranslateMonEllipticalRespectSide |
 | 28 | SAND_ATTACK | 0 | 3 | 0 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:DirtProjectile |
@@ -999,7 +1018,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 73 | LEECH_SEED | 0 | 1 | 0 | Sprite:LeechSeedArc |
 | 74 | GROWTH | 0 | 0 | 2 | Task:BlendColorCycleExact, Task:ScaleMonAndRestore |
 | 75 | RAZOR_LEAF | 0 | 2 | 1 | Sprite:RazorLeafDrift, Sprite:StandardArcProjectile, Task:ShakeMon2Exact |
-| 76 | SOLAR_BEAM | 1 | 2 | 6 | Sprite:AbsorptionLinear, Sprite:SolarBeamBigOrb, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:ShakeMon2Exact, Task:SolarBeamOrbs |
+| 76 | SOLAR_BEAM | 3 | 2 | 6 | Sprite:AbsorptionLinear, Sprite:SolarBeamBigOrb, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:ShakeMon2Exact, Task:SolarBeamOrbs |
 | 77 | POISON_POWDER | 0 | 1 | 0 | Sprite:PowderParticle |
 | 78 | STUN_SPORE | 0 | 1 | 0 | Sprite:PowderParticle |
 | 79 | SLEEP_POWDER | 0 | 1 | 0 | Sprite:PowderParticle |
@@ -1066,7 +1085,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 140 | BARRAGE | 0 | 1 | 2 | Sprite:BattlerShake, Task:BarrageBall, Task:ShakeMonExact |
 | 141 | LEECH_LIFE | 0 | 5 | 1 | Sprite:AbsorptionArc, Sprite:LeechLifeNeedle, Sprite:OrientedStatic, Sprite:PalettePulse, Task:ShakeMonExact |
 | 142 | LOVELY_KISS | 0 | 2 | 0 | Sprite:DevilOrbit, Sprite:PinkHeartWave |
-| 143 | SKY_ATTACK | 1 | 1 | 10 | Sprite:SkyAttackBird, Task:AttackerFadeFromInvisibleExact, Task:AttackerFadeToInvisibleExact, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:HorizontalShakeExact, Task:ShakeMon2Exact, Task:SlidingBackground |
+| 143 | SKY_ATTACK | 2 | 1 | 10 | Sprite:SkyAttackBird, Task:AttackerFadeFromInvisibleExact, Task:AttackerFadeToInvisibleExact, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:HorizontalShakeExact, Task:ShakeMon2Exact, Task:SlidingBackground |
 | 144 | TRANSFORM | 0 | 0 | 1 | Task:TransformMon |
 | 145 | BUBBLE | 0 | 2 | 0 | Sprite:BubbleRise, Sprite:OrbitingProjectile |
 | 146 | DIZZY_PUNCH | 0 | 4 | 1 | Sprite:BasicFistOrFootExact, Sprite:BattlerLunge, Sprite:DizzyWave, Sprite:OrientedStatic, Task:ShakeMon2Exact |
@@ -1133,7 +1152,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 207 | SWAGGER | 0 | 2 | 1 | Sprite:AnchorOrientedStatic, Sprite:BreathPuff, Task:GrowAndShrink |
 | 208 | MILK_DRINK | 0 | 3 | 0 | Sprite:MilkBottleDrink, Sprite:OrientedStatic |
 | 209 | SPARK | 0 | 5 | 2 | Sprite:BattlerLunge, Sprite:ElectricOrbit, Sprite:OrientedStatic, Sprite:StaticElectricity, Task:BlendColorCycleExact, Task:ShakeMonExact |
-| 210 | FURY_CUTTER | 1 | 2 | 3 | Sprite:PalettePulse, Sprite:SliceArc, Task:ShakeMonExact |
+| 210 | FURY_CUTTER | 4 | 2 | 3 | Sprite:PalettePulse, Sprite:SliceArc, Task:ShakeMonExact |
 | 211 | STEEL_WING | 0 | 4 | 3 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Sprite:StandardLinearProjectile, Task:MetallicShineExact, Task:TagPaletteRotate, Task:TranslateMonElliptical |
 | 212 | MEAN_LOOK | 0 | 2 | 0 | Sprite:PalettePulse, Sprite:SpotlightSway |
 | 213 | ATTRACT | 0 | 3 | 3 | Sprite:HeartWaveProjectile, Sprite:ParticleBurstWave, Sprite:RedHeartRising, Task:BlendColorCycleExact, Task:HeartsField, Task:SwayMonExact |
@@ -1187,7 +1206,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 261 | WILL_O_WISP | 0 | 2 | 2 | Sprite:ExpandingEllipse, Sprite:WillOWispOrb, Task:ShakeMon2Exact |
 | 262 | MEMENTO | 0 | 0 | 4 | Task:InitMementoShadowExact, Task:MementoAttackerShadow, Task:MementoBackgroundControl, Task:MementoTargetShadow |
 | 263 | FACADE | 0 | 0 | 2 | Task:FacadeColorBlendExact, Task:SquishAndSweatDroplets |
-| 264 | FOCUS_PUNCH | 0 | 2 | 3 | Sprite:FocusPunchWobble, Sprite:OrientedStatic, Task:ShakeMonExact |
+| 264 | FOCUS_PUNCH | 3 | 2 | 3 | Sprite:FocusPunchWobble, Sprite:OrientedStatic, Task:ShakeMonExact |
 | 265 | SMELLING_SALT | 0 | 2 | 2 | Sprite:SmellingSalts, Sprite:SmellingSaltsBlink, Task:ShakeMon2Exact, Task:SmellingSaltsSquish |
 | 266 | FOLLOW_ME | 0 | 1 | 0 | Sprite:FollowMeFinger |
 | 267 | NATURE_POWER | 0 | 5 | 1 | Sprite:BattlerRestorePosition, Sprite:BattlerShake, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Sprite:RaiseSprite, Task:ShakeMon2Exact |
@@ -1224,7 +1243,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 298 | TEETER_DANCE | 0 | 1 | 1 | Sprite:MusicOrbit, Task:TeeterDanceMovement |
 | 299 | BLAZE_KICK | 0 | 4 | 2 | Sprite:LocalFixedVelocity, Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 300 | MUD_SPORT | 0 | 1 | 1 | Sprite:MudSportDirt, Task:Splash |
-| 301 | ICE_BALL | 1 | 1 | 2 | Sprite:StandardArcProjectile |
+| 301 | ICE_BALL | 7 | 2 | 3 | Sprite:DriftingBubble, Sprite:StandardArcProjectile, Task:ShakeTargetPowerOrDamage |
 | 302 | NEEDLE_ARM | 0 | 3 | 1 | Sprite:BasicFistOrFootExact, Sprite:NeedleArmSpike, Sprite:OrientedStatic, Task:ShakeMon2Exact |
 | 303 | SLACK_OFF | 0 | 1 | 1 | Sprite:OrientedStatic, Task:SlackOffSquish |
 | 304 | HYPER_VOICE | 0 | 2 | 4 | Sprite:HyperVoiceRing, Sprite:PalettePulse, Task:ScaleMonAndRestore, Task:ShakeBattleTerrainExact, Task:ShakeMon2Exact |
@@ -1289,11 +1308,11 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 363 | NATURAL_GIFT | 0 | 2 | 3 | Sprite:DragonDanceOrbit, Sprite:LocalStarVelocity, Task:BlendColorCycleExact, Task:DragonDanceDistortion, Task:TagBlendInOut |
 | 364 | FEINT | 0 | 2 | 0 | Sprite:SliceArc, Sprite:Static |
 | 365 | PLUCK | 0 | 2 | 0 | Sprite:OrientedStatic, Sprite:PluckParticleJump |
-| 366 | TAILWIND | 0 | 1 | 4 | Sprite:FlyingSandCrescent, Task:SlidingBackground, Task:TraceMonBlendedExact, Task:TranslateMonEllipticalRespectSide |
+| 366 | TAILWIND | 1 | 1 | 4 | Sprite:FlyingSandCrescent, Task:SlidingBackground, Task:TraceMonBlendedExact, Task:TranslateMonEllipticalRespectSide |
 | 367 | ACUPRESSURE | 0 | 2 | 0 | Sprite:OrientedStatic, Sprite:StandardLinearProjectile |
 | 368 | METAL_BURST | 0 | 1 | 3 | Sprite:RadialScatter, Task:DefenseCurlDeformMon, Task:ScaleMonAndRestore, Task:SetGrayscaleOrOriginalPal |
 | 369 | U_TURN | 0 | 3 | 1 | Sprite:AbsorptionArc, Sprite:OrientedStatic, Sprite:ShadowBall, Task:ShakeMonExact |
-| 370 | CLOSE_COMBAT | 0 | 1 | 3 | Sprite:RandomBattlerHit, Task:ShakeMonInPlaceExact, Task:SlidingBackground |
+| 370 | CLOSE_COMBAT | 1 | 1 | 3 | Sprite:RandomBattlerHit, Task:ShakeMonInPlaceExact, Task:SlidingBackground |
 | 371 | PAYBACK | 0 | 1 | 1 | Sprite:OrientedStatic, Task:ShakeMon2Exact |
 | 372 | ASSURANCE | 0 | 2 | 0 | Sprite:BasicFistOrFootExact, Sprite:OrientedStatic |
 | 373 | EMBARGO | 0 | 1 | 1 | Sprite:SporeOrbit, Task:ShakeMon2Exact |
@@ -1317,7 +1336,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 391 | HEART_SWAP | 0 | 3 | 4 | Sprite:LocalStarVelocity, Sprite:ParticleBurstWave, Sprite:RisingHeartWave, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ScaleMonAndRestore, Task:SkillSwapOrbs |
 | 392 | AQUA_RING | 0 | 2 | 3 | Sprite:BubbleRise, Sprite:GuardRingRise, Task:BlendColorCycleExact, Task:ShakeMonExact, Task:TagBlendToColor |
 | 393 | MAGNET_RISE | 0 | 1 | 2 | Sprite:StaticElectricity, Task:BlendColorCycleExact, Task:WindUpLunge |
-| 394 | FLARE_BLITZ | 0 | 5 | 6 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:ExpandingSpiral, Sprite:LocalFixedVelocity, Sprite:OrientedStatic, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ShakeMon2Exact, Task:TranslateMonEllipticalRespectSide |
+| 394 | FLARE_BLITZ | 3 | 5 | 6 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:ExpandingSpiral, Sprite:LocalFixedVelocity, Sprite:OrientedStatic, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ShakeMon2Exact, Task:TranslateMonEllipticalRespectSide |
 | 395 | FORCE_PALM | 0 | 2 | 1 | Sprite:DiagonalStrike, Sprite:Static, Task:ShakeMonExact |
 | 396 | AURA_SPHERE | 0 | 1 | 2 | Sprite:SuperpowerFireball, Task:ShakeMon2Exact, Task:SlidingBackground |
 | 397 | ROCK_POLISH | 0 | 3 | 0 | Sprite:PalettePulse, Sprite:RockPolishStreak, Sprite:Static |
@@ -1328,7 +1347,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 402 | SEED_BOMB | 0 | 2 | 1 | Sprite:BulletSeedRicochet, Sprite:OrientedStatic, Task:ShakeMon2Exact |
 | 403 | AIR_SLASH | 0 | 1 | 2 | Sprite:SlashFlicker, Task:ShakeMon2Exact, Task:SlidingBackground |
 | 404 | X_SCISSOR | 0 | 2 | 3 | Sprite:PalettePulse, Sprite:SliceArc, Task:ShakeMonExact, Task:TraceMonBlendedExact, Task:TranslateMonEllipticalRespectSide |
-| 405 | BUG_BUZZ | 0 | 2 | 5 | Sprite:OrientedStatic, Sprite:RoarLine, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:SlidingBackground, Task:UproarDistortion |
+| 405 | BUG_BUZZ | 1 | 2 | 5 | Sprite:OrientedStatic, Sprite:RoarLine, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:SlidingBackground, Task:UproarDistortion |
 | 406 | DRAGON_PULSE | 0 | 2 | 2 | Sprite:PalettePulse, Sprite:TargetLocationProjectile, Task:BlendColorCycleExact, Task:SwayMonExact |
 | 407 | DRAGON_RUSH | 0 | 5 | 1 | Sprite:BattlerLunge, Sprite:DragonRushStrike, Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:RockFragmentLinear, Task:ShakeMonExact |
 | 408 | POWER_GEM | 0 | 3 | 2 | Sprite:FastOrbit, Sprite:PalettePulse, Sprite:RadialScatter, Task:BlendMonInAndOutExact, Task:ScaleMonAndRestore |
@@ -1339,7 +1358,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 413 | BRAVE_BIRD | 0 | 1 | 7 | Sprite:SkyAttackBird, Task:AttackerFadeFromInvisibleExact, Task:AttackerFadeToInvisibleExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact, Task:SlidingBackground |
 | 414 | EARTH_POWER | 0 | 2 | 3 | Sprite:BattlerRestorePosition, Sprite:OrientedStatic, Task:FissureBackgroundPosition, Task:HorizontalShakeExact, Task:ShakeMonExact |
 | 415 | SWITCHEROO | 0 | 1 | 3 | Sprite:TrickBagOrbit, Task:ShakeMonExact, Task:StretchAttackerUp, Task:StretchTargetUp |
-| 416 | GIGA_IMPACT | 0 | 4 | 3 | Sprite:BattlerDip, Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Task:ShakeMonInPlaceExact |
+| 416 | GIGA_IMPACT | 2 | 4 | 3 | Sprite:BattlerDip, Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Task:ShakeMonInPlaceExact |
 | 417 | NASTY_PLOT | 0 | 1 | 1 | Sprite:QuestionMarkExact, Task:FadeScreenPaletteCycle |
 | 418 | BULLET_PUNCH | 0 | 2 | 1 | Sprite:BasicFistOrFootExact, Sprite:OrientedStatic, Task:ShakeMonExact |
 | 419 | AVALANCHE | 0 | 2 | 1 | Sprite:BattlerShake, Sprite:FallingRockEllipse, Task:ShakeMonExact |
@@ -1361,7 +1380,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 435 | DISCHARGE | 0 | 4 | 5 | Sprite:OrientedStatic, Sprite:RandomBattlerHit, Sprite:StaticElectricity, Task:BlendBattleAnimPalExcludeExact, Task:BlendColorCycleExact, Task:HorizontalShakeExact, Task:TagBlendToColor |
 | 436 | LAVA_PLUME | 0 | 1 | 2 | Sprite:LavaPlumeDrift, Task:BlendColorCycleExact, Task:ShakeMon2Exact |
 | 437 | LEAF_STORM | 0 | 4 | 1 | Sprite:NeedleArmSpike, Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:StandardLinearProjectile, Task:ShakeMonExact |
-| 438 | POWER_WHIP | 0 | 3 | 2 | Sprite:BattlerLunge, Sprite:OrientedStatic, Sprite:TargetLocalLinear, Task:ShakeMonExact |
+| 438 | POWER_WHIP | 1 | 3 | 2 | Sprite:BattlerLunge, Sprite:OrientedStatic, Sprite:TargetLocalLinear, Task:ShakeMonExact |
 | 439 | ROCK_WRECKER | 0 | 6 | 3 | Sprite:NeedleArmSpike, Sprite:OrientedStatic, Sprite:RockFragmentLinear, Sprite:Static, Sprite:TargetLocationProjectile, Task:ShakeMon2Exact, Task:ShakeMonExact, Task:SlidingBackground |
 | 440 | CROSS_POISON | 0 | 3 | 1 | Sprite:BubbleRise, Sprite:OrientedStatic, Sprite:PalettePulse, Task:ShakeMonExact |
 | 441 | GUNK_SHOT | 0 | 3 | 3 | Sprite:BubbleRise, Sprite:GunkShotParticleWave, Sprite:Static, Task:ShakeMonExact, Task:SlidingBackground |
@@ -1380,7 +1399,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 454 | ATTACK_ORDER | 0 | 3 | 1 | Sprite:OrientedStatic, Sprite:RandomBattlerHit, Sprite:TwisterParticle, Task:ShakeMonInPlaceExact |
 | 455 | DEFEND_ORDER | 0 | 1 | 2 | Sprite:TwisterParticle, Task:BlendColorCycleExact, Task:ShakeMon2Exact |
 | 456 | HEAL_ORDER | 0 | 2 | 0 | Sprite:OrientedStatic, Sprite:TwisterParticle |
-| 457 | HEAD_SMASH | 0 | 2 | 4 | Sprite:FlashingHitFlicker, Sprite:RockScatterBounce, Task:ShakeMonInPlaceExact, Task:SkullBashPosition |
+| 457 | HEAD_SMASH | 3 | 2 | 4 | Sprite:FlashingHitFlicker, Sprite:RockScatterBounce, Task:ShakeMonInPlaceExact, Task:SkullBashPosition |
 | 458 | DOUBLE_HIT | 0 | 2 | 1 | Sprite:BattlerLunge, Sprite:OrientedStatic, Task:ShakeMonExact |
 | 459 | ROAR_OF_TIME | 0 | 3 | 3 | Sprite:AbsorptionLinear, Sprite:OrientedStatic, Task:BlendBattleAnimPalExact, Task:ShakeMonInPlaceExact |
 | 460 | SPACIAL_REND | 0 | 2 | 2 | Sprite:ExpandingSpiral, Sprite:LocalFixedVelocity, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
@@ -1389,7 +1408,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 463 | MAGMA_STORM | 0 | 1 | 4 | Sprite:Vortex, Task:BlendColorCycleExact, Task:SeismicTossBackground, Task:SeismicTossBackgroundEnd, Task:ShakeMonExact |
 | 464 | DARK_VOID | 0 | 5 | 2 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:LocalStarVelocity, Task:DestinyBondShadow, Task:SlidingBackground |
 | 465 | SEED_FLARE | 0 | 4 | 2 | Sprite:AbsorptionLinear, Sprite:FlyingSandCrescent, Sprite:StandardArcProjectile, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
-| 466 | OMINOUS_WIND | 0 | 3 | 4 | Sprite:FlyingParticle, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:SlidingBackground |
+| 466 | OMINOUS_WIND | 1 | 3 | 4 | Sprite:FlyingParticle, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:SlidingBackground |
 | 467 | SHADOW_FORCE | 1 | 1 | 7 | Sprite:PalettePulse, Task:AttackerFadeToInvisibleExact, Task:BlendColorCycleExact, Task:FadeScreenPaletteCycle, Task:NightShadeClone, Task:SetGrayscaleOrOriginalPal, Task:ShakeMon2Exact, Task:TranslateMonEllipticalRespectSide |
 | 468 | HONE_CLAWS | 0 | 2 | 1 | Sprite:BattlerLunge, Sprite:Static, Task:TagBlendToColor |
 | 469 | WIDE_GUARD | 0 | 1 | 2 | Sprite:ConversionHold, Task:ConversionAlphaBlendExact, Task:RockMonBackAndForth |
@@ -1406,7 +1425,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 480 | STORM_THROW | 0 | 2 | 1 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Task:RotateMonSpriteToSide |
 | 481 | FLAME_BURST | 0 | 3 | 1 | Sprite:DragonFire, Sprite:LocalFixedVelocity, Sprite:OrientedStatic, Task:ShakeMon2Exact |
 | 482 | SLUDGE_WAVE | 0 | 0 | 1 | Task:SurfWave |
-| 483 | QUIVER_DANCE | 0 | 1 | 6 | Sprite:DragonDanceOrbit, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:DragonDanceDistortion, Task:SlidingBackground, Task:TagBlendInOut |
+| 483 | QUIVER_DANCE | 1 | 1 | 6 | Sprite:DragonDanceOrbit, Task:BlendBattleAnimPalExact, Task:BlendBattleAnimPalExcludeExact, Task:DragonDanceDistortion, Task:SlidingBackground, Task:TagBlendInOut |
 | 484 | HEAVY_SLAM | 0 | 4 | 2 | Sprite:BattlerDip, Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Task:MetallicShineExact, Task:ShakeMonInPlaceExact |
 | 485 | SYNCHRONOISE | 0 | 4 | 1 | Sprite:HyperVoiceRing, Sprite:LocalFixedVelocity, Task:BlendBattleAnimPalExact |
 | 486 | ELECTRO_BALL | 0 | 3 | 1 | Sprite:OrientedStatic, Sprite:ShadowBall, Sprite:Static, Task:ShakeMon2Exact |
@@ -1440,7 +1459,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 514 | RETALIATE | 0 | 1 | 3 | Sprite:GuillotinePincer, Task:AttackerPunchWithTraceExact, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
 | 515 | FINAL_GAMBIT | 0 | 2 | 5 | Sprite:OrientedStatic, Sprite:ShadowBall, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:ScaleMonAndRestore, Task:ShakeMon2Exact, Task:ShakeMonExact |
 | 516 | BESTOW | 0 | 0 | 1 | Task:BestowItemThrow |
-| 517 | INFERNO | 0 | 1 | 4 | Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
+| 517 | INFERNO | 3 | 1 | 4 | Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
 | 518 | WATER_PLEDGE | 0 | 2 | 2 | Sprite:OrientedStatic, Sprite:PledgeOrbRise, Task:BlendColorCycleExact, Task:ShakeMonExact |
 | 519 | FIRE_PLEDGE | 0 | 1 | 2 | Sprite:PledgeOrbRise, Task:BlendColorCycleExact, Task:ShakeMonExact |
 | 520 | GRASS_PLEDGE | 0 | 2 | 2 | Sprite:PledgeOrbRise, Sprite:WhipHitExact, Task:BlendColorCycleExact, Task:ShakeMonExact |
@@ -1469,7 +1488,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 543 | HEAD_CHARGE | 0 | 2 | 1 | Sprite:BattlerBow, Sprite:FlashingHitFlicker, Task:ShakeMonExact |
 | 544 | GEAR_GRIND | 0 | 2 | 1 | Sprite:BiteClamp, Sprite:OrientedStatic, Task:ShakeMonExact |
 | 545 | SEARING_SHOT | 0 | 3 | 5 | Sprite:RadialLinear, Sprite:SpinningKickOrPunchExact, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ElectricChargingParticles, Task:ShakeMonExact, Task:SlidingBackground, Task:TagBlendToColor |
-| 546 | TECHNO_BLAST | 0 | 5 | 3 | Sprite:AbsorptionLinear, Sprite:OrientedStatic, Sprite:Static, Sprite:TargetLocationProjectile, Sprite:ZapCannonSpark, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 546 | TECHNO_BLAST | 4 | 29 | 3 | Sprite:AbsorptionLinear, Sprite:BubbleRise, Sprite:ExpandingSpiral, Sprite:IceImpact, Sprite:LocalFixedVelocity, Sprite:OrientedStatic, Sprite:Static, Sprite:StaticElectricity, Sprite:TargetLocationProjectile, Sprite:ZapCannonSpark, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 547 | RELIC_SONG | 0 | 5 | 5 | Sprite:OrientedStatic, Sprite:RandomBattlerHit, Sprite:RoarLine, Sprite:WavyMusicNote, Task:MusicNotePaletteClear, Task:MusicNotePaletteSetup, Task:ShakeMonInPlaceExact, Task:UproarDistortion |
 | 548 | SECRET_SWORD | 0 | 3 | 3 | Sprite:LocalFixedVelocity, Sprite:SliceArc, Sprite:SwordRise, Task:BlendBattleAnimPalExact, Task:ShakeMonExact, Task:TagFlash |
 | 549 | GLACIATE | 0 | 3 | 1 | Sprite:IceImpact, Sprite:SmokeDrift, Task:BlendBattleAnimPalExact |
@@ -1493,7 +1512,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 567 | TRICK_OR_TREAT | 0 | 1 | 3 | Sprite:GhostRiseFade, Task:BlendColorCycleExact, Task:ScaryFaceExact, Task:ShakeMon2Exact |
 | 568 | NOBLE_ROAR | 0 | 2 | 3 | Sprite:PalettePulse, Sprite:RoarLine, Task:ScaleMonAndRestore, Task:ShakeMon2Exact |
 | 569 | ION_DELUGE | 0 | 0 | 2 | Task:BlendBattleAnimPalExact, Task:IonRain |
-| 570 | PARABOLIC_CHARGE | 0 | 3 | 6 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ElectricChargingParticles, Task:ShakeMonExact, Task:ShockWaveLightning, Task:ShockWaveProgressingBolt |
+| 570 | PARABOLIC_CHARGE | 1 | 3 | 6 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ElectricChargingParticles, Task:ShakeMonExact, Task:ShockWaveLightning, Task:ShockWaveProgressingBolt |
 | 571 | FORESTS_CURSE | 0 | 2 | 2 | Sprite:GhostRiseFade, Sprite:WaterPulseBubble, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 572 | PETAL_BLIZZARD | 0 | 5 | 1 | Sprite:OrientedStatic, Sprite:RandomBattlerHit, Sprite:TwisterParticle, Task:ShakeMonInPlaceExact |
 | 573 | FREEZE_DRY | 0 | 5 | 3 | Sprite:GrowingCircle, Sprite:IceImpact, Sprite:PalettePulse, Task:BlendBattleAnimPalExact, Task:FrozenIceCube, Task:ShakeMonExact |
@@ -1509,7 +1528,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 583 | PLAY_ROUGH | 0 | 3 | 1 | Sprite:DizzyWave, Sprite:OrientedStatic, Sprite:PinkHeartWave, Task:TranslateMonElliptical |
 | 584 | FAIRY_WIND | 0 | 1 | 2 | Sprite:StandardArcProjectile, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 585 | MOONBLAST | 0 | 3 | 3 | Sprite:MoonAbsolute, Sprite:PalettePulse, Sprite:TargetLocationProjectile, Task:AlphaFadeInExact, Task:MoonlightEndFadeExact, Task:ShakeMonExact |
-| 586 | BOOMBURST | 0 | 2 | 6 | Sprite:HyperVoiceRing, Sprite:OrientedStatic, Task:InvertScreenColorExact, Task:ScaleMonAndRestore, Task:ShakeMon2Exact |
+| 586 | BOOMBURST | 1 | 2 | 6 | Sprite:HyperVoiceRing, Sprite:OrientedStatic, Task:InvertScreenColorExact, Task:ScaleMonAndRestore, Task:ShakeMon2Exact |
 | 587 | FAIRY_LOCK | 0 | 0 | 2 | Task:BlendBattleAnimPalExact, Task:VoltTackleBolts |
 | 588 | KINGS_SHIELD | 0 | 1 | 1 | Sprite:ProtectSlide, Task:TagBlendToColor |
 | 589 | PLAY_NICE | 0 | 1 | 1 | Sprite:HeartWaveProjectile, Task:SwayMonExact |
@@ -1542,7 +1561,7 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 616 | LANDS_WRATH | 0 | 1 | 3 | Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:FissureBackgroundPosition, Task:HorizontalShakeExact |
 | 617 | LIGHT_OF_RUIN | 0 | 3 | 6 | Sprite:HyperBeamOrb, Sprite:OrientedStatic, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ElectricChargingParticles, Task:ShakeMon2Exact, Task:ShakeMonExact, Task:TagBlendToColor, Task:TagFlash |
 | 618 | ORIGIN_PULSE | 0 | 5 | 1 | Sprite:DragonDanceOrbit, Sprite:NeedleArmSpike, Sprite:OrientedStatic, Sprite:RandomBattlerHit, Task:SlidingBackground |
-| 619 | PRECIPICE_BLADES | 0 | 5 | 4 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Sprite:SpriteOnMonDuration, Task:FissureBackgroundPosition, Task:HorizontalShakeExact, Task:TagBlendToColor |
+| 619 | PRECIPICE_BLADES | 1 | 5 | 4 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OrientedStatic, Sprite:SpriteOnMonDuration, Task:FissureBackgroundPosition, Task:HorizontalShakeExact, Task:TagBlendToColor |
 | 620 | DRAGON_ASCENT | 0 | 5 | 4 | Sprite:BattlerRestorePosition, Sprite:BattlerSlideToOffset, Sprite:OffscreenFly, Sprite:OrientedStatic, Sprite:Vortex, Task:BlendBattleAnimPalExact, Task:ShakeMonInPlaceExact, Task:SlidingBackground, Task:TagBlendToColor |
 | 621 | HYPERSPACE_FURY | 0 | 3 | 7 | Sprite:ExpandingSpiral, Sprite:NeedleArmSpike, Sprite:RandomBattlerHit, Task:BlendBattleAnimPalExact, Task:PsychicPaletteCycle, Task:ShakeMon2Exact, Task:ShakeMonExact, Task:SnatchOpposingMonMoveExact |
 | 622 | SHORE_UP | 0 | 2 | 1 | Sprite:FlyingSandCrescent, Sprite:OrientedStatic, Task:SandstormField |
@@ -1553,16 +1572,16 @@ Generated from every reachable branch of the original 354 FireRed move scripts p
 | 627 | SPARKLING_ARIA | 0 | 4 | 2 | Sprite:BubbleRise, Sprite:MudSportDirt, Sprite:Static, Task:BlendBattleAnimPalExact, Task:ShakeMonExact |
 | 628 | ICE_HAMMER | 0 | 4 | 2 | Sprite:IceImpact, Sprite:SmokeDrift, Sprite:StompDrop, Task:BlendBattleAnimPalExact, Task:SmellingSaltsSquish |
 | 629 | FLORAL_HEALING | 0 | 6 | 0 | Sprite:LocalStarVelocity, Sprite:SporeOrbit, Sprite:SweetScentPetal, Sprite:Vortex |
-| 630 | HIGH_HORSEPOWER | 0 | 3 | 4 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
+| 630 | HIGH_HORSEPOWER | 3 | 3 | 4 | Sprite:OrientedStatic, Sprite:PalettePulse, Sprite:SpinningKickOrPunchExact, Task:BlendBattleAnimPalExact, Task:ShakeMon2Exact |
 | 631 | STRENGTH_SAP | 0 | 4 | 1 | Sprite:AbsorptionArc, Sprite:LocalStarVelocity, Sprite:OrientedStatic, Sprite:TargetConverge, Task:BlendBattleAnimPalExact |
-| 632 | SOLAR_BLADE | 1 | 4 | 7 | Sprite:AbsorptionLinear, Sprite:Static, Sprite:SunlightRay, Sprite:SwordRise, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:ShakeMon2Exact, Task:TagFlash, Task:TranslateMonEllipticalRespectSide |
+| 632 | SOLAR_BLADE | 3 | 4 | 7 | Sprite:AbsorptionLinear, Sprite:Static, Sprite:SunlightRay, Sprite:SwordRise, Task:BlendBattleAnimPalExact, Task:BlendColorCycleExact, Task:ShakeMon2Exact, Task:TagFlash, Task:TranslateMonEllipticalRespectSide |
 | 633 | LEAFAGE | 0 | 2 | 0 | Sprite:OrientedStatic, Sprite:StandardArcProjectile |
 | 634 | SPOTLIGHT | 0 | 1 | 3 | Sprite:SpotlightSway, Task:HardwarePaletteFadeExact, Task:SpotlightWindow |
 | 635 | TOXIC_THREAD | 0 | 2 | 2 | Sprite:StringWrapBlink, Sprite:WebThreadWave, Task:BlendBattleAnimPalExact, Task:TagBlendToColor |
 | 636 | LASER_FOCUS | 0 | 2 | 1 | Sprite:OrientedStatic, Task:BlendBattleAnimPalExact |
 | 637 | GEAR_UP | 0 | 2 | 1 | Sprite:PetalDanceBig, Sprite:StaticElectricity, Task:BlendBattleAnimPalExact |
 | 638 | THROAT_CHOP | 0 | 2 | 2 | Sprite:DiagonalStrike, Sprite:OrientedStatic, Task:InvertScreenColorExact, Task:ShakeMonExact |
-| 639 | POLLEN_PUFF | 0 | 5 | 4 | Sprite:BubbleRise, Sprite:NeedleArmSpike, Sprite:StandardArcProjectile, Sprite:ZapCannonSpark, Task:BlendBattleAnimPalExact, Task:RockMonBackAndForth, Task:ShakeMonExact |
+| 639 | POLLEN_PUFF | 1 | 6 | 4 | Sprite:BubbleRise, Sprite:NeedleArmSpike, Sprite:OrientedStatic, Sprite:StandardArcProjectile, Sprite:ZapCannonSpark, Task:BlendBattleAnimPalExact, Task:RockMonBackAndForth, Task:ShakeMonExact |
 | 640 | ANCHOR_SHOT | 0 | 3 | 1 | Sprite:BlockBounce, Sprite:ShadowBall, Sprite:ThunderWavePairBlink, Task:ShakeMonExact |
 | 641 | PSYCHIC_TERRAIN | 0 | 2 | 3 | Sprite:FastOrbit, Sprite:RadialScatter, Task:BlendBattleAnimPalExact, Task:BlendMonInAndOutExact, Task:ScaleMonAndRestore |
 | 642 | LUNGE | 0 | 4 | 1 | Sprite:OrientedStatic, Sprite:PsychoBoostRise, Sprite:StandardArcProjectile, Sprite:TargetConverge, Task:ShakeMonExact |

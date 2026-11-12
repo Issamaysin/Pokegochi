@@ -13,13 +13,11 @@
 namespace {
 
 constexpr uint32_t kSaveMagic = 0x504F4B45U;
-constexpr uint16_t kCurrentSaveVersion = 52U;
-constexpr uint16_t kCurrentPayloadSize = 54984U;
+constexpr uint16_t kCurrentSaveVersion = PersistentSave::formatVersion();
+constexpr uint16_t kCurrentPayloadSize = sizeof(GameSave);
 constexpr size_t kHeaderSize = 16U;
 constexpr uint16_t kStarterSpecies[] = {
     1U, 4U, 7U, 152U, 155U, 158U, 252U, 255U, 258U};
-static_assert(sizeof(GameSave) == kCurrentPayloadSize,
-              "Inspector payload size is stale");
 
 uint32_t crc32(const uint8_t* data, size_t length) {
   uint32_t crc = 0xFFFFFFFFU;

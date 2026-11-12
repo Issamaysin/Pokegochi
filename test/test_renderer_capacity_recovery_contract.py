@@ -13,9 +13,8 @@ ASSET_BUILDER = (ROOT / "scripts/build_sd_asset_pack.py").read_text(
 ASSET_ROOT = ROOT / ".generated/sdcard/pokegochi/assets"
 
 
-def compact_lz_length(source: bytes) -> int:
+def compact_lz_length(source: bytes, match_depth: int = 10) -> int:
     """Return the exact encoded length of one firmware block-LZ block."""
-    match_depth = 10
     table = [[-1] * match_depth for _ in range(512)]
     position = 0
     literal_start = 0
@@ -115,7 +114,7 @@ def decoded_pkg_indices(path: Path) -> tuple[int, int, bytes]:
     return width, height, bytes(indices)
 
 
-def compact_ui_resident_bytes(path: Path) -> int:
+def compact_ui_resident_bytes(path: Path, match_depth: int = 10) -> int:
     width, height, indices = decoded_pkg_indices(path)
     block_count = (height + 7) // 8
     used = (block_count + 1) * 2
@@ -123,7 +122,9 @@ def compact_ui_resident_bytes(path: Path) -> int:
         first_row = block * 8
         rows = min(8, height - first_row)
         begin = first_row * width
-        used += compact_lz_length(indices[begin:begin + rows * width])
+        used += compact_lz_length(
+            indices[begin:begin + rows * width], match_depth
+        )
     return used
 
 
@@ -239,6 +240,22 @@ def main() -> None:
         f"{largest_compact_asset} needs {largest_compact_bytes} bytes, "
         f"above the post-radio contract {compact_ui_limit_bytes}"
     )
+    # With Wi-Fi active the durable collection leaves a measured 4 KiB scene
+    # bank. The renderer reverses its two existing arenas: a four-candidate
+    # history occupies that bank and the compressed page occupies the 13 KiB
+    # sprite arena. Audit every Summary/Pokecenter asset against that fallback.
+    low_memory_compact_sizes = {
+        path.relative_to(ASSET_ROOT).as_posix():
+            compact_ui_resident_bytes(path, match_depth=4)
+        for path in compact_ui_assets
+    }
+    largest_low_memory_asset, largest_low_memory_bytes = max(
+        low_memory_compact_sizes.items(), key=lambda item: item[1]
+    )
+    assert largest_low_memory_bytes <= 13_312, (
+        f"{largest_low_memory_asset} needs {largest_low_memory_bytes} bytes "
+        "in the active-Wi-Fi compact UI bank"
+    )
     home_assets = sorted(
         (ASSET_ROOT / "firered/ui").glob("home_background_[0-9][0-9].pkg")
     )
@@ -261,23 +278,47 @@ def main() -> None:
     assert compact_ui_limit_bytes <= post_remote_disconnect_workspace
     assert "kResidentBlockLz8Bpp = 0x8AU" in RENDERER
     assert "kCompactLzMatchDepth = 10U" in RENDERER
+    assert "kCompactLzLowMemoryMatchDepth = 4U" in RENDERER
+    assert "kCompactLzLowMemoryHashBytes <= 4096U" in RENDERER
+    assert "compactUiInCacheArena" in RENDERER
+    assert "largeAssetUsesCacheArena" in RENDERER
     assert "kCompactLzHashBytes" in RENDERER
     assert "kCompactLzHashBytes <= kCacheArenaBytes" in RENDERER
-    assert "cacheArenaUsed != 0U" in RENDERER
+    assert "compactUiScene && cacheArenaUsed == 0U" in RENDERER
     assert "loadCompactBlockLzIndexed(" in RENDERER
     assert "decodeCompactLzBlock(" in RENDERER
     assert "kCompactBlockRows = 8U" in RENDERER
     assert "kResidentWideTiled8Bpp" in RENDERER
     assert "kResidentFlippedTiled8Bpp = 0x8BU" in RENDERER
     assert "compactTileMatches(" in RENDERER
+    assert "uint16_t compactTileHash(const uint8_t* tile)" in RENDERER
+    assert "kCompactTileHashCapacity = 560U" in RENDERER
+    assert "tileHashes[tileIndex] != sourceHash" in RENDERER
     assert "residentBytes, true, true" in RENDERER
     assert 'std::strstr(path, "/summary_screen/")' in RENDERER
     assert 'std::strstr(path, "/pokecenter/")' in RENDERER
-    assert "const bool compactBorrowedBattle" in RENDERER
+    assert "const bool compactBattleTerrain" in RENDERER
+    assert 'std::strstr(path, "/battle_terrain/")' in RENDERER
+    assert (
+        "compactHome || compactUiScene || compactBattleTerrain ||"
+        in RENDERER
+    )
+    assert "const bool compactBattleReplacement" in RENDERER
     assert "sceneWorkspaceBorrowed && isOpaqueBattleReplacement(path)" in RENDERER
-    assert "!loaded && compactBorrowedBattle" in RENDERER
+    assert "compactBattleReplacement = isOpaqueBattleReplacement(path)" in RENDERER
+    assert "!loaded && compactBattleReplacement" in RENDERER
     assert "reserve <= sceneWorkspaceCapacity" in RENDERER
     assert "residentBytes >= reserve" in RENDERER
+    plane_start = RENDERER.index("bool preloadBattlePlane(const char* path)")
+    plane_end = RENDERER.index("bool cacheSmallAsset(const char* path)", plane_start)
+    plane_loader = RENDERER[plane_start:plane_end]
+    assert "if (cropToViewport && info.bitsPerPixel != 16U" in plane_loader
+    assert "compactCapacity" in plane_loader
+    assert "compactBytes, false, false, residentHeight" in plane_loader
+    assert "compactBytes, true, false, residentHeight" in plane_loader
+    assert plane_loader.index("compactBytes, false, false, residentHeight") < (
+        plane_loader.index("promoteBattleSceneWorkspace(end)")
+    )
     task_capacity = re.search(
         r"kBattleAnimationTaskCapacity\s*=\s*(\d+)", MAIN
     )
@@ -322,6 +363,12 @@ def main() -> None:
     assert save_now.index("if (pvpCollectionWorkspaceBorrowed) return;") < save_now.index(
         "saves.commit(gameSave)"
     )
+    # OTAP owns the released renderer bank until its radio is shut down. A
+    # minute checkpoint may still persist the save, but must not repeatedly
+    # allocate that bank underneath the active update transport.
+    assert "const bool updaterOwnsReleasedRenderer" in save_now
+    assert "!updaterOwnsReleasedRenderer &&" in save_now
+    assert "if (!restored && !updaterOwnsReleasedRenderer)" in save_now
     diagnostic_pvp = MAIN[
         MAIN.index('!std::strcmp(line, "ANIMPVP OFF")'):
         MAIN.index('!std::strncmp(line, "ANIMPLAY ", 9U)',
@@ -331,6 +378,21 @@ def main() -> None:
     assert "pvpCollectionWorkspaceBorrowed = true;" in diagnostic_pvp
     assert "pvpSessionActive = true;" in diagnostic_pvp
     assert "if (saveDirty) saveNow();" in diagnostic_pvp
+
+    # Cable animation speed selection is a transient profiler override. It
+    # must not dirty the durable user setting while sweeping 1x/2x/3x.
+    diagnostic_speed = MAIN[
+        MAIN.index('!std::strncmp(line, "ANIMSPEED ", 10U)'):
+        MAIN.index('!std::strcmp(line, "ANIMRADIO BLE")')
+    ]
+    assert "diagnosticBattleSpeedMultiplier = speed;" in diagnostic_speed
+    assert "gameSave.settings.setBattleSpeedMultiplier" not in diagnostic_speed
+    speed_resolver = MAIN[
+        MAIN.index("uint8_t battlePresentationSpeedMultiplier() {"):
+        MAIN.index("uint32_t battlePresentationDurationMs(")
+    ]
+    assert "diagnosticBattleSpeedMultiplier != 0U" in speed_resolver
+    assert "normalizeSpeed(\n        diagnosticBattleSpeedMultiplier)" in speed_resolver
 
     # Consecutive opaque move scenes are rebuilt in memory before the next
     # preload. They must not force an intermediate TFT commit, which used to
@@ -416,8 +478,15 @@ def main() -> None:
         "bool restoreBattleSceneAfterPromotionFailure("
     )
     rollback = RENDERER[rollback_start:promotion_start]
-    assert "preloadLargeAsset(retainedLargePath)" in rollback
+    assert "preloadLargeAssetCanonical(retainedLargePath)" in rollback
     assert "sceneWorkspaceCapacity = sceneWorkspace ? requested : 0U;" in rollback
+    canonical_reload_start = RENDERER.index(
+        "bool preloadLargeAssetCanonical(const char* path)"
+    )
+    canonical_reload = RENDERER[canonical_reload_start:rollback_start]
+    assert "AssetRenderer::beginPreloadBatch()" in canonical_reload
+    assert "AssetRenderer::endPreloadBatch()" in canonical_reload
+    assert "preloadLargeAsset(path)" in canonical_reload
 
     # Even an unrecoverable missing package is a visual degradation, not a
     # journal lock: the procedural arena must compile for ESP32 as well as

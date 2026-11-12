@@ -766,6 +766,10 @@ class BattleEngine {
                                MoveId move,BattleSide userSide);
   static bool moveIsSelectable(const BattleState& battle,const PokemonCollection& collection,
                                MoveId move,BattleSide userSide);
+  // Lightweight local AI used by the opt-in Wild auto-battle toggle. It
+  // returns only a legal move with PP and never falls back to Struggle.
+  static uint8_t choosePlayerAutoMove(BattleState& battle,
+                                      const PokemonCollection& collection);
   static bool canUseZMove(const BattleState& battle,const OwnedPokemon& pokemon,
                            MoveId move,BattleSide side=BattleSide::Player);
   static bool armPlayerZMove(BattleState& battle,const PokemonCollection& collection,

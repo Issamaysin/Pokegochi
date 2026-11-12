@@ -74,6 +74,28 @@ inline bool journalAdvanceBlocked(bool levelUpPanelPending,
       statusAnimationPending || finishPending;
 }
 
+// Android keeps a down/up event queued while its Surface is being published.
+// The physical XPT2046 is polled, so a short press can begin and end while the
+// ILI9341 owns the loop. A hardware edge may be buffered only after a real
+// text/page is ready and every ordered journal barrier has completed. Keeping
+// this rule independent from the ISR prevents an old move-selection press or
+// an HP/animation transition from silently skipping the following message.
+inline bool manualAdvanceCaptureCanArm(bool awaitingAdvance,
+                                       bool visibleTextOrPage,
+                                       bool journalBlocked) {
+  return awaitingAdvance && visibleTextOrPage && !journalBlocked;
+}
+
+// Once the journal is exhausted, its final result and any chained reward
+// notices are presented by the standalone battle surface. They deserve the
+// same one-edge hardware capture as journal text, but only while real text is
+// visible: an idle command grid must never turn an old edge into FIGHT/BAG.
+inline bool standaloneAdvanceCaptureCanArm(bool flowIdle,
+                                           bool visibleText,
+                                           bool journalBlocked) {
+  return flowIdle && visibleText && !journalBlocked;
+}
+
 // HP events are silent journal entries. Without an explicit boundary the
 // presenter can finish the last meter sample and immediately paint the next
 // message/animation in the same call stack. Damage happened to hide this in

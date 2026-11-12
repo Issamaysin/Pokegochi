@@ -112,6 +112,7 @@ enum PacketType : uint8_t {
   BattleSyncCore,
   BattleSyncAck,
   BattleRulesChoice,
+  BattleSyncReplacement,
 };
 
 static_assert(Invite == PokegochiMultiplayerProtocol::Invite &&
@@ -136,7 +137,9 @@ static_assert(Invite == PokegochiMultiplayerProtocol::Invite &&
               BattleSyncVolatile == PokegochiMultiplayerProtocol::BattleSyncVolatile &&
               BattleSyncCore == PokegochiMultiplayerProtocol::BattleSyncCore &&
               BattleSyncAck == PokegochiMultiplayerProtocol::BattleSyncAck &&
-              BattleRulesChoice == PokegochiMultiplayerProtocol::BattleRulesChoice,
+              BattleRulesChoice == PokegochiMultiplayerProtocol::BattleRulesChoice &&
+              BattleSyncReplacement ==
+                  PokegochiMultiplayerProtocol::BattleSyncReplacement,
               "Multiplayer packet type ABI changed");
 
 #pragma pack(push, 1)
@@ -211,6 +214,11 @@ struct BattleSyncCorePayload {
 struct BattleSyncAckPayload {
   uint16_t turn;
   uint32_t snapshotChecksum;
+};
+struct BattleSyncReplacementPayload {
+  uint16_t turn;
+  uint8_t hostReason;
+  uint8_t guestReason;
 };
 #pragma pack(pop)
 
@@ -2475,13 +2483,13 @@ bool Multiplayer::publishBattleState(const BattleState& battle, const PokemonCol
                                      const uint8_t remoteRosterSlotAtIndex[kPartyCapacity]) {
   if (!isBattleHost() || state_ != State::BattleActive || battle.kind != BattleKind::Pvp) return false;
 #if !defined(ARDUINO_ARCH_ESP32)
-  // A canonical three-vs-three snapshot is thirteen packets. Reserving the
+  // A canonical three-vs-three snapshot is fourteen packets. Reserving the
   // complete batch before its first packet prevents Android from filling its
   // native queue with two-and-a-half retries and then publishing a partial
   // state that can never be acknowledged after a faint.
   const uint8_t snapshotPackets = static_cast<uint8_t>(
       localRoster_.count + battle.opponentCount + localRoster_.count +
-      battle.opponentCount + 1U);
+      battle.opponentCount + 2U);
   if (snapshotPackets > kOutgoingPacketCapacity - outgoingPacketCount_) {
     std::printf("[LINK] snapshot queue busy turn=%u queued=%u need=%u\n",
                 static_cast<unsigned>(battle.turn),
@@ -2533,6 +2541,10 @@ bool Multiplayer::publishBattleState(const BattleState& battle, const PokemonCol
   sync.delayedToGuest = battle.delayedToOpponent;
   sync.hostCount = localRoster_.count;
   sync.guestCount = battle.opponentCount;
+  sync.hostReplacementReason = static_cast<uint8_t>(
+      battle.pendingPlayerReplacement & 0x0FU);
+  sync.guestReplacementReason = static_cast<uint8_t>(
+      (battle.pendingPlayerReplacement >> 4U) & 0x0FU);
 
   uint8_t hostActiveSlot = 0xFFU;
   for (uint8_t slot = 0; slot < localRoster_.count; ++slot) {
@@ -2608,6 +2620,10 @@ bool Multiplayer::publishBattleState(const BattleState& battle, const PokemonCol
         sync.guestMoveEffects[slot], sync.guestGen4Effects[slot]};
     if (!sendPacket(BattleSyncVolatile, &packet, sizeof(packet), sync.turn)) return false;
   }
+  const BattleSyncReplacementPayload replacement{
+      sync.turn, sync.hostReplacementReason, sync.guestReplacementReason};
+  if (!sendPacket(BattleSyncReplacement, &replacement,
+                  sizeof(replacement), sync.turn)) return false;
   const BattleSyncCorePayload core =
       battleSyncCorePayload(sync, sync.snapshotChecksum);
   return sendPacket(BattleSyncCore, &core, sizeof(core), sync.turn);

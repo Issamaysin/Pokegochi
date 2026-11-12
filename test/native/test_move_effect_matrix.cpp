@@ -286,6 +286,91 @@ int main(){
     assert(attacker.evasionStage==0);
   }
 
+  // Stage effects are named protocol families, not arbitrary keywords.
+  // QUICK_ATTACK used to match the generic ATTACK substring and therefore
+  // gave Shadow Sneak (and every other ordinary priority move) Attack +1 on
+  // every hit. SPEED_SWAP and Tailwind's DOUBLE_SPEED_3_TURNS had the same
+  // problem with Speed. Exercise every current zero-chance false positive on
+  // both battle sides, including Protean to reproduce Mega Greninja's setup.
+  {
+    const auto neutral=[](const CombatVolatile& state){
+      return state.attackStage==0&&state.defenseStage==0&&
+          state.spAttackStage==0&&state.spDefenseStage==0&&
+          state.speedStage==0&&state.accuracyStage==0&&
+          state.evasionStage==0;
+    };
+    constexpr MoveId falseStageMoves[]={
+      static_cast<MoveId>(98),  // QUICK ATTACK
+      static_cast<MoveId>(183), // MACH PUNCH
+      static_cast<MoveId>(245), // EXTREME SPEED
+      static_cast<MoveId>(410), // VACUUM WAVE
+      static_cast<MoveId>(418), // BULLET PUNCH
+      static_cast<MoveId>(420), // ICE SHARD
+      static_cast<MoveId>(425), // SHADOW SNEAK
+      static_cast<MoveId>(453), // AQUA JET
+      static_cast<MoveId>(663), // ACCELEROCK
+      static_cast<MoveId>(672), // MULTI-ATTACK
+      static_cast<MoveId>(366), // TAILWIND
+      static_cast<MoveId>(646), // SPEED SWAP
+    };
+    const MoveId splash=static_cast<MoveId>(150);
+    for(const MoveId move:falseStageMoves)for(bool enemy:{false,true}){
+      Fixture fixture(enemy?splash:move,enemy?move:splash);
+      OwnedPokemon& user=enemy?fixture.opponent():fixture.player();
+      user.abilityId=169; // PROTEAN: the observed Mega Greninja Ability.
+      fixture.player().maximumHp=fixture.player().currentHp=5000;
+      fixture.opponent().maximumHp=fixture.opponent().currentHp=5000;
+      const BattleActionResult result=enemy?fixture.opponentUses():fixture.playerUses();
+      assert(result.accepted&&neutral(fixture.battle.playerVolatile)&&
+             neutral(fixture.battle.opponentVolatiles[0]));
+    }
+
+    // Tri Attack only entered the broken generic path when its 20% added
+    // effect roll succeeded. Sweep deterministic seeds so that both the proc
+    // and no-proc paths remain stage-neutral.
+    for(bool enemy:{false,true})for(uint32_t seed=1U;seed<=128U;++seed){
+      const MoveId triAttack=static_cast<MoveId>(161);
+      Fixture fixture(enemy?splash:triAttack,enemy?triAttack:splash);
+      fixture.battle.rngState=seed;
+      fixture.player().maximumHp=fixture.player().currentHp=5000;
+      fixture.opponent().maximumHp=fixture.opponent().currentHp=5000;
+      const BattleActionResult result=enemy?fixture.opponentUses():fixture.playerUses();
+      assert(result.accepted&&neutral(fixture.battle.playerVolatile)&&
+             neutral(fixture.battle.opponentVolatiles[0]));
+    }
+
+    // Sky Attack reaches its effect only on the release turn.
+    for(bool enemy:{false,true}){
+      const MoveId skyAttack=static_cast<MoveId>(143);
+      Fixture fixture(enemy?splash:skyAttack,enemy?skyAttack:splash);
+      fixture.player().maximumHp=fixture.player().currentHp=5000;
+      fixture.opponent().maximumHp=fixture.opponent().currentHp=5000;
+      const BattleActionResult charge=enemy?fixture.opponentUses():fixture.playerUses();
+      const BattleActionResult release=enemy?fixture.opponentUses():fixture.playerUses();
+      assert(charge.accepted&&release.accepted&&
+             neutral(fixture.battle.playerVolatile)&&
+             neutral(fixture.battle.opponentVolatiles[0]));
+    }
+
+    // Sucker Punch must see a pending damaging command to reach its effect.
+    for(bool enemy:{false,true}){
+      const MoveId suckerPunch=static_cast<MoveId>(389);
+      Fixture fixture(enemy?MoveId::Tackle:suckerPunch,
+                      enemy?suckerPunch:MoveId::Tackle);
+      fixture.player().maximumHp=fixture.player().currentHp=5000;
+      fixture.opponent().maximumHp=fixture.opponent().currentHp=5000;
+      fixture.battle.playerVolatile.speedStage=enemy?
+          kMinimumBattleStatStage:kMaximumBattleStatStage;
+      fixture.battle.opponentVolatiles[0].speedStage=enemy?
+          kMaximumBattleStatStage:kMinimumBattleStatStage;
+      const BattleActionResult result=BattleEngine::fightPvp(
+          fixture.battle,fixture.collection,0,0);
+      const CombatVolatile& userState=enemy?
+          fixture.battle.opponentVolatiles[0]:fixture.battle.playerVolatile;
+      assert(result.accepted&&userState.attackStage==0);
+    }
+  }
+
   // FireRed's internal 0..12 stages map to Pokegochi's signed -6..+6.
   // Verify both battle sides, one- and two-stage changes, partial composite
   // boosts, and the no-op feedback once every affected stat reaches a cap.
@@ -345,6 +430,19 @@ int main(){
     accuracy.battle.playerVolatile.accuracyStage=kMinimumBattleStatStage;
     const BattleActionResult lowAccuracy=accuracy.playerUses();
     assert(lowAccuracy.accepted&&accuracy.battle.opponentVolatiles[0].attackStage==-1);
+
+    // The holder of a self boost owns Contrary. The old generic path passed
+    // the target Pokemon into changeStageForHolder, so Swords Dance ignored
+    // Contrary unless the opponent happened to have it.
+    for(bool enemy:{false,true}){
+      Fixture contrary(enemy?splash:swordsDance,enemy?swordsDance:splash);
+      OwnedPokemon& user=enemy?contrary.opponent():contrary.player();
+      CombatVolatile& userState=enemy?contrary.battle.opponentVolatiles[0]:
+          contrary.battle.playerVolatile;
+      user.abilityId=127; // CONTRARY
+      const BattleActionResult result=enemy?contrary.opponentUses():contrary.playerUses();
+      assert(result.accepted&&userState.attackStage==-2);
+    }
   }
 
   // Pinch stat berries stay equipped when their relevant stage is already
@@ -3280,24 +3378,53 @@ int main(){
     }
   }
 
-  // Skill Swap's three immutable cases are explicit source-script checks,
-  // not generic accuracy failures: Wonder Guard, Multitype and either
-  // Griseous Orb holder all leave both raw Abilities untouched.
-  for(bool enemy:{false,true})for(uint8_t blockedCase=0;blockedCase<3;++blockedCase){
-    const MoveId swap=static_cast<MoveId>(285),splash=static_cast<MoveId>(150);
-    Fixture f(enemy?splash:swap,enemy?swap:splash);
-    OwnedPokemon& user=enemy?f.opponent():f.player();
-    OwnedPokemon& target=enemy?f.player():f.opponent();
-    user.abilityId=2;target.abilityId=32;
-    if(blockedCase==0U)user.abilityId=25; // WONDER GUARD
-    else if(blockedCase==1U)target.abilityId=122; // MULTITYPE
-    else user.heldItem=HeldItem::GriseousOrb;
-    const uint8_t userBefore=user.abilityId,targetBefore=target.abilityId;
-    const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
-    assert(result.accepted&&user.abilityId==userBefore&&
-           target.abilityId==targetBefore&&
-           saw(result,BattleMoveEffect::Failed,
-               enemy?BattleSide::Opponent:BattleSide::Player));
+  // Skill Swap cannot detach an Ability that controls species identity or a
+  // form. Test every such Ability implemented through Gen VII on either side
+  // of the exchange and from both execution directions. A Griseous Orb on
+  // either participant is the remaining item-specific failure case.
+  constexpr uint8_t immutableAbilities[]={
+      25,  // WONDER GUARD
+      122, // MULTITYPE
+      150, // ILLUSION
+      162, // ZEN MODE
+      177, // STANCE CHANGE
+      198, // SHIELDS DOWN
+      209, // SCHOOLING
+      210, // DISGUISE
+      211, // BATTLE BOND
+      212, // POWER CONSTRUCT
+      214, // COMATOSE
+      226, // RKS SYSTEM
+  };
+  for(bool enemy:{false,true}){
+    for(const uint8_t immutableAbility:immutableAbilities){
+      for(bool blockedOnUser:{false,true}){
+        const MoveId swap=static_cast<MoveId>(285),splash=static_cast<MoveId>(150);
+        Fixture f(enemy?splash:swap,enemy?swap:splash);
+        OwnedPokemon& user=enemy?f.opponent():f.player();
+        OwnedPokemon& target=enemy?f.player():f.opponent();
+        user.abilityId=blockedOnUser?immutableAbility:2;
+        target.abilityId=blockedOnUser?32:immutableAbility;
+        const uint8_t userBefore=user.abilityId,targetBefore=target.abilityId;
+        const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+        assert(result.accepted&&user.abilityId==userBefore&&
+               target.abilityId==targetBefore&&
+               saw(result,BattleMoveEffect::Failed,
+                   enemy?BattleSide::Opponent:BattleSide::Player));
+      }
+    }
+    for(bool orbOnUser:{false,true}){
+      const MoveId swap=static_cast<MoveId>(285),splash=static_cast<MoveId>(150);
+      Fixture f(enemy?splash:swap,enemy?swap:splash);
+      OwnedPokemon& user=enemy?f.opponent():f.player();
+      OwnedPokemon& target=enemy?f.player():f.opponent();
+      user.abilityId=2;target.abilityId=32;
+      (orbOnUser?user:target).heldItem=HeldItem::GriseousOrb;
+      const BattleActionResult result=enemy?f.opponentUses():f.playerUses();
+      assert(result.accepted&&user.abilityId==2U&&target.abilityId==32U&&
+             saw(result,BattleMoveEffect::Failed,
+                 enemy?BattleSide::Opponent:BattleSide::Player));
+    }
   }
 
   // Copying Truant initializes its parity at the ability-change turn. The

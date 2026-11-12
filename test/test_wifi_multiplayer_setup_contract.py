@@ -113,6 +113,9 @@ assert "firmware.multiplayerCompleteWifiPlayerSearch()" in ANDROID
 assert "peerRefreshSentForScan" in ANDROID
 assert "state == STATE_SCANNING && !peerRefreshSentForScan" in ANDROID
 assert "REFRESH_MS" not in ANDROID
+assert "OnlineTransportPolicy.shouldReplayInvite(" in ANDROID
+assert "OnlineTransportPolicy.shouldReleaseAbandonedRoom(" in ANDROID
+assert "protocolSessionObserved" not in ANDROID
 welcome = ANDROID[
     ANDROID.index("case OnlineMultiplayerProtocol.WELCOME"):
     ANDROID.index("case OnlineMultiplayerProtocol.PEER_ENTRY")
@@ -221,13 +224,17 @@ assert "rolled back ready=%u/%u" in SERVER
 assert "kClientIdleTimeoutMs = 30000U" in SERVER
 assert "kClientSessionTimeoutMs = 120000U" in SERVER
 assert "client.sessionId" in SERVER
+assert "releasing abandoned handshake" in SERVER
 for required in (
     "pivotMovePending",
     "pivotMoveExecuted",
+    "lastHostPivotMoveTurn",
     "botMoveRequiresChosenReplacement",
     "sendBotPivotReplacement",
+    "BattleSyncReplacement",
+    "wait for host pivot",
     "sync.pokemon.movePp[battleBot.lastPivotMoveSlot] <",
-    "command.turn == battleBot.lastPivotMoveTurn",
+    "static_cast<uint16_t>(turn + 1U)",
 ):
     assert required in SERVER, f"server bot pivot barrier missing: {required}"
 

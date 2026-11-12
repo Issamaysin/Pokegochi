@@ -17,6 +17,7 @@ from test_online_server import (
     BATTLE_SYNC_ACK,
     BATTLE_SYNC_CORE,
     BATTLE_SYNC_POKEMON,
+    BATTLE_SYNC_REPLACEMENT,
     BOT_PLAYER_ID,
     GAME_VERSION,
     HELLO,
@@ -44,6 +45,11 @@ SPECIES_OFFSET = 8
 HP_OFFSET = 16
 MAX_HP_OFFSET = 18
 MOVE_PP_OFFSET = 44
+MOVES_OFFSET = 36
+HELD_ITEM_OFFSET = 56
+U_TURN = 369
+Z_CRYSTAL_FIRST = 109
+Z_CRYSTAL_LAST = 126
 
 
 def read_u16(record: bytes | bytearray, offset: int) -> int:
@@ -103,6 +109,12 @@ def decrement_move_pp(pokemon: bytearray, command_value: int) -> None:
         pokemon[offset] -= 1
 
 
+def set_all_moves(pokemon: bytearray, move: int, pp: int) -> None:
+    for slot in range(4):
+        struct.pack_into("<H", pokemon, MOVES_OFFSET + slot * 2, move)
+        pokemon[MOVE_PP_OFFSET + slot] = pp
+
+
 def apply_bot_item(team: list[bytearray], command_value: int) -> None:
     item = command_value & 0x1F
     target = (command_value >> 5) & 0x03
@@ -132,6 +144,8 @@ def send_snapshot(
     active: bool,
     outcome: int,
     checksum_serial: int,
+    host_replacement_reason: int = 0,
+    guest_replacement_reason: int = 0,
 ) -> None:
     for side, team in ((0, host_team), (1, bot_team)):
         for slot, pokemon in enumerate(team):
@@ -153,6 +167,17 @@ def send_snapshot(
         client,
         BOT_PLAYER_ID,
         session,
+        BATTLE_SYNC_REPLACEMENT,
+        struct.pack(
+            "<HBB", state_turn, host_replacement_reason,
+            guest_replacement_reason,
+        ),
+        transaction=state_turn,
+    )
+    send_game(
+        client,
+        BOT_PLAYER_ID,
+        session,
         BATTLE_SYNC_CORE,
         bytes(core),
         transaction=state_turn,
@@ -160,6 +185,107 @@ def send_snapshot(
     _, _, acknowledgement = expect_game(client, BATTLE_SYNC_ACK)
     if acknowledgement != struct.pack("<HI", state_turn, checksum):
         raise AssertionError("bot acknowledged a different battle snapshot")
+
+
+def play_chained_pivot_regression(
+    host: str, port: int, access_code: int
+) -> None:
+    """Bot pivots first; queued host U-turn then requires a second barrier."""
+    client, session, host_team, bot_team = open_battle(host, port, access_code, 90)
+    host_active = 0
+    # Keep the first bot action out of its single Z slot, because a damaging
+    # Z-U-turn intentionally does not pivot. The held Z-Crystal identifies that
+    # slot without relying on the server's private Team layout.
+    bot_active = next(
+        slot for slot, pokemon in enumerate(bot_team)
+        if not Z_CRYSTAL_FIRST <= pokemon[HELD_ITEM_OFFSET] <= Z_CRYSTAL_LAST
+    )
+    set_all_moves(host_team[host_active], U_TURN, 20)
+    set_all_moves(bot_team[bot_active], U_TURN, 20)
+    checksum_serial = 90000
+    try:
+        # Publish the controlled teams and active slots before the command.
+        send_snapshot(
+            client, session, 0, host_team, bot_team, host_active, bot_active,
+            True, OUTCOME_ONGOING, checksum_serial,
+        )
+
+        send_game(
+            client, BOT_PLAYER_ID, session, BATTLE_COMMAND,
+            struct.pack("<HBB", 0, COMMAND_MOVE, 0), transaction=0,
+        )
+        _, _, first = expect_game(client, BATTLE_COMMAND)
+        first_turn, first_kind, first_value = struct.unpack("<HBB", first)
+        if first_turn != 0 or first_kind != COMMAND_MOVE or first_value & 0x80:
+            raise AssertionError("bot did not choose the controlled plain U-turn")
+
+        # The faster bot U-turn executes first. The engine has incremented the
+        # battle turn from command turn 0 to replacement turn 1.
+        decrement_move_pp(bot_team[bot_active], first_value)
+        checksum_serial += 1
+        send_snapshot(
+            client, session, 1, host_team, bot_team, host_active, bot_active,
+            True, OUTCOME_ONGOING, checksum_serial,
+            guest_replacement_reason=2,
+        )
+        send_game(
+            client, BOT_PLAYER_ID, session, BATTLE_COMMAND,
+            struct.pack("<HBB", 1, COMMAND_WAIT, 0), transaction=1,
+        )
+        _, _, bot_switch = expect_game(client, BATTLE_COMMAND)
+        switch_turn, switch_kind, switch_value = struct.unpack("<HBB", bot_switch)
+        if (switch_turn != 1 or switch_kind != COMMAND_SWITCH or
+                switch_value == bot_active or not hp(bot_team[switch_value])):
+            raise AssertionError("bot failed its U-turn replacement barrier")
+        bot_active = switch_value
+
+        # The host's already-queued U-turn now lands on that replacement. The
+        # server must remember the host action across the bot's switch and WAIT
+        # for the host recipient instead of selecting a second attack.
+        decrement_move_pp(host_team[host_active], 0)
+        checksum_serial += 1
+        send_snapshot(
+            client, session, 1, host_team, bot_team, host_active, bot_active,
+            True, OUTCOME_ONGOING, checksum_serial,
+            host_replacement_reason=2,
+        )
+        host_replacement = 1
+        send_game(
+            client, BOT_PLAYER_ID, session, BATTLE_COMMAND,
+            struct.pack("<HBB", 1, COMMAND_SWITCH, host_replacement),
+            transaction=1,
+        )
+        _, _, wait = expect_game(client, BATTLE_COMMAND)
+        wait_turn, wait_kind, _ = struct.unpack("<HBB", wait)
+        if wait_turn != 1 or wait_kind != COMMAND_WAIT:
+            raise AssertionError("server treated the U-turn recipient as a new action")
+
+        host_active = host_replacement
+        checksum_serial += 1
+        send_snapshot(
+            client, session, 1, host_team, bot_team, host_active, bot_active,
+            True, OUTCOME_ONGOING, checksum_serial,
+        )
+
+        # A genuinely new decision follows the completed barriers and is also
+        # numbered 1. It must now receive an ordinary bot action.
+        send_game(
+            client, BOT_PLAYER_ID, session, BATTLE_COMMAND,
+            struct.pack("<HBB", 1, COMMAND_MOVE, 0), transaction=1,
+        )
+        _, _, resumed = expect_game(client, BATTLE_COMMAND)
+        resumed_turn, resumed_kind, _ = struct.unpack("<HBB", resumed)
+        if resumed_turn != 1 or resumed_kind not in (COMMAND_MOVE, COMMAND_ITEM):
+            raise AssertionError("normal play did not resume after chained pivots")
+
+        client.send(9, target=BOT_PLAYER_ID, session=session)
+        source, _, closed_session, _ = expect(client, 10)
+        if source != BOT_PLAYER_ID or closed_session != session:
+            raise AssertionError("bot room did not close after pivot regression")
+    finally:
+        client.close()
+
+    print("PHYSICAL PIVOT: chained bot/host U-turn barriers passed")
 
 
 def open_battle(
@@ -368,6 +494,9 @@ def main() -> None:
             raise AssertionError(
                 f"bot Balanced wins changed by {final_wins - initial_wins}, expected 1"
             )
+        play_chained_pivot_regression(
+            arguments.host, arguments.port, arguments.access_code
+        )
     finally:
         monitor.close()
 

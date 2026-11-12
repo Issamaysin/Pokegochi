@@ -18,6 +18,12 @@ start = generated.index("constexpr AbilityData kAbilities[]")
 end = generated.index("};", start)
 base = re.findall(r'\{\s*(\d+)\s*,\s*"([A-Z0-9 .\'-]+)"\s*,', generated[start:end])
 base = [name for ability_id, name in base if int(ability_id) != 0]
+base_descriptions = {
+    name: description
+    for _ability_id, name, description in re.findall(
+        r'\{\s*(\d+)\s*,\s*"([A-Z0-9 .\'-]+)"\s*,\s*"([^"]*)"\s*\}',
+        generated[start:end])
+}
 
 mega_text = (ROOT / "src/game/MegaEvolution.cpp").read_text(encoding="utf-8")
 start = mega_text.index("constexpr AbilityData kCustomAbilities[]")
@@ -137,6 +143,8 @@ ADAPTED_NO_EFFECT = {
 }
 
 errors: list[str] = []
+if base_descriptions.get("HEALER") != "NO EFFECT IN SINGLE BATTLES.":
+    errors.append("HEALER: Summary must disclose its singles-only no-effect adaptation")
 classified: dict[str, str] = {}
 IMPLEMENTATION_TOKENS = {
     # These mechanics are intentionally species/form-driven and therefore do

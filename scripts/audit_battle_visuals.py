@@ -300,6 +300,18 @@ def main() -> None:
             luster_purge["programCommands"] != 41):
         raise RuntimeError(
             "Luster Purge no longer matches its authored background program")
+    nasty_plot = moves["417"]
+    if (nasty_plot["spriteTemplates"] != [
+            "gQuestionMarkSpriteTemplate"] or
+            nasty_plot["taskCallbacks"] != [
+                "AnimTask_FadeScreenToWhite"] or
+            nasty_plot["backgroundIds"] != [1] or
+            nasty_plot["programCommands"] != 13 or
+            nasty_plot["visualCoverage"] != [
+                "Sprite:QuestionMarkExact",
+                "Task:FadeScreenPaletteCycle"]):
+        raise RuntimeError(
+            "Nasty Plot no longer matches its authored dark-BG palette cycle")
 
     invalid_sprites = [
         name for name, handler in animation["spriteHandlers"].items()
@@ -331,6 +343,56 @@ def main() -> None:
     # exact switch and require every emitted callback profile to be named
     # before the fail-closed boundary.
     runtime_source = (ROOT / "src/main.cpp").read_text(encoding="utf-8")
+    renderer_source = (ROOT / "src/drivers/AssetRenderer.cpp").read_text(
+        encoding="utf-8")
+
+    # Palette callbacks do not all rotate in the same direction: Aurora Beam
+    # moves the first colour to the last, while Psychic/Nasty Plot, Gust, Surf
+    # and defensive walls move the last colour to the first. The renderer must
+    # retain neutral N+shift lookup semantics and the callback boundary must
+    # translate each source direction explicitly. A global subtraction fixes
+    # one family by silently reversing the other.
+    palette_lookup = re.search(
+        r"uint16_t indexedPaletteIndexPixel\(.*?\n\}",
+        renderer_source, re.S)
+    if (not palette_lookup or
+            "relative + normalizedShift" not in palette_lookup.group(0) or
+            "relative + count - normalizedShift" in palette_lookup.group(0)):
+        raise RuntimeError(
+            "Palette renderer no longer has direction-neutral lookup semantics")
+    palette_direction_requirements = (
+        "enum class PaletteRotationDirection",
+        "constexpr uint8_t paletteLookupShiftForRotation(",
+        "1U, 8U, PaletteRotationDirection::Left) == 1U",
+        "1U, 8U, PaletteRotationDirection::Right) == 7U",
+        "task.age / delay, 8U, PaletteRotationDirection::Right",
+        "task.age / 4U, 11U, PaletteRotationDirection::Right",
+        "travelAge / 4U, 7U, PaletteRotationDirection::Right",
+        "(particle.age - 14U) / 2U, 8U,",
+        "tick / 3U, 8U, PaletteRotationDirection::Left",
+    )
+    if any(token not in runtime_source
+           for token in palette_direction_requirements):
+        raise RuntimeError(
+            "Palette callback directions are no longer explicit at runtime")
+    linear_start = renderer_source.index("const bool directLinearIndexed")
+    linear_end = renderer_source.index(
+        "const bool directTiled4", linear_start)
+    linear_palette_path = renderer_source[linear_start:linear_end]
+    if ("!paletteCount" in linear_palette_path or
+            "indexedPaletteIndexPixel(" not in linear_palette_path):
+        raise RuntimeError(
+            "Linear palette-cycling backgrounds left the precomputed hot path")
+    palette_runtime_requirements = (
+        "const bool backgroundPaletteChanged =",
+        "battleAnimationAtomicRevealPending = true;",
+        "const bool coherentPanelRows = coherentPvpRows || atomicReveal;",
+        "if (coherentPanelRows)",
+    )
+    if any(token not in runtime_source
+           for token in palette_runtime_requirements):
+        raise RuntimeError(
+            "Palette transitions are no longer committed as coherent TFT rows")
 
     # A real screen transition invalidates battle-owned cache descriptors.
     # Every painter that owns a UI manifest must therefore enter the screen
@@ -569,6 +631,62 @@ def main() -> None:
             "drawBattleVisualPsychicField();" not in runtime_source):
         raise RuntimeError(
             "PsychicBackground must use a retained compositor plane")
+
+    # Task-only field programs cannot be identified by a short move-ID list.
+    # FireRed reuses this callback in ordinary attacks, status moves and one
+    # Z-Move. Keep the renderer policy content-derived so every current and
+    # future program carrying the task receives visible pixels on Android and
+    # ESP32 alike.
+    resolver_start = runtime_source.index(
+        "bool battleAnimationProgramUsesProceduralPsychicField(")
+    resolver_end = runtime_source.index(
+        "bool battleAnimationProgramUsesArenaPalette(", resolver_start)
+    psychic_resolver = runtime_source[resolver_start:resolver_end]
+    resolver_requirements = (
+        "visitBattleAnimationProgram",
+        "BattleAnimationTaskKind::PsychicBackground",
+        "BattleAnimationTaskMotion::PsychicPaletteCycle",
+        "(value.priority() & 0x80U) == 0U",
+    )
+    if any(token not in psychic_resolver for token in resolver_requirements):
+        raise RuntimeError(
+            "Psychic field resolver is no longer derived from the reachable task")
+    if ("tracePsychicMove" in psychic_resolver or
+            "POKEGOCHI_ANDROID" in psychic_resolver or
+            re.search(r"\b(?:93|94)U?\b", psychic_resolver)):
+        raise RuntimeError(
+            "Psychic field resolver regressed to move IDs or one platform")
+    if runtime_source.count(
+            "battleAnimationProgramUsesProceduralPsychicField(") < 3:
+        raise RuntimeError(
+            "Psychic field resolver must drive playback and preload")
+    if ("const bool proceduralPsychicField = "
+            "battleAnimationProceduralPsychicField;" not in runtime_source or
+            "if (battleVisualOverlay.psychicFieldActive)" not in runtime_source or
+            "taskOwnedFieldFrames" not in runtime_source):
+        raise RuntimeError(
+            "Task-owned psychic pixels are not rendered and measured end-to-end")
+
+    psychic_moves = {
+        move_id: move for move_id, move in moves.items()
+        if "AnimTask_SetPsychicBackground" in move["taskCallbacks"]
+    }
+    psychic_handler = animation["taskHandlers"].get(
+        "AnimTask_SetPsychicBackground", {})
+    if (not psychic_moves or
+            psychic_handler.get("kind") != "PsychicBackground" or
+            psychic_handler.get("motion") != "PsychicPaletteCycle" or
+            psychic_handler.get("uses") != len(psychic_moves)):
+        raise RuntimeError(
+            "PsychicBackground callback inventory no longer matches move programs")
+    missing_psychic_pixels = sorted(
+        move_id for move_id, move in psychic_moves.items()
+        if "Task:PsychicPaletteCycle" not in move["visualCoverage"]
+    )
+    if missing_psychic_pixels:
+        raise RuntimeError(
+            "PsychicBackground moves lack task-owned visual coverage: " +
+            ", ".join(missing_psychic_pixels))
 
     broad_motions = {
         "ShakeHorizontal", "ShakeVertical", "ShakeSink", "ShakePattern",

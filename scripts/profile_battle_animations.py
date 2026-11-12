@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import pathlib
+import re
 import time
 
 import serial
@@ -34,7 +35,15 @@ def main() -> None:
         "--setup-between", action="store_true",
         help="rebuild the battle fixture between moves to isolate stale-scene failures",
     )
+    parser.add_argument(
+        "--setup-every", type=int, default=0,
+        help="rebuild the battle fixture every N moves (0 disables periodic setup)",
+    )
     parser.add_argument("--timeout", type=float, default=90.0)
+    parser.add_argument(
+        "--require-task-field", action="store_true",
+        help="fail each requested move unless the renderer measured task-owned field pixels",
+    )
     parser.add_argument(
         "--log", default=".codex-debug/animation-optimization-20261030/profile.log"
     )
@@ -58,12 +67,22 @@ def main() -> None:
     connection.open()
 
     with log_path.open("a", encoding="utf-8") as log:
+        last_task_field_frames: int | None = None
+
         def record(line: str) -> None:
+            nonlocal last_task_field_frames
             stamped = f"{dt.datetime.now().isoformat()} {line}"
             print(stamped.encode("ascii", errors="backslashreplace").decode("ascii"),
                   flush=True)
             log.write(stamped + "\n")
             log.flush()
+            geometry = re.search(r"\[ANIM\] geometry .*?\bfield=(\d+)", line)
+            if geometry:
+                last_task_field_frames = int(geometry.group(1))
+            elif line.startswith("[R]"):
+                values = line[3:].split(",")
+                if len(values) >= 12 and values[-1].isdigit():
+                    last_task_field_frames = int(values[-1])
 
         def wait_for(markers: tuple[str, ...], timeout: float) -> str:
             deadline = time.monotonic() + timeout
@@ -120,12 +139,23 @@ def main() -> None:
                 send(f"ANIMSPEED {speed}")
                 wait_for((f"[ANIM_DIAG] SPEED {speed}x",), 5.0)
                 for move_index, move in enumerate(moves):
-                    if args.setup_between and move_index:
+                    periodic_setup = args.setup_every > 0 and move_index and \
+                        move_index % args.setup_every == 0
+                    if move_index and (args.setup_between or periodic_setup):
                         send("ANIMSETUP")
                         wait_for(("[ANIM_DIAG] READY",), 15.0)
+                    last_task_field_frames = None
                     send(f"ANIMPLAY {move} {args.side} {args.turn}")
-                    wait_for(("[ANIM_DIAG] DONE", "[ANIM_DIAG] PLAY REJECTED"),
-                             args.timeout)
+                    result = wait_for(
+                        ("[ANIM_DIAG] DONE", "[ANIM_DIAG] PLAY REJECTED"),
+                        args.timeout)
+                    if "PLAY REJECTED" in result:
+                        raise RuntimeError(f"move {move} playback was rejected")
+                    if (args.require_task_field and
+                            (last_task_field_frames is None or
+                             last_task_field_frames <= 0)):
+                        raise RuntimeError(
+                            f"move {move} produced no measured task-owned field frames")
         finally:
             if args.workspace == "pvp":
                 send("ANIMPVP OFF")

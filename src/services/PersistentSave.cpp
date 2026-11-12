@@ -31,6 +31,7 @@ static_assert(sizeof(CurrentSaveHeader) == 16, "Persistent save header layout ch
 void initializeNewSave(GameSave& save) {
   std::memset(&save, 0, sizeof(save));
   save.collection.nextUid = 1;
+  PartyPresetLogic::initialize(save.partyPresets, save.collection);
   // The unique Mega Stone is now earned from the post-Hoenn special boss.
   save.ownedMachines = 0;
   save.inventory.balls[static_cast<uint8_t>(PokeBallType::PokeBall)] = 10;
@@ -283,6 +284,52 @@ bool PersistentSave::inspectV51Record(const char* key, uint32_t& sequence) const
   return true;
 }
 
+bool PersistentSave::inspectV52Record(const char* key,
+                                      uint32_t& sequence) const {
+  static_assert(offsetof(RecordV52, payload) == sizeof(CurrentSaveHeader),
+                "Streamed V52 header layout changed");
+  static_assert(offsetof(RecordV52, crc) ==
+                    sizeof(CurrentSaveHeader) + sizeof(GameSaveV52),
+                "Streamed V52 payload layout changed");
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file || file.size() != static_cast<size_t>(sizeof(RecordV52))) {
+    if (file) file.close();
+    return false;
+  }
+  CurrentSaveHeader header{};
+  if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) !=
+          sizeof(header) ||
+      header.magic != kMagic || header.version != 52U ||
+      header.payloadSize != sizeof(GameSaveV52)) {
+    file.close();
+    return false;
+  }
+  uint32_t crc = crc32Update(0xFFFFFFFFU,
+      reinterpret_cast<const uint8_t*>(&header), sizeof(header));
+  uint8_t chunk[256];
+  size_t remaining = sizeof(GameSaveV52);
+  while (remaining) {
+    const size_t requested = std::min(remaining, sizeof(chunk));
+    if (file.readBytes(reinterpret_cast<char*>(chunk), requested) != requested) {
+      file.close();
+      return false;
+    }
+    crc = crc32Update(crc, chunk, requested);
+    remaining -= requested;
+  }
+  uint32_t storedCrc = 0U;
+  uint32_t trailingPadding = 0U;
+  const bool complete =
+      file.readBytes(reinterpret_cast<char*>(&storedCrc), sizeof(storedCrc)) ==
+          sizeof(storedCrc) &&
+      file.readBytes(reinterpret_cast<char*>(&trailingPadding),
+                     sizeof(trailingPadding)) == sizeof(trailingPadding);
+  file.close();
+  if (!complete || storedCrc != ~crc) return false;
+  sequence = header.sequence;
+  return true;
+}
+
 bool PersistentSave::inspectAnyFileRecord(const char* key, uint32_t& sequence) const {
   File file = SPIFFS.open(savePath(key), "r");
   if (!file || file.size() < sizeof(CurrentSaveHeader) + 2U * sizeof(uint32_t)) {
@@ -384,6 +431,45 @@ bool PersistentSave::loadV51Record(const char* key, GameSave& save,
                     sizeof(GameSaveV51));
   if (!complete || storedCrc != ~crc) return false;
   save.wifiBalancedWins = 0U;
+  sequence = header.sequence;
+  return true;
+}
+
+bool PersistentSave::loadV52Record(const char* key, GameSave& save,
+                                   uint32_t& sequence) const {
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file || file.size() != static_cast<size_t>(sizeof(RecordV52))) {
+    if (file) file.close();
+    return false;
+  }
+  CurrentSaveHeader header{};
+  if (file.readBytes(reinterpret_cast<char*>(&header), sizeof(header)) !=
+          sizeof(header) ||
+      header.magic != kMagic || header.version != 52U ||
+      header.payloadSize != sizeof(GameSaveV52)) {
+    file.close();
+    return false;
+  }
+  initializeNewSave(save);
+  if (file.readBytes(reinterpret_cast<char*>(&save), sizeof(GameSaveV52)) !=
+      sizeof(GameSaveV52)) {
+    file.close();
+    return false;
+  }
+  uint32_t storedCrc = 0U;
+  uint32_t trailingPadding = 0U;
+  const bool complete =
+      file.readBytes(reinterpret_cast<char*>(&storedCrc), sizeof(storedCrc)) ==
+          sizeof(storedCrc) &&
+      file.readBytes(reinterpret_cast<char*>(&trailingPadding),
+                     sizeof(trailingPadding)) == sizeof(trailingPadding);
+  file.close();
+  uint32_t crc = crc32Update(0xFFFFFFFFU,
+      reinterpret_cast<const uint8_t*>(&header), sizeof(header));
+  crc = crc32Update(crc, reinterpret_cast<const uint8_t*>(&save),
+                    sizeof(GameSaveV52));
+  if (!complete || storedCrc != ~crc) return false;
+  PartyPresetLogic::initialize(save.partyPresets, save.collection);
   sequence = header.sequence;
   return true;
 }
@@ -917,6 +1003,27 @@ bool PersistentSave::readRecordV51(const char* key, RecordV51& record) {
   return read && record.magic == kMagic && record.version == 51 &&
          record.payloadSize == sizeof(GameSaveV51) && record.crc == calculatedCrc;
 }
+bool PersistentSave::readRecordV52(const char* key, RecordV52& record) {
+#if defined(ARDUINO_ARCH_ESP32)
+  File file = SPIFFS.open(savePath(key), "r");
+  if (!file) return false;
+  const bool read = file.size() == static_cast<size_t>(sizeof(RecordV52)) &&
+                    file.readBytes(reinterpret_cast<char*>(&record),
+                                   sizeof(record)) == sizeof(record);
+  file.close();
+#else
+  const bool read = preferences_.getBytesLength(key) == sizeof(RecordV52) &&
+                    preferences_.getBytes(key, &record, sizeof(record)) ==
+                        sizeof(record);
+#endif
+  const uint32_t calculatedCrc = read
+      ? crc32(reinterpret_cast<const uint8_t*>(&record),
+              offsetof(RecordV52, crc))
+      : 0U;
+  return read && record.magic == kMagic && record.version == 52U &&
+         record.payloadSize == sizeof(GameSaveV52) &&
+         record.crc == calculatedCrc;
+}
 bool PersistentSave::valid(const Record& record) const {
   return record.magic == kMagic && record.version == kFormatVersion && record.payloadSize == sizeof(GameSave) &&
          record.crc == crc32(reinterpret_cast<const uint8_t*>(&record), offsetof(Record, crc));
@@ -946,11 +1053,37 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     if (!loadCurrentRecord(selectedKey, save, loadedSequence) || loadedSequence != selectedSequence)
       return SaveLoadResult::StorageError;
   }
-  // V52 only appends the local online Balanced-win counter. Upgrade the
-  // immediately preceding 55 KiB record as a stream into the caller-owned
-  // GameSave. The no-PSRAM board has no second contiguous 55 KiB buffer after
-  // the renderer is reserved, so the generic legacy scratch path cannot do
-  // this safely on physical hardware.
+  // V53 appends the five Party presets. Upgrade the immediately preceding
+  // 55 KiB V52 record as a stream into the caller-owned GameSave. The
+  // no-PSRAM board has no second contiguous 55 KiB buffer after the renderer
+  // is reserved, so the generic legacy scratch path cannot do this safely on
+  // physical hardware.
+  if (!found) {
+    const char* selectedV52Key = nullptr;
+    uint32_t selectedV52Sequence = 0U;
+    for (const char* key : {"save_a", "save_b"}) {
+      uint32_t candidateSequence = 0U;
+      if (!inspectV52Record(key, candidateSequence)) continue;
+      if (!selectedV52Key || isNewer(candidateSequence, selectedV52Sequence)) {
+        selectedV52Key = key;
+        selectedV52Sequence = candidateSequence;
+      }
+    }
+    if (selectedV52Key) {
+      uint32_t loadedSequence = 0U;
+      if (!loadV52Record(selectedV52Key, save, loadedSequence) ||
+          loadedSequence != selectedV52Sequence)
+        return SaveLoadResult::StorageError;
+      sequence_ = loadedSequence;
+      nextSlotA_ = true;
+      discardRetiredHeldItems(save);
+      if (!commit(save)) return SaveLoadResult::StorageError;
+      return SaveLoadResult::Loaded;
+    }
+  }
+  // V52 appended the local online Balanced-win counter. Keep the preceding
+  // V51 streaming migration available so a device can still jump directly
+  // from that shipped release to V53.
   if (!found) {
     const char* selectedV51Key = nullptr;
     uint32_t selectedV51Sequence = 0U;
@@ -1162,6 +1295,34 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
     std::memset(save.battle.opponentEncoreTurns,0,sizeof(save.battle.opponentEncoreTurns));
   };
   if (!found) {
+    // V53 adds only the five Party presets. Preserve every V52 field and seed
+    // Party 1 from the Party that was active in the shipped record.
+    if (scratchBytes_ >= sizeof(RecordV52)) {
+      RecordV52* legacy52 = reinterpret_cast<RecordV52*>(record);
+      bool legacy52Found = false;
+      uint32_t legacy52Sequence = 0U;
+      for (const char* key : {"save_a", "save_b"}) {
+        std::memset(legacy52, 0, sizeof(*legacy52));
+        if (!readRecordV52(key, *legacy52) ||
+            (legacy52Found &&
+             !isNewer(legacy52->sequence, legacy52Sequence))) continue;
+        initializeNewSave(save);
+        std::memcpy(&save, legacy52->payload.bytes,
+                    sizeof(legacy52->payload.bytes));
+        PartyPresetLogic::initialize(save.partyPresets, save.collection);
+        legacy52Sequence = legacy52->sequence;
+        legacy52Found = true;
+      }
+      if (legacy52Found) {
+        sequence_ = legacy52Sequence;
+        nextSlotA_ = true;
+        discardRetiredHeldItems(save);
+        if (!commit(save)) return SaveLoadResult::StorageError;
+        return SaveLoadResult::Loaded;
+      }
+    }
+  }
+  if (!found) {
     // V52 appends only the local Wi-Fi Balanced victory counter. The relay
     // never persists this value, so every migrated player starts at zero.
     if (scratchBytes_ >= sizeof(RecordV51)) {
@@ -1175,6 +1336,7 @@ SaveLoadResult PersistentSave::loadOrCreate(GameSave& save) {
         initializeNewSave(save);
         std::memcpy(&save, legacy51->payload.bytes, sizeof(legacy51->payload.bytes));
         save.wifiBalancedWins = 0;
+        PartyPresetLogic::initialize(save.partyPresets, save.collection);
         legacy51Sequence = legacy51->sequence;
         legacy51Found = true;
       }

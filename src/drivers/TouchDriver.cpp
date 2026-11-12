@@ -4,7 +4,18 @@
 #include "android_runtime.h"
 #endif
 
-namespace { constexpr uint8_t kReadX = 0xD0; constexpr uint8_t kReadY = 0x90; }
+namespace {
+constexpr uint8_t kReadX = 0xD0;
+constexpr uint8_t kReadY = 0x90;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+// Battle animations are synchronous on the physical panel. Core 0 retains a
+// short press while loopTask is transferring a frame, while core 1 continues
+// to own ordinary UI polling. The XPT2046 is bit-banged, so serialize the
+// complete sample transaction; interleaving its clock/data pins produces a
+// valid-looking coordinate in the wrong part of the screen.
+portMUX_TYPE touchReadMux = portMUX_INITIALIZER_UNLOCKED;
+#endif
+}
 
 void TouchDriver::begin() {
   pinMode(board::kTouchCsPin, OUTPUT); pinMode(board::kTouchSckPin, OUTPUT);
@@ -58,6 +69,14 @@ TouchPoint TouchDriver::read() {
 #else
   TouchPoint point;
   if (digitalRead(board::kTouchIrqPin) != LOW) return point;
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  portENTER_CRITICAL(&touchReadMux);
+  // The press may have ended while the other core completed its sample.
+  if (digitalRead(board::kTouchIrqPin) != LOW) {
+    portEXIT_CRITICAL(&touchReadMux);
+    return point;
+  }
+#endif
   digitalWrite(board::kTouchCsPin, LOW);
   uint16_t rawX[5]{}, rawY[5]{};
   const uint8_t sampleCount = fingerMode_ ? 5U : 3U;
@@ -76,6 +95,9 @@ TouchPoint TouchDriver::read() {
   point.y = map(point.rawX, board::kTouchRawXMin, board::kTouchRawXMax, 0, board::kScreenHeight - 1);
   point.x = constrain(point.x, 0, board::kScreenWidth - 1);
   point.y = constrain(point.y, 0, board::kScreenHeight - 1);
+#if defined(ARDUINO_ARCH_ESP32) && !defined(POKEGOCHI_ANDROID)
+  portEXIT_CRITICAL(&touchReadMux);
+#endif
   return point;
 #endif
 }

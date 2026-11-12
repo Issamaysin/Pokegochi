@@ -101,8 +101,8 @@ android {
         applicationId = "com.pokegochi.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 117
-        versionName = "3.1"
+        versionCode = 121
+        versionName = "3.3"
         externalNativeBuild {
             cmake {
                 arguments += "-DPOKEGOCHI_XY_SHINY_FIXTURE=${if (xyShinyFixture) 1 else 0}"

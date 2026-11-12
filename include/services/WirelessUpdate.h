@@ -15,6 +15,12 @@ class WirelessUpdate {
   using ErrorCode = PokegochiUpdateProtocol::ErrorCode;
   using SaveCommitCallback = bool (*)(void* context);
   using SaveResetCallback = bool (*)(void* context);
+  // Signature verification needs a temporary contiguous heap block on the
+  // no-PSRAM ESP32. `suspend=true` parks the already-durable game state and
+  // returns any non-null success token; `suspend=false` restores it and
+  // returns the new live save address. The loan lasts only for the P-256
+  // operation, so updater save backup/restore remains available afterwards.
+  using VerificationMemoryCallback = void* (*)(void* context, bool suspend);
   using DiagnosticReadCallback = size_t (*)(void* context, uint8_t section,
                                             uint16_t selector, char* output,
                                             size_t capacity);
@@ -36,6 +42,8 @@ class WirelessUpdate {
                                SaveCommitCallback commitCallback,
                                SaveResetCallback resetCallback,
                                void* callbackContext);
+  void configureVerificationMemory(VerificationMemoryCallback callback,
+                                   void* context);
   // The callback only formats read-only state into the supplied buffer. It
   // runs on the normal Arduino loop, never from a BLE callback task.
   void configureDiagnostics(DiagnosticReadCallback callback, void* context);
@@ -207,6 +215,8 @@ class WirelessUpdate {
   SaveCommitCallback saveCommitCallback_ = nullptr;
   SaveResetCallback saveResetCallback_ = nullptr;
   void* saveCallbackContext_ = nullptr;
+  VerificationMemoryCallback verificationMemoryCallback_ = nullptr;
+  void* verificationMemoryContext_ = nullptr;
   DiagnosticReadCallback diagnosticReadCallback_ = nullptr;
   void* diagnosticCallbackContext_ = nullptr;
   // Keep the readback buffer below the ESP32's tight internal DRAM budget.

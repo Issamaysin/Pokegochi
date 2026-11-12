@@ -1,21 +1,19 @@
-# Pokegochi Firmware 4.1 / Android App 3.1
+# Pokegochi Firmware 4.3 / Android App 3.3
 
 Pokegochi is a persistent Pokemon-inspired virtual pet and battle game for the
 ESP32-2432S028R (CYD). It adapts the FireRed visual language and Generation III
 battle rules to a 320x240 landscape touchscreen.
 
-Download the signed [Android 3.1 APK](https://drive.google.com/file/d/1wA6P70FUgiOU_qtQs5vnNUUqpmpAKIRN/view?usp=drivesdk)
-or the save-preserving [Firmware 4.1 PGOTA](https://drive.google.com/file/d/1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi/view?usp=drivesdk).
+Download the signed [Android 3.3 APK](https://drive.google.com/file/d/1wA6P70FUgiOU_qtQs5vnNUUqpmpAKIRN/view?usp=drivesdk)
+or the save-preserving [Firmware 4.3 PGOTA](https://drive.google.com/file/d/1Ms7y-OmD3TuPg3oNbY3Jz-3mwrHMwzXi/view?usp=drivesdk).
 The standalone [Pokegochi Updater 2.5 APK](https://drive.google.com/file/d/1dNQ5woQwcwu1yLnsyEQXe8Dk4vn2bl7B/view?usp=drivesdk)
 is available under a stable, version-independent filename.
-The complete release is also published in
-[GitHub releases](https://github.com/Issamaysin/Pokegochi/releases), and the
-coordinated source is preserved by the
-[`app-v3.1-fw-v4.1` GitHub tag](https://github.com/Issamaysin/Pokegochi/tree/app-v3.1-fw-v4.1).
+Published source releases are available in
+[GitHub releases](https://github.com/Issamaysin/Pokegochi/releases).
 The legacy ready-to-install v2.2 hardware distribution remains in
 [`POKEGOCHI_V2/`](POKEGOCHI_V2/README.md).
 
-See the [4.1 / 3.1 release notes](docs/RELEASE_NOTES_V4.1.md) for the current
+See the [4.3 / 3.3 release notes](docs/RELEASE_NOTES_V4.3.md) for the current
 gameplay, compatibility, build and installation notes.
 
 ## Current game

@@ -56,10 +56,12 @@ final class WifiMultiplayer implements AutoCloseable {
     private boolean running;
     private boolean authenticated;
     private boolean sessionReady;
-    private boolean protocolSessionObserved;
     private int sessionId;
     private int sessionPeerId;
     private int requestedPeerId;
+    private byte[] invitationPacket;
+    private long lastInvitationSendMs;
+    private int invitationReplayCount;
     private long lastConnectAttemptMs;
     private int lastNativeState = -1;
     private boolean peerRefreshSentForScan;
@@ -170,9 +172,11 @@ final class WifiMultiplayer implements AutoCloseable {
         resetFrameReader();
         authenticated = false;
         sessionReady = false;
-        protocolSessionObserved = false;
         sessionId = sessionPeerId = requestedPeerId = 0;
         pendingGamePackets.clear();
+        invitationPacket = null;
+        lastInvitationSendMs = 0L;
+        invitationReplayCount = 0;
         lastReceiveMs = lastPingMs = now;
     }
 
@@ -338,17 +342,33 @@ final class WifiMultiplayer implements AutoCloseable {
         }
 
         byte[] packet;
-        while ((packet = firmware.multiplayerTakeOutgoing()) != null)
-            pendingGamePackets.add(Arrays.copyOf(packet, packet.length));
+        while ((packet = firmware.multiplayerTakeOutgoing()) != null) {
+            byte[] queued = Arrays.copyOf(packet, packet.length);
+            if (OnlineTransportPolicy.isInvite(queued)) {
+                invitationPacket = queued.clone();
+                lastInvitationSendMs = 0L;
+                invitationReplayCount = 0;
+            }
+            pendingGamePackets.add(queued);
+        }
         if (sessionReady) {
-            while ((packet = pendingGamePackets.poll()) != null)
+            while ((packet = pendingGamePackets.poll()) != null) {
                 send(OnlineMultiplayerProtocol.RELAY, sessionPeerId, sessionId, packet);
+                if (OnlineTransportPolicy.isInvite(packet))
+                    lastInvitationSendMs = now;
+            }
             int currentState = firmware.multiplayerState();
-            if (firmware.multiplayerConnected() || currentState >= 5)
-                protocolSessionObserved = true;
-            if (protocolSessionObserved &&
-                    (currentState == STATE_ADVERTISING || currentState == STATE_SCANNING ||
-                     !firmware.multiplayerEnabled())) {
+            if (OnlineTransportPolicy.shouldReplayInvite(
+                    true, currentState, invitationPacket != null,
+                    now - lastInvitationSendMs, invitationReplayCount)) {
+                send(OnlineMultiplayerProtocol.RELAY, sessionPeerId, sessionId,
+                        invitationPacket);
+                lastInvitationSendMs = now;
+                invitationReplayCount++;
+                status("Retrying the online room handshake.");
+            }
+            if (OnlineTransportPolicy.shouldReleaseAbandonedRoom(true, currentState) ||
+                    !firmware.multiplayerEnabled()) {
                 send(OnlineMultiplayerProtocol.CLOSE_SESSION, sessionPeerId, sessionId, null);
                 clearSession();
             }
@@ -429,7 +449,6 @@ final class WifiMultiplayer implements AutoCloseable {
                 sessionId = header.sessionId;
                 sessionPeerId = header.sourceId;
                 requestedPeerId = 0;
-                protocolSessionObserved = false;
                 firmware.multiplayerTransportConnected(payload[0] != 0);
                 status("Online room ready with player " + sessionPeerId + ".");
                 break;
@@ -481,9 +500,11 @@ final class WifiMultiplayer implements AutoCloseable {
 
     private void clearSession() {
         sessionReady = false;
-        protocolSessionObserved = false;
         sessionId = sessionPeerId = requestedPeerId = 0;
         pendingGamePackets.clear();
+        invitationPacket = null;
+        lastInvitationSendMs = 0L;
+        invitationReplayCount = 0;
     }
 
     private void resetFrameReader() {

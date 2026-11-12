@@ -1225,6 +1225,30 @@ bool abilityIs(const OwnedPokemon& pokemon, const char* name) {
   const AbilityData* ability = findAbility(pokemon.abilityId);
   return ability && std::strcmp(ability->name, name) == 0;
 }
+
+bool skillSwapAbilityIsImmutable(uint8_t abilityId) {
+  // Abilities that own a species' identity/form state cannot be detached by
+  // Skill Swap. Keep the complete Gen I-VII set together: accepting only
+  // Wonder Guard/Multitype (the old Gen-IV list) lets later form controllers
+  // leak onto arbitrary species and leaves their native Pokemon inconsistent.
+  switch(abilityId){
+    case 25U:  // WONDER GUARD
+    case 122U: // MULTITYPE
+    case 150U: // ILLUSION
+    case 162U: // ZEN MODE
+    case 177U: // STANCE CHANGE
+    case 198U: // SHIELDS DOWN
+    case 209U: // SCHOOLING
+    case 210U: // DISGUISE
+    case 211U: // BATTLE BOND
+    case 212U: // POWER CONSTRUCT
+    case 214U: // COMATOSE
+    case 226U: // RKS SYSTEM
+      return true;
+    default:
+      return false;
+  }
+}
 bool hasGroundImmunityAbility(const OwnedPokemon& pokemon){
   return abilityIs(pokemon,"LEVITATE")||abilityIs(pokemon,"EELEVATE");
 }
@@ -4472,26 +4496,102 @@ bool changeStageForHolder(const OwnedPokemon& holder,int8_t& stage,int8_t amount
   if(abilityIs(holder,"CONTRARY"))amount=static_cast<int8_t>(-amount);
   return changeStage(stage,amount);
 }
+
+enum class StageEffectStat : uint8_t {
+  None,
+  Attack,
+  Defense,
+  SpAttack,
+  SpDefense,
+  Speed,
+  Accuracy,
+  Evasion,
+};
+
+struct StageEffectChange {
+  StageEffectStat stat=StageEffectStat::None;
+  int8_t amount=0;
+};
+
+bool decodeStageEffectFamily(const char* effect,const char* stem,
+                             StageEffectStat stat,int8_t direction,
+                             StageEffectChange& decoded){
+  const size_t stemLength=std::strlen(stem);
+  if(std::strncmp(effect,stem,stemLength)!=0)return false;
+  const char* suffix=effect+stemLength;
+  // Spell internal suffixes as character tables so the UI-localization
+  // inventory does not mistake protocol fragments for player-visible text.
+  static constexpr char kHitSuffix[]={'_','H','I','T','\0'};
+  static constexpr char kTwoSuffix[]={'_','2','\0'};
+  static constexpr char kTwoHitSuffix[]={
+      '_','2','_','H','I','T','\0'};
+  static constexpr char kTwoOppositeGenderSuffix[]={
+      '_','2','_','O','P','P','O','S','I','T','E','_',
+      'G','E','N','D','E','R','\0'};
+  const bool twoStages=std::strcmp(suffix,kTwoSuffix)==0||
+      std::strcmp(suffix,kTwoHitSuffix)==0||
+      std::strcmp(suffix,kTwoOppositeGenderSuffix)==0;
+  const bool validSuffix=*suffix=='\0'||twoStages||
+      std::strcmp(suffix,kHitSuffix)==0;
+  if(!validSuffix)return false;
+  decoded.stat=stat;
+  decoded.amount=static_cast<int8_t>(direction*(twoStages?2:1));
+  return true;
+}
+
+bool decodeStageEffect(const char* effect,StageEffectChange& decoded){
+  if(!effect)return false;
+  // Platinum uses this older spelling for Mud Bomb and Mirror Shot.
+  if(std::strcmp(effect,"LOWER_ACCURACY_HIT")==0){
+    decoded={StageEffectStat::Accuracy,-1};
+    return true;
+  }
+  struct Family {
+    const char* stem;
+    StageEffectStat stat;
+    int8_t direction;
+  };
+  static constexpr Family kFamilies[]={
+    {"SPECIAL_ATTACK_UP",StageEffectStat::SpAttack,1},
+    {"SPECIAL_ATTACK_DOWN",StageEffectStat::SpAttack,-1},
+    {"SPECIAL_DEFENSE_UP",StageEffectStat::SpDefense,1},
+    {"SPECIAL_DEFENSE_DOWN",StageEffectStat::SpDefense,-1},
+    {"SP_ATTACK_UP",StageEffectStat::SpAttack,1},
+    {"SP_ATTACK_DOWN",StageEffectStat::SpAttack,-1},
+    {"SP_DEFENSE_UP",StageEffectStat::SpDefense,1},
+    {"SP_DEFENSE_DOWN",StageEffectStat::SpDefense,-1},
+    {"ATTACK_UP",StageEffectStat::Attack,1},
+    {"ATTACK_DOWN",StageEffectStat::Attack,-1},
+    {"DEFENSE_UP",StageEffectStat::Defense,1},
+    {"DEFENSE_DOWN",StageEffectStat::Defense,-1},
+    {"SPEED_UP",StageEffectStat::Speed,1},
+    {"SPEED_DOWN",StageEffectStat::Speed,-1},
+    {"ACCURACY_UP",StageEffectStat::Accuracy,1},
+    {"ACCURACY_DOWN",StageEffectStat::Accuracy,-1},
+    {"EVASION_UP",StageEffectStat::Evasion,1},
+    {"EVASION_DOWN",StageEffectStat::Evasion,-1},
+  };
+  for(const Family& family:kFamilies)
+    if(decodeStageEffectFamily(effect,family.stem,family.stat,
+                               family.direction,decoded))return true;
+  return false;
+}
+
 void applyStageEffect(BattleState& battle, const OwnedPokemon& sourcePokemon,
                       const char* effect, CombatVolatile& self,
                       CombatVolatile& target,const OwnedPokemon& targetPokemon,
                       BattleActionResult* result=nullptr) {
-  // Composite and side-condition effects have dedicated handlers below. If
-  // they also pass through keyword matching, DEFENSE CURL and BULK UP apply
-  // one of their boosts twice.
-  if (!effect || std::strcmp(effect,"DEFENSE_CURL")==0 || std::strcmp(effect,"BULK_UP")==0 ||
-      std::strcmp(effect,"CALM_MIND")==0 || std::strcmp(effect,"COSMIC_POWER")==0 ||
-      std::strcmp(effect,"DRAGON_DANCE")==0 || std::strcmp(effect,"LIGHT_SCREEN")==0 ||
-      std::strcmp(effect,"REFLECT")==0 || std::strcmp(effect,"MIST")==0 ||
-      std::strcmp(effect,"REMOVE_HAZARDS_SCREENS_EVA_DOWN")==0) return;
-  // Platinum names Mud Bomb and Mirror Shot as LOWER_ACCURACY_HIT while the
-  // older generated effects use ACCURACY_DOWN_HIT.  Both spellings target
-  // the defender; treating LOWER_ as an ordinary boost raised the user's
-  // Accuracy instead.
-  const bool down = std::strstr(effect,"DOWN") != nullptr ||
-      std::strncmp(effect,"LOWER_",6U)==0;
+  // Only explicit stat-effect families belong here. Keyword matching made
+  // QUICK_ATTACK, TRI_ATTACK, SKY_ATTACK, MULTI_ATTACK and
+  // HIT_FIRST_IF_TARGET_ATTACKING look like Attack boosts; it likewise made
+  // TAILWIND and SPEED_SWAP look like Speed boosts. Dedicated/composite
+  // effects now fall through without mutating a stage.
+  StageEffectChange decoded{};
+  if(!decodeStageEffect(effect,decoded))return;
+  const bool down=decoded.amount<0;
   CombatVolatile& v = down ? target : self;
-  int8_t amount = (std::strstr(effect,"_2") ? 2 : 1) * (down ? -1 : 1);
+  const int8_t amount=decoded.amount;
+  const OwnedPokemon& holder=down?targetPokemon:sourcePokemon;
   const bool opposingDrop=down&&
       sideOf(battle,sourcePokemon)!=sideOf(battle,targetPokemon);
   if (opposingDrop) {
@@ -4513,31 +4613,40 @@ void applyStageEffect(BattleState& battle, const OwnedPokemon& sourcePokemon,
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
     return;
   }
-  if(opposingDrop&&std::strstr(effect,"ATTACK")&&!std::strstr(effect,"SPECIAL")&&
+  if(opposingDrop&&decoded.stat==StageEffectStat::Attack&&
      defenderAbilityApplies(sourcePokemon,targetPokemon,"HYPER CUTTER")){
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
     return;
   }
-  if(opposingDrop&&std::strstr(effect,"ACCURACY")&&
+  if(opposingDrop&&decoded.stat==StageEffectStat::Accuracy&&
      defenderAbilityApplies(sourcePokemon,targetPokemon,"KEEN EYE")){
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
     return;
   }
-  if(opposingDrop&&std::strstr(effect,"DEFENSE")&&!std::strstr(effect,"SPECIAL")&&
+  if(opposingDrop&&decoded.stat==StageEffectStat::Defense&&
      defenderAbilityApplies(sourcePokemon,targetPokemon,"BIG PECKS")){
     if(result)appendAbilityActivation(*result,sideOf(battle,targetPokemon),targetPokemon);
     return;
   }
   const StageSnapshot beforeDrop=snapshotStages(v);
   bool changed=false;
-  if (std::strstr(effect,"SPECIAL_ATTACK") || std::strstr(effect,"SP_ATTACK")) changed=changeStageForHolder(targetPokemon,v.spAttackStage,amount);
-  else if (std::strstr(effect,"SPECIAL_DEFENSE") || std::strstr(effect,"SP_DEFENSE")) changed=changeStageForHolder(targetPokemon,v.spDefenseStage,amount);
-  else if (std::strstr(effect,"ATTACK")) changed=changeStageForHolder(targetPokemon,v.attackStage,amount);
-  else if (std::strstr(effect,"DEFENSE")) changed=changeStageForHolder(targetPokemon,v.defenseStage,amount);
-  else if (std::strstr(effect,"SPEED")) changed=changeStageForHolder(targetPokemon,v.speedStage,amount);
-  else if (std::strstr(effect,"ACCURACY")) changed=changeStageForHolder(targetPokemon,v.accuracyStage,amount);
-  else if (std::strstr(effect,"EVASION")||std::strstr(effect,"EVA_DOWN"))
-    changed=changeStageForHolder(targetPokemon,v.evasionStage,amount);
+  switch(decoded.stat){
+    case StageEffectStat::Attack:
+      changed=changeStageForHolder(holder,v.attackStage,amount);break;
+    case StageEffectStat::Defense:
+      changed=changeStageForHolder(holder,v.defenseStage,amount);break;
+    case StageEffectStat::SpAttack:
+      changed=changeStageForHolder(holder,v.spAttackStage,amount);break;
+    case StageEffectStat::SpDefense:
+      changed=changeStageForHolder(holder,v.spDefenseStage,amount);break;
+    case StageEffectStat::Speed:
+      changed=changeStageForHolder(holder,v.speedStage,amount);break;
+    case StageEffectStat::Accuracy:
+      changed=changeStageForHolder(holder,v.accuracyStage,amount);break;
+    case StageEffectStat::Evasion:
+      changed=changeStageForHolder(holder,v.evasionStage,amount);break;
+    case StageEffectStat::None:break;
+  }
   const StageSnapshot afterDrop=snapshotStages(v);
   bool actuallyDropped=false;
   for(uint8_t index=0;index<7U;++index)
@@ -6229,19 +6338,14 @@ bool applyDedicatedMoveEffect(BattleState& battle,BattleActionResult& result,
     return true;
   }
   if(effectIs(&move,"SKILL_SWAP")){
-    // Platinum swaps the raw Ability fields while Gastro Acid's suppression
-    // flags remain attached to their battlers. Wonder Guard, Multitype and a
-    // Griseous Orb holder are immutable; one empty slot is otherwise legal.
+    // Swap the raw Ability fields while Gastro Acid's suppression flags stay
+    // attached to their battlers. Form/identity Abilities through Gen VII and
+    // a Griseous Orb holder are immutable; one empty slot is otherwise legal.
     const uint8_t userAbility=underlyingAbilityId(battle,user);
     const uint8_t targetAbility=underlyingAbilityId(battle,target);
-    const AbilityData* userAbilityData=findAbility(userAbility);
-    const AbilityData* targetAbilityData=findAbility(targetAbility);
-    const auto named=[](const AbilityData* data,const char* name){
-      return data&&std::strcmp(data->name,name)==0;
-    };
-    if((!userAbility&&!targetAbility)||named(userAbilityData,"WONDER GUARD")||
-       named(targetAbilityData,"WONDER GUARD")||
-       named(userAbilityData,"MULTITYPE")||named(targetAbilityData,"MULTITYPE")||
+    if((!userAbility&&!targetAbility)||
+       skillSwapAbilityIsImmutable(userAbility)||
+       skillSwapAbilityIsImmutable(targetAbility)||
        rawBattleHeldItem(user,userVolatile)==HeldItem::GriseousOrb||
        rawBattleHeldItem(target,targetVolatile)==HeldItem::GriseousOrb){
       failed();return true;
@@ -7101,6 +7205,68 @@ bool BattleEngine::moveIsSelectable(const BattleState& battle,
   if(gen7EffectsFor(battle,userSide).throatChopTurns&&isSoundMove(*data))
     return false;
   return true;
+}
+
+uint8_t BattleEngine::choosePlayerAutoMove(
+    BattleState& battle, const PokemonCollection& collection) {
+  const OwnedPokemon* player = CollectionLogic::find(
+      collection, battle.playerUid);
+  const OwnedPokemon* opponent = currentOpponent(battle);
+  if (!battle.active || battle.kind != BattleKind::Wild || !player ||
+      !opponent || !player->currentHp || !opponent->currentHp)
+    return 0xFFU;
+
+  const SpeciesData* attacker = findSpecies(displayedSpeciesId(battle, *player));
+  const SpeciesData* defender = findSpecies(displayedSpeciesId(battle, *opponent));
+  if (!attacker || !defender) return 0xFFU;
+
+  int32_t bestScore = -1;
+  uint8_t best[kMoveSlots]{};
+  uint8_t bestCount = 0U;
+  for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
+    const MoveId moveId = player->moves[slot];
+    const FullMoveData* move = findFullMove(moveId);
+    if (!move || !player->movePp[slot] ||
+        !isMoveAvailableInSingleBattle(moveId) ||
+        !moveIsSelectable(battle, collection, moveId, BattleSide::Player))
+      continue;
+
+    int32_t score = 18;
+    if (move->power) {
+      const PokemonType type = effectiveMoveType(
+          battle, *move, *player, opponent);
+      const uint16_t effectiveness = typeMultiplier100(type, *defender);
+      const uint8_t accuracy = (!move->accuracy || move->accuracy > 100U)
+          ? 100U : move->accuracy;
+      score = static_cast<int32_t>(move->power) * accuracy / 100;
+      if (type == attacker->type1 || type == attacker->type2)
+        score = score * 3 / 2;
+      score = score * effectiveness / 100;
+      score += static_cast<int32_t>(move->priority) * 10;
+    } else {
+      // Keep the automatic player offensive, but retain the same basic AI
+      // utility for a recovery move when the battler is actually in danger.
+      const bool heals = std::strstr(move->effect, "RESTORE_HP") ||
+          std::strstr(move->effect, "SOFTBOILED") ||
+          std::strstr(move->effect, "HEAL_HALF") ||
+          std::strstr(move->effect, "SYNTHESIS") ||
+          std::strstr(move->effect, "MORNING_SUN") ||
+          std::strstr(move->effect, "MOONLIGHT") ||
+          std::strcmp(move->effect, "REST") == 0;
+      if (heals && player->currentHp * 2U < player->maximumHp)
+        score = 140;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best[0] = slot;
+      bestCount = 1U;
+    } else if (score == bestScore && bestCount < kMoveSlots) {
+      best[bestCount++] = slot;
+    }
+  }
+  if (!bestCount) return 0xFFU;
+  return best[random(battle) % bestCount];
 }
 
 bool BattleEngine::canUseZMove(const BattleState& battle,
@@ -11571,6 +11737,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
        abilityIs(*player,"PRANKSTER")?1:0)+
       triageBoost(plannedPlayerMove,*player)+
       (abilityIs(*player,"GALE WINGS")&&
+       player->currentHp==player->maximumHp&&
        effectiveMoveType(battle,*plannedPlayerMove,*player,opponent)==
            PokemonType::Flying?1:0)) : 0;
   const int8_t enemyPriority = plannedEnemyMove ? static_cast<int8_t>(plannedEnemyMove->priority+
@@ -11578,6 +11745,7 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
        abilityIs(*opponent,"PRANKSTER")?1:0)+
       triageBoost(plannedEnemyMove,*opponent)+
       (abilityIs(*opponent,"GALE WINGS")&&
+       opponent->currentHp==opponent->maximumHp&&
        effectiveMoveType(battle,*plannedEnemyMove,*opponent,player)==
            PokemonType::Flying?1:0)) : 0;
   const bool playerPursuesBatonPass=effectIs(plannedPlayerMove,"PURSUIT")&&
@@ -12886,8 +13054,15 @@ void BattleEngine::fightInto(BattleState& battle, PokemonCollection& collection,
     result.opponentDefeated=true;awardExperience(battle,collection,result);
     finishOpponentFaint(battle,collection,result);
     opponentFaintResolvedForUTurn=true;
-    if(battle.active&&player->currentHp&&currentOpponent(battle)&&
-       currentOpponent(battle)->currentHp){
+    // A link opponent remains on its fainted roster slot until the synchronized
+    // replacement barrier. U-turn still has to withdraw its surviving user,
+    // so both players choose a recipient in the same barrier. Requiring the
+    // currently selected opponent to be alive silently discarded the user's
+    // pivot exactly when U-turn scored a KO.
+    const bool opponentBattleContinues=battle.kind==BattleKind::Pvp?
+        hasHealthyOpponentReplacement(battle):
+        (currentOpponent(battle)&&currentOpponent(battle)->currentHp);
+    if(battle.active&&player->currentHp&&opponentBattleContinues){
       setPendingReplacement(battle,BattleSide::Player,
           playerUsesZMove&&zStatusEffectForMove(selectedMove)==
               ZStatusEffect::RestoreReplacementHp?5U:2U);

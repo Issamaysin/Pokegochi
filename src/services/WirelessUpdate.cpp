@@ -191,6 +191,12 @@ void WirelessUpdate::configureSaveManagement(
   saveCallbackContext_ = callbackContext;
 }
 
+void WirelessUpdate::configureVerificationMemory(
+    VerificationMemoryCallback callback, void* context) {
+  verificationMemoryCallback_ = callback;
+  verificationMemoryContext_ = context;
+}
+
 void WirelessUpdate::configureDiagnostics(DiagnosticReadCallback callback,
                                            void* context) {
   diagnosticReadCallback_ = callback;
@@ -1038,7 +1044,28 @@ bool WirelessUpdate::verifyManifest() {
   if (seen != 0x0FU || assetBytes > 64ULL * 1024ULL * 1024ULL) {
     fail(ErrorCode::ManifestFormat, "THE ASSET LIST IS INCOMPLETE."); return false;
   }
-  if (!signatureValid(manifest_)) {
+  // NimBLE and the 55 KiB live GameSave can leave several small free blocks
+  // but no block large enough for mbedTLS's P-256 temporaries. Park the save
+  // only around verification, then immediately reload its durable record and
+  // refresh saveData_ before any updater save command can run.
+  bool verificationMemoryLoaned = false;
+  if (verificationMemoryCallback_ && saveData_) {
+    if (!verificationMemoryCallback_(verificationMemoryContext_, true)) {
+      fail(ErrorCode::Busy, "SAVE MEMORY COULD NOT BE PARKED FOR SIGNATURE CHECK.");
+      return false;
+    }
+    saveData_ = nullptr;
+    verificationMemoryLoaned = true;
+  }
+  const bool validSignature = signatureValid(manifest_);
+  if (verificationMemoryLoaned) {
+    saveData_ = verificationMemoryCallback_(verificationMemoryContext_, false);
+    if (!saveData_) {
+      fail(ErrorCode::CommitFailed, "SAVE MEMORY COULD NOT BE RESTORED.");
+      return false;
+    }
+  }
+  if (!validSignature) {
     fail(ErrorCode::ManifestSignature, "PACKAGE SIGNATURE IS INVALID."); return false;
   }
 
@@ -1855,25 +1882,29 @@ bool WirelessUpdate::hashFile(const char* path, uint8_t output[32]) const {
 #else
   File file = SD.open(path, FILE_READ);
   if (!file) return false;
+  const size_t fileBytes = file.size();
   mbedtls_sha256_context context;
   mbedtls_sha256_init(&context);
   bool okay = mbedtls_sha256_starts(&context, 0) == 0;
-  constexpr size_t kHashBufferBytes = 4096;
-  uint8_t* buffer = static_cast<uint8_t*>(std::malloc(kHashBufferBytes));
-  if (!buffer) {
-    mbedtls_sha256_free(&context);
-    file.close();
-    return false;
-  }
-  while (okay && file.available()) {
-    const size_t count = file.read(buffer, kHashBufferBytes);
-    if (!count) { okay = false; break; }
+  // Verification runs with NimBLE and the 55 KiB GameSave resident. The old
+  // 4 KiB heap allocation therefore failed on the real no-PSRAM board after
+  // a perfectly valid 30 MB PAK transfer (largest block was about 3 KiB), and
+  // that allocation failure was incorrectly reported as a SHA mismatch. A
+  // bounded stack buffer makes hashing independent of heap fragmentation.
+  uint8_t buffer[1024];
+  size_t hashedBytes = 0U;
+  while (okay && hashedBytes < fileBytes) {
+    const size_t requested = std::min<size_t>(sizeof(buffer),
+                                               fileBytes - hashedBytes);
+    const size_t count = file.read(buffer, requested);
+    if (count != requested) { okay = false; break; }
     okay = mbedtls_sha256_update(&context, buffer, count) == 0;
+    hashedBytes += count;
     yield();
   }
   file.close();
+  okay = okay && hashedBytes == fileBytes;
   if (okay) okay = mbedtls_sha256_finish(&context, output) == 0;
-  std::free(buffer);
   mbedtls_sha256_free(&context);
   return okay;
 #endif
@@ -1910,8 +1941,13 @@ bool WirelessUpdate::signatureValid(const Manifest& manifest) const {
   return true;
 #else
   uint8_t digest[32]{};
-  if (mbedtls_sha256(reinterpret_cast<const uint8_t*>(&manifest),
-                     offsetof(Manifest, signature), digest, 0) != 0) return false;
+  const int hashResult = mbedtls_sha256(
+      reinterpret_cast<const uint8_t*>(&manifest),
+      offsetof(Manifest, signature), digest, 0);
+  if (hashResult != 0) {
+    Serial.printf("[OTAP] signature hash failed result=%d\n", hashResult);
+    return false;
+  }
   mbedtls_ecp_group group;
   mbedtls_ecp_point publicPoint;
   mbedtls_mpi r, s;
@@ -1919,12 +1955,34 @@ bool WirelessUpdate::signatureValid(const Manifest& manifest) const {
   mbedtls_ecp_point_init(&publicPoint);
   mbedtls_mpi_init(&r);
   mbedtls_mpi_init(&s);
-  bool okay = mbedtls_ecp_group_load(&group, MBEDTLS_ECP_DP_SECP256R1) == 0 &&
-      mbedtls_ecp_point_read_binary(&group, &publicPoint, kPokegochiUpdatePublicKey,
-                                    sizeof(kPokegochiUpdatePublicKey)) == 0 &&
-      mbedtls_mpi_read_binary(&r, manifest.signature, 32) == 0 &&
-      mbedtls_mpi_read_binary(&s, manifest.signature + 32, 32) == 0 &&
-      mbedtls_ecdsa_verify(&group, digest, sizeof(digest), &publicPoint, &r, &s) == 0;
+  const int groupResult = mbedtls_ecp_group_load(
+      &group, MBEDTLS_ECP_DP_SECP256R1);
+  const int pointResult = groupResult == 0
+      ? mbedtls_ecp_point_read_binary(
+            &group, &publicPoint, kPokegochiUpdatePublicKey,
+            sizeof(kPokegochiUpdatePublicKey))
+      : groupResult;
+  const int rResult = pointResult == 0
+      ? mbedtls_mpi_read_binary(&r, manifest.signature, 32)
+      : pointResult;
+  const int sResult = rResult == 0
+      ? mbedtls_mpi_read_binary(&s, manifest.signature + 32, 32)
+      : rResult;
+  const int verifyResult = sResult == 0
+      ? mbedtls_ecdsa_verify(&group, digest, sizeof(digest), &publicPoint, &r, &s)
+      : sResult;
+  const bool okay = verifyResult == 0;
+  if (!okay) {
+    Serial.printf(
+        "[OTAP] signature verify failed group=%d point=%d r=%d s=%d verify=%d "
+        "unsigned_crc=%08lx digest=%02x%02x%02x%02x sig=%02x%02x%02x%02x\n",
+        groupResult, pointResult, rResult, sResult, verifyResult,
+        static_cast<unsigned long>(crc32(&manifest,
+                                         offsetof(Manifest, signature))),
+        digest[0], digest[1], digest[2], digest[3],
+        manifest.signature[0], manifest.signature[1],
+        manifest.signature[2], manifest.signature[3]);
+  }
   mbedtls_mpi_free(&s);
   mbedtls_mpi_free(&r);
   mbedtls_ecp_point_free(&publicPoint);

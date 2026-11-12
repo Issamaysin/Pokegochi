@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 FILES = (
+    ROOT / "src/game/PokemonDataGenerated.inc",
     ROOT / "src/game/TrainerDataGenerated.inc",
     ROOT / "src/game/BattleTowerDataGenerated.inc",
     ROOT / "src/game/PokedexDataGenerated.inc",

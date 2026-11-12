@@ -364,7 +364,7 @@ motor. `CORRIGIDO` identifica uma divergência encontrada nesta auditoria.
 | 282 | Knock Off | Poder 20 e remoção pós-dano bloqueada por Substitute/Sticky Hold; feedback de Sticky Hold restaurado e recompensas únicas locais continuam não removíveis | CORRIGIDO |
 | 283 | Endeavor | Falha antes da precisão se o alvo não tiver mais HP; iguala o HP respeitando imunidade Normal e sem multiplicadores de fraqueza/resistência | OK |
 | 284 | Eruption | Poder `150 * HP atual / HP máximo`, com mínimo 1, calculado no instante do ataque | OK |
-| 285 | Skill Swap | Troca Abilities, permite uma Ability vazia e Ability igual, mas falha com ambas vazias ou Wonder Guard | OK |
+| 285 | Skill Swap | Troca Abilities temporariamente, permite uma Ability vazia e Ability igual, preserva a supressao de Gastro Acid e falha com ambas vazias, Griseous Orb ou qualquer Ability inseparavel de forma/identidade ate a Gen VII | CORRIGIDO |
 | 286 | Imprison | Só arma se houver ao menos um golpe compartilhado com o oponente e falha quando já está ativo | OK |
 | 287 | Refresh | Cura Poison, Bad Poison, Burn ou Paralysis e falha para qualquer outro estado | OK |
 | 288 | Grudge | Fica ativo até a próxima ação/saída e zera o PP do golpe que nocautear diretamente o usuário | OK |

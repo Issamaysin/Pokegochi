@@ -9,6 +9,25 @@
 
 using namespace PokegochiUpdateProtocol;
 
+static uint8_t verificationSave[32]{};
+static uint8_t verificationMemoryCalls = 0;
+static bool verificationMemoryParked = false;
+
+static bool saveCommit(void*) { return true; }
+static bool saveReset(void*) { return true; }
+
+static void* verificationMemory(void*, bool suspend) {
+  ++verificationMemoryCalls;
+  if (suspend) {
+    assert(!verificationMemoryParked);
+    verificationMemoryParked = true;
+    return verificationSave;  // non-null success token; storage is now parked
+  }
+  assert(verificationMemoryParked);
+  verificationMemoryParked = false;
+  return verificationSave;  // reloaded live save address
+}
+
 static size_t diagnosticReport(void*, uint8_t section, uint16_t selector,
                                char* output, size_t capacity) {
   const int written = std::snprintf(output, capacity,
@@ -63,6 +82,9 @@ static void sendObject(WirelessUpdate& update, ObjectKind kind, uint8_t assetId,
 int main() {
   WirelessUpdate update;
   assert(update.begin(12345, "TEST", 18, true));
+  update.configureSaveManagement(verificationSave, sizeof(verificationSave),
+                                 1U, saveCommit, saveReset, nullptr);
+  update.configureVerificationMemory(verificationMemory, nullptr);
   update.transportConnected();
   assert(update.state() == DeviceState::AwaitingAuthentication);
 
@@ -98,6 +120,8 @@ int main() {
     expectedTotal += manifest.assets[index].size;
   }
   sendManifest(update, manifest);
+  assert(verificationMemoryCalls == 2U);
+  assert(!verificationMemoryParked);
   assert(update.bytesTotal() == expectedTotal);
 
   for (uint8_t index = 0; index < kMaximumAssets; ++index)

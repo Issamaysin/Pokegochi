@@ -1417,6 +1417,27 @@ def write_indexed_asset(relative: str, image: Image.Image,
     }
 
 
+def build_spinda_front_assets(manifest: dict[str, dict]) -> list[str]:
+    """Export Spinda without renumbering its GBA palette entries.
+
+    DrawSpindaSpots is defined in terms of numeric entries 1..3 -> 5..7.
+    Flattening the source through RGBA made a still sprite look identical but
+    silently reassigned those entries by first occurrence, so the runtime
+    painted outlines and unrelated shadows. Keep the original indexed pixels
+    and the complete authored normal/shiny palettes byte-for-byte.
+    """
+    folder = DECOMP / "graphics/pokemon/spinda"
+    source = Image.open(folder / "front.png")
+    if source.mode != "P" or source.size != (64, 64):
+        raise RuntimeError("Unexpected indexed Spinda front source")
+    relatives = ["pokemon/front/327.pkg", "pokemon/shiny/front/327.pkg"]
+    write_indexed_asset(relatives[0], source, jasc_palette(
+        folder / "normal.pal"), manifest, transparent_index=0)
+    write_indexed_asset(relatives[1], source, jasc_palette(
+        folder / "shiny.pal"), manifest, transparent_index=0)
+    return relatives
+
+
 def export_expansion_battle_background_assets(
         manifest: dict,
         audit_images: list[tuple[str, Image.Image]] | None = None) -> list[str]:
@@ -2706,9 +2727,21 @@ def main() -> None:
         front_indices, front_palette = extract_battle_sprite(rom, rom_species, 0x2350AC)
         back_indices, back_palette = extract_battle_sprite(rom, rom_species, BACK_SPRITE_TABLE)
         front_image = indexed(front_indices, front_palette, 64)
-        write_asset(f"pokemon/front/{species:03}.pkg", front_image, manifest)
+        if species == 327:
+            front_indexed = Image.new("L", (64, 64))
+            front_indexed.putdata(front_indices)
+            write_indexed_asset(f"pokemon/front/{species:03}.pkg",
+                                front_indexed, front_palette, manifest,
+                                transparent_index=0)
+        else:
+            write_asset(f"pokemon/front/{species:03}.pkg", front_image, manifest)
         write_asset(f"pokemon/back/{species:03}.pkg", indexed(back_indices, back_palette, 64), manifest)
-        write_asset(f"pokemon/shiny/front/{species:03}.pkg", indexed(front_indices, shiny_palette, 64), manifest)
+        if species == 327:
+            write_indexed_asset(f"pokemon/shiny/front/{species:03}.pkg",
+                                front_indexed, shiny_palette, manifest,
+                                transparent_index=0)
+        else:
+            write_asset(f"pokemon/shiny/front/{species:03}.pkg", indexed(front_indices, shiny_palette, 64), manifest)
         write_asset(f"pokemon/shiny/back/{species:03}.pkg", indexed(back_indices, shiny_palette, 64), manifest)
         # FireRed cycles solid silhouettes of the old and new species during
         # evolution.  Export them once so the ESP32 does not have to recolour
@@ -3936,7 +3969,15 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if "--compact-battle-waves-only" in sys.argv:
+    if "--spinda-assets-only" in sys.argv:
+        manifest_path = OUTPUT / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        relatives = build_spinda_front_assets(manifest)
+        merge_assets_into_archive(relatives, manifest)
+        write_runtime_metadata()
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print("Built exact indexed Spinda fronts and promoted the asset archive")
+    elif "--compact-battle-waves-only" in sys.argv:
         manifest_path = OUTPUT / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         relatives = build_compact_battle_wave_assets(manifest)

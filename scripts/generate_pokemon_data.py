@@ -536,7 +536,10 @@ description_symbols = {
     )
 }
 for symbol, number in sorted(ability_ids.items(), key=lambda item: item[1]):
-    description = description_values.get(description_symbols.get(symbol, ""), "No special ability.")
+    description = fire_red_ascii(
+        description_values.get(description_symbols.get(symbol, ""),
+                               "No special ability."),
+        f"FireRed ability description {symbol}")
     description = description.replace('\\', '\\\\').replace('"', '\\"')
     content += f'    {{{number}, "{symbol.replace("_", " ")}", "{description.upper()}"}},\n'
 gen4_ability_descriptions = {
@@ -592,6 +595,11 @@ for symbol in gen4_ability_symbols:
     content += f'    {{{gen4_ability_ids[symbol]}, "{symbol.replace("_", " ")}", "{gen4_ability_descriptions[symbol]}"}},\n'
 
 expansion_abilities = expansion_text("src/data/abilities.h")
+gen5_ability_description_overrides = {
+    # Healer only targets an adjacent ally. Pokegochi battles are singles, so
+    # disclose the adaptation instead of showing the misleading upstream text.
+    "HEALER": "NO EFFECT IN SINGLE BATTLES.",
+}
 for symbol in gen5_ability_symbols:
     block_match = re.search(
         rf"\[ABILITY_{symbol}\]\s*=\s*\{{(.*?)\n\s*\}},",
@@ -603,10 +611,17 @@ for symbol in gen5_ability_symbols:
     description_match = re.search(
         r'\.description\s*=\s*COMPOUND_STRING\("([^"]*)"\)', block)
     name = (name_match.group(1) if name_match else symbol.replace("_", " ")).upper()
-    description = (description_match.group(1) if description_match else
-                   "GENERATION V ABILITY.").replace("\\n", " ").upper()
+    description = gen5_ability_description_overrides.get(symbol)
+    if description is None:
+        description = fire_red_ascii(
+            (description_match.group(1) if description_match else
+             "GENERATION V ABILITY.").replace("\\n", " ").upper(),
+            f"Gen-V ability description {symbol}")
     description = description.replace('\\', '\\\\').replace('"', '\\"')
     content += f'    {{{gen5_ability_ids[symbol]}, "{name}", "{description}"}},\n'
+gen6_ability_description_overrides = {
+    "GALE_WINGS": "GIVES FLYING MOVES PRIORITY AT FULL HP.",
+}
 for symbol in gen6_ability_symbols:
     block_match = re.search(
         rf"\[ABILITY_{symbol}\]\s*=\s*\{{(.*?)\n\s*\}},",
@@ -618,10 +633,12 @@ for symbol in gen6_ability_symbols:
     description_match = re.search(
         r'\.description\s*=\s*COMPOUND_STRING\("([^"]*)"\)', block)
     name = (name_match.group(1) if name_match else symbol.replace("_", " ")).upper()
-    description = fire_red_ascii(
-        (description_match.group(1) if description_match else
-         "GENERATION VI ABILITY.").replace("\\n", " ").upper(),
-        f"Gen-VI ability description {symbol}")
+    description = gen6_ability_description_overrides.get(symbol)
+    if description is None:
+        description = fire_red_ascii(
+            (description_match.group(1) if description_match else
+             "GENERATION VI ABILITY.").replace("\\n", " ").upper(),
+            f"Gen-VI ability description {symbol}")
     description = description.replace('\\', '\\\\').replace('"', '\\"')
     content += f'    {{{gen6_ability_ids[symbol]}, "{name}", "{description}"}},\n'
 for symbol in gen7_ability_symbols:

@@ -15,6 +15,7 @@ int main() {
   assert(kBattleBagFullHealCount == 4U);
   assert(kBattleBagMaxReviveCount == 1U);
   assert(kBattleBagMaxElixirCount == 1U);
+  assert(BattleSyncReplacement == 24U);
   assert(std::strcmp(kServiceUuid, "70564743-4849-4d50-8000-504f4b45474f") == 0);
   PacketHeader packet{ kPacketMagic, kVersion, BattleCommand, 0x01020304U,
                        0xAABBCCDDU, 3U };

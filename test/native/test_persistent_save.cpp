@@ -302,6 +302,9 @@ struct RecordV50Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint3
 constexpr size_t kGameSaveV51TestSize=offsetof(GameSave,wifiBalancedWins);
 struct alignas(GameSave) GameSaveV51Test {uint8_t bytes[kGameSaveV51TestSize]{};};
 struct RecordV51Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV51Test payload;uint32_t crc;};
+constexpr size_t kGameSaveV52TestSize=54984U;
+struct alignas(GameSave) GameSaveV52Test {uint8_t bytes[kGameSaveV52TestSize]{};};
+struct RecordV52Test {uint32_t magic;uint16_t version;uint16_t payloadSize;uint32_t sequence;GameSaveV52Test payload;uint32_t crc;};
 static_assert(sizeof(BattleStateV33Test)==684);
 static_assert(sizeof(GameSaveV33Test)==25912);
 static_assert(sizeof(OwnedPokemonV11Test)==48U);
@@ -343,6 +346,8 @@ static_assert(sizeof(GameSaveV50Test)==54936U);
 static_assert(sizeof(RecordV50Test)==54960U);
 static_assert(sizeof(GameSaveV51Test)==54984U);
 static_assert(sizeof(RecordV51Test)==55008U);
+static_assert(sizeof(GameSaveV52Test)==54984U);
+static_assert(sizeof(RecordV52Test)==55008U);
 uint32_t crc32(const uint8_t* data,size_t length){uint32_t crc=0xFFFFFFFFU;for(size_t i=0;i<length;++i){crc^=data[i];for(uint8_t bit=0;bit<8;++bit)crc=(crc>>1U)^(0xEDB88320U&(0U-(crc&1U)));}return ~crc;}
 
 PokemonCollectionV11Test legacyCollectionV11WithStarter(uint16_t speciesId) {
@@ -1206,6 +1211,40 @@ int main() {
   assert(v52Migrated.modernHeldItems.quantities[0]==19U);
   assert(v52Migrated.modernHeldItems.quantities[kModernHeldItemCount-1U]==7U);
   assert(v52Migrated.wifiBalancedWins==0U);
+
+  // V53 adds five persistent Party presets. A shipped V52 save keeps its
+  // Balanced-win count and active Party, which becomes Party 1 / MAIN.
+  Preferences::resetTestStorage();
+  GameSave v52Source{};
+  v52Source.playTimeSeconds=530052U;v52Source.money=888053U;
+  v52Source.wifiBalancedWins=23U;
+  CollectionLogic::initialize(v52Source.collection);
+  assert(CollectionLogic::chooseStarter(v52Source.collection,4U));
+  uint32_t v52SecondUid=0U;
+  assert(CollectionLogic::add(v52Source.collection,
+      CollectionLogic::createPokemon(0U,25U,20U,false,0x520025U),
+      &v52SecondUid));
+  assert(CollectionLogic::setPartySlot(v52Source.collection,1U,v52SecondUid));
+  RecordV52Test old52{};old52.magic=0x504F4B45;old52.version=52U;
+  old52.payloadSize=sizeof(GameSaveV52Test);old52.sequence=101452U;
+  std::memcpy(old52.payload.bytes,&v52Source,
+              offsetof(GameSave,partyPresets));
+  old52.crc=crc32(reinterpret_cast<const uint8_t*>(&old52),
+                  offsetof(RecordV52Test,crc));
+  assert(raw.putBytes("save_a",&old52,sizeof(old52))==sizeof(old52));
+  assert(raw.putBool("started",true)==1);
+  PersistentSave v52Migrator;assert(v52Migrator.begin());GameSave v53Migrated;
+  assert(v52Migrator.loadOrCreate(v53Migrated)==SaveLoadResult::Loaded);
+  assert(v53Migrated.playTimeSeconds==530052U&&v53Migrated.money==888053U);
+  assert(v53Migrated.wifiBalancedWins==23U);
+  assert(v53Migrated.partyPresets.schemaMarker==
+         PartyPresetState::kSchemaMarker);
+  assert(v53Migrated.partyPresets.primary==0U);
+  assert(v53Migrated.partyPresets.members[0][0]==
+         v53Migrated.collection.party[0]);
+  assert(v53Migrated.partyPresets.members[0][1]==v52SecondUid);
+  assert(PartyPresetLogic::validate(v53Migrated.partyPresets,
+                                    v53Migrated.collection));
 
   PokemonCollectionV47 fullV47{};
   for(uint16_t i=0;i<kBoxCapacityV47;++i)fullV47.box[i].uid=static_cast<uint32_t>(i)+1U;

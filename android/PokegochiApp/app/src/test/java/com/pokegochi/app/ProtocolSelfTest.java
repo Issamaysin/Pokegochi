@@ -86,6 +86,35 @@ public final class ProtocolSelfTest {
                         BleTransportPolicy.STATE_CONNECTED,
                         BleTransportPolicy.MAX_HANDSHAKE_REPLAYS),
                 "handshake replay is bounded");
+        byte[] invite = MultiplayerProtocol.packet(MultiplayerProtocol.INVITE,
+                52742, 0x12345678, null);
+        check(OnlineTransportPolicy.isInvite(invite),
+                "online bridge recognizes its cached Invite");
+        check(!OnlineTransportPolicy.isInvite(packet),
+                "online bridge does not replay another game packet");
+        check(!OnlineTransportPolicy.shouldReplayInvite(true,
+                        OnlineTransportPolicy.STATE_CONNECTING, true,
+                        OnlineTransportPolicy.INVITE_REPLAY_MS - 1L, 0),
+                "online Invite waits for its retry interval");
+        check(OnlineTransportPolicy.shouldReplayInvite(true,
+                        OnlineTransportPolicy.STATE_CONNECTING, true,
+                        OnlineTransportPolicy.INVITE_REPLAY_MS, 0),
+                "online Invite is replayed after a lost acceptance");
+        check(!OnlineTransportPolicy.shouldReplayInvite(true,
+                        OnlineTransportPolicy.STATE_CONNECTED, true,
+                        OnlineTransportPolicy.INVITE_REPLAY_MS, 0),
+                "online Invite replay stops after acceptance");
+        check(!OnlineTransportPolicy.shouldReplayInvite(true,
+                        OnlineTransportPolicy.STATE_CONNECTING, true,
+                        OnlineTransportPolicy.INVITE_REPLAY_MS,
+                        OnlineTransportPolicy.MAX_INVITE_REPLAYS),
+                "online Invite replay is bounded");
+        check(OnlineTransportPolicy.shouldReleaseAbandonedRoom(true,
+                        OnlineTransportPolicy.STATE_SCANNING),
+                "abandoned online room is released when discovery resumes");
+        check(!OnlineTransportPolicy.shouldReleaseAbandonedRoom(true,
+                        OnlineTransportPolicy.STATE_CONNECTING),
+                "active online handshake keeps its room");
         System.out.println("MultiplayerProtocol v10 BLE/online vectors: OK");
     }
 

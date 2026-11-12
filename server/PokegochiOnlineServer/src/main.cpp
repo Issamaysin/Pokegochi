@@ -59,6 +59,11 @@ struct BotSyncVolatilePayload {
   Gen4BattlerEffectState gen4Effects;
 };
 struct BotSyncAckPayload { uint16_t turn; uint32_t snapshotChecksum; };
+struct BotSyncReplacementPayload {
+  uint16_t turn;
+  uint8_t hostReason;
+  uint8_t guestReason;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(BotPartyPayload) == 65U,
@@ -108,6 +113,21 @@ struct BotRuntime {
   uint8_t lastPivotMovePp = 0U;
   bool pivotMovePending = false;
   bool pivotMoveExecuted = false;
+  // The bot already tracks its own U-turn/Volt Switch so it can provide the
+  // second SWITCH command after the authoritative snapshot. Track the host's
+  // pivot independently as well. A chained turn (bot pivots first, then the
+  // queued host U-turn lands) keeps the same battle turn number; relying on
+  // lastCommandTurn alone mistakes the host's replacement for a fresh action.
+  uint16_t lastHostPivotMoveTurn = 0xFFFFU;
+  uint8_t lastHostPivotMoveSlot = 0xFFU;
+  uint8_t lastHostPivotMoveRosterSlot = 0xFFU;
+  uint8_t lastHostPivotMovePp = 0U;
+  bool hostPivotMovePending = false;
+  bool hostPivotMoveExecuted = false;
+  uint16_t replacementIntentTurn = 0xFFFFU;
+  uint8_t hostReplacementReason = 0U;
+  uint8_t guestReplacementReason = 0U;
+  bool replacementIntentReceived = false;
   uint8_t rules = 0U;
   uint8_t activeSlot = 0U;
   uint8_t hostActiveSlot = 0U;
@@ -256,6 +276,16 @@ void resetBotActivity() {
   battleBot.lastPivotMovePp = 0U;
   battleBot.pivotMovePending = false;
   battleBot.pivotMoveExecuted = false;
+  battleBot.lastHostPivotMoveTurn = 0xFFFFU;
+  battleBot.lastHostPivotMoveSlot = 0xFFU;
+  battleBot.lastHostPivotMoveRosterSlot = 0xFFU;
+  battleBot.lastHostPivotMovePp = 0U;
+  battleBot.hostPivotMovePending = false;
+  battleBot.hostPivotMoveExecuted = false;
+  battleBot.replacementIntentTurn = 0xFFFFU;
+  battleBot.hostReplacementReason = 0U;
+  battleBot.guestReplacementReason = 0U;
+  battleBot.replacementIntentReceived = false;
   std::memset(battleBot.hostHp, 0, sizeof(battleBot.hostHp));
   std::memset(battleBot.hostTeam, 0, sizeof(battleBot.hostTeam));
   std::memset(battleBot.hostVolatiles, 0,
@@ -502,16 +532,24 @@ BotActionChoice chooseBotAction() {
 
 bool botMoveRequiresChosenReplacement(const OwnedPokemon& pokemon,
                                       uint8_t commandValue) {
-  // Z-Moves based on U-turn/Volt Switch use their Z effect and do not pivot.
-  if (commandValue & kBotMoveZFlag) return false;
   const uint8_t slot = static_cast<uint8_t>(commandValue & ~kBotMoveZFlag);
   if (slot >= kMoveSlots) return false;
   const uint16_t move = static_cast<uint16_t>(pokemon.moves[slot]);
+  // Damaging Z-Moves based on U-turn/Volt Switch do not pivot. Z-Parting Shot
+  // retains the switch and heals the chosen recipient.
+  if (commandValue & kBotMoveZFlag) return move == 575U;
   return move == 369U || move == 521U || move == 575U;  // U-turn, Volt Switch, Parting Shot.
 }
 
+bool isPivotReplacementReason(uint8_t reason) {
+  return reason == 2U || reason == 5U;
+}
+
 void rememberBotMove(uint16_t turn, uint8_t commandValue) {
-  battleBot.lastPivotMoveTurn = turn;
+  // BattleEngine increments the turn while resolving the move. The choice
+  // that completes a pivot therefore uses the resulting turn, not the command
+  // turn that selected U-turn/Volt Switch.
+  battleBot.lastPivotMoveTurn = static_cast<uint16_t>(turn + 1U);
   battleBot.lastPivotMoveSlot = static_cast<uint8_t>(commandValue & ~kBotMoveZFlag);
   battleBot.lastPivotMoveRosterSlot = battleBot.activeSlot;
   battleBot.lastPivotMovePp = 0U;
@@ -532,6 +570,29 @@ void clearBotPivotMove() {
   battleBot.lastPivotMovePp = 0U;
   battleBot.pivotMovePending = false;
   battleBot.pivotMoveExecuted = false;
+}
+
+void clearHostPivotMove() {
+  battleBot.lastHostPivotMoveTurn = 0xFFFFU;
+  battleBot.lastHostPivotMoveSlot = 0xFFU;
+  battleBot.lastHostPivotMoveRosterSlot = 0xFFU;
+  battleBot.lastHostPivotMovePp = 0U;
+  battleBot.hostPivotMovePending = false;
+  battleBot.hostPivotMoveExecuted = false;
+}
+
+void rememberHostMove(uint16_t turn, uint8_t commandValue) {
+  clearHostPivotMove();
+  if (battleBot.hostActiveSlot >= battleBot.hostCount) return;
+  const OwnedPokemon& active = battleBot.hostTeam[battleBot.hostActiveSlot];
+  if (!botMoveRequiresChosenReplacement(active, commandValue)) return;
+  const uint8_t moveSlot = static_cast<uint8_t>(commandValue & ~kBotMoveZFlag);
+  if (moveSlot >= kMoveSlots) return;
+  battleBot.lastHostPivotMoveTurn = static_cast<uint16_t>(turn + 1U);
+  battleBot.lastHostPivotMoveSlot = moveSlot;
+  battleBot.lastHostPivotMoveRosterSlot = battleBot.hostActiveSlot;
+  battleBot.lastHostPivotMovePp = active.movePp[moveSlot];
+  battleBot.hostPivotMovePending = true;
 }
 
 int8_t chooseBotReplacement() {
@@ -576,9 +637,30 @@ void handleBotSyncCore(ClientSlot& client, const uint8_t* payload,
   battleBot.activeSlot = payload[countsOffset + 3U];
   battleBot.battleActive = payload[10U] != 0U;
   const uint8_t hostOutcome = payload[11U];
+  if (battleBot.replacementIntentReceived) {
+    if (battleBot.replacementIntentTurn == turn) {
+      if (battleBot.hostPivotMovePending)
+        battleBot.hostPivotMoveExecuted =
+            isPivotReplacementReason(battleBot.hostReplacementReason);
+      if (battleBot.pivotMovePending)
+        battleBot.pivotMoveExecuted =
+            isPivotReplacementReason(battleBot.guestReplacementReason);
+    }
+    battleBot.replacementIntentReceived = false;
+  }
   const BotSyncAckPayload acknowledgement{turn, checksum};
   sendBotGamePacket(client, PokegochiMultiplayerProtocol::BattleSyncAck,
                     &acknowledgement, sizeof(acknowledgement), turn);
+  // A host pivot is complete only when the authoritative roster slot changes.
+  // Keep it armed across the bot's own pivot barrier: the queued host U-turn
+  // may execute only after that switch, while the battle turn remains equal.
+  if (battleBot.hostPivotMovePending && battleBot.hostPivotMoveExecuted &&
+      battleBot.hostActiveSlot != battleBot.lastHostPivotMoveRosterSlot) {
+    Serial.printf("[BOT] host pivot confirmed turn=%u active=%u\n",
+                  static_cast<unsigned>(turn),
+                  static_cast<unsigned>(battleBot.hostActiveSlot));
+    clearHostPivotMove();
+  }
   // BattleOutcome::Defeat (3) is the authoritative host losing, hence a bot
   // victory. Commit it once, only for Balanced battles, before the room can
   // be closed or the same final snapshot retried.
@@ -659,8 +741,11 @@ void handleBotGamePacket(ClientSlot& client, const uint8_t* bytes,
   const uint8_t* payload = bytes + sizeof(header);
   switch (header.type) {
     case PokegochiMultiplayerProtocol::Invite:
-      sendBotGamePacket(client, PokegochiMultiplayerProtocol::InviteAccept,
-                        nullptr, 0U, header.transaction);
+      if (sendBotGamePacket(client, PokegochiMultiplayerProtocol::InviteAccept,
+                            nullptr, 0U, header.transaction))
+        Serial.printf("[BOT] invitation accepted player=%05lu token=%08lX\n",
+                      static_cast<unsigned long>(client.playerId),
+                      static_cast<unsigned long>(header.transaction));
       break;
     case PokegochiMultiplayerProtocol::ActivityRequest: {
       if (header.payloadLength != sizeof(BotActivityPayload)) break;
@@ -757,6 +842,8 @@ void handleBotGamePacket(ClientSlot& client, const uint8_t* bytes,
       battleBot.lastCommandTurn = 0xFFFFU;
       battleBot.lastForcedTurn = 0xFFFFU;
       clearBotPivotMove();
+      clearHostPivotMove();
+      battleBot.replacementIntentReceived = false;
       break;
     }
     case PokegochiMultiplayerProtocol::BattleCommand: {
@@ -765,15 +852,44 @@ void handleBotGamePacket(ClientSlot& client, const uint8_t* bytes,
       BotCommandPayload command{};
       std::memcpy(&command, payload, sizeof(command));
       if (battleBot.forcedCommandPending) break;
+      if (battleBot.hostPivotMovePending &&
+          command.turn != battleBot.lastHostPivotMoveTurn)
+        clearHostPivotMove();
       if (battleBot.pivotMovePending &&
           command.turn != battleBot.lastPivotMoveTurn)
         clearBotPivotMove();
-      // A successful bot pivot creates a second command pair in the same
-      // battle turn. The host submits WAIT (or SWITCH if it also fainted).
+      // A successful bot pivot creates a second command pair on the resolved
+      // turn (the original command turn + 1). The host submits WAIT, or SWITCH
+      // if it also fainted. A normal MOVE/ITEM means the pivot did not happen
+      // (miss, immunity or no reserve), even for a legacy peer whose only
+      // execution evidence is the consumed PP.
       if (battleBot.pivotMovePending && battleBot.pivotMoveExecuted &&
-          command.turn == battleBot.lastPivotMoveTurn) {
+          command.turn == battleBot.lastPivotMoveTurn &&
+          (command.kind == kBotCommandWait ||
+           command.kind == kBotCommandSwitch)) {
         if (sendBotPivotReplacement(client, command.turn)) break;
         clearBotPivotMove();
+      }
+      if (battleBot.pivotMovePending && battleBot.pivotMoveExecuted &&
+          command.turn == battleBot.lastPivotMoveTurn)
+        clearBotPivotMove();
+      // A replacement chosen after the host's U-turn/Volt Switch is the
+      // second half of an already-spent action. This explicit transaction is
+      // essential when the bot pivoted first and the queued host move landed
+      // only after the bot's replacement: lastCommandTurn has intentionally
+      // been re-armed by then for ordinary post-faint play.
+      if (battleBot.hostPivotMovePending &&
+          battleBot.hostPivotMoveExecuted &&
+          command.turn == battleBot.lastHostPivotMoveTurn &&
+          command.kind == kBotCommandSwitch) {
+        if (sendBotCommand(client, command.turn, kBotCommandWait)) {
+          battleBot.lastForcedTurn = command.turn;
+          battleBot.forcedCommandPending = true;
+          Serial.printf("[BOT] wait for host pivot turn=%u slot=%u\n",
+                        static_cast<unsigned>(command.turn),
+                        static_cast<unsigned>(command.value));
+        }
+        break;
       }
       if (battleBot.lastCommandTurn == command.turn) {
         // The host used Volt Switch/U-turn first. Its selected replacement is
@@ -789,6 +905,10 @@ void handleBotGamePacket(ClientSlot& client, const uint8_t* bytes,
         sendBotCommand(client, command.turn, kBotCommandWait);
       else if (battleBot.activeSlot < PokegochiServerBot::kTeamSize &&
                battleBot.team.members[battleBot.activeSlot].currentHp) {
+        if (command.kind == kBotCommandMove)
+          rememberHostMove(command.turn, command.value);
+        else
+          clearHostPivotMove();
         const BotActionChoice action = chooseBotAction();
         if (sendBotCommand(client, command.turn, action.kind, action.value)) {
           if (action.kind == kBotCommandItem) {
@@ -808,6 +928,12 @@ void handleBotGamePacket(ClientSlot& client, const uint8_t* bytes,
       std::memcpy(&sync, payload, sizeof(sync));
       if (sync.slot >= PokegochiServerBot::kTeamSize) break;
       if (sync.side == 0U) {
+        if (battleBot.hostPivotMovePending &&
+            sync.slot == battleBot.lastHostPivotMoveRosterSlot &&
+            battleBot.lastHostPivotMoveSlot < kMoveSlots &&
+            sync.pokemon.movePp[battleBot.lastHostPivotMoveSlot] <
+                battleBot.lastHostPivotMovePp)
+          battleBot.hostPivotMoveExecuted = true;
         battleBot.hostTeam[sync.slot] = sync.pokemon;
         battleBot.hostHp[sync.slot] = sync.pokemon.currentHp;
       } else if (sync.side == 1U) {
@@ -836,6 +962,16 @@ void handleBotGamePacket(ClientSlot& client, const uint8_t* bytes,
         battleBot.guestMoveEffects[sync.slot] = sync.moveEffects;
         battleBot.guestGen4Effects[sync.slot] = sync.gen4Effects;
       }
+      break;
+    }
+    case PokegochiMultiplayerProtocol::BattleSyncReplacement: {
+      if (header.payloadLength != sizeof(BotSyncReplacementPayload)) break;
+      BotSyncReplacementPayload replacement{};
+      std::memcpy(&replacement, payload, sizeof(replacement));
+      battleBot.replacementIntentTurn = replacement.turn;
+      battleBot.hostReplacementReason = replacement.hostReason;
+      battleBot.guestReplacementReason = replacement.guestReason;
+      battleBot.replacementIntentReceived = true;
       break;
     }
     case PokegochiMultiplayerProtocol::BattleSyncCore:
@@ -1110,6 +1246,17 @@ void processFrame(ClientSlot& client) {
       handleHello(client, header, client.payload);
       break;
     case MessageType::RefreshPeers:
+      // Returning to discovery before an activity was accepted means the
+      // client abandoned its provisional bot room (for example after losing
+      // InviteAccept). Release it before producing the list so bot 99999 is
+      // visible again in this very response instead of remaining hidden until
+      // the client's five-second socket reconnect.
+      if (client.peerId == PokegochiServerBot::kPlayerId &&
+          client.sessionId && !battleBot.activityAccepted) {
+        Serial.printf("[BOT] releasing abandoned handshake player=%05lu\n",
+                      static_cast<unsigned long>(client.playerId));
+        clearSession(client, false);
+      }
       sendPeerList(client);
       break;
     case MessageType::OpenSession:

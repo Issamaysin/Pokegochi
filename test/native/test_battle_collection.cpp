@@ -70,6 +70,9 @@ uint16_t countDefaultAnimationOpcode(uint16_t move,BattleAnimationOpcode wanted)
 }
 
 int main() {
+  static_assert(boundedBattleAnimationOffset(-73) == -72);
+  static_assert(boundedBattleAnimationOffset(73) == 72);
+  static_assert(boundedBattleAnimationOffset(4109) == 0);
   constexpr BattleAnimationCommand compactCommand(
       573U, 11414U, static_cast<uint8_t>(BattleAnimationOpcode::End),
       3U, 240U, 8U);
@@ -116,11 +119,24 @@ int main() {
       sizeof(unrelatedArguments) / sizeof(unrelatedArguments[0])));
   assert(psychoCutDelayArguments[0] == 30);
   static_assert(BatteryProtection::kCutoffPercent == 10U);
-  assert(!BatteryProtection::shouldEnterDormancy(false, 0U));
-  assert(!BatteryProtection::shouldEnterDormancy(true, 11U));
-  assert(BatteryProtection::shouldEnterDormancy(true, 10U));
-  assert(BatteryProtection::shouldEnterDormancy(true, 0U));
-  assert(!BatteryProtection::shouldEnterDormancy(true, 0U, true));
+  static_assert(BatteryProtection::kRequiredCriticalBursts == 2U);
+  uint8_t criticalBursts = BatteryProtection::nextCriticalBurstCount(
+      true, 10U, 0U);
+  assert(criticalBursts == 1U);
+  assert(!BatteryProtection::shouldEnterDormancy(
+      true, 10U, criticalBursts));
+  criticalBursts = BatteryProtection::nextCriticalBurstCount(
+      true, 10U, criticalBursts);
+  assert(criticalBursts == 2U);
+  assert(BatteryProtection::shouldEnterDormancy(
+      true, 10U, criticalBursts));
+  assert(BatteryProtection::nextCriticalBurstCount(
+      true, 11U, criticalBursts) == 0U);
+  assert(BatteryProtection::nextCriticalBurstCount(
+      false, 0U, criticalBursts) == 0U);
+  assert(!BatteryProtection::shouldEnterDormancy(false, 0U, 2U));
+  assert(!BatteryProtection::shouldEnterDormancy(true, 11U, 2U));
+  assert(!BatteryProtection::shouldEnterDormancy(true, 0U, 2U, true));
   assert(!BatteryProtection::canResume(false, 100U));
   assert(!BatteryProtection::canResume(true, 10U));
   assert(BatteryProtection::canResume(true, 11U));
@@ -1202,6 +1218,45 @@ int main() {
   assert(battle.rewardMoney == 0);
   assert(BattleEngine::currentOpponent(battle)->level >= 2 &&
          BattleEngine::currentOpponent(battle)->level <= 4);
+
+  // The opt-in Wild automatic player reuses a deterministic lightweight AI:
+  // prefer the stronger STAB/super-effective attack, never consume a zero-PP
+  // slot, never use Struggle, and never operate outside BattleKind::Wild.
+  PokemonCollection autoWildCollection;
+  CollectionLogic::initialize(autoWildCollection);
+  assert(CollectionLogic::chooseStarter(autoWildCollection, 4U, 1U));
+  OwnedPokemon* autoWildPlayer = CollectionLogic::active(autoWildCollection, 0U);
+  assert(autoWildPlayer);
+  for (uint8_t slot = 0; slot < kMoveSlots; ++slot) {
+    autoWildPlayer->moves[slot] = MoveId::None;
+    autoWildPlayer->movePp[slot] = 0U;
+  }
+  autoWildPlayer->moves[0] = MoveId::Tackle;
+  autoWildPlayer->movePp[0] = 35U;
+  autoWildPlayer->moves[1] = MoveId::Ember;
+  autoWildPlayer->movePp[1] = 25U;
+  BattleState autoWildBattle;
+  assert(BattleEngine::startWild(autoWildBattle, autoWildCollection,
+                                 autoWildPlayer->uid, 0xA070B477U));
+  OwnedPokemon* autoWildOpponent =
+      BattleEngine::currentOpponent(autoWildBattle);
+  assert(autoWildOpponent);
+  const uint32_t autoWildOpponentUid = autoWildOpponent->uid;
+  *autoWildOpponent = CollectionLogic::createPokemon(
+      autoWildOpponentUid, 1U, autoWildPlayer->level, false,
+      0xA070B478U);
+  assert(BattleEngine::choosePlayerAutoMove(
+      autoWildBattle, autoWildCollection) == 1U);
+  autoWildPlayer->movePp[1] = 0U;
+  assert(BattleEngine::choosePlayerAutoMove(
+      autoWildBattle, autoWildCollection) == 0U);
+  autoWildPlayer->movePp[0] = 0U;
+  assert(BattleEngine::choosePlayerAutoMove(
+      autoWildBattle, autoWildCollection) == 0xFFU);
+  autoWildPlayer->movePp[0] = 1U;
+  autoWildBattle.kind = BattleKind::Trainer;
+  assert(BattleEngine::choosePlayerAutoMove(
+      autoWildBattle, autoWildCollection) == 0xFFU);
 
   // The exact on-device regression: Dialga's Dragon Claw damage must be
   // journaled immediately after its move and before the foe's reply. The UI
@@ -5350,6 +5405,58 @@ int main() {
   assert(!moveCreatesLocalPivot(static_cast<MoveId>(369U),true));
   assert(!moveCreatesLocalPivot(static_cast<MoveId>(521U),true));
   assert(!moveCreatesLocalPivot(static_cast<MoveId>(575U),true));
+
+  // Scoring a KO with U-turn creates two simultaneous replacement choices in
+  // a link battle: the defeated peer must replace its fainted Pokemon and the
+  // surviving attacker must still withdraw. The old current-opponent-is-alive
+  // check lost the latter half and left peers on different command phases.
+  PokemonCollection koPivotCollection;
+  CollectionLogic::initialize(koPivotCollection);
+  assert(CollectionLogic::chooseStarter(koPivotCollection,1U,0x5240U));
+  OwnedPokemon* koPivotUser=CollectionLogic::active(koPivotCollection,0U);
+  const MoveId uTurn=static_cast<MoveId>(369U);
+  koPivotUser->moves[0]=uTurn;
+  koPivotUser->movePp[0]=findFullMove(uTurn)->pp;
+  uint32_t koPivotReserveUid=0U;
+  assert(CollectionLogic::add(koPivotCollection,
+      CollectionLogic::createPokemon(0U,7U,50U,false,0x5241U,7U),
+      &koPivotReserveUid));
+  assert(CollectionLogic::setPartySlot(
+      koPivotCollection,1U,koPivotReserveUid));
+  BattleState koPivotBattle{};
+  koPivotBattle.active=true;koPivotBattle.kind=BattleKind::Pvp;
+  koPivotBattle.outcome=BattleOutcome::Ongoing;
+  koPivotBattle.playerUid=koPivotUser->uid;
+  koPivotBattle.opponentCount=2U;koPivotBattle.rngState=0x5242U;
+  koPivotBattle.opponents[0]=CollectionLogic::createPokemon(
+      0xF1524001U,7U,50U,false,0x5243U,7U);
+  koPivotBattle.opponents[1]=CollectionLogic::createPokemon(
+      0xF1524002U,9U,50U,false,0x5244U,7U);
+  koPivotBattle.opponents[0].currentHp=1U;
+  koPivotBattle.opponents[0].moves[0]=MoveId::Tackle;
+  koPivotBattle.opponents[0].movePp[0]=findFullMove(MoveId::Tackle)->pp;
+  koPivotBattle.playerVolatile.speedStage=kMaximumBattleStatStage;
+  koPivotBattle.opponentVolatiles[0].speedStage=kMinimumBattleStatStage;
+  const uint32_t koPivotDefeatedUid=koPivotBattle.opponents[0].uid;
+  const uint32_t koPivotRemoteReserveUid=koPivotBattle.opponents[1].uid;
+  const BattleActionResult koPivotHit=BattleEngine::fightPvp(
+      koPivotBattle,koPivotCollection,0U,0U);
+  assert(koPivotHit.accepted&&koPivotHit.opponentDefeated&&
+         koPivotHit.batonPassSwitchRequired&&
+         (koPivotBattle.pendingPlayerReplacement&0x0FU)==2U&&
+         BattleEngine::currentOpponent(koPivotBattle)->uid==koPivotDefeatedUid&&
+         BattleEngine::currentOpponent(koPivotBattle)->currentHp==0U&&
+         koPivotBattle.pendingOpponentMoveSlot==0xFEU);
+  assert(BattleEngine::switchOpponentPvp(
+      koPivotBattle,koPivotCollection,1U,true).accepted);
+  const BattleActionResult koPivotCompleted=BattleEngine::completeBatonPassSwitch(
+      koPivotBattle,koPivotCollection,koPivotReserveUid,0xFEU,2U);
+  assert(koPivotCompleted.accepted&&
+         koPivotBattle.playerUid==koPivotReserveUid&&
+         BattleEngine::currentOpponent(koPivotBattle)->uid==
+             koPivotRemoteReserveUid&&
+         koPivotBattle.pendingPlayerReplacement==0U&&
+         koPivotBattle.pendingOpponentMoveSlot==0xFFU);
 
   // SHELL BELL recovery is a visible journal transition, not merely a final
   // HP mutation.  Both local and remote users must announce the item first

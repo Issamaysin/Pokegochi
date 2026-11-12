@@ -19,6 +19,26 @@ ROOT = Path(__file__).resolve().parent.parent
 D = ROOT / ".downloads/pokefirered-tree/pokefirered-master"
 EXPANSION = ROOT / ".downloads/pokeemerald-expansion"
 
+# These names are VM instructions, even when pokeemerald-expansion exposes
+# them through assembler macros.  Expanding a control-flow opcode such as
+# ``jumpretfalse`` all the way to its ``.byte/.4byte`` encoder erases the
+# symbolic branch before the Pokegochi bytecode generator can translate it.
+# Keep one canonical set for both macro expansion and the source audit so a
+# newly supported opcode cannot silently take two different paths again.
+BATTLE_SCRIPT_OPCODES = frozenset({
+    "loadspritegfx", "unloadspritegfx", "createsprite", "createvisualtask",
+    "delay", "waitforvisualfinish", "monbg", "clearmonbg",
+    "clearmonbg_static", "monbg_static", "setalpha", "blendoff", "setbldcnt",
+    "playsewithpan", "loopsewithpan", "panse_1b", "panse_19",
+    "waitplaysewithpan", "playse", "createsoundtask", "panse",
+    "panse_adjustnone", "panse_adjustall", "waitsound", "setpan", "call",
+    "return", "goto", "jumpargeq", "jumpifmoveturn", "jumpifcontest",
+    "jumprettrue", "jumpretfalse", "jumpreteq", "choosetwoturnanim", "setarg",
+    "changebg", "fadetobg", "fadetobgfromset", "waitbgfadeout",
+    "waitbgfadein", "restorebg", "splitbgprio", "splitbgprio_foes",
+    "splitbgprio_all", "invisible", "visible", "end",
+})
+
 
 def _split_macro_operands(text: str) -> list[str]:
     """Split an assembler macro call without splitting nested expressions."""
@@ -75,14 +95,7 @@ def _expand_battle_script_macros(script: str, macro_source: Path) -> str:
         # These are real battle-script opcodes.  They also have assembler
         # macro definitions in macros.inc, but expanding those byte encoders
         # would destroy the symbolic script we intentionally feed to the VM.
-        if parts[0] in {
-                "createsprite", "createvisualtask", "loadspritegfx",
-                "unloadspritegfx", "delay", "waitforvisualfinish",
-                "monbg", "monbg_static", "clearmonbg", "clearmonbg_static",
-                "setalpha", "blendoff", "setbldcnt", "changebg", "fadetobg",
-                "restorebg", "splitbgprio", "setarg", "call", "goto",
-                "return", "end", "invisible", "visible", "waitbgfadeout",
-                "waitbgfadein", "choosetwoturnanim"}:
+        if parts[0].lower() in BATTLE_SCRIPT_OPCODES:
             definition = None
         if definition is None:
             return [line]
@@ -1033,9 +1046,9 @@ def split_operands(text: str) -> list[str]:
         elif character == ")":
             depth = max(0, depth - 1)
         elif character == "," and depth == 0:
-            result.append(text[start:index].strip())
+            result.append(text[start:index].strip().rstrip(";"))
             start = index + 1
-    tail = text[start:].strip()
+    tail = text[start:].strip().rstrip(";")
     if tail:
         result.append(tail)
     return result
@@ -3242,7 +3255,7 @@ program_argument_values: list[int] = []
 program_argument_offsets: dict[tuple[int, ...], int] = {}
 COMPACT_COMMAND_PRIORITIES = (
     0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 16,
-    19, 20, 40, 41, 50, 51, 66, 70, 120, 130, 131, 132, 133, 136, 240,
+    19, 20, 40, 41, 50, 51, 66, 67, 68, 69, 70, 120, 130, 131, 132, 133, 136, 240,
 )
 sprite_resource_rows: list[str] = []
 sprite_frame_step_rows: list[str] = []
@@ -4082,19 +4095,9 @@ for symbol, number in move_definitions:
     program_rows.append(
         f"  {{{number}, {command_start}, {move_command_count}}},")
 
-    commands = re.findall(r"^\s*([a-z][a-z0-9_]*)\b", body, re.M)
-    supported = {
-        "loadspritegfx", "unloadspritegfx", "createsprite", "createvisualtask", "delay",
-        "waitforvisualfinish", "monbg", "clearmonbg", "clearmonbg_static", "monbg_static",
-        "setalpha", "blendoff", "setbldcnt", "playsewithpan", "loopsewithpan", "panse_1B",
-        "panse_19", "waitplaysewithpan", "playse", "createsoundtask", "panse",
-        "panse_adjustnone", "panse_adjustall", "waitsound", "setpan", "call", "return",
-        "goto", "jumpargeq", "jumpifmoveturn", "jumpifcontest", "jumprettrue",
-        "jumpretfalse", "jumpreteq", "choosetwoturnanim", "setarg", "changebg", "fadetobg",
-        "fadetobgfromset", "waitbgfadeout", "waitbgfadein", "restorebg", "splitbgprio",
-        "splitbgprio_foes", "splitbgprio_all", "invisible", "visible", "end",
-    }
-    unknown = sorted(set(commands) - supported)
+    commands = [command.lower() for command in re.findall(
+        r"^\s*([A-Za-z][A-Za-z0-9_]*)\b", body, re.M)]
+    unknown = sorted(set(commands) - BATTLE_SCRIPT_OPCODES)
     for command in unknown:
         unsupported_commands[command] = unsupported_commands.get(command, 0) + 1
     background_ids: set[int] = set()

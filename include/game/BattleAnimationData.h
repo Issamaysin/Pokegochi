@@ -726,6 +726,15 @@ struct BattleAnimationTaskResource {
   bool blocking;
 };
 
+// Convert authored OBJ coordinates to the retained 320x184 viewport. Values
+// beyond +/-1024 cannot be intentional screen offsets (the expansion source
+// contains a recurring malformed 4109 centre coordinate); treating them as
+// zero preserves the symmetric effect instead of pinning it to one edge.
+constexpr int16_t boundedBattleAnimationOffset(int16_t value) {
+  if (value < -1024 || value > 1024) return 0;
+  return value < -72 ? -72 : value > 72 ? 72 : value;
+}
+
 struct BattleAnimationSpriteResource {
   const char* asset;
   // FireRed palette tasks select their particles through ANIM_TAG_* rather
@@ -805,9 +814,9 @@ struct BattleAnimationCommand {
   // which the previous nine-bit layout silently wrapped.
   uint8_t packed[5];
 
-  static constexpr uint8_t priorityValues[29] = {
+  static constexpr uint8_t priorityValues[32] = {
       0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14, 16,
-      19, 20, 40, 41, 50, 51, 66, 70, 120, 130, 131, 132, 133, 136, 240};
+      19, 20, 40, 41, 50, 51, 66, 67, 68, 69, 70, 120, 130, 131, 132, 133, 136, 240};
 
   static constexpr uint8_t priorityCode(uint8_t priority) {
     for (uint8_t index = 0; index < sizeof(priorityValues); ++index)

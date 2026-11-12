@@ -42,6 +42,7 @@ final class MultiplayerProtocol {
     static final int BATTLE_SYNC_CORE = 21;
     static final int BATTLE_SYNC_ACK = 22;
     static final int BATTLE_RULES_CHOICE = 23;
+    static final int BATTLE_SYNC_REPLACEMENT = 24;
 
     private MultiplayerProtocol() {}
 

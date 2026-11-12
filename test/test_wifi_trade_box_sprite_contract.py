@@ -128,9 +128,17 @@ def main() -> None:
     # the stored rectangle.
     assert "kResidentCropped4Bpp = 0x8CU" in RENDERER
     assert "bool isPokemonIconAsset(const char* path)" in RENDERER
+    assert "bool isTransparentSmallAsset(const char* path)" in RENDERER
+    assert 'std::strstr(path, "/battle_anims/sprites/")' in RENDERER
     assert "compactBytes >= info.pixelBytes" in RENDERER
     assert "cropped4BppValueAt(image, x, y)" in RENDERER
-    assert "installCropped4Bpp(info, croppedPlan" in RENDERER
+    assert "installCropped4Bpp(file, info, croppedPlan" in RENDERER
+    assert "sourceRowBytes > sizeof(scratch.stream.indices)" in RENDERER
+    assert "struct CompactSmallTiled4BppPlan" in RENDERER
+    assert "prepareCompactSmallTiled4BppPlan(" in RENDERER
+    assert "installCompactSmallTiled4Bpp(" in RENDERER
+    assert "tiledPlan.indexBytes < croppedPlan.indexBytes" in RENDERER
+    assert "result.bitsPerPixel = kResidentTiled4Bpp;" in RENDERER
     assert "result.header = info.header;" in RENDERER
 
     print(

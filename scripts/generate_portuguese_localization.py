@@ -30,8 +30,16 @@ CATALOG_ENGINE_VERSION = "ptbr-pob-ct2-v3"
 
 
 MANUAL = {
-    "4.1 WIFI": "4.1 WI-FI",
-    "APP 3.1 RELEASE": "VERSAO DO APP 3.1",
+    "DIGEST": "HASH",
+    "PARKED": "ESTACIONADO",
+    "SIG": "ASSIN",
+    "UNSIGNED": "NAO ASSINADO",
+    "SAVE MEMORY COULD NOT BE PARKED FOR SIGNATURE CHECK.":
+        "A MEMORIA DO SAVE NAO PODE SER LIBERADA PARA VERIFICAR A ASSINATURA.",
+    "SAVE MEMORY COULD NOT BE RESTORED.":
+        "A MEMORIA DO SAVE NAO PODE SER RESTAURADA.",
+    "4.3": "4.3",
+    "APP 3.3 RELEASE": "VERSAO DO APP 3.3",
     "EN": "EN",
     "PT": "PT",
     "ENGLISH": "INGLES",
@@ -56,6 +64,10 @@ MANUAL = {
     "CONTINUE": "CONTINUAR",
     "YES": "SIM",
     "NO": "NAO",
+    "NO EFFECT IN SINGLE BATTLES.": "SEM EFEITO EM BATALHAS INDIVIDUAIS.",
+    "GIVES FLYING MOVES PRIORITY AT FULL HP.":
+        "DA PRIORIDADE A GOLPES VOADORES COM HP CHEIO.",
+    "GALE WINGS": "ASAS DE VENDAVAL",
     "ON": "LIGADO",
     "OFF": "DESLIGADO",
     "READY": "PRONTO",
@@ -302,7 +314,7 @@ MANUAL = {
 
 
 def strip_compile_only_diagnostics(source: str) -> str:
-    """Remove positive animation-diagnostic preprocessor branches.
+    """Remove positive cable-diagnostic preprocessor branches.
 
     Those cable commands never exist in production and are not rendered by
     the game. Treating their serial tokens as player-visible text made the
@@ -312,7 +324,7 @@ def strip_compile_only_diagnostics(source: str) -> str:
     output: list[str] = []
     suppressed_depth = 0
     diagnostic_if = re.compile(
-        r"^\s*#\s*if\s+defined\(POKEGOCHI_ANIMATION_DIAGNOSTICS\)\s*$"
+        r"^\s*#\s*if\s+defined\(POKEGOCHI_(?:ANIMATION|WILD_AUTO)_DIAGNOSTICS\)\s*$"
     )
     nested_if = re.compile(r"^\s*#\s*(?:if|ifdef|ifndef)\b")
     end_if = re.compile(r"^\s*#\s*endif\b")
@@ -488,6 +500,11 @@ def collect_catalogue() -> tuple[set[str], Counter[str]]:
     source_files += sorted((ROOT / "include/game").glob("*.h"))
     for path in source_files:
         for value in cpp_strings(path):
+            # Quoted #include operands are source paths, never player text.
+            # CamelCase filenames otherwise look like untranslated prose when
+            # a new gameplay helper is introduced.
+            if "/" in value and value.lower().endswith((".h", ".hpp")):
+                continue
             internal_identifier = re.fullmatch(
                 r"[A-Z0-9]+(?:_[A-Z0-9]+)+", value.strip()
             )
